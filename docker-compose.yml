@@ -1,0 +1,13 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      AIC_DATA_ROOT: /data
+      AIC_DATABASE_PATH: /data/app.sqlite
+    volumes:
+      - ./data:/data
+    ports:
+      - "8000:8000"
+
