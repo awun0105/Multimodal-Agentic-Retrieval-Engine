@@ -39,6 +39,20 @@ query -> ranked frames -> inspect video/timeline -> choose frame -> export answe
 Do not introduce PostgreSQL, OpenSearch, Rust, Tauri, Kubernetes, or cloud hosting
 unless the simple stack is measured and proven insufficient.
 
+## Coding Standards
+
+Follow `CODING_STANDARDS.md`.
+
+Default principles:
+
+- loose coupling;
+- high cohesion;
+- readable code over clever code;
+- API/service/storage boundaries;
+- PEP 8 and Ruff for Python;
+- strict TypeScript for frontend;
+- tests and validation before commits.
+
 ## Data Layout
 
 ```text
