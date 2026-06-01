@@ -34,6 +34,34 @@ The current implementation supports a JSON manifest importer:
 uv run aic-ingest path/to/manifest.json
 ```
 
+For normal dataset preparation, point the scanner at a data root:
+
+```bash
+uv run aic-prepare /path/to/aic-data
+```
+
+It discovers these folders when present:
+
+```text
+raw/videos/                 raw video files
+videos/                     alternate raw video folder
+processed/keyframes/        prepared keyframes by video id
+keyframes/                  alternate keyframe folder
+processed/thumbs/           optional thumbnails by video id
+thumbs/                     alternate thumbnail folder
+objects/<video_id>/*.json   object detections like last year's files
+```
+
+The command writes `/path/to/aic-data/manifest.generated.json` and imports it
+into SQLite. Use these options when needed:
+
+```bash
+uv run aic-prepare /path/to/aic-data \
+  --database /path/to/aic-data/app.sqlite \
+  --fps 25 \
+  --object-score-min 0.2
+```
+
 Minimal manifest shape:
 
 ```json

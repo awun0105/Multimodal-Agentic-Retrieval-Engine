@@ -11,6 +11,7 @@ dependencies = [
 
 [project.scripts]
 aic-ingest = "aic_retrieval.ingest:main"
+aic-prepare = "aic_retrieval.prepare:main"
 
 [dependency-groups]
 dev = [
