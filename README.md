@@ -118,6 +118,13 @@ Open:
 http://localhost:8080
 ```
 
+By default Compose exposes the backend on host port `8001` to avoid collisions
+with other local services. Override ports when needed:
+
+```bash
+AIC_BACKEND_PORT=8000 AIC_FRONTEND_PORT=8080 docker compose up --build
+```
+
 Validation:
 
 ```bash

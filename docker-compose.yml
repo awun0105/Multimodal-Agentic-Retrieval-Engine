@@ -9,13 +9,13 @@ services:
     volumes:
       - ./data:/data
     ports:
-      - "8000:8000"
+      - "${AIC_BACKEND_PORT:-8001}:8000"
 
   frontend:
     build:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "8080:80"
+      - "${AIC_FRONTEND_PORT:-8080}:80"
     depends_on:
       - backend
