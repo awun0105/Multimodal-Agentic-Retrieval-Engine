@@ -30,3 +30,10 @@ def test_dataset_and_video_listing() -> None:
     assert any(video["video_id"] == "L21_V001" for video in videos.json())
     assert frames.status_code == 200
     assert frames.json()[0]["video_id"] == "L21_V001"
+
+
+def test_demo_media_is_served() -> None:
+    with TestClient(app) as client:
+        response = client.get("/media/keyframes/L21_V001/1")
+    assert response.status_code == 200
+    assert "svg" in response.headers["content-type"]

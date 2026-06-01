@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 
 from .config import Settings, get_settings
 from .db import connect, init_db
-from .demo_data import seed_demo_data
+from .demo_data import ensure_demo_media, seed_demo_data
 from .models import (
     AgentRunRequest,
     AgentRunResponse,
@@ -38,6 +38,7 @@ from .search import search_frames
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     init_db(settings.database_path)
+    ensure_demo_media(settings.data_root)
     with connect(settings.database_path) as connection:
         seed_demo_data(connection)
     yield
