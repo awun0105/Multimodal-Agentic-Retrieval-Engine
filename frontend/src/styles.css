@@ -44,6 +44,7 @@ button {
 .brand,
 .panel-title,
 button,
+.media-link,
 .trace {
   align-items: center;
   display: flex;
@@ -258,6 +259,19 @@ dd {
 .wide {
   justify-content: center;
   margin-bottom: 12px;
+  width: 100%;
+}
+
+.media-link {
+  background: #151d2a;
+  border: 1px solid #3a4a62;
+  border-radius: 8px;
+  color: #f4f7fb;
+  font-weight: 600;
+  justify-content: center;
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  text-decoration: none;
   width: 100%;
 }
 

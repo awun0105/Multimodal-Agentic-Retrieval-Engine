@@ -274,6 +274,10 @@ export function App() {
               <Pin size={16} />
               Save candidate
             </button>
+            <a className="media-link" href={`/media/videos/${selected.video_id}`} target="_blank">
+              <Film size={16} />
+              Open video
+            </a>
           </>
         ) : (
           <p className="muted">Run a search and select a result.</p>

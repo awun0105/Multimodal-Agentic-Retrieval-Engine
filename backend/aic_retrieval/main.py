@@ -143,6 +143,19 @@ def search(request: SearchRequest, settings: Settings = Depends(get_settings)) -
     return SearchResponse(query=request.query, query_type=request.query_type, results=results)
 
 
+@app.get("/media/videos/{video_id}")
+def get_video_media(video_id: str, settings: Settings = Depends(get_settings)) -> FileResponse:
+    with connect(settings.database_path) as connection:
+        row = connection.execute("SELECT path FROM videos WHERE video_id=?", (video_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    path = settings.data_root / row["path"]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Video file missing: {path}")
+    return FileResponse(path)
+
+
 @app.get("/media/{kind}/{video_id}/{frame_id}")
 def get_frame_media(
     kind: str, video_id: str, frame_id: int, settings: Settings = Depends(get_settings)

@@ -52,3 +52,9 @@ def test_demo_media_is_served() -> None:
         response = client.get("/media/keyframes/L21_V001/1")
     assert response.status_code == 200
     assert "svg" in response.headers["content-type"]
+
+
+def test_missing_raw_video_returns_404() -> None:
+    with TestClient(app) as client:
+        response = client.get("/media/videos/L21_V001")
+    assert response.status_code == 404
