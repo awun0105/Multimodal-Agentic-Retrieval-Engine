@@ -1,7 +1,15 @@
 import { Bot, CheckCircle2, Film, Pin, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { listCandidates, runAgent, saveCandidate, search, validateExport } from "./api";
-import type { AgentRun, Candidate, SearchResult } from "./types";
+import {
+  exportPreview,
+  listCandidates,
+  listVideoFrames,
+  runAgent,
+  saveCandidate,
+  search,
+  validateExport
+} from "./api";
+import type { AgentRun, Candidate, ExportPreview, FrameInfo, SearchResult } from "./types";
 
 const queryTypes = ["tkis", "qa", "trake", "vkis"];
 
@@ -11,6 +19,8 @@ export function App() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [timelineFrames, setTimelineFrames] = useState<FrameInfo[]>([]);
+  const [exportRows, setExportRows] = useState<ExportPreview | null>(null);
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null);
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +30,18 @@ export function App() {
   }, []);
 
   const evidence = useMemo(() => selected?.evidence.join(" | ") || "No evidence selected", [selected]);
+
+  useEffect(() => {
+    if (!selected) {
+      setTimelineFrames([]);
+      return;
+    }
+    listVideoFrames(selected.video_id)
+      .then(setTimelineFrames)
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to load timeline");
+      });
+  }, [selected]);
 
   async function refreshCandidates() {
     setCandidates(await listCandidates());
@@ -61,6 +83,8 @@ export function App() {
 
   async function handleValidate() {
     const response = await validateExport();
+    const preview = await exportPreview();
+    setExportRows(preview);
     setStatus(response.valid ? "Export preview valid" : "Export has issues");
     if (response.warnings.length > 0) {
       setError(response.warnings.join(" "));
@@ -178,6 +202,34 @@ export function App() {
               <dt>Evidence</dt>
               <dd>{evidence}</dd>
             </dl>
+            <div className="timeline">
+              <h2>Frame List</h2>
+              <div className="strip">
+                {timelineFrames.map((frame) => (
+                  <button
+                    className={`mini-frame ${frame.frame_id === selected.frame_id ? "selected" : ""}`}
+                    key={`${frame.video_id}-${frame.frame_id}`}
+                    onClick={() =>
+                      setSelected({
+                        video_id: frame.video_id,
+                        frame_id: frame.frame_id,
+                        timestamp: frame.timestamp,
+                        thumb_url: frame.thumb_url,
+                        keyframe_url: frame.keyframe_url,
+                        score: selected.score,
+                        evidence: [frame.caption]
+                      })
+                    }
+                  >
+                    {frame.thumb_url ? (
+                      <img src={frame.thumb_url} alt={`${frame.video_id} frame ${frame.frame_id}`} />
+                    ) : (
+                      <span>{frame.frame_id}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button className="wide" onClick={() => void handleSave(selected)}>
               <Pin size={16} />
               Save candidate
@@ -211,6 +263,21 @@ export function App() {
           <CheckCircle2 size={16} />
           Validate export
         </button>
+        {exportRows ? (
+          <section className="export-preview">
+            <h2>Export Preview</h2>
+            {exportRows.rows.length === 0 ? (
+              <p className="muted">No saved rows.</p>
+            ) : (
+              exportRows.rows.map((row, index) => (
+                <code key={`${row.video_id}-${row.frame_id}-${index}`}>
+                  {row.video_id},{row.frame_id}
+                  {row.answer ? `,${row.answer}` : ""}
+                </code>
+              ))
+            )}
+          </section>
+        ) : null}
       </aside>
     </div>
   );

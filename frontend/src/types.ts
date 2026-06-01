@@ -40,3 +40,21 @@ export type AgentRun = {
     latency_ms: number;
   }>;
 };
+
+export type FrameInfo = {
+  video_id: string;
+  frame_id: number;
+  timestamp: number;
+  thumb_url: string | null;
+  keyframe_url: string | null;
+  caption: string;
+};
+
+export type ExportPreview = {
+  format: string;
+  rows: Array<{
+    video_id: string;
+    frame_id: number;
+    answer: string;
+  }>;
+};

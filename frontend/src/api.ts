@@ -1,4 +1,4 @@
-import type { AgentRun, Candidate, SearchResponse, SearchResult } from "./types";
+import type { AgentRun, Candidate, ExportPreview, FrameInfo, SearchResponse, SearchResult } from "./types";
 
 const API_BASE = "/api";
 
@@ -31,6 +31,18 @@ export async function listCandidates(): Promise<Candidate[]> {
 
 export async function validateExport(): Promise<{ valid: boolean; warnings: string[] }> {
   return post<{ valid: boolean; warnings: string[] }>("/validate", {});
+}
+
+export async function exportPreview(): Promise<ExportPreview> {
+  return post<ExportPreview>("/export", {});
+}
+
+export async function listVideoFrames(videoId: string): Promise<FrameInfo[]> {
+  const response = await fetch(`${API_BASE}/videos/${videoId}/frames`);
+  if (!response.ok) {
+    throw new Error(`Failed to load frames: ${response.status}`);
+  }
+  return response.json() as Promise<FrameInfo[]>;
 }
 
 async function post<T>(path: string, payload: unknown): Promise<T> {
