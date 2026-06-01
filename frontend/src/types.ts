@@ -14,6 +14,10 @@ export type SearchResponse = {
   results: SearchResult[];
 };
 
+export type SearchOptions = {
+  objectFilters: string[];
+};
+
 export type Candidate = {
   id: number;
   session_id: number | null;

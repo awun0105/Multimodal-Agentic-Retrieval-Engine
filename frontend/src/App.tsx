@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   exportPreview,
   listCandidates,
+  listObjectFilters,
   listVideoFrames,
   runAgent,
   saveCandidate,
@@ -21,15 +22,30 @@ export function App() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [timelineFrames, setTimelineFrames] = useState<FrameInfo[]>([]);
   const [exportRows, setExportRows] = useState<ExportPreview | null>(null);
+  const [availableObjects, setAvailableObjects] = useState<string[]>([]);
+  const [objectFilterText, setObjectFilterText] = useState("");
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null);
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshCandidates();
+    listObjectFilters()
+      .then(setAvailableObjects)
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to load object filters");
+      });
   }, []);
 
   const evidence = useMemo(() => selected?.evidence.join(" | ") || "No evidence selected", [selected]);
+  const objectFilters = useMemo(
+    () =>
+      objectFilterText
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    [objectFilterText]
+  );
 
   useEffect(() => {
     if (!selected) {
@@ -51,7 +67,7 @@ export function App() {
     setError(null);
     setStatus("Searching");
     try {
-      const response = await search(query, queryType);
+      const response = await search(query, queryType, { objectFilters });
       setResults(response.results);
       setSelected(response.results[0] ?? null);
       setStatus(`Found ${response.results.length} results`);
@@ -130,6 +146,30 @@ export function App() {
           <h2>Modes</h2>
           <div className="mode active">Interactive</div>
           <div className="mode">Automatic agent</div>
+        </section>
+        <section>
+          <h2>Filters</h2>
+          <input
+            className="filter-input"
+            list="object-filter-options"
+            placeholder="Objects: person, car"
+            value={objectFilterText}
+            onChange={(event) => setObjectFilterText(event.target.value)}
+          />
+          <datalist id="object-filter-options">
+            {availableObjects.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          {objectFilters.length > 0 ? (
+            <div className="filter-chips">
+              {objectFilters.map((name) => (
+                <span key={name}>{name}</span>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">Optional object names from detections.</p>
+          )}
         </section>
         <section>
           <h2>Saved</h2>

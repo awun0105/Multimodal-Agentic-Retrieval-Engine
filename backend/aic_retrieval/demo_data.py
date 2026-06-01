@@ -80,6 +80,10 @@ def seed_demo_data(connection: sqlite3.Connection) -> None:
             """,
             (video_id, str(frame_id), f"{caption} {objects}"),
         )
+        connection.execute(
+            "DELETE FROM objects WHERE video_id=? AND frame_id=?",
+            (video_id, frame_id),
+        )
         for object_name in objects.split():
             connection.execute(
                 """

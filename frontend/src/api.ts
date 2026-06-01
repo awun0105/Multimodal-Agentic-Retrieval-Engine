@@ -1,9 +1,26 @@
-import type { AgentRun, Candidate, ExportPreview, FrameInfo, SearchResponse, SearchResult } from "./types";
+import type {
+  AgentRun,
+  Candidate,
+  ExportPreview,
+  FrameInfo,
+  SearchOptions,
+  SearchResponse,
+  SearchResult
+} from "./types";
 
 const API_BASE = "/api";
 
-export async function search(query: string, queryType: string): Promise<SearchResponse> {
-  return post<SearchResponse>("/search", { query, query_type: queryType, limit: 50 });
+export async function search(
+  query: string,
+  queryType: string,
+  options: SearchOptions
+): Promise<SearchResponse> {
+  return post<SearchResponse>("/search", {
+    query,
+    query_type: queryType,
+    limit: 50,
+    object_filters: options.objectFilters
+  });
 }
 
 export async function runAgent(query: string, queryType: string): Promise<AgentRun> {
@@ -43,6 +60,14 @@ export async function listVideoFrames(videoId: string): Promise<FrameInfo[]> {
     throw new Error(`Failed to load frames: ${response.status}`);
   }
   return response.json() as Promise<FrameInfo[]>;
+}
+
+export async function listObjectFilters(): Promise<string[]> {
+  const response = await fetch(`${API_BASE}/filters/objects`);
+  if (!response.ok) {
+    throw new Error(`Failed to load object filters: ${response.status}`);
+  }
+  return response.json() as Promise<string[]>;
 }
 
 async function post<T>(path: string, payload: unknown): Promise<T> {

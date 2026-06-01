@@ -75,6 +75,25 @@ button {
   padding: 9px 11px;
 }
 
+.filter-input {
+  width: 100%;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.filter-chips span {
+  background: #111827;
+  border: 1px solid #263244;
+  border-radius: 999px;
+  color: #aab4c3;
+  padding: 4px 8px;
+}
+
 button {
   background: #2563eb;
   border-color: #3b82f6;

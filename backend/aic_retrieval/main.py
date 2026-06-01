@@ -31,7 +31,7 @@ from .models import (
     ValidationResponse,
     VideoInfo,
 )
-from .search import search_frames
+from .search import list_object_names, search_frames
 
 
 @asynccontextmanager
@@ -130,10 +130,16 @@ def list_video_frames(
     ]
 
 
+@app.get("/filters/objects", response_model=list[str])
+def list_objects(settings: Settings = Depends(get_settings)) -> list[str]:
+    with connect(settings.database_path) as connection:
+        return list_object_names(connection)
+
+
 @app.post("/search", response_model=SearchResponse)
 def search(request: SearchRequest, settings: Settings = Depends(get_settings)) -> SearchResponse:
     with connect(settings.database_path) as connection:
-        results = search_frames(connection, request.query, request.limit)
+        results = search_frames(connection, request.query, request.limit, request.object_filters)
     return SearchResponse(query=request.query, query_type=request.query_type, results=results)
 
 

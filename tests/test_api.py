@@ -19,6 +19,21 @@ def test_search_returns_demo_results() -> None:
     assert payload["results"][0]["video_id"] == "L21_V001"
 
 
+def test_search_supports_object_filter() -> None:
+    with TestClient(app) as client:
+        filters = client.get("/filters/objects")
+        response = client.post(
+            "/search",
+            json={"query": "city", "limit": 5, "object_filters": ["Bicycle"]},
+        )
+    assert filters.status_code == 200
+    assert "Bicycle" in filters.json()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["results"]
+    assert all("Bicycle" in " ".join(result["evidence"]) for result in payload["results"])
+
+
 def test_dataset_and_video_listing() -> None:
     with TestClient(app) as client:
         datasets = client.get("/datasets")

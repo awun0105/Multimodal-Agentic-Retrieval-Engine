@@ -10,6 +10,7 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     query_type: str = "tkis"
     limit: int = Field(default=50, ge=1, le=200)
+    object_filters: list[str] = Field(default_factory=list)
 
 
 class SearchResult(BaseModel):
