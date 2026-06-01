@@ -9,6 +9,9 @@ dependencies = [
   "uvicorn[standard]>=0.32.0"
 ]
 
+[project.scripts]
+aic-ingest = "aic_retrieval.ingest:main"
+
 [dependency-groups]
 dev = [
   "httpx>=0.28.0",
