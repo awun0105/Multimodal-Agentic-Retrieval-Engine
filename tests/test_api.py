@@ -63,6 +63,25 @@ def test_query_session_tracks_progressive_clues() -> None:
     assert any(item["id"] == session_id for item in sessions.json())
 
 
+def test_candidate_rows_can_be_updated_for_export() -> None:
+    with TestClient(app) as client:
+        created = client.post(
+            "/candidates",
+            json={"video_id": "L21_V001", "frame_id": 1, "timestamp": 0.04},
+        )
+        candidate_id = created.json()["id"]
+        updated = client.patch(
+            f"/candidates/{candidate_id}",
+            json={"answer": "L21_V001,1", "rank": 1, "note": "best frame"},
+        )
+        exported = client.post("/export", json={})
+    assert created.status_code == 200
+    assert updated.status_code == 200
+    assert updated.json()["rank"] == 1
+    assert exported.status_code == 200
+    assert any(row["answer"] == "L21_V001,1" for row in exported.json()["rows"])
+
+
 def test_demo_media_is_served() -> None:
     with TestClient(app) as client:
         response = client.get("/media/keyframes/L21_V001/1")

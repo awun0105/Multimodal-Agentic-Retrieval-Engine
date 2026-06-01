@@ -10,6 +10,7 @@ import {
   runAgent,
   saveCandidate,
   search,
+  updateCandidate,
   validateExport
 } from "./api";
 import type {
@@ -104,8 +105,33 @@ export function App() {
   }
 
   async function handleSave(result: SearchResult) {
-    await saveCandidate(result);
+    await saveCandidate(result, session?.id ?? null);
     await refreshCandidates();
+  }
+
+  function handleCandidateField(
+    candidate: Candidate,
+    field: "answer" | "note" | "rank",
+    value: string
+  ) {
+    setCandidates((current) =>
+      current.map((item) =>
+        item.id === candidate.id
+          ? { ...item, [field]: field === "rank" ? Number(value) || 0 : value }
+          : item
+      )
+    );
+  }
+
+  async function handleCandidateUpdate(candidate: Candidate) {
+    setError(null);
+    try {
+      await updateCandidate(candidate);
+      await refreshCandidates();
+      setStatus(`Updated ${candidate.video_id} frame ${candidate.frame_id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update candidate");
+    }
   }
 
   async function handleCreateSession() {
@@ -258,6 +284,38 @@ export function App() {
               <div className="saved" key={candidate.id}>
                 <strong>{candidate.video_id}</strong>
                 <span>Frame {candidate.frame_id}</span>
+                <label>
+                  Rank
+                  <input
+                    min="0"
+                    type="number"
+                    value={candidate.rank}
+                    onChange={(event) =>
+                      handleCandidateField(candidate, "rank", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  Answer
+                  <input
+                    value={candidate.answer}
+                    onChange={(event) =>
+                      handleCandidateField(candidate, "answer", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  Note
+                  <input
+                    value={candidate.note}
+                    onChange={(event) =>
+                      handleCandidateField(candidate, "note", event.target.value)
+                    }
+                  />
+                </label>
+                <button className="small-button" onClick={() => void handleCandidateUpdate(candidate)}>
+                  Save row
+                </button>
               </div>
             ))
           )}

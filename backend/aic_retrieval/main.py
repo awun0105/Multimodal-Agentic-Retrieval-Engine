@@ -18,6 +18,7 @@ from .models import (
     AgentStep,
     Candidate,
     CandidateCreate,
+    CandidateUpdate,
     Clue,
     ClueCreate,
     DatasetInfo,
@@ -297,6 +298,28 @@ def list_candidates(settings: Settings = Depends(get_settings)) -> list[Candidat
     return [Candidate(**dict(row)) for row in rows]
 
 
+@app.patch("/candidates/{candidate_id}", response_model=Candidate)
+def update_candidate(
+    candidate_id: int,
+    request: CandidateUpdate,
+    settings: Settings = Depends(get_settings),
+) -> Candidate:
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            UPDATE candidates
+            SET answer=?, rank=?, note=?
+            WHERE id=?
+            """,
+            (request.answer, request.rank, request.note, candidate_id),
+        )
+        connection.commit()
+        row = connection.execute("SELECT * FROM candidates WHERE id=?", (candidate_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return Candidate(**dict(row))
+
+
 @app.post("/agent/run", response_model=AgentRunResponse)
 def run_agent(
     request: AgentRunRequest, settings: Settings = Depends(get_settings)
@@ -380,9 +403,12 @@ def get_agent_run(run_id: int, settings: Settings = Depends(get_settings)) -> Ag
 def validate_export(settings: Settings = Depends(get_settings)) -> ValidationResponse:
     with connect(settings.database_path) as connection:
         row_count = connection.execute("SELECT COUNT(*) AS count FROM candidates").fetchone()["count"]
+    warnings = ["Official 2026 rules are not configured yet."]
+    if row_count == 0:
+        warnings.append("No candidates saved.")
     return ValidationResponse(
-        valid=True,
-        warnings=["Official 2026 rules are not configured yet."],
+        valid=row_count > 0,
+        warnings=warnings,
         row_count=row_count,
     )
 

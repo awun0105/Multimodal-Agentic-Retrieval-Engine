@@ -96,6 +96,12 @@ class Candidate(CandidateCreate):
     created_at: str
 
 
+class CandidateUpdate(BaseModel):
+    answer: str = ""
+    rank: int = Field(default=0, ge=0)
+    note: str = ""
+
+
 class AgentRunRequest(BaseModel):
     query: str = Field(min_length=1)
     query_type: str = "auto"

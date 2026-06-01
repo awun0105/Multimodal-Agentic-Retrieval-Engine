@@ -164,6 +164,24 @@ section {
   gap: 4px;
 }
 
+.saved label {
+  color: #aab4c3;
+  display: grid;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.saved input {
+  min-width: 0;
+  padding: 7px 8px;
+}
+
+.small-button {
+  justify-content: center;
+  margin-top: 4px;
+  padding: 7px 8px;
+}
+
 .session-card {
   display: grid;
   gap: 4px;

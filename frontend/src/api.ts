@@ -29,14 +29,26 @@ export async function runAgent(query: string, queryType: string): Promise<AgentR
   return post<AgentRun>("/agent/run", { query, query_type: queryType, limit: 10 });
 }
 
-export async function saveCandidate(result: SearchResult): Promise<Candidate> {
+export async function saveCandidate(
+  result: SearchResult,
+  sessionId: number | null
+): Promise<Candidate> {
   return post<Candidate>("/candidates", {
+    session_id: sessionId,
     video_id: result.video_id,
     frame_id: result.frame_id,
     timestamp: result.timestamp,
     rank: 0,
     answer: "",
     note: ""
+  });
+}
+
+export async function updateCandidate(candidate: Candidate): Promise<Candidate> {
+  return patch<Candidate>(`/candidates/${candidate.id}`, {
+    answer: candidate.answer,
+    rank: candidate.rank,
+    note: candidate.note
   });
 }
 
@@ -92,6 +104,19 @@ export async function listObjectFilters(): Promise<string[]> {
 async function post<T>(path: string, payload: unknown): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed: ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function patch<T>(path: string, payload: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
