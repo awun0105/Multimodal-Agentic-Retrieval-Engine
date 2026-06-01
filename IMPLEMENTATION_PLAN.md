@@ -39,28 +39,30 @@ and expose a foundation for automatic agent mode.
 
 ## Phase 4: Interactive Workflow
 
-- Search from UI.
-- Open result details.
-- Save candidate.
-- Show evidence and media URLs.
-- Progressive clue session UI.
+- Search from UI. Done.
+- Open result details. Done.
+- Save and edit candidates. Done.
+- Show evidence and media URLs. Done.
+- Full frame list for selected video. Done.
+- Similar-frame exploration. Done.
+- Progressive clue session UI. Done.
 
 ## Phase 5: Automatic Mode Foundation
 
-- Agent run API.
-- Route query type.
-- Call search internally.
-- Return ranked results with a simple trace.
-- UI panel for agent run output.
+- Agent run API. Done.
+- Route query type. Done.
+- Call search internally. Done.
+- Return ranked results with a simple trace. Done.
+- UI panel for agent run output. Done.
+- Next: allow agent to use sessions, filters, and similar-frame tools.
 
 ## Phase 6: Validation And Hardening
 
-- Backend tests.
-- Frontend build check.
-- Docker Compose smoke check.
-- Update README with run instructions.
+- Backend tests. Done for current API surface.
+- Frontend build check. Done.
+- Docker Compose smoke check. Pending.
+- Update README with run instructions. Done.
 
 ## Commit Policy
 
 Commit and push after each small completed phase. Do not merge this branch.
-
