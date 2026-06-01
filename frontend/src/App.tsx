@@ -6,6 +6,7 @@ import {
   exportPreview,
   listCandidates,
   listObjectFilters,
+  listSimilarFrames,
   listVideoFrames,
   runAgent,
   saveCandidate,
@@ -31,6 +32,7 @@ export function App() {
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [timelineFrames, setTimelineFrames] = useState<FrameInfo[]>([]);
+  const [similarFrames, setSimilarFrames] = useState<SearchResult[]>([]);
   const [exportRows, setExportRows] = useState<ExportPreview | null>(null);
   const [availableObjects, setAvailableObjects] = useState<string[]>([]);
   const [objectFilterText, setObjectFilterText] = useState("");
@@ -62,12 +64,18 @@ export function App() {
   useEffect(() => {
     if (!selected) {
       setTimelineFrames([]);
+      setSimilarFrames([]);
       return;
     }
     listVideoFrames(selected.video_id)
       .then(setTimelineFrames)
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to load timeline");
+      });
+    listSimilarFrames(selected.video_id, selected.frame_id)
+      .then(setSimilarFrames)
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "Failed to load similar frames");
       });
   }, [selected]);
 
@@ -414,6 +422,24 @@ export function App() {
               <Film size={16} />
               Open video
             </a>
+            <div className="timeline">
+              <h2>Similar Frames</h2>
+              <div className="strip">
+                {similarFrames.map((frame) => (
+                  <button
+                    className="mini-frame"
+                    key={`${frame.video_id}-${frame.frame_id}`}
+                    onClick={() => setSelected(frame)}
+                  >
+                    {frame.thumb_url ? (
+                      <img src={frame.thumb_url} alt={`${frame.video_id} frame ${frame.frame_id}`} />
+                    ) : (
+                      <span>{frame.video_id} #{frame.frame_id}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
           </>
         ) : (
           <p className="muted">Run a search and select a result.</p>

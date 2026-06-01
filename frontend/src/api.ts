@@ -93,6 +93,17 @@ export async function listVideoFrames(videoId: string): Promise<FrameInfo[]> {
   return response.json() as Promise<FrameInfo[]>;
 }
 
+export async function listSimilarFrames(
+  videoId: string,
+  frameId: number
+): Promise<SearchResult[]> {
+  const response = await fetch(`${API_BASE}/frames/${videoId}/${frameId}/similar`);
+  if (!response.ok) {
+    throw new Error(`Failed to load similar frames: ${response.status}`);
+  }
+  return response.json() as Promise<SearchResult[]>;
+}
+
 export async function listObjectFilters(): Promise<string[]> {
   const response = await fetch(`${API_BASE}/filters/objects`);
   if (!response.ok) {

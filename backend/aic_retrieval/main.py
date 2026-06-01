@@ -28,13 +28,14 @@ from .models import (
     HealthResponse,
     SearchRequest,
     SearchResponse,
+    SearchResult,
     Session,
     SessionCreate,
     SessionDetail,
     ValidationResponse,
     VideoInfo,
 )
-from .search import list_object_names, search_frames
+from .search import list_object_names, search_frames, similar_frames
 
 
 @asynccontextmanager
@@ -137,6 +138,23 @@ def list_video_frames(
 def list_objects(settings: Settings = Depends(get_settings)) -> list[str]:
     with connect(settings.database_path) as connection:
         return list_object_names(connection)
+
+
+@app.get("/frames/{video_id}/{frame_id}/similar", response_model=list[SearchResult])
+def get_similar_frames(
+    video_id: str,
+    frame_id: int,
+    limit: int = 24,
+    settings: Settings = Depends(get_settings),
+) -> list[SearchResult]:
+    with connect(settings.database_path) as connection:
+        exists = connection.execute(
+            "SELECT 1 FROM frames WHERE video_id=? AND frame_id=?",
+            (video_id, frame_id),
+        ).fetchone()
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Frame not found")
+        return similar_frames(connection, video_id, frame_id, limit)
 
 
 @app.post("/search", response_model=SearchResponse)

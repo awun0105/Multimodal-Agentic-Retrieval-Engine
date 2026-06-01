@@ -34,6 +34,14 @@ def test_search_supports_object_filter() -> None:
     assert all("Bicycle" in " ".join(result["evidence"]) for result in payload["results"])
 
 
+def test_similar_frames_returns_related_candidates() -> None:
+    with TestClient(app) as client:
+        response = client.get("/frames/L21_V001/1/similar")
+    assert response.status_code == 200
+    assert response.json()
+    assert all(result["frame_id"] != 1 for result in response.json())
+
+
 def test_dataset_and_video_listing() -> None:
     with TestClient(app) as client:
         datasets = client.get("/datasets")
