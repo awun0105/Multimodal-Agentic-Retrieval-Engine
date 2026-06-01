@@ -345,7 +345,47 @@ def run_agent(
     route = request.query_type if request.query_type != "auto" else _route_query(request.query)
     started = time.perf_counter()
     with connect(settings.database_path) as connection:
-        results = search_frames(connection, request.query, request.limit)
+        results = search_frames(connection, request.query, request.limit, request.object_filters)
+        steps = [
+            AgentStep(
+                step_index=1,
+                tool="search",
+                input={
+                    "query": request.query,
+                    "limit": request.limit,
+                    "object_filters": request.object_filters,
+                },
+                output={"result_count": len(results), "route": route},
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+        ]
+        if results:
+            similar_started = time.perf_counter()
+            top_result = results[0]
+            related = similar_frames(connection, top_result.video_id, top_result.frame_id, 5)
+            results = _merge_ranked_results(results, related, request.limit)
+            steps.append(
+                AgentStep(
+                    step_index=2,
+                    tool="similar_frames",
+                    input={"video_id": top_result.video_id, "frame_id": top_result.frame_id},
+                    output={"result_count": len(related)},
+                    latency_ms=int((time.perf_counter() - similar_started) * 1000),
+                )
+            )
+            steps.append(
+                AgentStep(
+                    step_index=3,
+                    tool="choose",
+                    input={"candidate_count": len(results)},
+                    output={
+                        "video_id": results[0].video_id,
+                        "frame_id": results[0].frame_id,
+                        "score": results[0].score,
+                    },
+                    latency_ms=0,
+                )
+            )
         confidence = results[0].score if results else 0.0
         cursor = connection.execute(
             """
@@ -355,27 +395,21 @@ def run_agent(
             (request.session_id, "completed", request.query, route, confidence),
         )
         run_id = int(cursor.lastrowid)
-        step = AgentStep(
-            step_index=1,
-            tool="search",
-            input={"query": request.query, "limit": request.limit},
-            output={"result_count": len(results), "route": route},
-            latency_ms=int((time.perf_counter() - started) * 1000),
-        )
-        connection.execute(
-            """
-            INSERT INTO agent_steps(run_id, step_index, tool, input_json, output_json, latency_ms)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                step.step_index,
-                step.tool,
-                json.dumps(step.input),
-                json.dumps(step.output),
-                step.latency_ms,
-            ),
-        )
+        for step in steps:
+            connection.execute(
+                """
+                INSERT INTO agent_steps(run_id, step_index, tool, input_json, output_json, latency_ms)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    step.step_index,
+                    step.tool,
+                    json.dumps(step.input),
+                    json.dumps(step.output),
+                    step.latency_ms,
+                ),
+            )
         connection.commit()
     return AgentRunResponse(
         run_id=run_id,
@@ -383,7 +417,7 @@ def run_agent(
         route=route,
         confidence=confidence,
         results=results,
-        steps=[step],
+        steps=steps,
     )
 
 
@@ -451,3 +485,21 @@ def _route_query(query: str) -> str:
     if "?" in query or "hỏi" in lowered or "answer" in lowered:
         return "qa"
     return "tkis"
+
+
+def _merge_ranked_results(
+    primary: list[SearchResult],
+    secondary: list[SearchResult],
+    limit: int,
+) -> list[SearchResult]:
+    merged: list[SearchResult] = []
+    seen: set[tuple[str, int]] = set()
+    for result in [*primary, *secondary]:
+        key = (result.video_id, result.frame_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(result)
+        if len(merged) >= limit:
+            break
+    return merged

@@ -42,6 +42,19 @@ def test_similar_frames_returns_related_candidates() -> None:
     assert all(result["frame_id"] != 1 for result in response.json())
 
 
+def test_agent_uses_search_and_similarity_tools() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/agent/run",
+            json={"query": "lantern city", "query_type": "auto", "limit": 5},
+        )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["route"] == "tkis"
+    assert payload["results"]
+    assert [step["tool"] for step in payload["steps"]] == ["search", "similar_frames", "choose"]
+
+
 def test_dataset_and_video_listing() -> None:
     with TestClient(app) as client:
         datasets = client.get("/datasets")

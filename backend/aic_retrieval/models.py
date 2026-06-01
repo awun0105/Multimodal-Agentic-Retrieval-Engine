@@ -107,6 +107,7 @@ class AgentRunRequest(BaseModel):
     query_type: str = "auto"
     session_id: int | None = None
     limit: int = Field(default=10, ge=1, le=50)
+    object_filters: list[str] = Field(default_factory=list)
 
 
 class AgentStep(BaseModel):

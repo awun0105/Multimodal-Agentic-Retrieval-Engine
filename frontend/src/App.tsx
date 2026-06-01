@@ -101,7 +101,10 @@ export function App() {
     setError(null);
     setStatus("Agent running");
     try {
-      const response = await runAgent(query, queryType);
+      const response = await runAgent(query, queryType, {
+        objectFilters,
+        sessionId: session?.id ?? null
+      });
       setAgentRun(response);
       setResults(response.results);
       setSelected(response.results[0] ?? null);

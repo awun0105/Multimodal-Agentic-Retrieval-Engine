@@ -25,8 +25,18 @@ export async function search(
   });
 }
 
-export async function runAgent(query: string, queryType: string): Promise<AgentRun> {
-  return post<AgentRun>("/agent/run", { query, query_type: queryType, limit: 10 });
+export async function runAgent(
+  query: string,
+  queryType: string,
+  options: SearchOptions & { sessionId: number | null }
+): Promise<AgentRun> {
+  return post<AgentRun>("/agent/run", {
+    query,
+    query_type: queryType,
+    session_id: options.sessionId,
+    object_filters: options.objectFilters,
+    limit: 10
+  });
 }
 
 export async function saveCandidate(
