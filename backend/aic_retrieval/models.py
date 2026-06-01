@@ -70,6 +70,17 @@ class ClueCreate(BaseModel):
     text: str = Field(min_length=1)
 
 
+class Clue(BaseModel):
+    id: int
+    session_id: int
+    text: str
+    order_index: int
+
+
+class SessionDetail(Session):
+    clues: list[Clue]
+
+
 class CandidateCreate(BaseModel):
     session_id: int | None = None
     video_id: str

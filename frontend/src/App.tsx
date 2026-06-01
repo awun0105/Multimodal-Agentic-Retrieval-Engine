@@ -1,6 +1,8 @@
-import { Bot, CheckCircle2, Film, Pin, Search, SlidersHorizontal } from "lucide-react";
+import { Bot, CheckCircle2, Film, Pin, Plus, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  addClue,
+  createSession,
   exportPreview,
   listCandidates,
   listObjectFilters,
@@ -10,7 +12,14 @@ import {
   search,
   validateExport
 } from "./api";
-import type { AgentRun, Candidate, ExportPreview, FrameInfo, SearchResult } from "./types";
+import type {
+  AgentRun,
+  Candidate,
+  ExportPreview,
+  FrameInfo,
+  SearchResult,
+  SessionDetail
+} from "./types";
 
 const queryTypes = ["tkis", "qa", "trake", "vkis"];
 
@@ -24,6 +33,8 @@ export function App() {
   const [exportRows, setExportRows] = useState<ExportPreview | null>(null);
   const [availableObjects, setAvailableObjects] = useState<string[]>([]);
   const [objectFilterText, setObjectFilterText] = useState("");
+  const [session, setSession] = useState<SessionDetail | null>(null);
+  const [clueText, setClueText] = useState("");
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null);
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +106,33 @@ export function App() {
   async function handleSave(result: SearchResult) {
     await saveCandidate(result);
     await refreshCandidates();
+  }
+
+  async function handleCreateSession() {
+    setError(null);
+    try {
+      const created = await createSession(query || "Untitled query", queryType);
+      setSession({ ...created, clues: [] });
+      setStatus(`Session ${created.id} ready`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create session");
+    }
+  }
+
+  async function handleAddClue() {
+    if (!session || !clueText.trim()) {
+      return;
+    }
+    setError(null);
+    try {
+      const updated = await addClue(session.id, clueText.trim());
+      setSession(updated);
+      setQuery(clueText.trim());
+      setClueText("");
+      setStatus(`Added clue ${updated.clues.length}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add clue");
+    }
   }
 
   async function handleValidate() {
@@ -169,6 +207,46 @@ export function App() {
             </div>
           ) : (
             <p className="muted">Optional object names from detections.</p>
+          )}
+        </section>
+        <section>
+          <h2>Query Session</h2>
+          {session ? (
+            <>
+              <div className="session-card">
+                <strong>{session.title}</strong>
+                <span>{session.query_type.toUpperCase()} · {session.clues.length} clues</span>
+              </div>
+              <form
+                className="clue-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleAddClue();
+                }}
+              >
+                <input
+                  placeholder="New revealed sentence"
+                  value={clueText}
+                  onChange={(event) => setClueText(event.target.value)}
+                />
+                <button type="submit" aria-label="Add clue">
+                  <Plus size={16} />
+                </button>
+              </form>
+              <div className="clue-list">
+                {session.clues.map((clue) => (
+                  <button key={clue.id} type="button" onClick={() => setQuery(clue.text)}>
+                    <span>{clue.order_index}</span>
+                    {clue.text}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <button className="wide secondary" onClick={() => void handleCreateSession()}>
+              <Plus size={16} />
+              New session
+            </button>
           )}
         </section>
         <section>

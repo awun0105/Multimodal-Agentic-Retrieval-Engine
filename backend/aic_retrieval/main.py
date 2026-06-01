@@ -18,6 +18,7 @@ from .models import (
     AgentStep,
     Candidate,
     CandidateCreate,
+    Clue,
     ClueCreate,
     DatasetInfo,
     ExportResponse,
@@ -28,6 +29,7 @@ from .models import (
     SearchResponse,
     Session,
     SessionCreate,
+    SessionDetail,
     ValidationResponse,
     VideoInfo,
 )
@@ -195,10 +197,48 @@ def create_session(
     return Session(**dict(row))
 
 
-@app.post("/sessions/{session_id}/clues")
+@app.get("/sessions", response_model=list[Session])
+def list_sessions(settings: Settings = Depends(get_settings)) -> list[Session]:
+    with connect(settings.database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, query_type, title, created_at
+            FROM query_sessions
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return [Session(**dict(row)) for row in rows]
+
+
+@app.get("/sessions/{session_id}", response_model=SessionDetail)
+def get_session(session_id: int, settings: Settings = Depends(get_settings)) -> SessionDetail:
+    with connect(settings.database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, query_type, title, created_at
+            FROM query_sessions
+            WHERE id=?
+            """,
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        clues = connection.execute(
+            """
+            SELECT id, session_id, text, order_index
+            FROM query_clues
+            WHERE session_id=?
+            ORDER BY order_index
+            """,
+            (session_id,),
+        ).fetchall()
+    return SessionDetail(**dict(row), clues=[Clue(**dict(clue)) for clue in clues])
+
+
+@app.post("/sessions/{session_id}/clues", response_model=Clue)
 def add_clue(
     session_id: int, request: ClueCreate, settings: Settings = Depends(get_settings)
-) -> dict[str, int]:
+) -> Clue:
     with connect(settings.database_path) as connection:
         exists = connection.execute(
             "SELECT id FROM query_sessions WHERE id=?", (session_id,)
@@ -214,7 +254,15 @@ def add_clue(
             (session_id, request.text, next_index),
         )
         connection.commit()
-    return {"id": int(cursor.lastrowid), "order_index": int(next_index)}
+        row = connection.execute(
+            """
+            SELECT id, session_id, text, order_index
+            FROM query_clues
+            WHERE id=?
+            """,
+            (cursor.lastrowid,),
+        ).fetchone()
+    return Clue(**dict(row))
 
 
 @app.post("/candidates", response_model=Candidate)

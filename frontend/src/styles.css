@@ -146,6 +146,7 @@ section {
 
 .mode,
 .saved,
+.session-card,
 .trace {
   background: #151d2a;
   border: 1px solid #263244;
@@ -161,6 +162,48 @@ section {
 .saved {
   display: grid;
   gap: 4px;
+}
+
+.session-card {
+  display: grid;
+  gap: 4px;
+}
+
+.clue-form {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 42px;
+  margin-bottom: 8px;
+}
+
+.clue-form input {
+  min-width: 0;
+}
+
+.clue-form button {
+  justify-content: center;
+  padding: 0;
+}
+
+.clue-list {
+  display: grid;
+  gap: 6px;
+}
+
+.clue-list button {
+  background: #111827;
+  border-color: #263244;
+  color: #f4f7fb;
+  display: grid;
+  font-weight: 500;
+  gap: 6px;
+  grid-template-columns: 24px 1fr;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.clue-list span {
+  color: #aab4c3;
 }
 
 .saved span,

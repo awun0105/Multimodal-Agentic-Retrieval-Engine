@@ -30,6 +30,24 @@ export type Candidate = {
   created_at: string;
 };
 
+export type Session = {
+  id: number;
+  query_type: string;
+  title: string;
+  created_at: string;
+};
+
+export type Clue = {
+  id: number;
+  session_id: number;
+  text: string;
+  order_index: number;
+};
+
+export type SessionDetail = Session & {
+  clues: Clue[];
+};
+
 export type AgentRun = {
   run_id: number;
   status: string;

@@ -47,6 +47,22 @@ def test_dataset_and_video_listing() -> None:
     assert frames.json()[0]["video_id"] == "L21_V001"
 
 
+def test_query_session_tracks_progressive_clues() -> None:
+    with TestClient(app) as client:
+        session = client.post("/sessions", json={"title": "final query", "query_type": "tkis"})
+        session_id = session.json()["id"]
+        clue = client.post(f"/sessions/{session_id}/clues", json={"text": "A lantern appears"})
+        detail = client.get(f"/sessions/{session_id}")
+        sessions = client.get("/sessions")
+    assert session.status_code == 200
+    assert clue.status_code == 200
+    assert clue.json()["order_index"] == 1
+    assert detail.status_code == 200
+    assert detail.json()["clues"][0]["text"] == "A lantern appears"
+    assert sessions.status_code == 200
+    assert any(item["id"] == session_id for item in sessions.json())
+
+
 def test_demo_media_is_served() -> None:
     with TestClient(app) as client:
         response = client.get("/media/keyframes/L21_V001/1")

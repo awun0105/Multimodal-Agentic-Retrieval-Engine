@@ -3,6 +3,8 @@ import type {
   Candidate,
   ExportPreview,
   FrameInfo,
+  Session,
+  SessionDetail,
   SearchOptions,
   SearchResponse,
   SearchResult
@@ -36,6 +38,23 @@ export async function saveCandidate(result: SearchResult): Promise<Candidate> {
     answer: "",
     note: ""
   });
+}
+
+export async function createSession(title: string, queryType: string): Promise<Session> {
+  return post<Session>("/sessions", { title, query_type: queryType });
+}
+
+export async function getSession(sessionId: number): Promise<SessionDetail> {
+  const response = await fetch(`${API_BASE}/sessions/${sessionId}`);
+  if (!response.ok) {
+    throw new Error(`Failed to load session: ${response.status}`);
+  }
+  return response.json() as Promise<SessionDetail>;
+}
+
+export async function addClue(sessionId: number, text: string): Promise<SessionDetail> {
+  await post("/sessions/" + sessionId + "/clues", { text });
+  return getSession(sessionId);
 }
 
 export async function listCandidates(): Promise<Candidate[]> {
