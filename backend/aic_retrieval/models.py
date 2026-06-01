@@ -28,6 +28,31 @@ class SearchResponse(BaseModel):
     results: list[SearchResult]
 
 
+class DatasetInfo(BaseModel):
+    id: str
+    name: str
+    video_count: int
+    frame_count: int
+
+
+class VideoInfo(BaseModel):
+    video_id: str
+    path: str
+    fps: float | None
+    duration: float | None
+    width: int | None
+    height: int | None
+
+
+class FrameInfo(BaseModel):
+    video_id: str
+    frame_id: int
+    timestamp: float
+    thumb_url: str | None
+    keyframe_url: str | None
+    caption: str
+
+
 class SessionCreate(BaseModel):
     query_type: str = "tkis"
     title: str
@@ -82,3 +107,19 @@ class AgentRunResponse(BaseModel):
     results: list[SearchResult]
     steps: list[AgentStep]
 
+
+class ValidationResponse(BaseModel):
+    valid: bool
+    warnings: list[str]
+    row_count: int
+
+
+class ExportRow(BaseModel):
+    video_id: str
+    frame_id: int
+    answer: str
+
+
+class ExportResponse(BaseModel):
+    format: str
+    rows: list[ExportRow]

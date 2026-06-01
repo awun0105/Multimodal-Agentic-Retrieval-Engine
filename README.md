@@ -28,3 +28,43 @@ search query -> ranked frame results -> inspect video/timeline -> choose frame -
 Raw videos are kept as video files. The app searches precomputed indexes and
 shows thumbnails/keyframes. Full dense frames are not extracted by default.
 
+## Development
+
+Backend:
+
+```bash
+uv run uvicorn aic_retrieval.main:app --app-dir backend --reload
+```
+
+Frontend:
+
+```bash
+npm install --prefix frontend
+npm run dev --prefix frontend
+```
+
+Open:
+
+```text
+http://localhost:5173
+```
+
+Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+Open:
+
+```text
+http://localhost:8080
+```
+
+Validation:
+
+```bash
+uv run ruff check backend tests
+uv run pytest
+npm run build --prefix frontend
+```

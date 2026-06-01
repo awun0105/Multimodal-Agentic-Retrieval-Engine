@@ -17,3 +17,16 @@ def test_search_returns_demo_results() -> None:
     payload = response.json()
     assert payload["results"]
     assert payload["results"][0]["video_id"] == "L21_V001"
+
+
+def test_dataset_and_video_listing() -> None:
+    with TestClient(app) as client:
+        datasets = client.get("/datasets")
+        videos = client.get("/videos")
+        frames = client.get("/videos/L21_V001/frames")
+    assert datasets.status_code == 200
+    assert datasets.json()[0]["frame_count"] >= 1
+    assert videos.status_code == 200
+    assert any(video["video_id"] == "L21_V001" for video in videos.json())
+    assert frames.status_code == 200
+    assert frames.json()[0]["video_id"] == "L21_V001"

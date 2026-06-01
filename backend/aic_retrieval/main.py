@@ -19,11 +19,17 @@ from .models import (
     Candidate,
     CandidateCreate,
     ClueCreate,
+    DatasetInfo,
+    ExportResponse,
+    ExportRow,
+    FrameInfo,
     HealthResponse,
     SearchRequest,
     SearchResponse,
     Session,
     SessionCreate,
+    ValidationResponse,
+    VideoInfo,
 )
 from .search import search_frames
 
@@ -53,6 +59,74 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse)
 def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
     return HealthResponse(status="ok", app=settings.app_name)
+
+
+@app.get("/datasets", response_model=list[DatasetInfo])
+def list_datasets(settings: Settings = Depends(get_settings)) -> list[DatasetInfo]:
+    with connect(settings.database_path) as connection:
+        counts = connection.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM videos) AS video_count,
+              (SELECT COUNT(*) FROM frames) AS frame_count
+            """
+        ).fetchone()
+    return [
+        DatasetInfo(
+            id="default",
+            name="Default local dataset",
+            video_count=counts["video_count"],
+            frame_count=counts["frame_count"],
+        )
+    ]
+
+
+@app.get("/videos", response_model=list[VideoInfo])
+def list_videos(settings: Settings = Depends(get_settings)) -> list[VideoInfo]:
+    with connect(settings.database_path) as connection:
+        rows = connection.execute("SELECT * FROM videos ORDER BY video_id").fetchall()
+    return [VideoInfo(**dict(row)) for row in rows]
+
+
+@app.get("/videos/{video_id}", response_model=VideoInfo)
+def get_video(video_id: str, settings: Settings = Depends(get_settings)) -> VideoInfo:
+    with connect(settings.database_path) as connection:
+        row = connection.execute("SELECT * FROM videos WHERE video_id=?", (video_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return VideoInfo(**dict(row))
+
+
+@app.get("/videos/{video_id}/frames", response_model=list[FrameInfo])
+def list_video_frames(
+    video_id: str, limit: int = 200, settings: Settings = Depends(get_settings)
+) -> list[FrameInfo]:
+    with connect(settings.database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT video_id, frame_id, timestamp, thumb_path, keyframe_path, caption
+            FROM frames
+            WHERE video_id=?
+            ORDER BY frame_id
+            LIMIT ?
+            """,
+            (video_id, limit),
+        ).fetchall()
+    return [
+        FrameInfo(
+            video_id=row["video_id"],
+            frame_id=row["frame_id"],
+            timestamp=row["timestamp"],
+            thumb_url=f"/media/thumbs/{row['video_id']}/{row['frame_id']}"
+            if row["thumb_path"]
+            else None,
+            keyframe_url=f"/media/keyframes/{row['video_id']}/{row['frame_id']}"
+            if row["keyframe_path"]
+            else None,
+            caption=row["caption"],
+        )
+        for row in rows
+    ]
 
 
 @app.post("/search", response_model=SearchResponse)
@@ -234,26 +308,28 @@ def get_agent_run(run_id: int, settings: Settings = Depends(get_settings)) -> Ag
     )
 
 
-@app.post("/validate")
-def validate_export() -> dict[str, object]:
-    return {"valid": True, "warnings": ["Official 2026 rules are not configured yet."]}
+@app.post("/validate", response_model=ValidationResponse)
+def validate_export(settings: Settings = Depends(get_settings)) -> ValidationResponse:
+    with connect(settings.database_path) as connection:
+        row_count = connection.execute("SELECT COUNT(*) AS count FROM candidates").fetchone()["count"]
+    return ValidationResponse(
+        valid=True,
+        warnings=["Official 2026 rules are not configured yet."],
+        row_count=row_count,
+    )
 
 
-@app.post("/export")
-def export_candidates(settings: Settings = Depends(get_settings)) -> dict[str, object]:
+@app.post("/export", response_model=ExportResponse)
+def export_candidates(settings: Settings = Depends(get_settings)) -> ExportResponse:
     with connect(settings.database_path) as connection:
         rows = connection.execute("SELECT * FROM candidates ORDER BY rank, id").fetchall()
-    return {
-        "format": "preview",
-        "rows": [
-            {
-                "video_id": row["video_id"],
-                "frame_id": row["frame_id"],
-                "answer": row["answer"],
-            }
+    return ExportResponse(
+        format="preview",
+        rows=[
+            ExportRow(video_id=row["video_id"], frame_id=row["frame_id"], answer=row["answer"])
             for row in rows
         ],
-    }
+    )
 
 
 def _route_query(query: str) -> str:
