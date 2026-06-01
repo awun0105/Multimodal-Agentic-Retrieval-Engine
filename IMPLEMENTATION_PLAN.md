@@ -60,7 +60,7 @@ and expose a foundation for automatic agent mode.
 
 - Backend tests. Done for current API surface.
 - Frontend build check. Done.
-- Docker Compose smoke check. Pending.
+- Docker Compose smoke check. Done on alternate ports.
 - Update README with run instructions. Done.
 
 ## Commit Policy
