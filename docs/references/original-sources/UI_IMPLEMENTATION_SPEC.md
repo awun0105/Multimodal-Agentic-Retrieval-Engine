@@ -17,6 +17,18 @@ The UI should optimize for:
 
 Keep it dense and practical. Do not build a marketing-style page.
 
+
+## Single Web UI + Multi-session Workflow
+
+Mô hình hoạt động chính thức của hệ thống là:
+> Single Web UI + Multi-session Workflow: one shared web app for the whole team, no roles and no separate dashboards, but multiple teammates can work independently or collaboratively through Query Sessions.
+
+Yêu cầu cụ thể cho UI:
+- **Single UI App**: Một ứng dụng SPA duy nhất (React/Vite). Không phân chia dashboard theo role (admin/reviewer). Agent mode hiển thị kết quả trực tiếp trên cùng UI/result model này.
+- **Multi-session**: Hỗ trợ nhiều đồng nghiệp mở Web UI qua mạng LAN từ các máy/trình duyệt khác nhau.
+- **Query Session**: Có nút chuyển đổi Query Session. Lịch sử tìm kiếm, clues, ghi chú, candidate basket được lưu tách biệt theo từng Query Session trong SQLite.
+- **Client Identity**: Có thể cho phép người dùng nhập nickname hoặc client_id để biết ai lưu candidate/viết note, nhưng không yêu cầu đăng nhập (no authentication).
+
 ## Main Layout
 
 ```text

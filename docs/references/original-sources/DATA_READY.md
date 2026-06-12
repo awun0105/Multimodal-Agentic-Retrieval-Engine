@@ -1,3 +1,17 @@
+---
+CANONICAL ARCHITECTURE NOTE (2026-06-12):
+
+Quyết định kiến trúc chính thức đã được xác nhận:
+- Runtime DB: SQLite WAL (chứa metadata lookup, app state, FTS5 text search).
+- Preprocessing/staging: DuckDB (bulk import, normalization, validation, report).
+- DuckDB KHÔNG phải là runtime app state database cho MVP.
+- Text search: SQLite FTS5 cho MVP (Tantivy/BM25/OpenSearch chỉ là alternative sau này).
+- Media: LocalFileMediaStore cho MVP (MinIO chỉ là optional adapter sau này).
+
+Nếu nội dung bên dưới mâu thuẫn với ghi chú này, hãy ưu tiên ghi chú này
+và tham khảo docs/decisions/ để xem quyết định đầy đủ.
+---
+
 Dưới đây là **toàn bộ các loại data nên/ có thể sinh ra từ preprocessing system** để phục vụ project AI Challenge này. Mục tiêu là biến raw video/keyframe thành các lớp dữ liệu có thể search, filter, inspect evidence, copy result, và hỗ trợ Q&A/TRAKE/VKIS.
 
 ## 1. Raw / Source Data
@@ -1000,13 +1014,14 @@ Nên chia thành **4 nơi lưu chính**, không lưu tất cả vào một DB.
     thumbnails/          # HDD hoặc SSD cache
 
   db/
-    metadata.duckdb      # SSD nếu có
-    app.sqlite           # session, basket, history
+    app.sqlite           # Runtime: metadata + app state + FTS5 (SSD)
+
+  preprocessing/
+    staging.duckdb       # Preprocessing staging only (SSD nếu có)
 
   indexes/
     visual.faiss         # SSD
     visual_mapping.parquet
-    text_index/          # SQLite FTS / Tantivy / BM25
 
   cache/
     recent_thumbnails/   # SSD nếu có
@@ -1055,19 +1070,15 @@ Lý do:
 
 ---
 
-# 2. Metadata: lưu vào DuckDB hoặc SQLite
+# 2. Metadata: kiến trúc runtime vs preprocessing
 
-Với máy 16–25GB RAM, mình khuyên:
+Theo quyết định canonical:
 
-## Giai đoạn đầu
-
-Dùng **DuckDB + Parquet** hoặc **SQLite**.
-
-| Loại                      | Khuyên dùng    |
-| ------------------------- | -------------- |
-| metadata phân tích lớn    | DuckDB         |
-| session/app state nhỏ     | SQLite         |
-| production nhiều user hơn | PostgreSQL sau |
+| Loại                             | Database         |
+| -------------------------------- | ---------------- |
+| Runtime metadata + app state     | SQLite WAL       |
+| Preprocessing / staging / report | DuckDB           |
+| Text search                      | SQLite FTS5      |
 
 ## Các bảng chính
 
@@ -1278,11 +1289,7 @@ candidates(
 );
 ```
 
-Tách `app.sqlite` khỏi `metadata.duckdb` để:
-
-* dễ reset session;
-* không đụng metadata/index;
-* dễ backup trước khi thi.
+SQLite WAL hoạt động như runtime database duy nhất chứa cả metadata lookup, captions, OCR, ASR, objects và app state để giảm độ trễ truy vấn runtime. DuckDB chỉ đóng vai trò là kho dữ liệu chuẩn bị (preprocessing staging warehouse) trước khi thi đấu.
 
 ---
 
@@ -1298,13 +1305,14 @@ Tách `app.sqlite` khỏi `metadata.duckdb` để:
     thumbnails/
 
   db/
-    metadata.duckdb
-    app.sqlite
+    app.sqlite              # Runtime: metadata + app state + FTS5
+
+  preprocessing/
+    staging.duckdb           # Preprocessing staging only, not runtime
 
   indexes/
     visual.faiss
     visual_mapping.parquet
-    text_fts.sqlite
 
   config/
     paths.yaml
@@ -1387,12 +1395,12 @@ Search → scan toàn bộ filesystem
 ## MVP nên chọn
 
 ```text
-Metadata: DuckDB
-App state: SQLite
+Metadata Preprocessing: DuckDB
+Runtime DB: SQLite WAL (containing app state, query sessions, metadata lookup, and text indexes)
 Vector: FAISS
-Text search: SQLite FTS5 hoặc Tantivy
-Media files: HDD filesystem
-Cache/index: SSD nếu có
+Text search: SQLite FTS5
+Media files: HDD/SSD filesystem (LocalFileMediaStore)
+MinIO: Optional future adapter only
 ```
 
 ## Vì sao không PostgreSQL/OpenSearch ngay?
@@ -1458,15 +1466,14 @@ hoặc lấy window ±30 giây.
 media/videos
 media/keyframes
 media/thumbnails
-metadata.duckdb:
+app.sqlite:
   videos
   keyframes
+  captions / OCR / ASR / objects
+  query_sessions / candidates / history
+  FTS5 tables
 visual.faiss
 visual_mapping.parquet
-text_fts.sqlite:
-  captions / OCR / ASR nếu có
-app.sqlite:
-  sessions / candidates / history
 ```
 
 ## P1 nên có
@@ -1503,17 +1510,17 @@ Nên chia như sau:
 Filesystem:
   file lớn: video, keyframe, thumbnail
 
-DuckDB:
-  metadata phân tích: video, frame, caption, OCR, ASR, object
+SQLite WAL:
+  runtime: metadata lookup, captions, OCR, ASR, objects, app state, FTS5
 
-SQLite:
-  app state: query session, candidate basket, history
+DuckDB:
+  preprocessing/staging: bulk import, normalization, validation, reports
 
 FAISS:
   vector search
 
-SQLite FTS / Tantivy:
-  text search
+SQLite FTS5:
+  text search (MVP)
 
 JSONL:
   logs, debug, search runs

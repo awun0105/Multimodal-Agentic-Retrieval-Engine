@@ -137,3 +137,89 @@ Before final response:
 - `docs/harness/TRACE_SPEC.md` has been read for normal/high-risk tasks.
 - The final trace includes files read, files changed, outcome, and friction
   when applicable.
+
+## Project Runtime And Coding Rules
+
+These project-specific rules are canonicalized from historical coding standards.
+
+### Architecture And Boundaries
+
+- Keep System 1 (offline ingestion notebooks) and System 2 (runtime retrieval app) separate.
+- System 1 produces artifacts for System 2; it is not part of live search runtime.
+- Keep one shared Web UI codebase for System 2.
+- Avoid microservices in MVP.
+- Keep runtime SQLite as the source of truth; do not move app state into DuckDB.
+
+
+### Engineering Principles
+- **Loose coupling:** UI, API routes, services, storage, and agent logic depend on small interfaces.
+- **Fail loudly:** Invalid data or bad submissions should throw clear errors, not fail silently.
+- **Config-driven:** Paths, ports, limits, and feature flags belong in config/env.
+- **Rebuildable:** Indexes, thumbnails, and generated evidence must be rebuildable from manifests.
+
+### Architecture Patterns
+- **Layered:** API (HTTP only) -> Service (logic) -> Repository (DB/Filesystem).
+- **Repository:** DB queries live in repository functions. UI and agent code must not know SQL details.
+- **Adapter:** Wrap FAISS, FTS5, and optional future object-stores in retriever/storage adapters.
+- **Strategy:** Isolate query workflows (TKIS, Q&A, TRAKE, VKIS) into separate solver strategies using the same retrieval tools.
+- **Command:** Automatic agent calls use structured inputs/outputs and are traceable.
+
+### Python Standards
+- **Format/Lint:** Use Ruff (`uv run ruff check`).
+- **Validation:** Use pytest (`uv run pytest`).
+- **Types:** Use type hints for public functions and service boundaries.
+- **Data Models:** Prefer Pydantic for API input/output.
+- **Safety:** Use `pathlib.Path` for paths. Use parameterized SQL only. Avoid global mutable state.
+
+### TypeScript / React Standards
+- **Strict Mode:** Use TypeScript strict mode.
+- **State:** Prefer explicit props over global state until global state is strictly necessary. Do not mirror backend source-of-truth deeply in UI state.
+- **API:** Keep API calls in a client module, not inline inside every component.
+- **Validation:** Must pass `npm run build --prefix frontend`.
+
+### Naming Conventions
+- **Python files/modules/functions/variables:** `snake_case`
+- **Python classes:** `PascalCase`
+- **TypeScript files:** `PascalCase.tsx` (components), `camelCase.ts` (helpers)
+- **TypeScript types/components:** `PascalCase`
+- **API JSON / DB columns:** `snake_case`
+
+### Performance Constraints
+- Live search must read indexes/DB, never scan raw videos.
+- Media responses stream files; JSON responses return URLs.
+
+### Backend Rules
+
+- Use FastAPI for the runtime backend.
+- Use Pydantic models for public API input/output.
+- Use parameterized SQL only.
+- Use `pathlib.Path` for filesystem paths where possible.
+- Do not swallow exceptions silently.
+
+### Frontend Rules
+
+- Use React + TypeScript + Vite.
+- Keep one SPA, not multiple dashboards.
+- Keep keyframe-first UX, lazy thumbnail loading, and virtualized grids.
+- Persist Query Session state in SQLite through backend APIs.
+
+### Ingestion Notebook Rules
+
+- Keep notebooks task-specific so teammates can split work by dataset chunk or by task type.
+- Do not hardcode personal machine paths.
+- Add checkpoint/skip logic for already-processed outputs.
+- Use explicit memory cleanup for long-running notebook loops.
+- Produce deterministic artifact names and stable mappings.
+
+### Search Rules
+
+- Use FAISS for MVP vector search.
+- Use SQLite FTS5 for MVP text search.
+- Treat Tantivy/OpenSearch/BM25 JSON as non-MVP alternatives.
+- Runtime search must read precomputed artifacts, never scan raw folders.
+
+### Validation Rules
+
+- Prefer executable proof tied to Harness stories.
+- Do not mark behavior implemented without evidence.
+- Keep MVP-0 to MVP-3 as the near-term proof target.
