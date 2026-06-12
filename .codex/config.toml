@@ -1,0 +1,164 @@
+# ==========================================
+# CẤU HÌNH CODEX CLI (TỐI ƯU HÓA QUA 9ROUTER)
+# ==========================================
+
+# --- [ 1. CẤU HÌNH LÕI & ĐỊNH TUYẾN MODEL ] ---
+personality = "pragmatic"
+approvals_reviewer = "user"
+model_reasoning_effort = "medium"
+model = "Combo-heavy-main"
+model_provider = "9router"
+
+# --- [ 2. NHÀ CUNG CẤP TÙY CHỈNH (QUAN TRỌNG NHẤT) ] ---
+# Cấu hình này ép mọi kết nối của Codex phải đi qua cổng LocalProxy
+[model_providers.9router]
+name = "9Router"
+api_key = "sk-6b6f2a939ff17943-2n8uwt-a4b4e419"
+base_url = "http://127.0.0.1:20128/v1"
+api_base = "http://127.0.0.1:20128/v1"      # Fallback cho HTTP
+wss_url = "ws://127.0.0.1:20128/v1/responses" # Ép chuẩn WebSocket qua proxy
+wire_api = "responses"
+stream = false                              # Tắt luồng stream lắt nhắt để tránh kẹt mạng nội bộ (nếu cần)
+
+# --- [ 3. CẤU HÌNH AGENT ] ---
+[agents]
+max_threads = 6
+max_depth = 1
+
+[agents.subagent]
+description = "Subagent role"
+model = "Combo-heavy-main"
+provider = "9router" # Đảm bảo subagent cũng bị ép đi qua 9router
+
+# --- [ 4. CẤU HÌNH DỰ ÁN & MỨC ĐỘ TIN CẬY ] ---
+[projects."/home/lqaq"]
+trust_level = "trusted"
+
+[projects."/home/lqaq/PROJECT/Mental-Health-Sovereign-Agentic-AI-Platform"]
+trust_level = "trusted"
+
+[projects."/home/lqaq/PROJECT/CLIP-Image-Retrieval-Gradio-App"]
+trust_level = "trusted"
+
+[projects."/home/lqaq/PROJECT/Bomberland-GDGoC-AI-Challenge"]
+trust_level = "trusted"
+
+[projects."/home/lqaq/PROJECT/C++/VIPLYR-video-player"]
+trust_level = "trusted"
+
+[projects."/home/lqaq/PROJECT/Multimodal-Agentic-Retrieval-Engine"]
+trust_level = "trusted"
+
+[projects."/home/lqaq/PROJECT/repository-harness"]
+trust_level = "trusted"
+
+# --- [ 5. GIAO DIỆN TERMINAL (TUI) & TÍNH NĂNG ] ---
+[tui]
+status_line = [
+    "model-with-reasoning",
+    "model",
+    "git-branch",
+    "five-hour-limit",
+    "weekly-limit",
+    "context-window-size",
+    "used-tokens",
+    "total-input-tokens",
+    "total-output-tokens",
+    "fast-mode",
+    "thread-title",
+    "context-remaining",
+    "context-used"
+]
+status_line_use_colors = true
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+
+[features]
+memories = true
+terminal_resize_reflow = true
+goals = true
+prevent_idle_sleep = true
+
+# --- [ 6. QUẢN LÝ MARKETPLACE & PLUGINS ] ---
+[marketplaces.antigravity-awesome-skills]
+last_updated = "2026-05-02T21:29:26Z"
+last_revision = "9d0b37c3bb3c4d17993caa5e31e08720f6cc9c8b"
+source_type = "git"
+source = "/home/lqaq/.codex/.tmp/marketplaces/antigravity-awesome-skills"
+
+[plugins."antigravity-bundle-architecture-design@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-data-analytics@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-llm-application-developer@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-python-pro@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-qa-testing@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-business-analyst@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-essentials@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-data-engineering@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-full-stack-developer@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-security-developer@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-startup-founder@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-systems-programming@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-ddd-evented-architecture@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-devops-cloud@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-observability-monitoring@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-security-engineer@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."antigravity-bundle-agent-architect@antigravity-awesome-skills"]
+enabled = true
+
+[plugins."build-web-apps@openai-curated"]
+enabled = true
+
+[plugins."codex-security@openai-curated"]
+enabled = true
+
+[plugins."github@openai-curated"]
+enabled = true
+
+# Các plugins tạm thời vô hiệu hóa
+#[plugins."hugging-face@openai-curated"]
+#enabled = false
+
+#[plugins."cloudflare@openai-curated"]
+#enabled = false
+
+#[plugins."build-web-data-visualization@openai-curated"]
+#enabled = true
+
+#[plugins."antigravity-bundle-seo-specialist@antigravity-awesome-skills"]
+#enabled = false
+
+#[plugins."antigravity-bundle-marketing-growth@antigravity-awesome-skills"]
+#enabled = false

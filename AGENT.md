@@ -1,5 +1,4 @@
-# AGENT.md - Project Source Of Truth
-
+# AGENT.md
 Build a simple web-based multimedia retrieval cockpit for AI Challenge HCMC.
 
 The app is not a chatbot and not a desktop app. It is an LSC/VBS-style browser:

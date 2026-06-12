@@ -8,7 +8,7 @@ Hệ thống được thiết kế theo hướng local-first, có thể chạy h
 
 ## Mục tiêu chính
 
-Xây dựng một trợ lý truy vấn multimedia hỗ trợ con người và agent tự động tìm kiếm thông tin trong tập dữ liệu lớn gồm video, keyframe, hình ảnh, âm thanh, transcript và metadata.
+Xây dựng một trợ lý truy vấn multimedia hỗ trợ con người và agent tự động tìm kiếm thông tin trong tập dữ liệu lớn gồm raw video, keyframes, hình ảnh, âm thanh, transcript và metadata.
 
 Hệ thống phải phục vụ cả:
 
@@ -66,21 +66,18 @@ Chuẩn bị toàn bộ dữ liệu trước khi truy vấn.
 
 Input có thể bao gồm:
 
-* Video
-* Keyframe
-* Metadata
-* OCR
-* ASR
-* Captions
-* Object Detection
-* Embeddings
-* Các dữ liệu BTC cung cấp
-
+* Folder chứa Raw Video
+* Folder chứa Keyframes
+* Metadata (link youtube của video, description video, nguồn kênh, title video,...)
+* Object Detection (file json)
+* Clip Embeddings từ keyframes
+* Các dữ liệu khác (chưa biết chắc)
+chắc
 System này chịu trách nhiệm:
 
 ### Data Ingestion
 
-Import dữ liệu BTC.
+Import dữ liệu được cung cấp từ ban tổ chức (có thể là google drive).
 
 ### Data Processing
 
@@ -89,12 +86,12 @@ Sinh hoặc chuẩn hóa:
 * Video Metadata
 * Keyframe Metadata
 * Timeline Metadata
-* Captions
-* OCR Text
-* ASR Transcript
-* Object Concepts
-* Scene Tags
-* Search Documents
+* Captions (từ keyframes, từ video)
+* OCR Text (từ keyframes)
+* ASR Transcript (từ file âm thanh của video)
+* Object Concepts (từ keyframes, từ video)
+* Scene Tags (từ keyframes, từ video)
+* các loại embedding (Text Embedding, Video Embedding, Audio Embedding, Object Embedding, ...)
 
 ### Index Building
 
@@ -130,7 +127,7 @@ Người dùng:
 * thay đổi retrieval strategy
 * thay đổi search mode
 * filter kết quả
-* duyệt keyframe
+* duyệt keyframe, video, các keyframe lân cận
 * đánh giá evidence
 * lưu candidate
 
@@ -146,9 +143,7 @@ Hệ thống trả về:
 
 Người dùng:
 
-* nhập query
-  hoặc
-* chat với agent
+* nhập query hoặc chat với agent
 
 Agent sẽ:
 
@@ -163,13 +158,12 @@ Agent sẽ:
 
 Sau đó trả về:
 
-* kết quả
-* giải thích
-* evidence
+* kết quả (ranked keyframes, ranked videos, evidence, metadata, candidate outputs, evidence)
+Giải thích cho từng kết quả (có thể dùng LLM để giải thích).
 
 và toàn bộ kết quả vẫn được hiển thị trong cùng hệ thống như Interactive Mode.
 
-Agent không được xây dựng thành một hệ thống riêng biệt mà phải sử dụng lại toàn bộ retrieval core hiện có.
+Agent không được xây dựng thành một hệ thống riêng biệt mà phải sử dụng lại toàn bộ retrieval core hiện có. Nghĩa là automatic mode là một agent làm các công việc end-to-end như con người làm.
 
 ---
 
@@ -191,13 +185,7 @@ Tìm chuỗi sự kiện theo thời gian trong cùng video.
 
 ### VKIS / Video KIS
 
-Tìm kiếm từ mô tả hình ảnh hoặc video do người vận hành quan sát và diễn đạt lại.
-
-### Future Query Types
-
-Phải thiết kế extensible để hỗ trợ các loại query mới của BTC trong tương lai.
-
-Không hard-code theo format của năm 2024 hoặc 2025.
+Tìm kiếm từ mô tả hình ảnh hoặc video do người vận hành quan sát và diễn đạt lại bằng text.
 
 ---
 
