@@ -1,0 +1,115 @@
+version: 1
+templates:
+  readme:
+    template: docs/harness/templates/readme/README_TEMPLATE.md
+    default_output: README.md
+    description: Project README template.
+    requires_review: true
+
+  readme_vn:
+    template: docs/harness/templates/readme/README_VN_TEMPLATE.md
+    default_output: README_VN.md
+    description: Vietnamese project README template.
+    requires_review: true
+
+  docs_suite:
+    template: docs/harness/templates/docs-suite/README.md
+    default_output: docs/README.md
+    description: Documentation suite index.
+    requires_review: true
+
+  docs_overview_en:
+    template: docs/harness/templates/docs-suite/EN/overview.md
+    default_output: docs/EN/overview.md
+    description: English project overview documentation.
+    requires_review: true
+
+  docs_overview_vn:
+    template: docs/harness/templates/docs-suite/VN/overview.md
+    default_output: docs/VN/overview.md
+    description: Vietnamese project overview documentation.
+    requires_review: true
+
+  srds:
+    template: docs/harness/templates/requirements/srds.md
+    default_output: docs/requirements/SRDS.md
+    description: Software Requirements and Design Specification.
+    requires_review: true
+
+  product_domain:
+    template: docs/harness/templates/product/domain.md
+    default_output_pattern: docs/product/{domain}.md
+    description: Product domain contract.
+    requires_review: true
+
+  spec_intake:
+    template: docs/harness/templates/intake/spec-intake.md
+    default_output: docs/stories/spec-intake.md
+    description: Spec intake worksheet.
+    requires_review: true
+
+  source_inventory:
+    template: docs/harness/templates/onboarding/source-inventory.md
+    default_output: docs/onboarding/source-inventory.md
+    description: Existing source material inventory.
+    requires_review: true
+
+  doc_sync_plan:
+    template: docs/harness/templates/onboarding/doc-sync-plan.md
+    default_output: docs/onboarding/doc-sync-plan.md
+    description: Existing documentation normalization plan.
+    requires_review: true
+
+  baseline_audit:
+    template: docs/harness/templates/onboarding/baseline-audit.md
+    default_output: docs/onboarding/baseline-audit.md
+    description: Existing project baseline audit.
+    requires_review: true
+
+  doc_conflict:
+    template: docs/harness/templates/onboarding/doc-conflict.md
+    default_output: docs/onboarding/doc-conflicts.md
+    description: Code, docs, or spec conflict record.
+    requires_review: true
+
+  story:
+    template: docs/harness/templates/stories/story.md
+    default_output_pattern: docs/stories/{id}-{slug}.md
+    description: Normal story packet.
+    requires_review: true
+
+  high_risk_overview:
+    template: docs/harness/templates/stories/high-risk/overview.md
+    default_output_pattern: docs/stories/{epic}/{story}/overview.md
+    description: High-risk story overview.
+    requires_review: true
+
+  high_risk_execplan:
+    template: docs/harness/templates/stories/high-risk/execplan.md
+    default_output_pattern: docs/stories/{epic}/{story}/execplan.md
+    description: High-risk story execution plan.
+    requires_review: true
+
+  high_risk_design:
+    template: docs/harness/templates/stories/high-risk/design.md
+    default_output_pattern: docs/stories/{epic}/{story}/design.md
+    description: High-risk story design notes.
+    requires_review: true
+
+  high_risk_validation:
+    template: docs/harness/templates/stories/high-risk/validation.md
+    default_output_pattern: docs/stories/{epic}/{story}/validation.md
+    description: High-risk story validation plan.
+    requires_review: true
+
+  decision:
+    template: docs/harness/templates/decisions/decision.md
+    default_output_pattern: docs/decisions/{number}-{slug}.md
+    description: Durable decision record.
+    requires_review: true
+
+  validation_report:
+    template: docs/harness/templates/validation/validation-report.md
+    default_output_pattern: docs/validation/reports/{date}-{slug}.md
+    description: Validation report.
+    requires_review: true

@@ -21,8 +21,7 @@ search query -> ranked frame results -> inspect video/timeline -> choose frame -
 ## Runtime Modes
 
 - Local: run everything on one machine and open `localhost`.
-- LAN: one host machine runs app/data, teammates open the shared Web UI by IP address.
-- One shared SPA supports multiple teammates through Query Sessions.
+- LAN: one host machine runs app/data, teammates open the Web UI by IP address.
 
 ## Data
 
