@@ -220,8 +220,8 @@ __marimo__/
 .codex/agents
 
 # Harness durable layer
-harness.db
-harness.db-wal
-harness.db-shm
-scripts/bin/harness-cli
-scripts/bin/harness-cli.exe
+#harness.db
+#harness.db-wal
+#harness.db-shm
+#scripts/bin/harness-cli
+#scripts/bin/harness-cli.exe
