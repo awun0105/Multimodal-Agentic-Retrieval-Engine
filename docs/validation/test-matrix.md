@@ -22,7 +22,7 @@ MVP scope, but no implementation proof exists yet.
 
 | Story | Contract | Unit | Integration | E2E | Platform | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| MVP-0 | Canonical docs, decisions, and supersession markers match accepted architecture | no | no | no | no | planned | `docs/onboarding/doc-conflicts.md`, `docs/architecture/overview.md`, `docs/architecture/ingestion.md`, `docs/decisions/` |
+| MVP-0 | Canonical docs, decisions, and supersession markers match accepted architecture | no | no | no | no | implemented | `docs/onboarding/doc-conflicts.md`, `docs/architecture/overview.md`, `docs/architecture/ingestion.md` (no ADRs required) |
 | MVP-1 | Runtime SQLite schema and local file-path validation support the dataset contract | no | no | no | no | planned | planned |
 | MVP-2 | One React/Vite SPA provides keyframe-first query and inspection workflow | no | no | no | no | planned | planned |
 | MVP-3 | FAISS visual retrieval returns ranked keyframe results through FastAPI | no | no | no | no | planned | planned |
