@@ -1,129 +1,46 @@
 # Documentation Conflicts
 
-## Conflict 1: Metadata Database Choice
+## Conflict 1: Runtime DB/Search Layer
 
-### Area
-
-Ingestion and storage architecture.
-
-### Conflict
-
-Earlier documents disagreed on whether MVP metadata/runtime storage should use
-DuckDB, SQLite, or both.
-
-### Evidence
-
-- `DATA_READY.md`: proposes `metadata.duckdb` plus `app.sqlite`.
 - `README.md`: states `DB: SQLite` and `Text/object search: SQLite FTS5`.
-- `docs/references/original-sources/INGESTION.md`: centers the runtime around SQLite artifacts.
+- Earlier source material also discussed DuckDB/Tantivy/OpenSearch alternatives.
 - User decision on 2026-06-12: canonical architecture is SQLite WAL + FTS5 for runtime and DuckDB for preprocessing/staging/analytics.
 
-### Proposed Resolution
+Resolved. Use SQLite WAL + SQLite FTS5 for runtime application state and text search. Use DuckDB for preprocessing, staging, analytics, validation, and bulk metadata warehouse work.
 
-Resolved. Use SQLite WAL + SQLite FTS5 for runtime application state and text
-search. Use DuckDB for preprocessing, staging, analytics, validation, and bulk metadata warehouse work.
+## Conflict 2: Keyframe ID Format
 
-### Human Confirmation Needed
+- Older docs/examples used underscore-style identifiers such as `old underscore-style keyframe example`.
+- The archived root data-contract draft introduced `keyframe_id = "{video_id}:{frame_id}"`.
 
-No. Resolved by explicit user decision.
+Resolved. Canonical keyframe identifier is colon-based. Underscore-style examples are stale and must not appear in canonical runtime/API docs.
 
-## Conflict 2: Original Ingestion Draft vs V2 Ingestion
+## Conflict 3: `legacy video-name field` vs `video_id`
 
-### Area
+- Some source docs say `video name` or `legacy video-name field`.
+- Canonical DB/API contract needs one stable field name.
 
-Ingestion pipeline and normalized artifact contract.
+Resolved. Use `video_id` as the canonical field in DB, API, UI, and docs. `legacy video-name field` may appear only when quoting or explaining legacy source wording.
 
-### Conflict
+## Conflict 4: Logical `data/` Tree vs Physical Storage Roots
 
-The original ingestion draft and the later ingestion reference described different ingestion directions.
+- Older source material used `old repo-local SQLite path`, `old repo-local FAISS path`, and `old repo-local media path` examples.
+- The app-ready contract separates repo code from external data and runtime roots.
 
-### Evidence
+Resolved. Physical roots are `${AIC_DATA_ROOT}` for large media/staging artifacts and `${AIC_RUNTIME_ROOT}` for hot runtime artifacts. Any `data/` tree is logical documentation shorthand only.
 
-- Historical ingestion draft: older System 1/System 2 draft and JSON-heavy artifact model.
-- `docs/references/original-sources/INGESTION.md`: simplified architecture with SQLite/FAISS/local media and flexible inputs.
-- User decision on 2026-06-12: treat `docs/references/original-sources/INGESTION.md` as canonical for future implementation planning.
+## Conflict 5: Media Storage Backend
 
-### Proposed Resolution
-
-Resolved. `docs/architecture/system1-ingestion.md` is canonical for planning. `docs/references/original-sources/INGESTION.md` is reference-only source material.
-
-### Human Confirmation Needed
-
-No. Resolved by explicit user decision.
-
-## Conflict 3: MinIO Optionality
-
-### Area
-
-Media storage.
-
-### Conflict
-
-Some documents introduced MinIO, but MVP simplicity and local-first constraints
-made its status unclear.
-
-### Evidence
-
-- `docs/references/original-sources/INGESTION.md`: introduces a MediaStore abstraction and optional MinIO.
-- `README.md` and `SPEC.md`: emphasize local/LAN simplicity.
+- Archived ingestion reference introduced a MediaStore abstraction and optional MinIO.
 - User decision on 2026-06-12: LocalFileMediaStore for MVP; MinIO optional future adapter only.
-
-### Proposed Resolution
 
 Resolved. MVP uses local filesystem media storage through `LocalFileMediaStore`. MinIO remains an optional future adapter and is not part of MVP.
 
-### Human Confirmation Needed
+## Conflict 6: Text Search Engine Scope
 
-No. Resolved by explicit user decision.
-
-## Conflict 4: Test Matrix vs Product Scope
-
-### Area
-
-Validation planning.
-
-### Conflict
-
-`SPEC.md` defines broad product scope, but the repo has no implementation and the
-original test matrix had no real rows.
-
-### Evidence
-
-- `SPEC.md`: broad product scope.
-- Repo audit: docs-only, no runtime code or tests.
-- User decision on 2026-06-12: add concrete test-matrix rows for MVP-0 to MVP-3 first; later behavior stays planned.
-
-### Proposed Resolution
-
-Resolved for onboarding. The test matrix should contain concrete planned rows for MVP-0 through MVP-3 only. Later behaviors remain planned, not implemented.
-
-### Human Confirmation Needed
-
-No. Resolved by explicit user decision.
-
-## Conflict 5: Text Search Engine Direction
-
-### Area
-
-Text search implementation.
-
-### Conflict
-
-Older drafts referenced BM25/JSON sparse search, while newer docs and runtime
-constraints prefer SQLite FTS5 for MVP.
-
-### Evidence
-
-- Historical ingestion draft: BM25/JSON-style sparse retrieval direction.
 - `README.md`: `Text/object search: SQLite FTS5`.
-- `docs/references/original-sources/INGESTION.md`: `indexes/text.sqlite` using SQLite FTS5 first.
-- `DATA_READY.md`: SQLite FTS5 or Tantivy.
+- Archived ingestion reference described SQLite FTS5 first.
+- Archived data-ready reference mentioned SQLite FTS5 or Tantivy.
 - User decision on 2026-06-12: SQLite FTS5 is the MVP text search layer; Tantivy/OpenSearch/BM25 JSON are future or historical alternatives.
 
-### Proposed Resolution
-
 Resolved. Use SQLite FTS5 as MVP text search. Treat Tantivy/OpenSearch/BM25 JSON as future or historical alternatives only.
-
-### Human Confirmation Needed
-
-No. Resolved by explicit user decision.

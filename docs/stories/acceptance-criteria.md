@@ -2,7 +2,7 @@
 
 ## Status
 
-Canonical Acceptance Criteria. Derived from `SPEC.md`.
+Canonical Acceptance Criteria. Supersedes the earlier source specification acceptance notes.
 
 ## MVP Search Workbench
 

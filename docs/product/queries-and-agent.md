@@ -1,45 +1,60 @@
-# Retrieval Workflows & Automatic Agent
+# Queries And Agent
 
 ## Status
 
-Canonical Specification for Retrieval Workflows and Agent boundaries. Derived from `SPEC.md`.
+Canonical behavior contract for query handling and automatic mode.
 
----
+## Query Types
 
-## 1. Retrieval Query Workflows
+| Type | User Intent | Primary Outputs |
+| --- | --- | --- |
+| Textual KIS (`tkis`) | Find a frame from text clues. | `video_id`, `frame_id`, evidence. |
+| Q&A (`qa`) | Answer a question with supporting frame/evidence. | `video_id`, `frame_id`, `answer_text`, evidence. |
+| TRAKE (`trake`) | Build an ordered frame sequence. | ordered `(video_id, frame_id)` sequence. |
+| VKIS (`vkis`) | Find a video moment from visual/video description. | `video_id`, `frame_id`, evidence. |
 
-The engine must support four primary query workflows defined by the AI Challenge theme.
+## Clues
 
-### Textual KIS (TKIS)
-- **Goal**: Find a specific keyframe based on a detailed text clue.
-- **Flow**: Text input -> Hybrid FAISS visual search + FTS5 text search (captions/OCR) -> Sorted result grid.
+Each Query Session keeps current and accumulated clues. Searches must explicitly record which mode was used:
 
-### Q&A (Visual Question Answering)
-- **Goal**: Identify the exact frame that answers a visual question and extract the text/fact answer.
-- **Flow**: Query -> FTS5 object count filter + visual similarity -> Detail view -> Edit answer box -> Save card.
+- `current_only`: newest clue batch only.
+- `accumulated`: all active clue batches.
+- `selected`: user-selected subset when the UI adds clue selection.
 
-### TRAKE (Temporal Relationship)
-- **Goal**: Find an ordered sequence of events or actions in one video.
-- **Flow**: Multiple clues -> Temporal search -> Browse same-video keyframes chronologically -> Select start/end sequence -> Save TRAKE rows.
+## Agent Contract
 
-### VKIS (Video KIS)
-- **Goal**: Find the matching video file and sequence from raw clips.
-- **Flow**: Group ranked frames by video -> Video Explorer -> Inspect timeline.
+The agent is not a separate product. It is an automation layer over the same retrieval, evidence, session, candidate, and media APIs as the Web UI.
 
----
+Required constraints:
 
-## 2. Automatic Agent Mode
+- Use the same API payloads as human UI workflows.
+- Keep every tool call traceable in `agent_steps`.
+- Respect `max_steps` and `max_runtime_sec`.
+- Save proposals as normal candidates in the active Query Session.
+- Include evidence and score components for every selected candidate.
+- Allow human accept, edit, reject, or cancel.
+- Never read raw dataset paths directly during live retrieval.
 
-The system must support an automated search and reasoning agent alongside the human interface.
+## Minimum Agent Tools
 
-### Principles:
-1. **Shared Core**: The agent runs on top of the exact same FastAPI services, database, indexes, and media tools as the Web UI. No separate agent-only database or search path is allowed.
-2. **Command Pattern**: Agent calls must be structured, traceable, and recordable tool calls:
-   ```json
-   {
-       "tool": "search_hybrid",
-       "arguments": {"query": "traffic jam", "mode": "hybrid", "weights": {"visual": 0.7, "text": 0.3}}
-   }
-   ```
-3. **Execution Logging**: Every tool call, intermediate score, and LLM reasoning step must be persisted to the runtime SQLite `agent_runs` table.
-4. **UI Integration**: Teammates must be able to view, accept, reject, or edit candidates found by the agent directly inside the shared Web UI.
+| Tool | Purpose |
+| --- | --- |
+| `search` | Run hybrid retrieval with query type, clue mode, filters, and top-K. |
+| `get_keyframe` | Inspect one keyframe payload. |
+| `get_evidence` | Fetch caption/OCR/ASR/object/metadata evidence. |
+| `get_neighbors` | Inspect nearby keyframes in the same video. |
+| `save_candidate` | Persist a proposed candidate. |
+| `update_candidate` | Edit answer text, TRAKE sequence, notes, or validation state. |
+
+## Output Shape
+
+Agent output must include:
+
+- route/classification used;
+- clue mode;
+- searches performed;
+- inspected candidates;
+- chosen candidates;
+- evidence summary;
+- unresolved warnings;
+- human next action.

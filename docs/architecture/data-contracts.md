@@ -1,59 +1,134 @@
-# Data Contracts Specification
+# App-ready Data Contract
 
 ## Status
 
-Canonical data contract for System 1 ingestion outputs and System 2 runtime inputs.
-Derived from `DATA_READY.md`, `docs/references/original-sources/INGESTION.md`, and accepted decisions.
+Canonical. This document is the source of truth for the app-ready data contract; the earlier root draft has been archived.
 
-## System Boundary
+See also: `docs/architecture/storage-strategy.md`.
 
-- **System 1** produces the data artifacts below through offline notebooks and aggregation.
-- **System 2** consumes these artifacts at runtime through SQLite WAL, SQLite FTS5, FAISS, and local media files.
-- DuckDB is preprocessing/staging only; it is not the MVP runtime source of truth.
+This document defines the app-ready artifact contract that must exist before building runtime backend, UI, retrieval, or agent features.
 
-## Global Identity Contract
+## Principle
 
-| Field | Format | Example | Required | Notes |
-| --- | --- | --- | --- | --- |
-| `video_id` | Organizer/system video ID | `L01_V028` | yes | Stable video key across all tables. |
-| `frame_id` | Integer frame number | `25300` | yes for frame-level rows | Use official frame ID if available. |
-| `keyframe_id` | `{video_id}_{frame_id}` | `L01_V028_25300` | yes for keyframes | Glue key for media, evidence, search, and candidates. |
-| `doc_id` | `{type}_{key}` | `caption_L01_V028_25300` | yes for text docs | Used for FTS/evidence lookup. |
-| `vector_id` / `row_id` | integer vector row | `982331` | yes for FAISS mapping | Must align exactly with FAISS row index. |
+Runtime code must not infer dataset structure from raw files.
 
-## App-ready Directory Contract
+System 1 converts raw organizer data into app-ready artifacts. System 2 reads only those app-ready artifacts.
+
+| Layer | Canonical Role |
+| --- | --- |
+| JSON / CSV / Parquet | Raw input, staging output, manifests, validation reports, intermediate artifacts |
+| SQLite WAL | Runtime catalog, app state, query sessions, candidates, vector mapping, relational evidence |
+| SQLite FTS5 | Runtime text index for captions, OCR, ASR, metadata, objects |
+| FAISS | Runtime vector index |
+| Filesystem | Large media assets: videos, keyframes, thumbnails |
+| DuckDB | Offline preprocessing, staging, analytics, validation |
+
+JSON-only metadata is not acceptable for runtime search, state, or FAISS result resolution.
+
+## Roots
+
+The repo, large data, and hot runtime artifacts are separate.
+
+| Root | Purpose | Notes |
+| --- | --- | --- |
+| `${REPO_ROOT}` | Source code, docs, config, schemas, small fixtures | Do not store real competition media here. |
+| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos/keyframes and processed media live here. |
+| `${AIC_RUNTIME_ROOT}` | Runtime hot artifact root, preferably SSD | SQLite, FAISS, and runtime cache live here. |
+
+## Physical Layout
 
 ```text
-data/
-  media/
+${REPO_ROOT}/
+  backend/
+  frontend/
+  docs/
+  scripts/
+  notebooks/
+  config/
+  schemas/
+  tests/fixtures/tiny_seed_dataset/
+
+${AIC_DATA_ROOT}/
+  raw/
     videos/
-    keyframes/
-    thumbnails/
+    keyframes_original/
+    metadata_original/
+  processed/
+    media/
+      videos/
+      keyframes/
+      thumbnails/
+  staging/
+    shards/
+    reports/
+  warehouse/
+    warehouse.duckdb
 
+${AIC_RUNTIME_ROOT}/
   db/
-    app.sqlite              # Runtime DB: metadata + app state + FTS5
-
-  preprocessing/
-    staging.duckdb           # System 1 staging only
-
+    app.sqlite
   indexes/
     visual.faiss
-    visual_mapping.parquet
-
-  config/
-    paths.yaml
-    retrieval_weights.yaml
-    export_rules.yaml
-
-  logs/
-    search_runs.jsonl
-
-  exports/
+    visual_index_manifest.json
+  cache/
 ```
 
-## Runtime SQLite Pragmas
+Any earlier `data/` tree in docs should be read as a logical app-ready artifact layout, not as repository layout.
 
-System 2 must initialize SQLite runtime DB with:
+## Canonical IDs
+
+| ID | Format | Example | Notes |
+| --- | --- | --- | --- |
+| `dataset_id` | Stable dataset/version key | `aic2026` | Groups one app-ready dataset. |
+| `video_id` | Video name without extension | `L01_V028` | Primary video identifier. |
+| `frame_id` | Integer frame number | `25300` | Official frame ID if provided. |
+| `keyframe_id` | `{video_id}:{frame_id}` | `L01_V028:25300` | Canonical keyframe key. |
+| `vector_id` | FAISS row integer | `123456` | Resolved through SQLite `vector_map`. |
+| `media_ref` | Logical relative path | `keyframes/L01_V028/025300.jpg` | Never absolute. |
+
+`video_id + frame_id` remains the user-facing submit/copy unit. `keyframe_id` is the DB/API glue key.
+
+## Logical Media References
+
+SQLite stores logical refs only. It must not store absolute or machine-specific paths.
+
+| Asset | Ref Pattern | Example |
+| --- | --- | --- |
+| Video | `videos/{video_id}.mp4` | `videos/L01_V028.mp4` |
+| Keyframe | `keyframes/{video_id}/{frame_id_padded}.jpg` | `keyframes/L01_V028/025300.jpg` |
+| Thumbnail | `thumbnails/{video_id}/{frame_id_padded}.webp` | `thumbnails/L01_V028/025300.webp` |
+
+Backend resolves refs through `MediaStorePort`. MVP implementation is `LocalFileMediaStore` using `${AIC_DATA_ROOT}`. MinIO is optional future work behind the same port.
+
+## Data Categories
+
+The app-ready contract covers these categories:
+
+1. Raw videos
+2. Official/generated keyframes
+3. Thumbnails
+4. Video metadata
+5. Keyframe metadata
+6. Captions
+7. OCR text and optional boxes
+8. ASR transcript segments
+9. Object/concept detections
+10. Scene/location/attribute tags
+11. Image embeddings
+12. FAISS index
+13. Vector mapping
+14. Query sessions
+15. Query clues
+16. Search runs/results
+17. Candidates
+18. Agent runs/steps
+19. Validation reports/manifests
+
+## Runtime SQLite Schema
+
+Runtime SQLite is the source of truth for app-readable metadata, search mapping, and user/agent state.
+
+Required pragmas:
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -61,574 +136,100 @@ PRAGMA synchronous=NORMAL;
 PRAGMA foreign_keys=ON;
 ```
 
-Optional machine-dependent pragmas:
+Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must not be required for correctness.
 
-```sql
-PRAGMA temp_store=MEMORY;
-PRAGMA mmap_size=<machine dependent>;
-```
+### Required Tables
 
-## Runtime SQLite Tables
+| Table | Purpose |
+| --- | --- |
+| `datasets` | Dataset identity and build metadata. |
+| `videos` | One row per video; stores `video_ref`, duration, fps, dimensions, metadata. |
+| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `keyframe_ref`, `thumbnail_ref`. |
+| `captions` | Caption evidence mapped to `keyframe_id`. |
+| `ocr_texts` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
+| `asr_segments` | Transcript segments mapped to `video_id` and time range; optional keyframe alignment through `keyframe_asr_segments`. |
+| `keyframe_asr_segments` | Optional many-to-many alignment between keyframes and ASR segments. |
+| `objects` | Object/concept detections mapped to `keyframe_id`. |
+| `scene_tags` | Optional scene, location, or attribute tags mapped to `keyframe_id`. |
+| `embedding_indexes` | Registered vector index metadata: name, model, dimension, metric, path/ref. |
+| `vector_map` | Mandatory mapping from `(index_name, vector_id)` to `keyframe_id`, `video_id`, `frame_id`. |
+| `query_sessions` | Human/team query session state. |
+| `query_clues` | Clues/questions attached to a query session. |
+| `search_runs` | Search execution metadata and parameters. |
+| `search_results` | Ranked result snapshots for reproducibility/debugging. |
+| `candidates` | Saved candidate answers/frames. |
+| `agent_runs` | Automatic mode run metadata. |
+| `agent_steps` | Automatic mode trace steps. |
 
-### `videos`
+## FTS5 Tables
 
-```sql
-CREATE TABLE IF NOT EXISTS videos (
-    video_id TEXT PRIMARY KEY,
-    uri TEXT NOT NULL,
-    duration_sec REAL,
-    fps REAL,
-    width INTEGER,
-    height INTEGER,
-    num_frames INTEGER,
-    has_audio INTEGER,
-    source TEXT,
-    metadata_json TEXT
-);
-```
+Runtime text search uses SQLite FTS5 inside `app.sqlite`.
 
-Required for:
+Required FTS5 tables:
 
-- mapping video IDs;
-- grouping results by video;
-- computing timestamp/frame relationships;
-- checking missing files;
-- opening raw video only on demand.
+- `caption_fts`
+- `ocr_fts`
+- `asr_fts`
+- `object_fts`
+- `metadata_fts`
 
-### `keyframes`
+Optional unified table:
 
-```sql
-CREATE TABLE IF NOT EXISTS keyframes (
-    keyframe_id TEXT PRIMARY KEY,
-    video_id TEXT NOT NULL,
-    frame_id INTEGER NOT NULL,
-    timestamp_sec REAL,
-    keyframe_uri TEXT NOT NULL,
-    thumbnail_uri TEXT NOT NULL,
-    width INTEGER,
-    height INTEGER,
-    shot_id TEXT,
-    source TEXT NOT NULL,
-    FOREIGN KEY(video_id) REFERENCES videos(video_id),
-    UNIQUE(video_id, frame_id)
-);
-```
+- `evidence_fts`
 
-Required for:
+FTS5 queries must return `keyframe_id` or `video_id`, then backend joins relational tables to produce UI-ready results.
 
-- result grid;
-- selected frame detail;
-- same-video strip;
-- copy helpers;
-- TRAKE sequence editing;
-- Q&A grounding.
+## FAISS Mapping Contract
 
-### `objects`
+FAISS only returns vector row IDs. It does not know videos or frames.
 
-```sql
-CREATE TABLE IF NOT EXISTS objects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    video_id TEXT NOT NULL,
-    frame_id INTEGER NOT NULL,
-    label TEXT NOT NULL,
-    score REAL,
-    bbox_json TEXT,
-    source TEXT,
-    aliases_json TEXT,
-    FOREIGN KEY(video_id, frame_id) REFERENCES keyframes(video_id, frame_id)
-);
-```
-
-Object records must keep:
-
-- label;
-- confidence score;
-- bounding box when available;
-- Vietnamese/English aliases when available.
-
-### `ocr_texts`
-
-```sql
-CREATE TABLE IF NOT EXISTS ocr_texts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    video_id TEXT NOT NULL,
-    frame_id INTEGER NOT NULL,
-    raw_text TEXT NOT NULL,
-    normalized_text TEXT,
-    no_accent_text TEXT,
-    lowercase_text TEXT,
-    bbox_json TEXT,
-    confidence REAL,
-    source TEXT,
-    FOREIGN KEY(video_id, frame_id) REFERENCES keyframes(video_id, frame_id)
-);
-```
-
-OCR should preserve raw and normalized variants because competition queries may use exact signs, names, locations, or no-accent Vietnamese text.
-
-### `captions`
-
-```sql
-CREATE TABLE IF NOT EXISTS captions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    video_id TEXT NOT NULL,
-    frame_id INTEGER,
-    shot_id TEXT,
-    caption_vi TEXT,
-    caption_en TEXT,
-    model TEXT,
-    confidence REAL,
-    source TEXT,
-    FOREIGN KEY(video_id) REFERENCES videos(video_id)
-);
-```
-
-Captioning rules:
-
-- Prefer bilingual captions when feasible.
-- English captions are useful for CLIP-like model alignment.
-- Vietnamese captions are useful for local query intent and manual inspection.
-
-### `asr_segments`
-
-```sql
-CREATE TABLE IF NOT EXISTS asr_segments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    video_id TEXT NOT NULL,
-    start_sec REAL NOT NULL,
-    end_sec REAL NOT NULL,
-    start_frame INTEGER,
-    end_frame INTEGER,
-    text TEXT NOT NULL,
-    normalized_text TEXT,
-    no_accent_text TEXT,
-    english_translation TEXT,
-    language TEXT,
-    confidence REAL,
-    source TEXT,
-    FOREIGN KEY(video_id) REFERENCES videos(video_id)
-);
-```
-
-ASR contract:
-
-- ASR is time-range evidence, not fake per-frame text.
-- Word-level timestamps are optional.
-- Runtime lookup for selected keyframe should use exact containment or a nearby time window.
-
-Example lookup:
-
-```sql
-SELECT *
-FROM asr_segments
-WHERE video_id = ?
-  AND start_frame <= ?
-  AND end_frame >= ?;
-```
-
-Fallback lookup may use a ±30 second window.
-
-### `evidence_documents`
-
-```sql
-CREATE TABLE IF NOT EXISTS evidence_documents (
-    doc_id TEXT PRIMARY KEY,
-    video_id TEXT NOT NULL,
-    frame_id INTEGER,
-    shot_id TEXT,
-    doc_type TEXT NOT NULL,
-    text TEXT NOT NULL,
-    fields_json TEXT,
-    source TEXT,
-    FOREIGN KEY(video_id) REFERENCES videos(video_id)
-);
-```
-
-Use this table for merged search documents:
-
-- keyframe document;
-- shot document;
-- video document;
-- ASR segment document.
-
-### `vector_map`
-
-```sql
-CREATE TABLE IF NOT EXISTS vector_map (
-    row_id INTEGER PRIMARY KEY,
-    vector_id INTEGER,
-    keyframe_id TEXT NOT NULL,
-    video_id TEXT NOT NULL,
-    frame_id INTEGER NOT NULL,
-    model TEXT NOT NULL,
-    dim INTEGER NOT NULL,
-    source TEXT NOT NULL,
-    FOREIGN KEY(keyframe_id) REFERENCES keyframes(keyframe_id)
-);
-```
-
-FAISS rule:
-
-- Row `N` in `visual.faiss` must map to `vector_map.row_id = N`.
-- `visual_mapping.parquet` is allowed as a rebuild/debug artifact, but SQLite `vector_map` is the runtime mapping source.
-
-### `timeline_keyframes`
-
-```sql
-CREATE TABLE IF NOT EXISTS timeline_keyframes (
-    video_id TEXT NOT NULL,
-    frame_id INTEGER NOT NULL,
-    timestamp_sec REAL,
-    ordinal INTEGER NOT NULL,
-    keyframe_id TEXT NOT NULL,
-    PRIMARY KEY(video_id, frame_id),
-    FOREIGN KEY(keyframe_id) REFERENCES keyframes(keyframe_id)
-);
-```
-
-Required for:
-
-- same-video strip;
-- nearby frame navigation;
-- TRAKE chronological verification;
-- progressive clue checking.
-
-### `query_sessions`
-
-```sql
-CREATE TABLE IF NOT EXISTS query_sessions (
-    session_id TEXT PRIMARY KEY,
-    query_type TEXT,
-    title TEXT,
-    notes TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT
-);
-```
-
-### `query_clues`
-
-```sql
-CREATE TABLE IF NOT EXISTS query_clues (
-    clue_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    clue_index INTEGER NOT NULL,
-    clue_text TEXT NOT NULL,
-    created_by TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(session_id) REFERENCES query_sessions(session_id)
-);
-```
-
-### `search_runs`
-
-```sql
-CREATE TABLE IF NOT EXISTS search_runs (
-    run_id TEXT PRIMARY KEY,
-    session_id TEXT,
-    query_text TEXT NOT NULL,
-    search_mode TEXT NOT NULL,
-    top_k INTEGER,
-    latency_ms INTEGER,
-    weights_json TEXT,
-    created_by TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(session_id) REFERENCES query_sessions(session_id)
-);
-```
-
-### `candidates`
-
-```sql
-CREATE TABLE IF NOT EXISTS candidates (
-    candidate_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    video_id TEXT NOT NULL,
-    frame_id INTEGER NOT NULL,
-    answer TEXT,
-    note TEXT,
-    rank INTEGER,
-    score REAL,
-    pinned INTEGER DEFAULT 0,
-    created_by TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(session_id) REFERENCES query_sessions(session_id),
-    FOREIGN KEY(video_id, frame_id) REFERENCES keyframes(video_id, frame_id)
-);
-```
-
-### `agent_runs`
-
-```sql
-CREATE TABLE IF NOT EXISTS agent_runs (
-    run_id TEXT PRIMARY KEY,
-    session_id TEXT,
-    status TEXT NOT NULL,
-    input_json TEXT,
-    tool_calls_json TEXT,
-    output_json TEXT,
-    created_at TEXT NOT NULL,
-    finished_at TEXT,
-    FOREIGN KEY(session_id) REFERENCES query_sessions(session_id)
-);
-```
-
-## SQLite FTS5 Contract
-
-Use FTS5 for MVP text search.
-
-```sql
-CREATE VIRTUAL TABLE IF NOT EXISTS evidence_fts USING fts5(
-    doc_id UNINDEXED,
-    video_id UNINDEXED,
-    frame_id UNINDEXED,
-    doc_type,
-    text,
-    tokenize='unicode61 remove_diacritics 2'
-);
-```
-
-FTS source inputs:
-
-- captions;
-- OCR;
-- ASR;
-- metadata;
-- object labels/aliases;
-- scene/action tags when available.
-
-## Optional / Deferred Data Tables
-
-These are not required for MVP but have accepted future use.
-
-| Data | Priority | Notes |
-| --- | --- | --- |
-| `audio_events` | P2 | applause, music, siren, crowd, vehicle sounds. |
-| `shots` | P1 | group keyframes into shot/segment ranges. |
-| `scene_tags` | P2 | indoor/outdoor, place, environment. |
-| `visual_attributes` | P2 | colors, clothing, dominant visual cues. |
-| `persons` | P2 | person bbox, clothing, pose; avoid identity focus unless rules allow. |
-| `object_tracks` | P2/P3 | tracking across keyframes, useful for TRAKE. |
-| `action_tags` | P2/P3 | running, handshake, cooking, scoring goal. |
-| `entities` | P1/P2 | locations, organizations, people, topics from OCR/ASR/captions. |
-| `query_expansions` | P1 | Vietnamese/English synonyms and domain phrases. |
-| `candidate_diversification` | P1/P2 | cluster/frame grouping to avoid duplicate top results. |
-| `similarity_graph` | P2 | precomputed similar keyframes if FAISS runtime is insufficient. |
-| `trake_event_candidates` | P2 | query-time or light precompute candidate sequences. |
-| `qa_answer_candidates` | P2 | suggested normalized answers. |
-| `inventory_health` | P0 | validation report rows for missing files and artifact completeness. |
-
-## Notebook Artifact Formats
-
-### Visual Embedding Shard
+Canonical resolution flow:
 
 ```text
-outputs/{shard_id}/visual/{video_id}_dense.npy
-outputs/{shard_id}/visual/{video_id}_embedding_map.jsonl
+FAISS vector_id
+  -> SQLite vector_map(index_name, vector_id)
+  -> keyframe_id
+  -> video_id + frame_id
+  -> keyframe_ref + thumbnail_ref
+  -> caption/OCR/ASR/object evidence
 ```
 
-Each map row:
+`vector_map` is mandatory runtime data. A Parquet or JSON mapping file may exist as a staging/debug artifact, but it is not the runtime source of truth.
 
-```json
-{"row_offset": 0, "video_id": "L01_V028", "frame_id": 25300, "keyframe_id": "L01_V028_25300", "model": "clip-vit-l14", "dim": 768}
-```
+## App-ready Dataset Validation
 
-### OCR Shard
+A dataset is app-ready only when validation proves all required checks pass.
 
-```text
-outputs/{shard_id}/ocr/{video_id}_ocr.jsonl
-```
+Required checks:
 
-Each row:
+- No duplicate `video_id`.
+- No duplicate `(video_id, frame_id)`.
+- Every `media_ref` resolves through `MediaStorePort`.
+- Every keyframe has `keyframe_ref` and `thumbnail_ref`.
+- Every FAISS vector has a corresponding `vector_map` row.
+- Every `vector_map.keyframe_id` exists in `keyframes`.
+- Every caption/OCR/object row points to an existing keyframe.
+- Every ASR segment points to an existing video.
+- SQLite contains no absolute paths.
+- SQLite contains no machine-specific paths.
+- FTS5 row counts match source relational tables or documented expectations.
 
-```json
-{"video_id":"L01_V028","frame_id":25300,"text":"HỘI NGHỊ","normalized_text":"hoi nghi","bbox":[100,50,700,120],"confidence":0.91}
-```
+## Seed Dataset Requirement
 
-### ASR Shard
+Before runtime implementation, the project needs a tiny seed dataset under `tests/fixtures/tiny_seed_dataset/` or equivalent. It should include:
 
-```text
-outputs/{shard_id}/asr/{video_id}_transcript.jsonl
-```
+- At least one video record.
+- Multiple keyframes for the video.
+- Thumbnails for those keyframes.
+- At least one caption row.
+- At least one OCR row.
+- At least one ASR segment.
+- At least one object/concept row.
+- A small FAISS-compatible vector-map fixture, even if the actual FAISS index is stubbed for early tests.
+- Validation report proving the seed dataset is app-ready.
 
-Each row:
+## Open Questions
 
-```json
-{"video_id":"L01_V028","start_sec":1008.0,"end_sec":1020.5,"start_frame":25200,"end_frame":25512,"text":"...","language":"vi","confidence":0.84}
-```
-
-### Caption Shard
-
-```text
-outputs/{shard_id}/captions/{video_id}_captions.jsonl
-```
-
-Each row:
-
-```json
-{"video_id":"L01_V028","frame_id":25300,"caption_vi":"...","caption_en":"...","model":"qwen2.5-vl","confidence":0.82}
-```
-
-### Object Shard
-
-```text
-outputs/{shard_id}/objects/{video_id}_objects.jsonl
-```
-
-Each row:
-
-```json
-{"video_id":"L01_V028","frame_id":25300,"label":"person","score":0.97,"bbox":[120,80,400,600]}
-```
-
-
-## 5. Preprocessing & Supporting Schema Details
-
-### Thumbnail Specifications
-- **Format**: WebP (`.webp`) format is mandatory to minimize HDD load and browser memory.
-- **Resolution Tiers**:
-  - `thumb_160`: Width 160px (proportional height). Used for virtualized result grids and same-video strips.
-  - `thumb_320`: Width 320px (proportional height). Used for Candidate Basket cards and hover previews.
-- **Preview Image**: Raw keyframe full-size scaled to max 1280px width (JPEG/PNG) used in detailed inspector before video player loading.
-
-### Query Expansion Dictionary
-Stored as JSON in the config folder (`config/query_expansion.json`) and parsed at startup:
-```json
-{
-  "xe máy": ["motorbike", "motorcycle", "scooter"],
-  "phát biểu": ["speech", "speaker", "podium", "microphone", "presentation"],
-  "múa lân": ["lion dance", "dragon dance", "festival"],
-  "đám đông": ["crowd", "audience", "people gathering"]
-}
-```
-
-### Candidate Diversification Contract
-To prevent the top 100 results from being dominated by visually identical adjacent frames from the same video:
-```json
-{
-  "video_id": "L01_V028",
-  "cluster_id": "cluster_881",
-  "representative_frame_id": 25300,
-  "member_frame_ids": [25280, 25300, 25320]
-}
-```
-At runtime, the retrieval engine should apply video-level or shot-level clustering rules (max $N$ keyframes per video/shot in the top $K$ results).
-
-### Preprocessing Inventory Health Data
-System 1 must produce a dataset health manifest (`data/inventory_health.json`) after merging:
-```json
-{
-  "video_id": "L01_V028",
-  "video_exists": true,
-  "keyframe_count": 320,
-  "embedding_count": 320,
-  "ocr_count": 318,
-  "caption_count": 320,
-  "asr_segments": 25,
-  "missing_files": []
-}
-```
-
-### Search Run Log Format
-Runtime queries must append details to `logs/search_runs.jsonl`:
-```json
-{
-  "run_id": "search_20260609_001",
-  "query": "người áo trắng hang động",
-  "search_mode": "hybrid",
-  "top_k": 100,
-  "latency_ms": 842,
-  "weights": {
-    "visual": 0.4,
-    "caption": 0.3,
-    "ocr": 0.1,
-    "asr": 0.1,
-    "object": 0.1
-  },
-  "top_results": [
-    {"video_id": "L01_V028", "frame_id": 25300, "score": 0.88}
-  ]
-}
-```
-
-## Storage Priority
-
-### P0 Mandatory
-
-- `media/videos`
-- `media/keyframes`
-- `media/thumbnails`
-- `app.sqlite` with runtime metadata, app state, and FTS5
-- `visual.faiss`
-- `vector_map` / `visual_mapping.parquet`
-- `timeline_keyframes`
-- `query_sessions`
-- `candidates`
-
-### P1 Should Have Early
-
-- OCR;
-- ASR/transcripts;
-- normalized text fields;
-- object/concept tags;
-- captions;
-- evidence documents;
-- search logs;
-- copy/export config;
-- query expansion dictionary.
-
-### P2/P3 Deferred
-
-- dense LVLM captions for all frames;
-- text embedding indexes;
-- scene/action/person tracking;
-- TRAKE event candidates;
-- Q&A answer candidates;
-- similarity graph;
-- audio event tags.
-
-## Runtime Loading Rules
-
-Load into RAM:
-
-- FAISS index if it fits;
-- small config;
-- recent search results;
-- small LRU thumbnail cache;
-- hot metadata cache.
-
-Do not load into RAM:
-
-- raw videos;
-- full keyframes;
-- all thumbnails;
-- all captions;
-- all OCR;
-- all ASR;
-- raw embedding `.npy` files.
-
-If FAISS is too large:
-
-- use FAISS mmap / IVF / PQ;
-- split index by batch/dataset;
-- keep vector index on SSD when needed.
-
-## Runtime Access Rules
-
-Search path:
-
-```text
-Query
-  -> FAISS / SQLite FTS5
-  -> row_id / doc_id
-  -> SQLite metadata lookup
-  -> return video_id, frame_id, paths, evidence
-  -> UI lazy-loads thumbnails
-```
-
-Never do during live search:
-
-- load all images;
-- load all videos;
-- scan the raw filesystem;
-- run OCR/ASR/captioning.
+- Official AIC 2026 dataset structure and submission format are not confirmed.
+- Final object/OCR/ASR provider formats are not confirmed.
+- Exact schema DDL will be finalized in `MVP-1 Runtime SQLite Schema + Validation`.

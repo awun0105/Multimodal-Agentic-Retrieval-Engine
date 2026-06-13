@@ -1,74 +1,72 @@
-# System 2: Retrieval Engine (Runtime App)
+# System 2: Retrieval Runtime
 
 ## Status
 
-Canonical System 2 Architecture. Derived from `SPEC.md`.
+Canonical for the live runtime. System 2 is the online query, search, evidence, candidate, and agent application.
 
-## Architectural Position
-
-System 2 is the **live, online query, search, and validation application**. It runs during active competition use and is exposed locally or over LAN.
+## Runtime Flow
 
 ```text
-user / agent query
-  -> FastAPI Search Controller
-  -> Retriever Adapters (FAISS, SQLite FTS5)
-  -> Hybrid Scoring & Fusion
-  -> Evidences Panel & Detailed Inspector
-  -> Query Sessions / Candidate Basket
+human UI or agent query
+  -> query/session context
+  -> modality adapters
+  -> fusion and diversification
+  -> optional rerank top-K
+  -> evidence builder
+  -> candidate/session persistence
+  -> UI/API payloads
 ```
 
----
+System 2 must not scan raw organizer folders at query time. It reads app-ready artifacts defined in `docs/architecture/data-contracts.md`.
 
-## 1. Clean Architecture Layers
+## Core Ports And Adapters
 
-System 2 must strictly separate concern layers to maintain debuggability under pressure.
+| Component | Role |
+| --- | --- |
+| `SQLiteRepository` | Reads catalog/evidence and writes query sessions, search runs, candidates, and agent traces. |
+| `FaissRetriever` | Queries visual/vector indexes and resolves `vector_id` through SQLite `vector_map`. |
+| `Fts5Retriever` | Queries captions, OCR, ASR, objects, and metadata FTS5 tables inside `app.sqlite`. |
+| `MediaStorePort` | Resolves logical media refs to served URLs without exposing absolute paths. |
+| `LocalFileMediaStore` | MVP implementation backed by `${AIC_DATA_ROOT}/processed/media`. |
+| `EvidenceBuilder` | Joins ranked hits to captions, OCR, ASR, objects, metadata, thumbnails, and video refs. |
+| `FusionEngine` | Normalizes, weights, diversifies, and reranks adapter outputs. |
 
-### API Layer
-FastAPI routes that handle HTTP requests and response mapping.
-- Receives queries, type filters, and current sessions.
-- Exposes stream endpoints for video files.
-- Return response payloads in snake_case JSON models.
+## Retrieval Adapters
 
-### Service Layer
-Contains workflow and domain business logic.
-- **Retriever Orchestrator**: Orchestrates queries to visual and text layers.
-- **Scoring & Fusion Engine**: Combines FAISS cosine similarity scores and FTS5 BM25 text scores using configurable weights.
-- **Export Validator**: Validates basket outputs against rule constraints.
+Minimum adapters:
 
-### Repository / Storage Layer
-Handles persistent IO.
-- SQLite WAL repository classes.
-- MediaStore adapters (`LocalFileMediaStore` MVP) for URI translation.
-- FAISS client wrappers.
+- Visual adapter: FAISS image/keyframe vectors.
+- Caption adapter: generated or imported keyframe/segment captions.
+- OCR adapter: text detected in keyframes.
+- ASR adapter: spoken transcript segments by video/time range.
+- Object adapter: object/concept labels and optional boxes.
+- Metadata adapter: title, source/channel, official annotations, tags, duration, fps.
 
-### UI Layer
-The React Single Page Application loaded by browser clients.
+Adapters return normalized hit records with `source`, `score`, `keyframe_id` or resolvable `video_id`/time range, and evidence snippets. API responses must resolve to `keyframe_id`, `video_id`, and `frame_id` before reaching UI.
 
----
+## Fusion Pipeline
 
-## 2. Runtime Database Optimization
+1. Parse query type: TKIS, Q&A, TRAKE, VKIS, or generic hybrid.
+2. Run relevant adapters in parallel when available.
+3. Normalize scores per adapter to `[0, 1]`.
+4. Apply query-type weights from `docs/product/search-fusion.md`.
+5. Merge by `keyframe_id` and retain per-modality evidence.
+6. Diversify by video when the UI requests it.
+7. Rerank top-K candidates with richer evidence when configured.
+8. Build UI-ready evidence summaries and validation warnings.
 
-To support sub-second query times with multiple LAN users, the SQLite database must run in WAL mode with normal synchronization.
+## Write Model
 
-```sql
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA foreign_keys=ON;
-```
+Search reads are mostly read-only. Writes are scoped to Query Sessions:
 
-Search routines should be read-only lookups. Write operations (saving candidate cards, notes, query history) are small and scoped to independent Query Sessions.
+- `query_sessions`
+- `search_runs`
+- `candidates`
+- `agent_runs`
+- `agent_steps`
 
----
+Multiple LAN users may write to different sessions concurrently. SQLite WAL is the MVP concurrency model; long-running retrieval should not hold write transactions.
 
-## 3. Search and Retrieval Pattern
+## Agent Runtime
 
-The search engine uses the Adapter and Strategy patterns to keep retrieval modular:
-1. **Retriever Adapters**:
-   - `FaissRetriever`: Queries visual vector space.
-   - `Fts5Retriever`: Queries FTS5 virtual tables.
-   - `ObjectFilter`: Filters metadata/objects counts from SQLite tables.
-2. **Search Strategies**:
-   - `TkisStrategy` (Textual KIS): Combines FTS5 text indexes with visual similarities.
-   - `QaStrategy` (Visual Q&A): Weights FTS5 object filtering heavily before ranking visual matches.
-   - `TrakeStrategy` (Temporal Relationship): Scans consecutive keyframes chronologically to identify sequence matches.
-   - `VkisStrategy` (Video KIS): Groups frame similarities by video constraints.
+The agent is an automation layer on the same APIs and result model as the UI. It may classify query intent, run multi-step retrieval, inspect evidence, save candidates, and propose exports. It must keep traceable tool calls and allow human accept/edit/reject in the same Query Session.

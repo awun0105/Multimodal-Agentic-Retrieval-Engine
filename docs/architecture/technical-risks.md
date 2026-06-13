@@ -2,36 +2,17 @@
 
 ## Status
 
-Canonical Technical Risks tracking. Derived from `SPEC.md`.
+Canonical risk register for the MVP docs and early implementation.
 
-## Risk 1: Dataset Format Uncertainty
-
-- **Risk**: 2026 organizers change the dataset format (e.g., no keyframes, new metadata format).
-- **Mitigation**: System 1 ingestion notebooks are decoupled. Adapters must be written for the exact format once released. System 2 is shielded from raw layout.
-
-## Risk 2: RAM Exhaustion
-
-- **Risk**: A massive 2026 dataset may produce a FAISS index too large for RAM, or the UI may load too many high-res images.
-- **Mitigation**:
-  - Use WebP 160px/320px thumbnails for grids.
-  - Implement virtualized lists in React.
-  - Support memory-mapped FAISS indices if needed.
-  - SQLite metadata is queried on-demand.
-
-## Risk 3: HDD Bottleneck
-
-- **Risk**: Raw videos or massive image folders on an external HDD cause slow IO during search.
-- **Mitigation**: Live search only reads SQLite, FAISS, and SSD-cached thumbnails. Raw video files are only touched for on-demand playback/preview.
-
-## Risk 4: Agent Latency and Unpredictability
-
-- **Risk**: Agent loops burn too much time or drift from the objective.
-- **Mitigation**:
-  - Agent must use the same fast retrieval APIs as humans.
-  - Strictly enforce `max_steps` and `max_runtime_sec`.
-  - Provide an easy human-override interrupt.
-
-## Risk 5: Submission Format Changes
-
-- **Risk**: 2026 requires an active REST API submission or a very different CSV.
-- **Mitigation**: Export behavior is a configurable output helper, not a core retrieval engine dependency.
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| App-ready validation drift | Runtime behavior silently diverges from data contract. | Keep `docs/architecture/data-contracts.md` authoritative; add seed dataset validation before runtime work. |
+| Official data format drift | 2026 organizer files may differ from source assumptions. | Keep ingestion configurable; isolate raw import adapters from canonical SQLite/FAISS contract. |
+| FAISS index loading time | Large indexes may slow startup or exceed memory. | Use index manifests, lazy loading where possible, and explicit health/status endpoints. |
+| Vector mapping mismatch | FAISS result rows may resolve to wrong frames. | Validate every vector row against SQLite `vector_map` and `keyframes`. |
+| Cache invalidation errors | Old thumbnails/results may appear after dataset rebuild. | Key cache by `dataset_id`, build id, and index manifest hash; cache is disposable. |
+| LAN concurrency on SQLite | Multiple teammates may write sessions/candidates during active search. | Use WAL, short write transactions, session-scoped writes, and avoid long write locks. |
+| Text modality sparsity | OCR/ASR/caption/object coverage may be incomplete. | Return evidence availability flags and per-modality score components. |
+| Media path portability | Absolute paths break on another machine. | Store logical refs only and resolve through `MediaStorePort`. |
+| Agent overreach | Agent may bypass UI/retrieval rules or produce untraceable answers. | Force same APIs as UI, trace tool calls, cap runtime/steps, and require human override. |
+| Competition export drift | Final answer format may change. | Keep output helper configurable; avoid hard-coded final submission API assumptions. |
