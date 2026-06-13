@@ -54,7 +54,7 @@ Canonical meaning:
 ```text
 official/raw dataset
   -> DuckDB preprocessing/staging/validation
-  -> SQLite runtime artifacts + FAISS + SQLite FTS5 + media files
+  -> app-ready artifacts under `${AIC_DATA_ROOT}` + `${AIC_RUNTIME_ROOT}`
   -> FastAPI retrieval API
   -> React/Vite SPA
   -> Query Sessions / Candidate Basket / Output Helper / Optional Agent Panel
@@ -85,9 +85,12 @@ The product is keyframe-first:
 ## Ingestion Boundaries
 
 `docs/architecture/system1-ingestion.md` is the canonical ingestion planning document.
-`docs/references/original-sources/INGESTION.md` is preserved as reference-only source material.
+Archived ingestion inputs are historical only; canonical implementation planning starts from `docs/architecture/system1-ingestion.md`.
 
 Canonical ingestion direction:
+
+- `docs/architecture/data-contracts.md` is the canonical app-ready contract for runtime inputs.
+- `docs/architecture/storage-strategy.md` defines repo/data/runtime root separation.
 
 - DuckDB handles bulk import, staging, normalization, and validation.
 - SQLite WAL is the runtime source of truth.

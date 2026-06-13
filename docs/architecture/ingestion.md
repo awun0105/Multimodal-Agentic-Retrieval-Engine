@@ -7,8 +7,7 @@ Canonical planning document for ingestion architecture. Derived from archived in
 ## Source-of-Truth Rules
 
 - `docs/architecture/system1-ingestion.md` is the canonical System 1 ingestion architecture source for future implementation planning.
-- `docs/references/original-sources/INGESTION.md` is reference-only source material.
-- `docs/references/original-sources/DATA_READY.md` is reference-only source material.
+- Archived source inputs are historical only and are not required for implementation.
 
 ## Goal
 

@@ -1,69 +1,90 @@
-# System 1: Ingestion Pipelines (Offline Staging)
+# System 1: Ingestion And Preprocessing
 
 ## Status
 
-Canonical Ingestion Architecture. Derived from `docs/references/original-sources/INGESTION.md`.
+Canonical for offline preprocessing. System 1 produces the app-ready contract in `docs/architecture/data-contracts.md` and never serves live user queries.
 
-## Architectural Position
+## Responsibility
 
-System 1 is an **offline, preprocessing, staging, and validation system**. It does not run during active retrieval. Its output is the App-Ready dataset loaded by System 2.
+System 1 converts raw organizer data and generated signals into validated app-ready artifacts. System 2 reads only SQLite, FTS5 tables, FAISS indexes, and logical media refs produced by this system.
 
 ```text
-raw data (videos, official keyframes)
-  -> Task-specific Notebooks (CLIP, Whisper, OCR, Captions)
-  -> Sharded output artifacts (JSONL, Parquet, NPY)
-  -> DuckDB aggregation & validation
-  -> app.sqlite + visual.faiss + local thumbnails
+raw organizer files
+  -> dataset registration
+  -> media discovery
+  -> metadata normalization
+  -> thumbnail/keyframe normalization
+  -> OCR / ASR / caption / object extraction or import
+  -> embedding generation/import
+  -> DuckDB staging and validation
+  -> SQLite WAL + FTS5 + FAISS + validation reports
 ```
 
----
+## Required Stages
 
-## 1. Shard-based Preprocessing Workflow
+| Stage | Required Output | Notes |
+| --- | --- | --- |
+| Dataset registration | `datasets` row and build manifest | Assign stable `dataset_id`, source version, build time, and source roots. |
+| Media discovery | `videos`, discovered media manifest | Discover videos/keyframes from configurable roots; do not hardcode personal paths. |
+| Metadata normalization | normalized staging tables | Titles, source/channel, duration, fps, dimensions, official annotations, and tags. |
+| Keyframe normalization | `keyframes` rows and media refs | Use `keyframe_id = "{video_id}:{frame_id}"`; store logical refs only. |
+| Thumbnail generation | `thumbnail_ref` per keyframe | Generate missing thumbnails under `${AIC_DATA_ROOT}/processed/media/thumbnails/`. |
+| OCR import/generation | `ocr_texts`, `ocr_fts` | Preserve confidence and optional boxes when available. |
+| ASR import/generation | `asr_segments`, `asr_fts` | ASR is usually time-range evidence on `video_id`; optional alignment links to keyframes. |
+| Caption import/generation | `captions`, `caption_fts` | Captions may be keyframe-level or segment-level, but UI results resolve to keyframes. |
+| Object/concept import | `objects`, `object_fts` | Preserve label, score, optional box, source, and model/version. |
+| Embedding import/generation | FAISS index + `vector_map` | FAISS rows must resolve through SQLite before returning results. |
+| Validation | validation report and failure status | App-ready build is usable only when required checks pass. |
 
-To allow team members to parallelize processing, the dataset is split into chunks (e.g., folder-based chunk `L01`, `L02`). Members run task-specific Jupyter notebooks independently on their local GPU workstations, Colab, or Kaggle.
+## CLI Contract
 
-### Notebook 1: Visual Feature Extraction (`NB_01_Vision_CLIP.ipynb`)
-- **Task**: Extract frames at 1fps (or load official keyframes) and run CLIP text/image visual encoders.
-- **Rules**: Load model once; batch process frames; release memory per video using garbage collection.
-- **Output**: `temp_dense/{video_name}_dense.npy` containing vector matrices.
+Preprocessing must be runnable from batch CLI scripts. Minimum interface:
 
-### Notebook 2: Audio Transcription (`NB_02_Audio_Whisper.ipynb`)
-- **Task**: Extract audio track from videos and run OpenAI Whisper (base or small).
-- **Rules**: Output transcript segments containing text and start/end time ranges.
-- **Output**: `temp_sparse/{video_name}_transcript.json`.
+```text
+aic-prepare build \
+  --dataset-id aic2026 \
+  --input-root ${AIC_DATA_ROOT}/raw \
+  --data-root ${AIC_DATA_ROOT} \
+  --runtime-root ${AIC_RUNTIME_ROOT} \
+  --report ${AIC_DATA_ROOT}/staging/reports/aic2026-validation.json
+```
 
-### Notebook 3: OCR & Metadata (`NB_03_Metadata_OCR.ipynb`)
-- **Task**: Run EasyOCR/PaddleOCR on keyframes. Parse organizer metadata JSONs.
-- **Output**: `temp_sparse/{video_name}_ocr.json` and `temp_metadata/{video_name}_meta.json`.
+CLI rules:
 
----
+- Accept input roots and output roots as config or flags.
+- Write large media/staging artifacts under `${AIC_DATA_ROOT}`.
+- Write hot runtime artifacts under `${AIC_RUNTIME_ROOT}`.
+- Emit machine-readable validation reports.
+- Fail non-zero when required validation checks fail.
+- Support resumable shard processing for long-running OCR/ASR/embedding jobs.
+- Never require absolute paths embedded in SQLite.
 
-## 2. Notebook Safety Constraints
+## Artifact Outputs
 
-Every processing notebook must enforce these guardrails:
-1. **Dynamic Paths**: Paths must be configurable parameters at the top. No personal machine paths hardcoded.
-2. **Checkpointing**: Check if the output file already exists before running inference. Skip processed videos.
-3. **Identity standard**: Use name normalization to turn `L01/V001.mp4` to `{video_id}_{frame_id}`.
-4. **RAM GC**: Explicitly call `del frames, features` and `gc.collect()` at the end of each video processing loop.
+```text
+${AIC_DATA_ROOT}/processed/media/videos/{video_id}.mp4
+${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{frame_id_padded}.jpg
+${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{frame_id_padded}.webp
+${AIC_DATA_ROOT}/warehouse/warehouse.duckdb
+${AIC_DATA_ROOT}/staging/reports/{dataset_id}-validation.json
+${AIC_RUNTIME_ROOT}/db/app.sqlite
+${AIC_RUNTIME_ROOT}/indexes/visual.faiss
+${AIC_RUNTIME_ROOT}/indexes/visual_index_manifest.json
+```
 
----
+The earlier `data/` tree in source material is a logical artifact layout, not a physical repository layout.
 
-## 3. DuckDB Staging & Aggregation
+## Validation Gate
 
-Once the processing chunks are complete, they are copied to the host machine. The aggregator script `00_Merge_To_DataReady.py` uses DuckDB to build the final runtime database.
+System 1 must prove:
 
-DuckDB scope:
-1. **Bulk Import**: Read sharded JSON, JSONL, Parquet, and NPY files.
-2. **Normalize and Clean**: Join transcripts, OCR, object tables, and media info. Resolves frame time offsets.
-3. **Build Runtime DB**: Insert aggregated rows into the runtime `app.sqlite` tables.
-4. **Concatenate Vectors**: Join individual `.npy` outputs into one continuous array to build `visual.faiss`.
-5. **Validation Report**: Run validation queries to check path integrity and missing dependencies.
-
----
-
-## 4. Ingestion Output Contract
-
-The completed aggregation must deposit exactly:
-- `data/db/app.sqlite` (Containing SQLite WAL tables and FTS5 indices)
-- `data/indexes/visual.faiss` (Vector index)
-- `data/media/` (Standard structured videos, keyframes, and generated thumbnails)
+- No duplicate `video_id` and no duplicate `(video_id, frame_id)`.
+- Every `keyframe_id` matches `"{video_id}:{frame_id}"`.
+- Every logical media ref resolves through `MediaStorePort`.
+- Every keyframe has a thumbnail ref.
+- Every FAISS vector has a `vector_map` row.
+- Every `vector_map.keyframe_id` exists in `keyframes`.
+- Caption, OCR, and object rows point to existing keyframes.
+- ASR rows point to existing videos and valid time ranges.
+- SQLite contains no absolute or machine-specific paths.
+- FTS5 row counts match source relational tables or documented expectations.

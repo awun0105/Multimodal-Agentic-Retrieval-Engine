@@ -2,7 +2,7 @@
 
 ## Status
 
-Canonical Rules Document. Derived from `HCMAI-RULES.md`.
+Canonical Rules Document. Supersedes the earlier archived rules notes.
 
 ---
 

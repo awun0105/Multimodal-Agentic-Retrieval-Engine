@@ -2,145 +2,98 @@
 
 ## Status
 
-Canonical query workflow specification for System 2. Derived from `SPEC.md`.
+Canonical workflow model for human and agent use. One Web UI supports all workflows through Query Sessions.
 
-## Principles
+## Shared Query Session Model
 
-- Query workflows run inside the same shared Web UI.
-- Query workflows save state into Query Sessions.
-- Query workflows share the same retrieval core, evidence builder, and candidate model.
-- Current clue, accumulated clues, and selected clues must all be supported.
+A Query Session stores:
+
+- query type: `tkis`, `qa`, `trake`, `vkis`, or `hybrid`;
+- current clue batch;
+- accumulated clues;
+- selected clues enabled for a search;
+- search history;
+- notes;
+- pinned candidates;
+- candidate validation/export state;
+- optional agent runs.
+
+Progressive reveal supports two modes:
+
+- `current_only`: search only the newest clue batch.
+- `accumulated`: search the merged clue history for the session.
+
+Pinned candidates persist across clue batches.
 
 ## Textual KIS
 
-### Goal
+Goal: find a frame from natural-language clues.
 
-Find a target video/keyframe from a natural language description.
+Flow:
 
-### Workflow
-
-```text
-User enters clue(s)
--> optional query understanding / clue decomposition
--> hybrid retrieval
--> ranked keyframes/videos
--> inspect keyframe and nearby frames
--> save candidate
--> copy video_id/frame_id
-```
-
-### Required Features
-
-- current-clue search
-- accumulated-clue search
-- selected-clue search
-- optional query rewriting
-- group-by-video mode
-- same-video keyframe browsing
+1. Create or reuse a Query Session with type `tkis`.
+2. Add the current clue batch.
+3. Search current-only or accumulated clues.
+4. Fuse caption, OCR, ASR, object, metadata, and visual adapters.
+5. Inspect evidence and nearby frames.
+6. Pin candidates and copy `video_id,frame_id`.
 
 ## Q&A
 
-### Goal
+Goal: answer a question using visual and textual evidence.
 
-Find the target video/keyframe and produce the answer value.
+Flow:
 
-### Workflow
+1. Enter the question and optional clue context.
+2. Search with high weight on text evidence and objects when relevant.
+3. Inspect candidate evidence.
+4. Save a candidate with `answer_text`.
+5. Validate export fields: `video_id`, `frame_id`, `answer_text`.
 
-```text
-User enters retrieval clue + question
--> retrieve candidate frames/videos
--> inspect evidence and nearby keyframes
--> use answer helper when needed
--> copy video_id, frame_id, answer
-```
-
-### Answer Helper Requirements
-
-- free-text answer box
-- optional normalization presets:
-  - digits only
-  - uppercase
-  - remove spaces
-  - remove accents
-  - max-length check
-- evidence snippets from OCR, ASR, and captions
+The UI must support editing answer text after saving a candidate.
 
 ## TRAKE
 
-### Goal
+Goal: produce an ordered frame sequence, usually within one video.
 
-Find ordered event frames in one video.
+Flow:
 
-### Workflow
+1. Search the first clue or anchor frame.
+2. Inspect same-video timeline around the candidate.
+3. Add frames to a sequence editor in order.
+4. Use object/text/time evidence to validate sequence continuity.
+5. Export ordered `(video_id, frame_id)` rows.
 
-```text
-User defines event sequence
--> search broad candidate videos
--> inspect same-video timeline/keyframes
--> choose frame for each event
--> validate order
--> copy TRAKE row
-```
-
-### MVP Behavior
-
-- user manually selects frames into a sequence
-- system validates same-video and increasing frame order
-- optional helper suggests candidate frames per event
+TRAKE candidates may contain multiple keyframes instead of one `keyframe_id`.
 
 ## VKIS / Video KIS
 
-### Goal
+Goal: locate a video moment from a visual/video description.
 
-Find the correct video and matching keyframes when the query is video-oriented.
+Flow:
 
-### Workflow
+1. Describe visual content or remembered scene.
+2. Prioritize visual, object, caption, and metadata adapters.
+3. Group/diversify results by video when scanning broadly.
+4. Inspect video player and nearby keyframe strip.
+5. Save the best frame candidate.
 
-```text
-User enters query
--> retrieve ranked candidate frames
--> group by video
--> inspect same-video keyframes and metadata
--> save likely video/frame candidates
-```
+## Candidate Selection Behavior
 
-### Required Features
+- Candidate cards show score, modality badges, video/frame IDs, timestamp, and warnings.
+- Selection never auto-submits; human must inspect/copy/export.
+- Saving a candidate snapshots score and evidence for later comparison.
+- Similar-frame and same-video exploration must preserve the current Query Session.
 
-- group by video
-- top-N per video
-- same-video explorer
-- candidate diversification
+## Agent Workflow
 
-## Progressive Clue Reveal
+The agent uses the same Query Session and APIs as the UI:
 
-Query Sessions must support progressive reveal.
+1. Classify query type.
+2. Choose clue mode and retrieval adapters.
+3. Run bounded search/refinement steps.
+4. Inspect evidence and save candidate proposals.
+5. Explain tool calls and rationale.
+6. Wait for human accept, edit, or reject.
 
-### Required State
-
-- clue list ordered by time
-- user query history
-- pinned candidates
-- selected clue subsets
-- notes
-
-### Search Modes
-
-- search only current clue
-- search accumulated clues
-- search selected clues
-
-## Shared Candidate Model
-
-All workflows must reuse the same candidate shape:
-
-```json
-{
-  "video_id": "L01_V028",
-  "frame_id": 25300,
-  "score": 0.842,
-  "answer": null,
-  "trake_frames": null,
-  "notes": "...",
-  "label": "maybe"
-}
-```
+Agent constraints: bounded steps, bounded runtime, traceable tool calls, no direct raw-file scanning, and no bypass of `MediaStorePort`/repository abstractions.
