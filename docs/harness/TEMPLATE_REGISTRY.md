@@ -40,6 +40,7 @@ normalizing, or syncing Project Harness documentation.
 | High-risk validation | `docs/harness/templates/stories/high-risk/validation.md` | `docs/stories/<epic>/<story>/validation.md` | High-risk proof plan | reviewer |
 | Decision | `docs/harness/templates/decisions/decision.md` | `docs/decisions/NNNN-<slug>.md` | Durable product or architecture decision | reviewer |
 | Validation report | `docs/harness/templates/validation/validation-report.md` | `docs/validation/reports/<date>-<slug>.md` | Capturing notable proof | reviewer |
+| Detailed final report | `docs/harness/templates/report/report_format.md` | Agent final response | Formatting detailed, audit-style, handoff, or release-quality final responses | reviewer |
 
 ## Existing Project Sync
 
