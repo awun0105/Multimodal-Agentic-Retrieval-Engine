@@ -55,7 +55,7 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 
 ## Done Criteria
 
-1. Có bộ app-ready artifacts hoàn chỉnh từ data năm ngoái.
+1. Có bộ app-ready artifacts hoàn chỉnh từ raw videos và metadata JSON đã pair/validate.
 2. Validation report pass.
 3. Team có thể trỏ System 2 vào artifact thật.
 4. Không cần mock dataset để bắt đầu backend/UI nữa.

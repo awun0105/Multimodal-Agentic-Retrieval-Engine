@@ -1,4 +1,4 @@
-# Phase 7 — Hybrid Search, Workspace, And Output
+# Phase 7 — Hybrid Search, Workspace, And Submission
 
 ## Maps To
 
@@ -14,7 +14,7 @@ Hoàn thiện workflow làm việc thật của người dùng:
 - query sessions
 - clues/notes/history
 - candidate basket
-- output helper
+- submission helper
 
 ## Scope
 
@@ -22,7 +22,7 @@ Hoàn thiện workflow làm việc thật của người dùng:
 - fusion and rerank service
 - query session persistence
 - candidate basket backend/UI
-- output helper
+- answer draft, review, submission history, and configurable organizer API adapter
 
 ## Suggested Issue Breakdown
 
@@ -31,21 +31,21 @@ Hoàn thiện workflow làm việc thật của người dùng:
 3. Add session persistence
 4. Add clue handling
 5. Add candidate basket
-6. Add output helper
+6. Add submission helper
 
 ## Done Criteria
 
 1. Người dùng có thể search và giữ trạng thái làm việc.
-2. Có thể lưu candidate và export output cơ bản.
+2. Có thể lưu candidate, tạo answer draft, review/edit, và xem submission history.
 3. Workflow TKIS/Q&A/TRAKE/VKIS có baseline usable.
 
 ## Validation
 
 - manual workflow checks
 - session persistence tests
-- candidate/export checks
+- candidate/submission checks
 
 ## Risks
 
-- overfit output helper theo rule chưa chốt;
+- overfit submission helper theo rule/API chưa chốt;
 - workspace state lệch canonical query model.

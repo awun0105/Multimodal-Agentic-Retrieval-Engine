@@ -4,11 +4,14 @@
 
 Canonical product-facing API shape. Names here must match `docs/architecture/data-contracts.md`.
 
+Requirements context: `docs/product/requirements-truth-set.md`.
+
 ## Naming Rules
 
 - Use `video_id` for API and DB payloads.
-- Use `frame_id` as integer official frame id.
+- Use `frame_id` as integer video frame number.
 - Use `keyframe_id = "{video_id}:{frame_id}"` as API/DB glue id.
+- Use probed per-video `fps` to compute `timestamp_sec`; last-year evidence suggests 25 fps as a planning/default expected value, not a universal hard-coded runtime divisor.
 - Treat `legacy video-name field` only as legacy wording in old source material, not as canonical payload field.
 - URL path params containing `keyframe_id` must be URL-safe encoded by clients because the value contains `:`.
 
@@ -108,6 +111,8 @@ Session payload:
 }
 ```
 
+`client_label` is lightweight teammate attribution only. It is not authentication and does not imply role or permission enforcement.
+
 ## Search
 
 ```http
@@ -190,6 +195,67 @@ Candidate payload:
   "created_by": "teammate-a"
 }
 ```
+
+## Submission Drafts And History
+
+Organizer submission API details are unknown. Internal API shape must therefore model drafts and history without hard-coding final organizer payloads.
+
+```http
+POST /api/sessions/{session_id}/submission-drafts
+GET /api/sessions/{session_id}/submission-drafts
+PATCH /api/sessions/{session_id}/submission-drafts/{draft_id}
+POST /api/sessions/{session_id}/submissions
+GET /api/sessions/{session_id}/submissions
+GET /api/submissions/{submission_id}
+```
+
+Submission draft payload:
+
+```json
+{
+  "draft_id": "draft_001",
+  "session_id": "qs_001",
+  "query_type": "tkis",
+  "candidate_ids": ["cand_001"],
+  "answer_payload": {
+    "video_id": "L21_0001",
+    "frame_id": 25300,
+    "answer_text": null,
+    "trake_sequence": []
+  },
+  "validation_warnings": ["official submission payload format unknown"],
+  "edited_by": "teammate-a"
+}
+```
+
+Submission history payload:
+
+```json
+{
+  "submission_id": "sub_001",
+  "session_id": "qs_001",
+  "draft_id": "draft_001",
+  "query_type": "tkis",
+  "status": "submitted",
+  "attempt_number": 1,
+  "submitted_payload_snapshot": {
+    "video_id": "L21_0001",
+    "frame_id": 25300
+  },
+  "organizer_response_status": "unknown",
+  "organizer_response_snapshot": null,
+  "submitted_by": "teammate-a",
+  "submitted_at": "2026-06-14T00:00:00Z"
+}
+```
+
+Submission rules:
+
+- Submit is per active question/session.
+- Multiple submissions may be possible, but wrong attempts may reduce score.
+- UI must show submission history before new submit attempts.
+- Organizer feedback may be immediate correctness, accepted-only, or unknown until official API behavior is known.
+- The app does not model submit roles in MVP; teammate submit responsibility is handled by team process outside the app.
 
 ## Agent Runs
 

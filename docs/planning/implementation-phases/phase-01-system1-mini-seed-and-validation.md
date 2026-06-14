@@ -11,11 +11,12 @@ Next implementation phase.
 
 ## Goal
 
-Implement một lát cắt nhỏ của System 1 để dùng **subset nhỏ từ data năm ngoái** tạo ra bộ app-ready artifacts đầu tiên.
+Implement một lát cắt nhỏ của System 1 để dùng **subset nhỏ gồm raw video + metadata JSON đã pair theo filename stem** tạo ra bộ app-ready artifacts đầu tiên.
 
 Mục tiêu không phải ingest toàn bộ dataset ngay, mà là chứng minh:
 
 - data contract có thể chạy thật;
+- raw video và metadata JSON match được 1-1 theo stem;
 - pipeline tối thiểu có thể tạo SQLite/media refs/report;
 - app-ready artifacts đầu tiên đủ làm input thật cho System 2.
 
@@ -25,18 +26,20 @@ Nếu nhảy thẳng sang System 2, team sẽ phải dùng mock hoặc giả đ�
 
 ## Scope
 
-### A. Chọn subset data năm ngoái
+### A. Chọn subset raw video + metadata JSON
 
 - 1-2 video hoặc một phần dataset rất nhỏ
-- vài keyframes tiêu biểu
-- vài ví dụ caption/OCR/ASR/object/metadata nếu có
+- metadata JSON tương ứng cho từng video, cùng filename stem
+- không assume keyframes/features/OCR/ASR/object có sẵn từ ban tổ chức
 
 ### B. Implement System 1 mini
 
 Pipeline tối thiểu cần làm được:
 
 - media discovery
+- raw video / metadata JSON pairing theo filename stem
 - metadata normalization ở mức đủ dùng
+- keyframe extraction từ raw video
 - keyframe normalization
 - thumbnail generation hoặc placeholder rõ ràng
 - SQLite fixture/build output
@@ -48,32 +51,37 @@ Output mong muốn:
 
 - processed media refs đúng contract
 - `app.sqlite`
+- normalized video registry với `video_id = source_video_stem`
 - FTS5 fixture tối thiểu hoặc seed text-search rows
 - `vector_map` fixture tối thiểu
 - validation report
 
 ## Suggested Issue Breakdown
 
-1. Define last-year tiny subset scope
-2. Create media discovery rules for subset
-3. Normalize video/keyframe identity
-4. Build minimal app-ready SQLite
-5. Seed minimal evidence rows
-6. Add validation checks
-7. Emit validation report
-8. Document how subset is built
+1. Define tiny paired subset scope
+2. Create raw video / metadata discovery rules
+3. Validate stem-based pairing and unique `video_id`
+4. Normalize video/keyframe identity
+5. Extract minimal keyframes and thumbnails
+6. Build minimal app-ready SQLite
+7. Seed minimal evidence rows
+8. Add validation checks
+9. Emit validation report
+10. Document how subset is built
 
 ## Done Criteria
 
-1. Có subset nhỏ từ data năm ngoái được chọn rõ.
-2. System 1 mini tạo được app-ready artifacts đầu tiên.
-3. Validation report pass.
-4. Team có input thật để thiết kế System 2, không còn chỉ dùng mock.
+1. Có subset nhỏ raw video + metadata JSON được chọn rõ.
+2. Pairing validation pass: mỗi raw video có đúng một metadata JSON cùng stem, và stem là unique `video_id`.
+3. System 1 mini tạo được app-ready artifacts đầu tiên.
+4. Validation report pass.
+5. Team có input thật để thiết kế System 2, không còn chỉ dùng mock.
 
 ## Validation
 
 - inspect generated artifact tree
 - inspect `app.sqlite`
+- verify raw video / metadata stem pairing
 - verify logical refs
 - verify `vector_map` resolution
 - verify validator catches broken cases

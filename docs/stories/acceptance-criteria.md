@@ -16,8 +16,9 @@ The system is acceptable for MVP when:
 6. A user can save candidates to a basket inside a Query Session.
 7. A user can copy `video_id`, `frame_id`, and `video_id,frame_id`.
 8. The app runs locally on one machine (SQLite WAL + FastAPI + React/Vite).
-9. The app can be exposed over LAN for shared browser access.
-10. The UI avoids loading all images at once and does not exceed RAM constraints during normal use.
+9. The app can be hosted on one machine and exposed over LAN for shared browser access.
+10. The host machine is the single runtime holder of SQLite, FAISS, and media/data artifacts during LAN use.
+11. The UI avoids loading all images at once and does not exceed RAM constraints during normal use.
 
 ## Competition Practice Ready
 

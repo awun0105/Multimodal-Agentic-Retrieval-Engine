@@ -84,24 +84,27 @@ The ingestion pipeline should prepare:
 
 ## Canonical Input Strategy
 
-Input layout must stay flexible because official 2026 details are not confirmed.
-The importer should detect available folders/files and skip missing optional
-sources cleanly.
+Input layout must stay flexible at the file-extension level, but the current dataset understanding is now specific: organizer input provides raw videos plus one metadata JSON per video, matched by filename stem.
 
-Possible inputs include:
+Required organizer inputs:
 
 - raw videos
-- official keyframes
-- official embeddings
-- metadata JSON/CSV/Parquet
+- metadata JSON files paired 1-1 with raw videos by stem
+
+Derived project-generated inputs or artifacts may later include:
+
+- extracted keyframes
+- generated embeddings
 - object detection files
-- OCR/ASR/caption files if provided
+- OCR/ASR/caption files
 
 ## Validation Responsibilities
 
 Ingestion validation should catch:
 
 - missing video files
+- missing metadata JSON for a raw video stem
+- metadata JSON without a matching raw video stem
 - missing keyframes
 - missing thumbnails when expected
 - duplicate video/frame IDs

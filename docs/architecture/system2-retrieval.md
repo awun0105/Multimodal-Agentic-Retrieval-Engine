@@ -2,7 +2,7 @@
 
 ## Status
 
-Canonical for the live runtime. System 2 is the online query, search, evidence, candidate, and agent application.
+Canonical for the live runtime. System 2 is the online query, search, evidence, candidate, submission, and agent application.
 
 ## Runtime Flow
 
@@ -14,10 +14,13 @@ human UI or agent query
   -> optional rerank top-K
   -> evidence builder
   -> candidate/session persistence
+  -> answer draft and explicit human submission
   -> UI/API payloads
 ```
 
-System 2 must not scan raw organizer folders at query time. It reads app-ready artifacts defined in `docs/architecture/data-contracts.md`.
+System 2 must not scan raw organizer folders or raw metadata JSON at query time. It reads only app-ready artifacts defined in `docs/architecture/data-contracts.md`.
+
+System 2 assumes `video_id` is the organizer filename stem chosen by System 1 during dataset pairing and validation.
 
 ## Core Ports And Adapters
 
@@ -30,6 +33,8 @@ System 2 must not scan raw organizer folders at query time. It reads app-ready a
 | `LocalFileMediaStore` | MVP implementation backed by `${AIC_DATA_ROOT}/processed/media`. |
 | `EvidenceBuilder` | Joins ranked hits to captions, OCR, ASR, objects, metadata, thumbnails, and video refs. |
 | `FusionEngine` | Normalizes, weights, diversifies, and reranks adapter outputs. |
+| `SubmissionPort` | Sends reviewed answers to organizer API when official endpoint/auth/payload are known. |
+| `SubmissionHistoryStore` | Persists drafts, attempts, response snapshots, status, actor, and timestamps per Query Session. |
 
 ## Retrieval Adapters
 
@@ -40,7 +45,7 @@ Minimum adapters:
 - OCR adapter: text detected in keyframes.
 - ASR adapter: spoken transcript segments by video/time range.
 - Object adapter: object/concept labels and optional boxes.
-- Metadata adapter: title, source/channel, official annotations, tags, duration, fps.
+- Metadata adapter: title, source/channel, normalized organizer metadata, tags, duration, fps.
 
 Adapters return normalized hit records with `source`, `score`, `keyframe_id` or resolvable `video_id`/time range, and evidence snippets. API responses must resolve to `keyframe_id`, `video_id`, and `frame_id` before reaching UI.
 
@@ -62,6 +67,8 @@ Search reads are mostly read-only. Writes are scoped to Query Sessions:
 - `query_sessions`
 - `search_runs`
 - `candidates`
+- `submission_drafts`
+- `submissions`
 - `agent_runs`
 - `agent_steps`
 
@@ -69,4 +76,6 @@ Multiple LAN users may write to different sessions concurrently. SQLite WAL is t
 
 ## Agent Runtime
 
-The agent is an automation layer on the same APIs and result model as the UI. It may classify query intent, run multi-step retrieval, inspect evidence, save candidates, and propose exports. It must keep traceable tool calls and allow human accept/edit/reject in the same Query Session.
+Organizer final-round submission is expected to happen through organizer API, but endpoint, auth/session mechanism, payload, response semantics, and rate limits are unknown. System 2 must keep submission provider details configurable and must not hard-code a final payload before official rules exist. The MVP app does not implement submit roles; teammate submit responsibility is handled by team process outside the app.
+
+The agent is an automation layer on the same APIs and result model as the UI. It may classify query intent, run multi-step retrieval, inspect evidence, save candidates, and prepare submission drafts. It must keep traceable tool calls and allow human accept/edit/reject in the same Query Session. It must not submit to organizer API without explicit human confirmation.

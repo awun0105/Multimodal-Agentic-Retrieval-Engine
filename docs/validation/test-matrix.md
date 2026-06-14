@@ -23,8 +23,8 @@ MVP scope, but no implementation proof exists yet.
 | Story | Contract | Unit | Integration | E2E | Platform | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | MVP-0 | Canonical docs, decisions, and supersession markers match accepted architecture | no | no | no | no | implemented | `docs/onboarding/doc-conflicts.md`, `docs/architecture/overview.md`, `docs/architecture/ingestion.md` (no ADRs required) |
-| MVP-0.5 | App-ready Data Contract defines roots, logical refs, IDs, SQLite/FTS5/FAISS boundaries, and validation rules | no | no | no | no | implemented | `docs/architecture/data-contracts.md`, `docs/architecture/system1-ingestion.md`, `docs/stories/backlog.md` |
-| MVP-0.6 | System 1 mini creates a tiny last-year-data subset and validation report proving the contract is executable | no | no | no | no | planned | planned |
+| MVP-0.5 | App-ready Data Contract defines organizer raw-video/metadata input, stem-based `video_id`, roots, logical refs, IDs, SQLite/FTS5/FAISS boundaries, and validation rules | no | no | no | no | implemented | `docs/architecture/data-contracts.md`, `docs/architecture/system1-ingestion.md`, `docs/stories/backlog.md` |
+| MVP-0.6 | System 1 mini creates a tiny paired raw-video/metadata subset and validation report proving the contract is executable | no | no | no | no | planned | planned |
 | MVP-1 | System 1 artifact builder produces validated runtime SQLite/FTS5/FAISS artifacts for System 2 | no | no | no | no | planned | planned |
 | MVP-2 | Backend API vertical slice reads System 1 app-ready artifacts and returns keyframe-first payloads | no | no | no | no | planned | planned |
 | MVP-3 | One React/Vite SPA provides keyframe-first query and inspection workflow | no | no | no | no | planned | planned |
@@ -32,7 +32,7 @@ MVP scope, but no implementation proof exists yet.
 | MVP-5 | SQLite FTS5 text retrieval supports captions/OCR/ASR/metadata/object search | no | no | no | no | planned | future MVP |
 | MVP-6 | Hybrid retrieval fuses vector, text, and metadata/object evidence | no | no | no | no | planned | future MVP |
 | MVP-7 | Query Session workspace and candidate basket support independent/collaborative team use | no | no | no | no | planned | future MVP |
-| MVP-8 | Output helper supports configurable copy/export patterns without hard-coded final submission API | no | no | no | no | planned | future MVP |
+| MVP-8 | Submission helper supports task-type-specific answer drafts, human edit/review, submission history, and configurable organizer API adapter without hard-coded final payload | no | no | no | no | planned | future MVP |
 | MVP-9 | Agent v0 uses the same retrieval/evidence APIs and appears in the same UI/result model | no | no | no | no | planned | future MVP |
 
 | SYS1-001 | Vision embedding notebook pipeline produces shard-safe visual embeddings | no | no | no | no | planned | durable matrix |
@@ -47,7 +47,7 @@ MVP scope, but no implementation proof exists yet.
 
 ## Evidence Rules
 
-- MVP-0 through MVP-4 are the concrete near-term validation targets, with MVP-0.5 followed by System 1 mini/full app-ready artifact generation before System 2 runtime implementation starts.
+- MVP-0 through MVP-4 are the concrete near-term validation targets, with MVP-0.5 followed by System 1 mini/full app-ready artifact generation from raw videos plus metadata JSON before System 2 runtime implementation starts.
 - MVP-4 and later remain planned until earlier implementation stories exist.
 - Unit proof covers pure domain and application rules.
 - Integration proof covers backend enforcement, data integrity, provider behavior, jobs, or service contracts.

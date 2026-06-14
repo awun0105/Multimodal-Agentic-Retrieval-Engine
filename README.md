@@ -21,11 +21,10 @@ search query -> ranked frame results -> inspect video/timeline -> choose frame -
 ## Runtime Modes
 
 - Local: run everything on one machine and open `localhost`.
-- LAN: one host machine runs app/data, teammates open the shared Web UI by IP address.
+- LAN: one host machine runs app, runtime artifacts, and media/data; teammates open the shared Web UI by host IP address from their browsers.
 - One shared SPA supports multiple teammates through Query Sessions.
 
 ## Data
 
 Raw videos are kept as video files. The app searches precomputed indexes and
 shows thumbnails/keyframes. Full dense frames are not extracted by default.
-

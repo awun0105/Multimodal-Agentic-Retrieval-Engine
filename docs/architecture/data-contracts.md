@@ -12,7 +12,7 @@ This document defines the app-ready artifact contract that must exist before bui
 
 Runtime code must not infer dataset structure from raw files.
 
-System 1 converts raw organizer data into app-ready artifacts. System 2 reads only those app-ready artifacts.
+System 1 converts raw organizer inputs into app-ready artifacts. System 2 reads only those app-ready artifacts.
 
 | Layer | Canonical Role |
 | --- | --- |
@@ -23,7 +23,25 @@ System 1 converts raw organizer data into app-ready artifacts. System 2 reads on
 | Filesystem | Large media assets: videos, keyframes, thumbnails |
 | DuckDB | Offline preprocessing, staging, analytics, validation |
 
-JSON-only metadata is not acceptable for runtime search, state, or FAISS result resolution.
+Organizer-provided raw videos plus JSON metadata are not acceptable by themselves for runtime search, state, or FAISS result resolution.
+
+## Organizer Input Contract
+
+The official dataset input for this project is:
+
+1. a folder of raw `.mp4` video files;
+2. a folder of metadata JSON files;
+3. one metadata JSON per raw video;
+4. raw video and metadata matched by the same filename stem.
+
+Example pairing:
+
+- `videos/L21_0001.mp4`
+- `metadata/L21_0001.json`
+
+The stem, such as `L21_0001`, is the organizer dataset key and the canonical `video_id` for this project. It does not depend on `watch_url`, YouTube ID, or any online identifier.
+
+Organizer input does not include derived retrieval artifacts such as keyframes, embeddings, FAISS indexes, OCR, ASR, object detections, or runtime SQLite databases. Those are project-generated System 1 outputs.
 
 ## Roots
 
@@ -80,13 +98,15 @@ Any earlier `data/` tree in docs should be read as a logical app-ready artifact 
 | ID | Format | Example | Notes |
 | --- | --- | --- | --- |
 | `dataset_id` | Stable dataset/version key | `aic2026` | Groups one app-ready dataset. |
-| `video_id` | Video name without extension | `L01_V028` | Primary video identifier. |
-| `frame_id` | Integer frame number | `25300` | Official frame ID if provided. |
+| `video_id` | Organizer file stem, unique within dataset | `L21_0001` | Primary video identifier and user-facing submit/debug key. |
+| `frame_id` | Integer frame number | `25300` | Frame number in the video. |
 | `keyframe_id` | `{video_id}:{frame_id}` | `L01_V028:25300` | Canonical keyframe key. |
 | `vector_id` | FAISS row integer | `123456` | Resolved through SQLite `vector_map`. |
 | `media_ref` | Logical relative path | `keyframes/L01_V028/025300.jpg` | Never absolute. |
 
-`video_id + frame_id` remains the user-facing submit/copy unit. `keyframe_id` is the DB/API glue key.
+`video_id` is derived from the raw video filename stem and must not be derived from `watch_url`. `video_id + frame_id` remains the user-facing submit/copy unit. `keyframe_id` is the DB/API glue key.
+
+Last-year dataset evidence shows videos at 25 fps. Treat `25` as the planning/default expected FPS, but System 1 must probe each raw video, persist actual `fps`, and compute `timestamp_sec = frame_id / actual_fps`. Do not hard-code `/25` as a universal runtime rule before current-year media is verified.
 
 ## Logical Media References
 
@@ -105,9 +125,9 @@ Backend resolves refs through `MediaStorePort`. MVP implementation is `LocalFile
 The app-ready contract covers these categories:
 
 1. Raw videos
-2. Official/generated keyframes
-3. Thumbnails
-4. Video metadata
+2. Video metadata JSON matched by stem
+3. Generated keyframes
+4. Thumbnails
 5. Keyframe metadata
 6. Captions
 7. OCR text and optional boxes
@@ -143,7 +163,7 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | Table | Purpose |
 | --- | --- |
 | `datasets` | Dataset identity and build metadata. |
-| `videos` | One row per video; stores `video_ref`, duration, fps, dimensions, metadata. |
+| `videos` | One row per video; stores `video_id`, `source_video_stem`, `video_ref`, duration, fps, dimensions, normalized metadata, and selected raw metadata fields. |
 | `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `keyframe_ref`, `thumbnail_ref`. |
 | `captions` | Caption evidence mapped to `keyframe_id`. |
 | `ocr_texts` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
@@ -202,8 +222,12 @@ A dataset is app-ready only when validation proves all required checks pass.
 
 Required checks:
 
+- Every raw video has exactly one metadata JSON with the same filename stem.
+- Every metadata JSON has exactly one raw video with the same filename stem.
 - No duplicate `video_id`.
 - No duplicate `(video_id, frame_id)`.
+- Every `videos.source_video_stem` equals `videos.video_id` for this dataset contract.
+- Every video has probed `fps`; mismatch from expected `25` must be reported until current-year FPS is confirmed.
 - Every `media_ref` resolves through `MediaStorePort`.
 - Every keyframe has `keyframe_ref` and `thumbnail_ref`.
 - Every FAISS vector has a corresponding `vector_map` row.
@@ -219,6 +243,7 @@ Required checks:
 Before runtime implementation, the project needs a tiny seed dataset under `tests/fixtures/tiny_seed_dataset/` or equivalent. It should include:
 
 - At least one video record.
+- Its matching metadata JSON.
 - Multiple keyframes for the video.
 - Thumbnails for those keyframes.
 - At least one caption row.

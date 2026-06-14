@@ -6,6 +6,8 @@ Canonical behavior contract for query handling and automatic mode.
 
 ## Query Types
 
+Official 2026 query types are not confirmed. Current planning assumes the last-year-style set below until official rules are released.
+
 | Type | User Intent | Primary Outputs |
 | --- | --- | --- |
 | Textual KIS (`tkis`) | Find a frame from text clues. | `video_id`, `frame_id`, evidence. |
@@ -33,6 +35,7 @@ Required constraints:
 - Save proposals as normal candidates in the active Query Session.
 - Include evidence and score components for every selected candidate.
 - Allow human accept, edit, reject, or cancel.
+- Do not submit answers to organizer API without explicit human confirmation.
 - Never read raw dataset paths directly during live retrieval.
 
 ## Minimum Agent Tools
@@ -45,6 +48,7 @@ Required constraints:
 | `get_neighbors` | Inspect nearby keyframes in the same video. |
 | `save_candidate` | Persist a proposed candidate. |
 | `update_candidate` | Edit answer text, TRAKE sequence, notes, or validation state. |
+| `prepare_submission_draft` | Create a task-type-specific answer draft from selected candidates. |
 
 ## Output Shape
 

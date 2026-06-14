@@ -20,7 +20,7 @@ Right panel
   selected candidate inspector, video player, nearby keyframes, evidence
 
 Bottom panel or modal
-  export preview, validation warnings, agent run panel/logs
+  answer draft, submit history, validation warnings, agent run panel/logs
 ```
 
 ## Candidate Card Fields
@@ -62,8 +62,19 @@ The candidate tray stores session-scoped saved results and supports:
 - normal frame candidates;
 - Q&A answer editing;
 - TRAKE ordered sequence editing;
-- export preview;
-- validation warnings before copy/export.
+- submission draft preview;
+- validation warnings before submit.
+
+## Submission UX
+
+Submission is an explicit human action for the active question/session. The UI should support:
+
+- task-type-specific answer drafts;
+- user edits before submit;
+- visible submit history and attempt count;
+- warning when previous attempts exist because wrong submissions may reduce score;
+- organizer API response/status display when available;
+- copy/export fallback only as configurable support, not as the final confirmed contract.
 
 ## Agent Run Panel
 
@@ -84,7 +95,8 @@ UI should surface warnings such as:
 - TRAKE sequence not ordered;
 - answer text missing for Q&A;
 - dataset health not ready;
-- export fields incomplete.
+- submission fields incomplete;
+- previous submissions exist for the current question/session.
 
 ## Performance Rules
 
@@ -93,4 +105,4 @@ UI should surface warnings such as:
 - Show first results as soon as possible.
 - Keep search and rerank asynchronous.
 - Load video only when a candidate is inspected.
-- Avoid blocking the whole UI on agent progress or export validation.
+- Avoid blocking the whole UI on agent progress or submission validation.

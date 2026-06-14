@@ -8,7 +8,7 @@
 
 ## Goal
 
-Mở rộng từ System 1 mini thành các pipeline lõi trên data năm ngoái:
+Mở rộng từ System 1 mini thành các pipeline lõi trên raw videos và metadata JSON đã pair theo stem:
 
 - visual embeddings
 - OCR + metadata normalization
@@ -16,7 +16,7 @@ Mở rộng từ System 1 mini thành các pipeline lõi trên data năm ngoái:
 
 ## Main Question This Phase Answers
 
-"Chúng ta có thể tạo được các modality outputs chính từ data năm ngoái theo dạng shard-safe, resumable, và có thể merge không?"
+"Chúng ta có thể tạo được các modality outputs chính từ raw videos và metadata JSON theo dạng shard-safe, resumable, và có thể merge không?"
 
 ## Scope
 
@@ -63,6 +63,6 @@ Mở rộng từ System 1 mini thành các pipeline lõi trên data năm ngoái:
 
 ## Risks
 
-- data năm ngoái có format lệch giữa modalities;
+- metadata/video pairing hoặc schema raw metadata có thể lệch giữa shards;
 - notebook/script khó reproduce;
 - output trung gian không đủ ổn để merge.

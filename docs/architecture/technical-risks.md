@@ -15,4 +15,5 @@ Canonical risk register for the MVP docs and early implementation.
 | Text modality sparsity | OCR/ASR/caption/object coverage may be incomplete. | Return evidence availability flags and per-modality score components. |
 | Media path portability | Absolute paths break on another machine. | Store logical refs only and resolve through `MediaStorePort`. |
 | Agent overreach | Agent may bypass UI/retrieval rules or produce untraceable answers. | Force same APIs as UI, trace tool calls, cap runtime/steps, and require human override. |
-| Competition export drift | Final answer format may change. | Keep output helper configurable; avoid hard-coded final submission API assumptions. |
+| Competition submission drift | Final API, answer format, or scoring feedback may change. | Keep submission helper/provider configurable; require human review; preserve submission history; avoid hard-coded final payload assumptions. |
+| Online provider dependency | Internet/external APIs are allowed, but provider latency, quota, or outages may disrupt live use. | Keep core retrieval local/LAN-first and artifact-backed; adapterize online providers as optional accelerators. |
