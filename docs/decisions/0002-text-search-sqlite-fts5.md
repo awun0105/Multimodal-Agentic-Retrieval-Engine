@@ -8,8 +8,8 @@ Accepted
 
 ## Context
 
-The MVP needs local text retrieval over captions, OCR, ASR, metadata, and object
-labels without introducing heavy search infrastructure.
+The MVP needs local text retrieval over the global `text_documents` contract
+without introducing heavy search infrastructure.
 
 ## Decision
 

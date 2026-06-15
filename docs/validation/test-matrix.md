@@ -22,20 +22,23 @@ MVP scope, but no implementation proof exists yet.
 
 | Story | Contract | Unit | Integration | E2E | Platform | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| MVP-0 | Canonical docs, decisions, and supersession markers match accepted architecture | no | no | no | no | planned | `docs/onboarding/doc-conflicts.md`, `docs/architecture/overview.md`, `docs/architecture/ingestion.md`, `docs/decisions/` |
-| MVP-1 | Runtime SQLite schema and local file-path validation support the dataset contract | no | no | no | no | planned | planned |
-| MVP-2 | One React/Vite SPA provides keyframe-first query and inspection workflow | no | no | no | no | planned | planned |
-| MVP-3 | FAISS visual retrieval returns ranked keyframe results through FastAPI | no | no | no | no | planned | planned |
-| MVP-4 | SQLite FTS5 text retrieval supports captions/OCR/ASR/metadata/object search | no | no | no | no | planned | future MVP |
-| MVP-5 | Hybrid retrieval fuses vector, text, and metadata/object evidence | no | no | no | no | planned | future MVP |
-| MVP-6 | Query Session workspace and candidate basket support independent/collaborative team use | no | no | no | no | planned | future MVP |
-| MVP-7 | Output helper supports configurable copy/export patterns without hard-coded final submission API | no | no | no | no | planned | future MVP |
-| MVP-8 | Agent v0 uses the same retrieval/evidence APIs and appears in the same UI/result model | no | no | no | no | planned | future MVP |
+| MVP-0 | Canonical docs, decisions, and supersession markers match accepted architecture | no | no | no | no | implemented | `docs/onboarding/doc-conflicts.md`, `docs/architecture/overview.md`, `docs/architecture/ingestion.md` (no ADRs required) |
+| MVP-0.5 | App-ready Data Contract defines organizer raw-video/metadata input, stem-based `video_id`, `video_ref`/derived logical refs, frame/timeline policy, SQLite/FTS5/FAISS boundaries, and validation rules | no | no | no | no | implemented | `docs/architecture/data-contracts.md`, `docs/architecture/system1-ingestion.md`, `docs/stories/backlog.md` |
+| MVP-0.6 | System 1 mini creates a tiny paired raw-video/metadata subset and validation report proving the contract is executable | no | no | no | no | planned | planned |
+| MVP-1 | System 1 artifact builder produces validated runtime SQLite/FTS5/FAISS, `vector_map`, feature availability, release capability, and logical-ref artifacts for System 2 | no | no | no | no | planned | planned |
+| MVP-2 | Backend API vertical slice reads System 1 app-ready artifacts and returns keyframe-first payloads | no | no | no | no | planned | planned |
+| MVP-3 | One React/Vite SPA provides keyframe-first query and inspection workflow | no | no | no | no | planned | planned |
+| MVP-4 | FAISS visual retrieval returns ranked keyframe results through FastAPI | no | no | no | no | planned | planned |
+| MVP-5 | SQLite FTS5 text retrieval supports the global `text_documents` contract and optional per-source details | no | no | no | no | planned | future MVP |
+| MVP-6 | Hybrid retrieval fuses vector, text, and metadata/object evidence | no | no | no | no | planned | future MVP |
+| MVP-7 | Query Session workspace and candidate basket support independent/collaborative team use | no | no | no | no | planned | future MVP |
+| MVP-8 | Submission helper supports task-type-specific answer drafts, human edit/review, submission history, and configurable organizer API adapter without hard-coded final payload | no | no | no | no | planned | future MVP |
+| MVP-9 | Agent v0 uses the same retrieval/evidence APIs and appears in the same UI/result model | no | no | no | no | planned | future MVP |
 
 | SYS1-001 | Vision embedding notebook pipeline produces shard-safe visual embeddings | no | no | no | no | planned | durable matrix |
 | SYS1-002 | OCR and metadata notebook pipeline produces shard-safe outputs | no | no | no | no | planned | durable matrix |
 | SYS1-003 | Audio transcription notebook pipeline produces ASR time-range outputs | no | no | no | no | planned | durable matrix |
-| SYS1-004 | DuckDB aggregation merges notebook outputs into SQLite and FAISS artifacts | no | no | no | no | planned | durable matrix |
+| SYS1-004 | DuckDB/staging aggregation merges System 1 outputs into validated SQLite, FTS5, FAISS, vector mapping, feature availability, and release capability artifacts | no | no | no | no | planned | durable matrix |
 | SYS2-001 | FastAPI runtime scaffold exposes core retrieval endpoints | no | no | no | no | planned | durable matrix |
 | SYS2-002 | React/Vite runtime scaffold supports Query Session workflow | no | no | no | no | planned | durable matrix |
 | SYS2-003 | FAISS runtime adapter queries vector index and resolves SQLite mappings | no | no | no | no | planned | durable matrix |
@@ -44,7 +47,7 @@ MVP scope, but no implementation proof exists yet.
 
 ## Evidence Rules
 
-- MVP-0 through MVP-3 are the only rows that should be treated as concrete near-term validation targets.
+- MVP-0 through MVP-4 are the concrete near-term validation targets, with MVP-0.5 followed by System 1 mini/full app-ready artifact generation from raw videos plus metadata JSON before System 2 runtime implementation starts.
 - MVP-4 and later remain planned until earlier implementation stories exist.
 - Unit proof covers pure domain and application rules.
 - Integration proof covers backend enforcement, data integrity, provider behavior, jobs, or service contracts.

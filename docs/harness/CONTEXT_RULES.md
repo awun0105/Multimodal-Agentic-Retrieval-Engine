@@ -3,6 +3,10 @@
 Context rules help agents decide what to read, when to read it, and when to
 stop reading. They are additive to the stable `AGENTS.md` reading list.
 
+These rules apply after the stable entrypoints in `AGENTS.md` have been read.
+Do not re-read stable entrypoints unless the current task phase requires fresh
+evidence.
+
 The goal is not to maximize context. The goal is to put the right information
 in the model for the current task phase and risk lane.
 

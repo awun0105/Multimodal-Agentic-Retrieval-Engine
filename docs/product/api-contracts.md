@@ -1,215 +1,286 @@
-# API Contracts
+# Product API Contracts
 
 ## Status
 
-Canonical API contract specification for System 2. Derived from `SPEC.md`.
+Canonical product-facing API shape. Names here must match `docs/architecture/data-contracts.md`.
 
-## API Principles
+Requirements context: `docs/product/requirements-truth-set.md`.
 
-- Keep APIs simple and local-first.
-- Use REST for most actions.
-- Use WebSocket or SSE only when progress streaming is truly needed.
-- Return lightweight result objects first, then lazy-load heavy detail/evidence.
-- Agent and UI should call the same APIs where practical.
+## Naming Rules
 
-## Dataset APIs
+- Use `video_id` for API and DB payloads.
+- Use `frame_id` as integer video frame number.
+- Use `keyframe_id = "{video_id}:{frame_id}"` as API/DB glue id.
+- Use probed per-video `fps` to compute `timestamp_sec`; last-year evidence suggests 25 fps as a planning/default expected value, not a universal hard-coded runtime divisor.
+- Treat `legacy video-name field` only as legacy wording in old source material, not as canonical payload field.
+- URL path params containing `keyframe_id` must be URL-safe encoded by clients because the value contains `:`.
 
-```http
-GET  /api/datasets
-GET  /api/datasets/{dataset_id}
-POST /api/datasets/select
-GET  /api/datasets/{dataset_id}/health
-```
-
-## Query Session APIs
+## Health And Dataset
 
 ```http
-POST   /api/query-sessions
-GET    /api/query-sessions
-GET    /api/query-sessions/{session_id}
-PUT    /api/query-sessions/{session_id}
-DELETE /api/query-sessions/{session_id}
-
-POST   /api/query-sessions/{session_id}/clues
-PUT    /api/query-sessions/{session_id}/clues/{clue_id}
-DELETE /api/query-sessions/{session_id}/clues/{clue_id}
-
-POST   /api/query-sessions/{session_id}/notes
-GET    /api/query-sessions/{session_id}/history
+GET /api/health
+GET /api/datasets/current
+GET /api/datasets/current/health
 ```
 
-## Search APIs
-
-```http
-POST /api/search
-POST /api/search/visual
-POST /api/search/caption
-POST /api/search/ocr
-POST /api/search/asr
-POST /api/search/object
-POST /api/search/metadata
-POST /api/search/similar-frame
-POST /api/search/within-video
-```
-
-### Generic Search Request
+Dataset health payload:
 
 ```json
 {
   "dataset_id": "aic2026",
-  "session_id": "optional-session-id",
-  "query": "person in white protective suit inside cave",
-  "query_type": "tkis",
-  "search_mode": "hybrid",
-  "strategy": "visual_heavy",
-  "top_k": 100,
-  "group_by_video": false,
-  "top_per_video": 3,
-  "filters": {
-    "video_names": [],
-    "objects": [],
-    "has_ocr": null,
-    "has_asr": null
+  "status": "ready",
+  "build_id": "2026-06-13T00-00-00Z",
+  "counts": {
+    "videos": 0,
+    "keyframes": 0,
+    "image_captions": 0,
+    "ocr": 0,
+    "asr_segments": 0,
+    "objects": 0,
+    "vectors": 0
   },
-  "options": {
-    "rerank": false,
-    "include_evidence_summary": true,
-    "diversify": true
+  "indexes": [
+    {"name": "visual", "kind": "faiss", "status": "ready", "vectors": 0},
+    {"name": "text_documents", "kind": "fts5", "status": "ready", "rows": 0}
+  ],
+  "validation": {
+    "status": "pass",
+    "report_ref": "reports/aic2026-validation.json",
+    "warnings": []
   }
 }
 ```
 
-### Search Response
+## Media And Catalog
+
+```http
+GET /api/media/thumbnail/{keyframe_id}
+GET /api/media/keyframe/{keyframe_id}
+GET /api/media/video/{video_id}
+GET /api/videos/{video_id}
+GET /api/keyframes/{keyframe_id}
+GET /api/videos/{video_id}/keyframes?around_frame_id=25300&window=20
+GET /api/keyframes/{keyframe_id}/evidence
+```
+
+Keyframe payload:
 
 ```json
 {
-  "search_run_id": "sr_123",
-  "latency_ms": 842,
+  "keyframe_id": "L01_V028:25300",
+  "video_id": "L01_V028",
+  "frame_id": 25300,
+  "timestamp_sec": 843.33,
+  "thumbnail_url": "/api/media/thumbnail/L01_V028%3A25300",
+  "keyframe_url": "/api/media/keyframe/L01_V028%3A25300",
+  "video_url": "/api/media/video/L01_V028",
+  "evidence_summary": {
+    "caption": "...",
+    "ocr": ["..."],
+    "asr": ["..."],
+    "objects": ["person", "car"],
+    "metadata": {"source": "..."}
+  }
+}
+```
+
+## Query Sessions
+
+```http
+POST /api/sessions
+GET /api/sessions
+GET /api/sessions/{session_id}
+PATCH /api/sessions/{session_id}
+POST /api/sessions/{session_id}/clues
+GET /api/sessions/{session_id}/search-runs
+```
+
+Session payload:
+
+```json
+{
+  "session_id": "qs_001",
+  "name": "Textual KIS round 1",
+  "query_type": "tkis",
+  "client_label": "teammate-a",
+  "active_clues": ["red bus", "rainy street"],
+  "clue_mode": "accumulated",
+  "notes": "manual notes",
+  "created_at": "2026-06-13T00:00:00Z",
+  "updated_at": "2026-06-13T00:00:00Z"
+}
+```
+
+`client_label` is lightweight teammate attribution only. It is not authentication and does not imply role or permission enforcement.
+
+## Search
+
+```http
+POST /api/search
+```
+
+Request:
+
+```json
+{
+  "session_id": "qs_001",
+  "query_type": "tkis",
+  "query_text": "red bus on rainy street",
+  "clue_mode": "current_only",
+  "filters": {
+    "video_id": null,
+    "modalities": ["visual", "caption", "ocr", "asr", "object", "metadata"],
+    "group_by_video": true
+  },
+  "top_k": 100,
+  "rerank_top_k": 50
+}
+```
+
+Response:
+
+```json
+{
+  "search_run_id": "sr_001",
+  "session_id": "qs_001",
+  "query_type": "tkis",
   "results": [
     {
-      "rank": 1,
-      "video_name": "L01_V028",
+      "keyframe_id": "L01_V028:25300",
+      "video_id": "L01_V028",
       "frame_id": 25300,
-      "keyframe_id": "kf_abc",
-      "thumbnail_url": "/api/keyframes/kf_abc/thumbnail",
-      "score": 0.842,
-      "scores": {
-        "visual": 0.88,
+      "timestamp_sec": 843.33,
+      "score": 0.87,
+      "score_components": {
+        "visual": 0.91,
         "caption": 0.72,
         "ocr": 0.0,
-        "asr": 0.51,
-        "object": 0.69
+        "asr": 0.44,
+        "object": 0.66,
+        "metadata": 0.15
       },
-      "evidence_summary": {
-        "caption": "A person wearing protective clothing in a cave.",
-        "ocr": "",
-        "asr": "French interview about cave...",
-        "objects": ["person", "helmet"]
-      }
+      "evidence": [
+        {"type": "caption", "text": "...", "score": 0.72, "source": "text_documents"},
+        {"type": "object", "text": "bus", "score": 0.66, "source": "text_documents"}
+      ],
+      "warnings": []
     }
   ]
 }
 ```
 
-## Keyframe and Media APIs
+## Candidates
 
 ```http
-GET /api/keyframes/{keyframe_id}
-GET /api/keyframes/{keyframe_id}/thumbnail
-GET /api/keyframes/{keyframe_id}/image
-GET /api/videos/{video_name}/keyframes
-GET /api/videos/{video_name}/nearby-keyframes?frame_id=25300&window=20
-GET /api/videos/{video_name}/metadata
-GET /api/videos/{video_name}/preview?frame_id=25300
+POST /api/sessions/{session_id}/candidates
+GET /api/sessions/{session_id}/candidates
+PATCH /api/sessions/{session_id}/candidates/{candidate_id}
+DELETE /api/sessions/{session_id}/candidates/{candidate_id}
 ```
 
-Video preview is optional and must not auto-load by default.
-
-## Evidence APIs
-
-```http
-GET  /api/evidence/by-frame?video_name=L01_V028&frame_id=25300
-POST /api/evidence/batch
-```
-
-### Evidence Response
+Candidate payload:
 
 ```json
 {
-  "video_name": "L01_V028",
+  "candidate_id": "cand_001",
+  "session_id": "qs_001",
+  "keyframe_id": "L01_V028:25300",
+  "video_id": "L01_V028",
   "frame_id": 25300,
-  "caption": "...",
-  "ocr": ["..."],
-  "asr_segments": [
-    {
-      "start_time_sec": 1000.0,
-      "end_time_sec": 1015.0,
-      "text": "..."
-    }
-  ],
-  "objects": [
-    {"label": "person", "score": 0.91}
-  ],
-  "metadata": {
-    "title": "...",
-    "description": "..."
-  }
+  "answer_text": null,
+  "trake_sequence": [],
+  "score_snapshot": 0.87,
+  "evidence_snapshot": [],
+  "validation_warnings": [],
+  "created_by": "teammate-a"
 }
 ```
 
-## Candidate APIs
+## Submission Drafts And History
+
+Organizer submission API details are unknown. Internal API shape must therefore model drafts and history without hard-coding final organizer payloads.
 
 ```http
-POST   /api/query-sessions/{session_id}/candidates
-GET    /api/query-sessions/{session_id}/candidates
-PUT    /api/query-sessions/{session_id}/candidates/{candidate_id}
-DELETE /api/query-sessions/{session_id}/candidates/{candidate_id}
+POST /api/sessions/{session_id}/submission-drafts
+GET /api/sessions/{session_id}/submission-drafts
+PATCH /api/sessions/{session_id}/submission-drafts/{draft_id}
+POST /api/sessions/{session_id}/submissions
+GET /api/sessions/{session_id}/submissions
+GET /api/submissions/{submission_id}
 ```
 
-### Candidate Request
+Submission draft payload:
 
 ```json
 {
-  "video_name": "L01_V028",
-  "frame_id": 25300,
-  "answer": null,
-  "trake_frames": null,
-  "notes": "Maybe correct because OCR/title matches clue.",
-  "label": "maybe"
+  "draft_id": "draft_001",
+  "session_id": "qs_001",
+  "query_type": "tkis",
+  "candidate_ids": ["cand_001"],
+  "answer_payload": {
+    "video_id": "L21_0001",
+    "frame_id": 25300,
+    "answer_text": null,
+    "trake_sequence": []
+  },
+  "validation_warnings": ["official submission payload format unknown"],
+  "edited_by": "teammate-a"
 }
 ```
 
-## Output Helper APIs
-
-```http
-POST /api/output/make-row
-POST /api/output/validate-row
-POST /api/output/export-csv
-POST /api/output/export-zip
-```
-
-These APIs are optional helpers and must not assume the final 2026 submission interface.
-
-## Agent APIs
-
-```http
-POST /api/agent/runs
-GET  /api/agent/runs/{agent_run_id}
-POST /api/agent/runs/{agent_run_id}/cancel
-```
-
-### Agent Run Request
+Submission history payload:
 
 ```json
 {
-  "dataset_id": "aic2026",
-  "session_id": "optional-session-id",
-  "query": "Find the video where a person cuts a cake and answer how many pieces are visible.",
-  "query_type": "qa",
-  "constraints": {
-    "max_steps": 6,
-    "max_runtime_sec": 45,
-    "top_k": 100
-  }
+  "submission_id": "sub_001",
+  "session_id": "qs_001",
+  "draft_id": "draft_001",
+  "query_type": "tkis",
+  "status": "submitted",
+  "attempt_number": 1,
+  "submitted_payload_snapshot": {
+    "video_id": "L21_0001",
+    "frame_id": 25300
+  },
+  "organizer_response_status": "unknown",
+  "organizer_response_snapshot": null,
+  "submitted_by": "teammate-a",
+  "submitted_at": "2026-06-14T00:00:00Z"
+}
+```
+
+Submission rules:
+
+- Submit is per active question/session.
+- Multiple submissions may be possible, but wrong attempts may reduce score.
+- UI must show submission history before new submit attempts.
+- Organizer feedback may be immediate correctness, accepted-only, or unknown until official API behavior is known.
+- The app does not model submit roles in MVP; teammate submit responsibility is handled by team process outside the app.
+
+## Agent Runs
+
+```http
+POST /api/sessions/{session_id}/agent-runs
+GET /api/sessions/{session_id}/agent-runs
+GET /api/agent-runs/{agent_run_id}
+POST /api/agent-runs/{agent_run_id}/cancel
+```
+
+Agent run payload:
+
+```json
+{
+  "agent_run_id": "ar_001",
+  "session_id": "qs_001",
+  "status": "running",
+  "query_type": "tkis",
+  "max_steps": 8,
+  "max_runtime_sec": 60,
+  "tool_calls": [
+    {"step": 1, "tool": "search", "arguments": {"query_text": "red bus"}, "result_count": 50}
+  ],
+  "selected_candidates": ["cand_001"],
+  "summary": "candidate rationale",
+  "human_override": "pending"
 }
 ```

@@ -1,142 +1,68 @@
-# Search Fusion and Evidence
+# Search Fusion
 
 ## Status
 
-Canonical search-fusion specification for System 2. Derived from `SPEC.md`.
+Canonical minimum scoring model. Exact weights are configurable, but result payload shape and score semantics must stay stable.
 
-## Retrieval Core Overview
+## Score Components
 
-```text
-Query
--> Query Understanding
--> Retrieval Strategy Planner
--> Visual / Caption / OCR / ASR / Object / Metadata search
--> Candidate Fusion
--> Optional Top-K reranking
--> Evidence Builder
--> Ranked Results
-```
+Every search result may include these normalized components:
 
-## Search Modalities
+| Component | Source |
+| --- | --- |
+| `visual` | FAISS visual/image embeddings. |
+| `caption` | Caption FTS5 or caption embedding adapter. |
+| `ocr` | OCR FTS5. |
+| `asr` | ASR transcript FTS5/time evidence. |
+| `object` | Object/concept FTS5 or structured filters; text source rows use `source_type = object_labels`. |
+| `metadata` | Title, source/channel, tags, annotations. |
+| `rerank` | Optional top-K reranker output. |
 
-### Visual Search
-- Input: text-to-visual embedding query, selected keyframe, optional image embedding.
-- Output: ranked keyframes.
-- Backend: FAISS with CLIP/SigLIP/EVA-CLIP/provided embeddings.
+Missing modalities score `0` and should be visible as missing evidence, not treated as validation failure.
 
-### Caption Search
-- Input: text query.
-- Output: keyframes or segments with matching captions.
-- Backend: SQLite FTS5 for MVP; optional text embeddings later.
+## Default Weights
 
-### OCR Search
-- Input: text expected on screen.
-- Output: keyframes with OCR matches.
-- Best for signs, slides, names, numbers, and logos.
+| Query Type | visual | caption | ocr | asr | object | metadata |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `tkis` | 0.25 | 0.25 | 0.15 | 0.15 | 0.15 | 0.05 |
+| `qa` | 0.15 | 0.25 | 0.20 | 0.20 | 0.15 | 0.05 |
+| `trake` | 0.20 | 0.15 | 0.10 | 0.10 | 0.15 | 0.30 |
+| `vkis` | 0.45 | 0.20 | 0.05 | 0.05 | 0.20 | 0.05 |
 
-### ASR Search
-- Input: words or concepts expected in speech.
-- Output: video segments and nearby keyframes.
-- Best for interviews, speeches, narration, and answer extraction.
+Weights are starting defaults, not competition truth. They must be config-driven.
 
-### Object / Concept Search
-- Input: object labels or concepts.
-- Output: keyframes containing matching objects/concepts.
+## Fusion Algorithm
 
-### Metadata Search
-- Input: title/channel/description/source clues.
-- Output: videos or keyframes related to metadata matches.
+1. Run available retrieval adapters.
+2. Normalize each adapter score to `[0, 1]`.
+3. Merge hits by `keyframe_id`.
+4. Compute weighted sum from available components.
+5. Retain raw per-modality rank and evidence snippets.
+6. Apply optional same-video diversification.
+7. Rerank top-K with richer evidence when enabled.
+8. Return final score, score components, evidence, and warnings.
 
-## Result Score Model
+## Diversification
 
-Every candidate should preserve per-modality scores.
+When `group_by_video=true`, avoid returning only near-duplicate frames from one video. The UI must allow users to turn this off for TRAKE and same-video exploration.
+
+## Evidence Summary Shape
 
 ```json
 {
-  "video_id": "L01_V028",
-  "frame_id": 25300,
-  "score": 0.842,
-  "scores": {
-    "visual": 0.88,
+  "score": 0.87,
+  "score_components": {
+    "visual": 0.91,
     "caption": 0.72,
     "ocr": 0.0,
-    "asr": 0.51,
-    "object": 0.69,
-    "metadata": 0.2
-  }
-}
-```
-
-## Strategy-based Fusion
-
-Fusion weights must be configurable per strategy.
-
-```yaml
-strategies:
-  hybrid_default:
-    visual: 0.35
-    caption: 0.25
-    ocr: 0.10
-    asr: 0.15
-    object: 0.10
-    metadata: 0.05
-
-  visual_heavy:
-    visual: 0.55
-    caption: 0.20
-    ocr: 0.05
-    asr: 0.05
-    object: 0.15
-    metadata: 0.00
-
-  speech_heavy:
-    visual: 0.15
-    caption: 0.15
-    ocr: 0.05
-    asr: 0.55
-    object: 0.05
-    metadata: 0.05
-```
-
-## Result Diversification
-
-The system should avoid returning many near-duplicate frames from the same moment.
-
-### Allowed Diversification Rules
-- group by video
-- group by shot/segment
-- keep top N frames per video
-- minimum frame distance between results
-- grouped and ungrouped display modes
-
-## Reranking
-
-Reranking is optional and must stay top-K only.
-
-### Possible Rerankers
-- text cross-encoder over captions/transcripts
-- LVLM verification on a small frame set
-- rule-based evidence score
-- agent-generated verification summary
-
-Reranking must always be controllable to protect latency.
-
-## Evidence Builder
-
-Each result should expose a compact evidence object.
-
-```json
-{
-  "caption": "A person wearing a white protective suit stands inside a cave.",
-  "ocr": "",
-  "asr": "... interview in French about cave engineering ...",
-  "objects": ["person", "helmet", "cave"],
-  "metadata": {
-    "title": "...",
-    "source": "..."
+    "asr": 0.44,
+    "object": 0.66,
+    "metadata": 0.15,
+    "rerank": null
   },
-  "agent_reasoning": "Optional short explanation."
+  "evidence": [
+    {"type": "caption", "text": "short snippet", "score": 0.72, "source": "text_documents"}
+  ],
+  "warnings": ["ocr_missing"]
 }
 ```
-
-Evidence should be lazy-loaded when practical.

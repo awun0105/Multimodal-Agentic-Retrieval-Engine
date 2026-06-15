@@ -1,4 +1,4 @@
-# 0003 Preprocessing Warehouse: DuckDB
+# 0003 Preprocessing Staging: DuckDB
 
 Date: 2026-06-12
 
@@ -15,7 +15,7 @@ from runtime app-state concerns.
 ## Decision
 
 Use DuckDB for preprocessing, staging, analytics, validation, and bulk metadata
-warehouse responsibilities.
+staging responsibilities.
 
 DuckDB is not the MVP runtime application database.
 
@@ -23,7 +23,7 @@ DuckDB is not the MVP runtime application database.
 
 1. SQLite-only for preprocessing and runtime.
 2. DuckDB as both preprocessing and runtime store.
-3. Pandas-only file processing without a warehouse layer.
+3. Pandas-only file processing without a staging layer.
 
 ## Consequences
 

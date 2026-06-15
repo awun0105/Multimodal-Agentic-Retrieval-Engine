@@ -7,8 +7,7 @@ Canonical planning document for ingestion architecture. Derived from archived in
 ## Source-of-Truth Rules
 
 - `docs/architecture/system1-ingestion.md` is the canonical System 1 ingestion architecture source for future implementation planning.
-- `docs/references/original-sources/INGESTION.md` is reference-only source material.
-- `docs/references/original-sources/DATA_READY.md` is reference-only source material.
+- Archived source inputs are historical only and are not required for implementation.
 
 ## Goal
 
@@ -38,7 +37,7 @@ Runtime SQLite scope:
 - agent runs
 - metadata lookup
 - vector ID mapping
-- captions
+- image captions / shot captions
 - OCR
 - ASR
 - objects
@@ -78,31 +77,34 @@ MinIO is an optional future adapter only.
 The ingestion pipeline should prepare:
 
 - runtime SQLite database with validated lookup tables and app/session tables
-- SQLite FTS5 tables for captions/OCR/ASR/metadata/objects
+- FTS5-backed text search contract built from global `text_documents` inside `app.sqlite`
 - FAISS visual index
 - local media paths/URIs for videos, keyframes, thumbnails, and generated assets
 - validation reports for completeness and mapping integrity
 
 ## Canonical Input Strategy
 
-Input layout must stay flexible because official 2026 details are not confirmed.
-The importer should detect available folders/files and skip missing optional
-sources cleanly.
+Input layout must stay flexible at the file-extension level, but the current dataset understanding is now specific: organizer input provides raw videos plus one metadata JSON per video, matched by filename stem.
 
-Possible inputs include:
+Required organizer inputs:
 
 - raw videos
-- official keyframes
-- official embeddings
-- metadata JSON/CSV/Parquet
+- metadata JSON files paired 1-1 with raw videos by stem
+
+Derived project-generated inputs or artifacts may later include:
+
+- extracted keyframes
+- generated embeddings
 - object detection files
-- OCR/ASR/caption files if provided
+- OCR/ASR/caption files
 
 ## Validation Responsibilities
 
 Ingestion validation should catch:
 
 - missing video files
+- missing metadata JSON for a raw video stem
+- metadata JSON without a matching raw video stem
 - missing keyframes
 - missing thumbnails when expected
 - duplicate video/frame IDs
