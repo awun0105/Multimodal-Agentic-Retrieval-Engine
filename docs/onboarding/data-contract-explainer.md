@@ -719,7 +719,7 @@ Ví dụ một dòng:
 
 #### Quan hệ `shot_transcript_links` / `scene_transcript_links`
 
-System 1 v1.1 canonical dùng liên kết transcript với shot/scene. Nếu implementation có `keyframe_asr_segments` để debug/align phụ thì nên coi đó là detail tùy chọn, không phải canonical release table.
+System 1 v1.1 canonical dùng liên kết transcript với shot/scene. Nếu implementation có thêm bảng align ASR cấp keyframe để debug thì nên coi đó là detail tùy chọn, không phải canonical release table.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
@@ -1610,7 +1610,7 @@ Input canonical ban đầu gồm:
 - `raw_videos/`;
 - `metadata/`.
 
-Keyframes/OCR/ASR/captions/objects/embeddings nếu organizer cung cấp thì là optional imported evidence qua adapter, không phải required MVP input.
+Keyframes/OCR/ASR/image captions/object detections/embeddings nếu organizer cung cấp thì là optional imported evidence qua adapter, không phải required MVP input.
 
 ### Bước 2: Normalize data
 

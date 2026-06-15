@@ -29,7 +29,7 @@ MVP scope, but no implementation proof exists yet.
 | MVP-2 | Backend API vertical slice reads System 1 app-ready artifacts and returns keyframe-first payloads | no | no | no | no | planned | planned |
 | MVP-3 | One React/Vite SPA provides keyframe-first query and inspection workflow | no | no | no | no | planned | planned |
 | MVP-4 | FAISS visual retrieval returns ranked keyframe results through FastAPI | no | no | no | no | planned | planned |
-| MVP-5 | SQLite FTS5 text retrieval supports captions/OCR/ASR/metadata/object search | no | no | no | no | planned | future MVP |
+| MVP-5 | SQLite FTS5 text retrieval supports the global `text_documents` contract and optional per-source details | no | no | no | no | planned | future MVP |
 | MVP-6 | Hybrid retrieval fuses vector, text, and metadata/object evidence | no | no | no | no | planned | future MVP |
 | MVP-7 | Query Session workspace and candidate basket support independent/collaborative team use | no | no | no | no | planned | future MVP |
 | MVP-8 | Submission helper supports task-type-specific answer drafts, human edit/review, submission history, and configurable organizer API adapter without hard-coded final payload | no | no | no | no | planned | future MVP |

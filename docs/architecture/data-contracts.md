@@ -18,7 +18,7 @@ System 1 converts raw organizer inputs into app-ready artifacts. System 2 reads 
 | --- | --- |
 | JSON / CSV / Parquet | Raw input, staging output, manifests, validation reports, intermediate artifacts |
 | SQLite WAL | Runtime catalog, app state, query sessions, candidates, vector mapping, relational evidence |
-| SQLite FTS5 | Runtime text index for captions, OCR, ASR, metadata, objects |
+| SQLite FTS5 | Runtime text search contract built from global `text_documents` inside `app.sqlite` |
 | FAISS | Runtime vector index |
 | Filesystem | Large media assets: videos, keyframes, thumbnails |
 | DuckDB | Offline preprocessing, staging, analytics, validation |
@@ -50,7 +50,7 @@ The repo, large data, and hot runtime artifacts are separate.
 | Root | Purpose | Notes |
 | --- | --- | --- |
 | `${REPO_ROOT}` | Source code, docs, config, schemas, small fixtures | Do not store real competition media here. |
-| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos/keyframes and processed media live here. |
+| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos/metadata and processed media live here. |
 | `${AIC_RUNTIME_ROOT}` | Runtime hot artifact root, preferably SSD | SQLite, FAISS, and runtime cache live here. |
 
 ## Physical Layout
@@ -79,15 +79,15 @@ ${AIC_DATA_ROOT}/
   staging/
     shards/
     reports/
-  warehouse/
-    warehouse.duckdb
+  staging/
+    staging.duckdb
 
 ${AIC_RUNTIME_ROOT}/
   db/
     app.sqlite
   indexes/
     visual.faiss
-    visual_index_manifest.json
+    index_version.json
   cache/
 ```
 
@@ -171,12 +171,14 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | `shots` | One row per shot or fallback full-video shot; stores `shot_id`, `video_id`, frame/time ranges, detection method, and degraded/full-fidelity status. |
 | `scenes` | Scene-level inspection context derived from shots and metadata/ASR; enriches runtime inspection but should not control MVP keyframe extraction. |
 | `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `pts_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
-| `captions` | Caption evidence mapped to `keyframe_id`. |
-| `ocr_texts` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
-| `asr_segments` | Transcript segments mapped to `video_id` and time range; optional keyframe alignment through `keyframe_asr_segments`. |
-| `keyframe_asr_segments` | Optional many-to-many alignment between keyframes and ASR segments. |
+| `image_captions` | Caption evidence mapped to image/keyframe. |
+| `shot_captions` | Caption evidence mapped to shot-level intervals. |
+| `ocr` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
+| `asr_segments` | Transcript segments mapped to `video_id` and time range. |
+| `shot_transcript_links` | Canonical link rows between ASR segments and shots. |
+| `scene_transcript_links` | Canonical link rows between ASR segments and scenes. |
 | `objects` | Object/concept detections mapped to `keyframe_id`; text source type is `object_labels`. |
-| `embedding_indexes` | Registered vector index metadata: name, model, dimension, metric, path/ref. |
+| `embeddings_meta` | Registered embedding/index metadata: name, model, dimension, metric, path/ref. |
 | `vector_map` | Mandatory mapping from `(index_name, vector_id)` to `keyframe_id`, `video_id`, `frame_id`. |
 | `feature_availability` | Runtime/UI convenience table describing whether ASR/OCR/object/caption/inspection evidence exists per entity and whether it is pass/degraded/missing/failed. |
 | `release_capabilities` | Dataset/release capability flags for runtime gating and degraded behavior. |
@@ -194,11 +196,7 @@ Runtime text search uses SQLite FTS5 inside `app.sqlite`.
 
 Required FTS5 tables:
 
-- `caption_fts`
-- `ocr_fts`
-- `asr_fts`
-- `object_fts`
-- `metadata_fts`
+FTS5-backed text search is built from global `text_documents`; per-source FTS tables are optional implementation details only.
 
 Optional unified table:
 

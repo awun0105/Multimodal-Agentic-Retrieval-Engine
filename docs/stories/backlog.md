@@ -16,7 +16,7 @@ decisions.
 | `MVP-2` | Backend API vertical slice | implementation | P0 | `MVP-1` | FastAPI reads app-ready artifacts produced by System 1 and returns keyframe-first result/detail payloads. |
 | `MVP-3` | Keyframe-first UI vertical slice | implementation | P0 | `MVP-2` | One React/Vite SPA with result grid, thumbnail lazy loading, detail view, same-video nearby keyframe strip, and copy `video_id/frame_id`. |
 | `MVP-4` | Visual retrieval | implementation | P1 | `MVP-1`, `MVP-2` | Load FAISS visual index, map `vector_id` to keyframe via SQLite `vector_map`, implement `/api/search/visual`, show ranked keyframe results. |
-| `MVP-5` | SQLite FTS5 text retrieval | implementation | P1 | `MVP-1`, `MVP-2` | Create FTS5 tables for captions/OCR/ASR/metadata/objects; implement `/api/search/text` and modality-specific search. |
+| `MVP-5` | SQLite FTS5 text retrieval | implementation | P1 | `MVP-1`, `MVP-2` | Build the FTS5-backed text search contract from `text_documents`; implement `/api/search/text` and modality-specific search. |
 | `MVP-6` | Hybrid retrieval | implementation | P1 | `MVP-4`, `MVP-5` | Implement `/api/search/hybrid`; fuse FAISS + FTS5 + metadata/object scores; support search modes and evidence summary. |
 | `MVP-7` | Query workspace + candidate basket | implementation | P1 | `MVP-3`, `MVP-6` | Current clue, accumulated clues, selected clues, notes, query history, candidate basket per Query Session, pin/unpin candidate. |
 | `MVP-8` | Submission helper and organizer API adapter | implementation | P2 | `MVP-7` | Build task-type-specific answer drafts, allow user edit/review, show per-question submission history, and submit through configurable organizer API when official details exist. |

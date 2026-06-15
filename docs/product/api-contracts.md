@@ -33,15 +33,15 @@ Dataset health payload:
   "counts": {
     "videos": 0,
     "keyframes": 0,
-    "captions": 0,
-    "ocr_texts": 0,
+    "image_captions": 0,
+    "ocr": 0,
     "asr_segments": 0,
     "objects": 0,
     "vectors": 0
   },
   "indexes": [
     {"name": "visual", "kind": "faiss", "status": "ready", "vectors": 0},
-    {"name": "caption_fts", "kind": "fts5", "status": "ready", "rows": 0}
+    {"name": "text_documents", "kind": "fts5", "status": "ready", "rows": 0}
   ],
   "validation": {
     "status": "pass",
@@ -160,8 +160,8 @@ Response:
         "metadata": 0.15
       },
       "evidence": [
-        {"type": "caption", "text": "...", "score": 0.72, "source": "caption_fts"},
-        {"type": "object", "text": "bus", "score": 0.66, "source": "object_fts"}
+        {"type": "caption", "text": "...", "score": 0.72, "source": "text_documents"},
+        {"type": "object", "text": "bus", "score": 0.66, "source": "text_documents"}
       ],
       "warnings": []
     }

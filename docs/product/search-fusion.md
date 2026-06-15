@@ -61,7 +61,7 @@ When `group_by_video=true`, avoid returning only near-duplicate frames from one 
     "rerank": null
   },
   "evidence": [
-    {"type": "caption", "text": "short snippet", "score": 0.72, "source": "caption_fts"}
+    {"type": "caption", "text": "short snippet", "score": 0.72, "source": "text_documents"}
   ],
   "warnings": ["ocr_missing"]
 }

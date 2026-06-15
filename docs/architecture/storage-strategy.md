@@ -9,7 +9,7 @@ Canonical. Storage follows the app-ready contract in `docs/architecture/data-con
 | Root | Contents | Performance Target |
 | --- | --- | --- |
 | `${REPO_ROOT}` | Code, docs, schemas, config, tiny fixtures | Small and git-safe. |
-| `${AIC_DATA_ROOT}` | Raw videos/keyframes, processed media, DuckDB warehouse, preprocessing reports | Large external storage, usually HDD. |
+| `${AIC_DATA_ROOT}` | Raw videos/metadata, processed media, DuckDB staging/preprocessing, preprocessing reports | Large external storage, usually HDD. |
 | `${AIC_RUNTIME_ROOT}` | `app.sqlite`, WAL/SHM files, FTS5 tables, FAISS indexes, small runtime cache | Hot storage, preferably SSD. |
 
 Do not store real competition media in the repository. Any earlier `data/` examples are logical artifact trees, not physical repo layout.

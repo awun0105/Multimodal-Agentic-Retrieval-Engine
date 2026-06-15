@@ -478,7 +478,7 @@ keyframes
 → thumbnails
 → OCR
 → image embeddings
-→ captions nếu có
+→ image captions / shot captions nếu có
 → object detection nếu có
 → FAISS/vector_map
 → text_documents
@@ -1058,7 +1058,7 @@ Nên cache:
 - ASR result
 - OCR result
 - image embeddings
-- captions
+- image captions / shot captions
 - object detections
 ```
 

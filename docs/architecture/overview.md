@@ -72,7 +72,7 @@ official/raw dataset
 | React/Vite SPA | Query workspace, search controls, results grid, detail view, same-video explorer, evidence panel, candidate basket, submission helper, optional agent panel | specified, not implemented |
 | FastAPI API | HTTP routes, request/response mapping, media URL resolution | specified, not implemented |
 | Service Layer | Search workflows, evidence assembly, scoring, answer draft, submission helper logic | specified, not implemented |
-| Runtime SQLite | app state, Query Sessions, clues, candidates, agent runs, metadata lookup, vector mapping, captions, OCR, ASR, objects, FTS5 | specified, not implemented |
+| Runtime SQLite | System 1 read-only release tables plus System 2 app state; includes metadata lookup, vector mapping, OCR, ASR, objects, caption evidence, and FTS5-backed text search from `text_documents` | specified, not implemented |
 | DuckDB Warehouse | bulk import, staging, normalization, dataset validation, reports, artifact preparation | specified, not implemented |
 | FAISS | visual/vector retrieval | specified, not implemented |
 | LocalFileMediaStore | videos, keyframes, thumbnails, generated assets | specified, not implemented |

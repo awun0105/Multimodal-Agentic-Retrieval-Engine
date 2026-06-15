@@ -6,7 +6,7 @@
 - Earlier source material also discussed DuckDB/Tantivy/OpenSearch alternatives.
 - User decision on 2026-06-12: canonical architecture is SQLite WAL + FTS5 for runtime and DuckDB for preprocessing/staging/analytics.
 
-Resolved. Use SQLite WAL + SQLite FTS5 for runtime application state and text search. Use DuckDB for preprocessing, staging, analytics, validation, and bulk metadata warehouse work.
+Resolved. Use SQLite WAL + SQLite FTS5 for runtime application state and text search. Use DuckDB for preprocessing, staging, analytics, validation, and bulk metadata staging/preprocessing work.
 
 ## Conflict 2: Keyframe ID Format
 

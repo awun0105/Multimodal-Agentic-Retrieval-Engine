@@ -28,10 +28,10 @@ System 2 assumes `video_id` is the organizer filename stem chosen by System 1 du
 | --- | --- |
 | `SQLiteRepository` | Reads catalog/evidence and writes query sessions, search runs, candidates, and agent traces. |
 | `FaissRetriever` | Queries visual/vector indexes and resolves `vector_id` through SQLite `vector_map`. |
-| `Fts5Retriever` | Queries captions, OCR, ASR, objects, and metadata FTS5 tables inside `app.sqlite`. |
+| `Fts5Retriever` | Queries the FTS5-backed text search contract built from `text_documents` inside `app.sqlite`. |
 | `MediaStorePort` | Resolves logical media refs to served URLs without exposing absolute paths. |
 | `LocalFileMediaStore` | MVP implementation backed by `${AIC_DATA_ROOT}/processed/media`. |
-| `EvidenceBuilder` | Joins ranked hits to captions, OCR, ASR, objects, metadata, thumbnails, and video refs. |
+| `EvidenceBuilder` | Joins ranked hits to caption evidence, OCR, ASR, objects, metadata-derived text, thumbnails, and video refs. |
 | `FusionEngine` | Normalizes, weights, diversifies, and reranks adapter outputs. |
 | `SubmissionPort` | Sends reviewed answers to organizer API when official endpoint/auth/payload are known. |
 | `SubmissionHistoryStore` | Persists drafts, attempts, response snapshots, status, actor, and timestamps per Query Session. |
@@ -41,7 +41,7 @@ System 2 assumes `video_id` is the organizer filename stem chosen by System 1 du
 Minimum adapters:
 
 - Visual adapter: FAISS image/keyframe vectors.
-- Caption adapter: generated or imported keyframe/segment captions.
+- Caption adapter: generated or imported image/shot captions.
 - OCR adapter: text detected in keyframes.
 - ASR adapter: spoken transcript segments by video/time range.
 - Object adapter: object/concept labels and optional boxes.

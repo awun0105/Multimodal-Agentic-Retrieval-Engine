@@ -37,7 +37,7 @@ Runtime SQLite scope:
 - agent runs
 - metadata lookup
 - vector ID mapping
-- captions
+- image captions / shot captions
 - OCR
 - ASR
 - objects
@@ -77,7 +77,7 @@ MinIO is an optional future adapter only.
 The ingestion pipeline should prepare:
 
 - runtime SQLite database with validated lookup tables and app/session tables
-- SQLite FTS5 tables for captions/OCR/ASR/metadata/objects
+- FTS5-backed text search contract built from global `text_documents` inside `app.sqlite`
 - FAISS visual index
 - local media paths/URIs for videos, keyframes, thumbnails, and generated assets
 - validation reports for completeness and mapping integrity

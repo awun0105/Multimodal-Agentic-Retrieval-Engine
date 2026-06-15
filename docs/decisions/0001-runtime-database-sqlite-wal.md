@@ -26,7 +26,7 @@ Runtime SQLite scope includes:
 - agent runs
 - metadata lookup
 - vector ID mapping
-- captions
+- image_captions
 - OCR
 - ASR
 - objects

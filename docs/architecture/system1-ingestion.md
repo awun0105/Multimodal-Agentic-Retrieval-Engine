@@ -38,10 +38,10 @@ raw video folder + metadata JSON folder
 | Scene construction | `scenes` rows | Scenes enrich inspection/runtime context, but MVP keyframe extraction should not depend on scene heuristics. |
 | Keyframe extraction | `keyframes` rows and media refs | Generate keyframes from raw videos; use `keyframe_id = "{video_id}:{frame_id}"`; compute timestamps from actual probed fps; store logical refs only. |
 | Thumbnail generation | `thumbnail_ref` per keyframe | Generate missing thumbnails under `${AIC_DATA_ROOT}/processed/media/thumbnails/`. |
-| OCR import/generation | `ocr_texts`, `ocr_fts` | Preserve confidence and optional boxes when available. |
-| ASR import/generation | `asr_segments`, `asr_fts` | ASR is usually time-range evidence on `video_id`; optional alignment links to keyframes. |
-| Caption import/generation | `captions`, `caption_fts` | Captions may be keyframe-level or segment-level, but UI results resolve to keyframes. |
-| Object/concept import | `objects`, `object_fts` | Preserve label, score, optional box, source, and model/version. |
+| OCR import/generation | `ocr`, `text_documents` | Preserve confidence and optional boxes when available; global text search is built later from `text_documents`. |
+| ASR import/generation | `asr_segments`, `text_documents` | ASR is usually time-range evidence on `video_id`; canonical links are shot/scene transcript links. |
+| Caption import/generation | `image_captions`, `shot_captions`, `text_documents` | Captions may be image-level or shot-level; global text search is built from `text_documents`. |
+| Object/concept import | `objects`, `text_documents` | Preserve label, score, optional box, source, and model/version. |
 | Embedding import/generation | FAISS index + `vector_map` | FAISS rows must resolve through SQLite before returning results. |
 | Validation | validation report and failure status | App-ready build is usable only when required checks pass. |
 
@@ -80,11 +80,11 @@ ${AIC_DATA_ROOT}/raw/videos/{video_id}.mp4
 ${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg
 ${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp
 ${AIC_DATA_ROOT}/staging/frame_timeline/{video_id}.parquet
-${AIC_DATA_ROOT}/warehouse/warehouse.duckdb
+${AIC_DATA_ROOT}/staging/staging.duckdb
 ${AIC_DATA_ROOT}/staging/reports/{dataset_id}-validation.json
 ${AIC_RUNTIME_ROOT}/db/app.sqlite
 ${AIC_RUNTIME_ROOT}/indexes/visual.faiss
-${AIC_RUNTIME_ROOT}/indexes/visual_index_manifest.json
+${AIC_RUNTIME_ROOT}/indexes/index_version.json
 ```
 
 The earlier `data/` tree in source material is a logical artifact layout, not a physical repository layout. Raw videos are referenced by `video_ref = raw_videos/{video_id}.mp4` and are resolved through `MediaStorePort`; compact releases may omit raw-video copies. `frame_timeline` is staging/debug and may be per-video, merged, sampled, or omitted from compact release when key tables retain enough frame/timestamp mapping fields.
