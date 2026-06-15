@@ -13,6 +13,15 @@ This repo uses Harness. Before work, read the stable entrypoints:
 * `docs/harness/CONTEXT_RULES.md`
 * `scripts/bin/harness-cli query matrix` on macOS/Linux, or `.\scripts\bin\harness-cli.exe query matrix` on Windows
 
+Repository layout:
+
+* `system1/` is the data factory / preprocessing / dataset release builder.
+* `system2/backend/` is the runtime retrieval backend.
+* `system2/frontend/` is the runtime retrieval UI.
+* `docs/` is canonical documentation.
+* `docs/archived/` is historical reference only.
+* `scripts/` is for repo-level utilities and Harness scripts.
+
 After reading the stable entrypoints, use `docs/harness/CONTEXT_RULES.md` to decide which additional files to read by task phase, risk lane, and retrieval trigger. Do not bulk-read unrelated documentation when the lane, affected files, and validation path are already clear.
 
 Before creating, normalizing, or syncing documentation, also read:

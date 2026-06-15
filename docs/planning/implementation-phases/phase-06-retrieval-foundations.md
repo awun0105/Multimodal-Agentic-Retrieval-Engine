@@ -33,7 +33,7 @@
 ## Done Criteria
 
 1. Search visual hoạt động trên data-ready thật.
-2. Search text hoạt động trên captions/OCR/ASR/object/metadata.
+2. Search text hoạt động qua `text_documents`/FTS5 với caption, OCR, ASR, object, và metadata evidence.
 3. Result resolve đúng về keyframe/video/frame.
 
 ## Validation

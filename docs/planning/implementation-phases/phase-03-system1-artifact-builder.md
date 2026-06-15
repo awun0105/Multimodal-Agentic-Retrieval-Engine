@@ -32,12 +32,12 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 ### B. Runtime artifact writing
 
 - write `app.sqlite`
-- write FTS5 tables
-- write `embedding_indexes`
+- write FTS5-backed text search from `text_documents`
+- write `embeddings_meta`
 - write `vector_map`
 - write `feature_availability`
 - write `release_capabilities`
-- write FAISS index + manifest
+- write FAISS index + `index_version.json`
 
 ### C. Full validation
 

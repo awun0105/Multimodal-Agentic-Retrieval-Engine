@@ -2,6 +2,12 @@
 
 Web-based multimedia retrieval cockpit for HCMC AI Challenge.
 
+The repository is organized around three top-level surfaces:
+
+- `system1/`: data factory / preprocessing / dataset release builder
+- `system2/`: runtime retrieval app, including backend and frontend
+- `docs/`: canonical documentation
+
 The system is designed for LSC/VBS-style workflows:
 
 ```text
@@ -10,11 +16,12 @@ search query -> ranked frame results -> inspect video/timeline -> choose frame -
 
 ## Architecture
 
-- Frontend: React + TypeScript + Vite.
-- Backend: Python + FastAPI.
-- DB: SQLite.
+- System 1: preprocessing, release building, validation, and dataset packaging.
+- System 2 backend: Python + FastAPI.
+- System 2 frontend: React + TypeScript + Vite.
+- Runtime DB: SQLite.
 - Vector search: FAISS.
-- Text/object search: SQLite FTS5.
+- Text search: SQLite FTS5.
 - Media: filesystem + FFmpeg.
 - Runtime: Docker Compose.
 
@@ -26,5 +33,4 @@ search query -> ranked frame results -> inspect video/timeline -> choose frame -
 
 ## Data
 
-Raw videos are kept as video files. The app searches precomputed indexes and
-shows thumbnails/keyframes. Full dense frames are not extracted by default.
+System 1 consumes raw videos + metadata and produces app-ready artifacts. System 2 reads the release package, searches precomputed indexes, and shows thumbnails/keyframes. Full dense frames are not extracted by default.

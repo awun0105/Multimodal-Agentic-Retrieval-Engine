@@ -25,7 +25,7 @@ emit a validation report that System 2 can trust.
 - `docs/architecture/data-contracts.md`
 - `docs/planning/implementation-phases/phase-01-system1-mini-seed-and-validation.md`
 - `docs/validation/test-matrix.md`
-- `system1_spec.md`
+- `docs/onboarding/system1_spec.md`
 
 ## Implementation Tickets
 

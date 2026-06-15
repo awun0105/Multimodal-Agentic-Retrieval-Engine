@@ -46,7 +46,7 @@ human-readable `yes`/`no`; use `query matrix --numeric` when copying values into
 `story update`.
 
 The schema lives in `scripts/schema/` and is version-controlled. The database
-file (`harness.db`) is `.gitignore`d.
+file (`harness.db`) is a shared durable layer kept at the repository root.
 
 Requires: the prebuilt Rust CLI at `scripts/bin/harness-cli` on macOS/Linux or
 `scripts/bin/harness-cli.exe` on Windows.

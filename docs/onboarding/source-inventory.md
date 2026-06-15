@@ -8,15 +8,15 @@ Historical onboarding record. Canonical implementation docs now live under `docs
 
 | Input | Current Location | Canonical Replacement | Status |
 | --- | --- | --- | --- |
-| Root data-contract draft | `archived/source-inputs/data-contract.md` | `docs/architecture/data-contracts.md` | archived |
-| Original system spec | `archived/source-inputs/SPEC.md` | `docs/architecture/`, `docs/product/`, `docs/stories/acceptance-criteria.md` | archived |
-| Rules notes | `archived/source-inputs/HCMAI-RULES.md` | `docs/product/rules-2026.md` | archived |
-| Data-ready notes | `archived/source-inputs/DATA_READY.md` | `docs/architecture/data-contracts.md`, `docs/architecture/storage-strategy.md` | archived |
-| Coding standards | `archived/source-inputs/CODING_STANDARDS.md` | `docs/harness/CONTEXT_RULES.md` | archived |
-| UI spec draft | `archived/source-inputs/UI_IMPLEMENTATION_SPEC.md` | `docs/product/ui-implementation.md` | archived |
-| Ingestion draft | `archived/source-inputs/INGESTION.md` | `docs/architecture/system1-ingestion.md`, `docs/architecture/ingestion.md` | archived |
-| Original README | `archived/source-inputs/README.original.md` | `README.md`, `docs/README.md` | archived |
-| Prompt notes | `archived/source-inputs/[0]SPEC_PROMPTS.md` | no canonical implementation dependency | archived |
+| Root data-contract draft | `docs/archived/source-inputs/data-contract.md` | `docs/architecture/data-contracts.md` | archived |
+| Original system spec | `docs/archived/source-inputs/SPEC.md` | `docs/architecture/`, `docs/product/`, `docs/stories/acceptance-criteria.md` | archived |
+| Rules notes | `docs/archived/source-inputs/HCMAI-RULES.md` | `docs/product/rules-2026.md` | archived |
+| Data-ready notes | `docs/archived/source-inputs/DATA_READY.md` | `docs/architecture/data-contracts.md`, `docs/architecture/storage-strategy.md` | archived |
+| Coding standards | `docs/archived/source-inputs/CODING_STANDARDS.md` | `docs/harness/CONTEXT_RULES.md` | archived |
+| UI spec draft | `docs/archived/source-inputs/UI_IMPLEMENTATION_SPEC.md` | `docs/product/ui-implementation.md` | archived |
+| Ingestion draft | `docs/archived/source-inputs/INGESTION.md` | `docs/architecture/system1-ingestion.md`, `docs/architecture/ingestion.md` | archived |
+| Original README | `docs/archived/source-inputs/README.original.md` | `README.md`, `docs/README.md` | archived |
+| Prompt notes | `docs/archived/source-inputs/[0]SPEC_PROMPTS.md` | no canonical implementation dependency | archived |
 
 ## Rule
 

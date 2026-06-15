@@ -57,14 +57,14 @@ The repo, large data, and hot runtime artifacts are separate.
 
 ```text
 ${REPO_ROOT}/
-  backend/
-  frontend/
+  system1/
+  system2/
+    backend/
+    frontend/
   docs/
   scripts/
-  notebooks/
-  config/
-  schemas/
-  tests/fixtures/tiny_seed_dataset/
+  docs/archived/
+  ui-ideas/
 
 ${AIC_DATA_ROOT}/
   raw/
@@ -246,7 +246,7 @@ Required checks:
 
 ## Seed Dataset Requirement
 
-Before runtime implementation, the project needs a tiny seed dataset under `tests/fixtures/tiny_seed_dataset/` or equivalent. It should include:
+Before runtime implementation, the project needs a tiny seed dataset under `system1/tests/fixtures/` or equivalent. It should include:
 
 - At least one video record.
 - Its matching metadata JSON.

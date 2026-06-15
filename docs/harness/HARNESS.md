@@ -92,7 +92,7 @@ Operational data — intake classifications, story status, decision outcomes,
 backlog items, and execution traces — lives in a SQLite database (`harness.db`)
 managed by the Rust Harness CLI at `scripts/bin/harness-cli`. Agents and humans
 should use that binary for Harness work. The database is local to each project
-instance and `.gitignore`d. The schema is version-controlled under
+instance and stays at the repository root. The schema is version-controlled under
 `scripts/schema/`.
 
 The CLI also exposes lightweight template utilities:

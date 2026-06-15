@@ -2,7 +2,7 @@
 
 Tài liệu này mô tả cách vận hành **System 1 preprocessing pipeline** để xử lý dataset video nhanh, ổn định, dễ chia việc cho nhiều teammate, và dễ khôi phục khi một session Kaggle/Colab bị lỗi.
 
-`system1_spec.md` là tài liệu mô tả **System 1 phải tạo ra data gì**.
+`docs/onboarding/system1_spec.md` là tài liệu mô tả **System 1 phải tạo ra data gì**.
 Tài liệu này mô tả **cách chạy System 1 sao cho nhanh và phối hợp tốt**.
 
 ---
@@ -617,7 +617,7 @@ tier_factor:
 
 Công thức này chỉ là ước lượng. Không cần chính xác tuyệt đối. Mục tiêu là chia batch cân bằng hơn.
 
-`<= 25 fps` ở đây chỉ là **bucket ước lượng chi phí scheduling** để chia batch, không phải FPS runtime hardcoded. Runtime FPS detection, `fps_detected`, `frame_id_method`, và frame mapping vẫn phải theo `system1_spec.md`.
+`<= 25 fps` ở đây chỉ là **bucket ước lượng chi phí scheduling** để chia batch, không phải FPS runtime hardcoded. Runtime FPS detection, `fps_detected`, `frame_id_method`, và frame mapping vẫn phải theo `docs/onboarding/system1_spec.md`.
 
 ---
 
@@ -1499,9 +1499,9 @@ optional, không bắt buộc cho MVP
 Cách hiểu cuối cùng:
 
 ```text
-system1_spec.md
+docs/onboarding/system1_spec.md
   = thiết kế pipeline và data contract
 
-docs/operations/throughput.md
+docs/onboarding/throughput-plan.md
   = hướng dẫn chạy pipeline nhanh, phối hợp nhiều worker, tránh trùng việc, reuse artifact, dễ retry
 ```
