@@ -45,8 +45,9 @@ Logic lớn của contract:
    - Nó không tự đoán cấu trúc raw dataset.
 
 4. **Mỗi loại storage có nhiệm vụ riêng**.
-   - SQLite WAL: catalog, app state, query session, candidate, evidence relations, vector mapping.
-   - SQLite FTS5: text search cho caption/OCR/ASR/object/metadata.
+   - System 1 `app.sqlite`: các bảng dataset/runtime read-only như video, scene, shot, keyframe, evidence, `text_documents`, `vector_map`, `feature_availability`, `release_capabilities`.
+   - System 2 runtime DB/state: query session, search run, candidate, agent run/step.
+   - SQLite FTS5: text search nằm trong `app.sqlite`, build từ global `text_documents`.
    - FAISS: vector search cho visual embeddings.
    - Filesystem: lưu file nặng như video, keyframe, thumbnail.
    - DuckDB: preprocessing/staging/validation offline, không phải runtime DB chính.
@@ -70,9 +71,9 @@ Ví dụ một keyframe canonical:
 video_id = "L01_V028"
 frame_id = 25300
 keyframe_id = "L01_V028:25300"
-video_ref = "raw_videos/L01_V028.mp4"
-keyframe_ref = "keyframes/L01_V028/L01_V028_f0025300.jpg"
-thumbnail_ref = "thumbnails/L01_V028/L01_V028_f0025300.webp"
+video_ref = "media://raw_videos/L01_V028.mp4"
+keyframe_ref = "media://keyframes/L01_V028/L01_V028_f0025300.jpg"
+thumbnail_ref = "media://thumbnails/L01_V028/L01_V028_f0025300.webp"
 ```
 
 Điểm cần check theo ý bạn: nếu app muốn hoạt động ổn định, mọi thứ phải quay về được `video_id`, `frame_id`, `keyframe_id`. Đây là xương sống của toàn bộ retrieval system.
@@ -106,18 +107,20 @@ raw data lộn xộn
 
 Output của System 1 không chỉ là một file. Nó là cả một bộ artifact gồm database, index, media đã chuẩn hóa, mapping, và report.
 
-### Nhóm output 1: Dataset registration
-Dùng để biết app đang chạy trên dataset nào.
+### Nhóm output 1: Dataset/release metadata
 
-Output gồm:
+Dùng để biết app đang chạy trên dataset/release nào.
 
-- row trong bảng `datasets`
-- build manifest
-- thông tin version/build time/source root
+Output nguồn sự thật gồm:
 
-Tác dụng: sau này nếu đổi dataset hoặc rebuild index, app biết mình đang dùng bộ dữ liệu nào.
+- `dataset_manifest.json`
+- `validation_report.json`
+- `release_capabilities`
+
+System 1 v1.1 không yêu cầu bảng SQLite `datasets` là source of truth. Nếu implementation thêm bảng `datasets` để tiện query thì đó là mirror/implementation detail.
 
 ### Nhóm output 2: Media và catalog đã chuẩn hóa
+
 Output gồm:
 
 - bảng `videos`
@@ -127,21 +130,25 @@ Output gồm:
 Tác dụng: app biết video nào có những keyframe nào, frame đó nằm ở thời điểm nào, thumbnail ở đâu, video gốc ở đâu.
 
 ### Nhóm output 3: Evidence đã import hoặc generate
-Output gồm:
 
-- `captions`: mô tả nội dung hình/video.
-- `ocr_texts`: chữ xuất hiện trong frame.
+Output canonical gồm:
+
 - `asr_segments`: transcript từ audio theo time range.
+- `shot_transcript_links`, `scene_transcript_links`: liên kết transcript với shot/scene.
+- `ocr`: chữ xuất hiện trong frame/keyframe.
 - `objects`: object/concept như person, car, bus, screen.
+- `image_captions`, `shot_captions`: caption theo image/shot.
+- `scene_summaries_initial`, `scene_summaries_enriched`: summary cấp scene.
 - `shots` / `scenes`: ngữ cảnh thời gian để inspect sâu hơn từ keyframe về shot/scene/video.
 - `feature_availability`: cho UI biết entity nào có ASR/OCR/object/caption/inspection evidence.
 
 Tác dụng: đây là nguồn dữ liệu để search text, filter, giải thích vì sao một result match query.
 
 ### Nhóm output 4: Search indexes
+
 Output gồm:
 
-- SQLite FTS5 tables cho text search.
+- FTS5-backed text search contract built from global `text_documents` inside `app.sqlite`.
 - FAISS visual index cho vector search.
 - `vector_map` để map FAISS vector row về keyframe.
 - index manifest để biết index được build như thế nào.
@@ -149,6 +156,7 @@ Output gồm:
 Tác dụng: nếu không có index, search sẽ chậm hoặc không thể search đa modality.
 
 ### Nhóm output 5: Validation report
+
 Output gồm:
 
 - validation report dạng machine-readable.
@@ -163,11 +171,11 @@ ${AIC_DATA_ROOT}/raw/videos/{video_id}.mp4
 ${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg
 ${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp
 ${AIC_DATA_ROOT}/staging/frame_timeline/{video_id}.parquet
-${AIC_DATA_ROOT}/warehouse/warehouse.duckdb
+${AIC_DATA_ROOT}/staging/staging.duckdb
 ${AIC_DATA_ROOT}/staging/reports/{dataset_id}-validation.json
 ${AIC_RUNTIME_ROOT}/db/app.sqlite
 ${AIC_RUNTIME_ROOT}/indexes/visual.faiss
-${AIC_RUNTIME_ROOT}/indexes/visual_index_manifest.json
+${AIC_RUNTIME_ROOT}/indexes/index_version.json
 ```
 
 ### Evidence
@@ -190,46 +198,42 @@ Input của System 2 là **output đã được System 1 chuẩn bị**. System 
 Input tối thiểu của System 2 gồm:
 
 ### Nhóm input 1: Runtime SQLite database
+
 File chính:
 
 ```text
 ${AIC_RUNTIME_ROOT}/db/app.sqlite
 ```
 
-Bên trong có:
+Bên trong System 1 release `app.sqlite` có các bảng read-only cho runtime:
 
-- catalog video/keyframe
-- evidence tables
-- query sessions
-- search runs
-- candidates
-- agent runs/steps
-- `vector_map`
+- `videos`, `scenes`, `shots`, `keyframes`
+- `asr_segments`, `ocr`, `objects`
+- `image_captions`, `shot_captions`, scene summaries
+- `embeddings_meta`, `text_documents`, `vector_map`
+- `feature_availability`, `release_capabilities`
 
-SQLite là nơi app lấy thông tin có cấu trúc và lưu state runtime.
+Query/session/candidate/agent tables như `query_sessions`, `search_runs`, `candidates`, `agent_runs`, `agent_steps` là **System 2 runtime state**, không phải System 1 release output contract.
 
 ### Nhóm input 2: Text search indexes
-Nằm trong SQLite FTS5:
 
-- `caption_fts`
-- `ocr_fts`
-- `asr_fts`
-- `object_fts`
-- `metadata_fts`
+Nằm trong SQLite FTS5 bên trong `app.sqlite`.
 
-Các bảng này giúp app search text nhanh hơn thay vì scan từng row thủ công.
+Contract System 1 v1.1 là **FTS5-backed text search build từ global `text_documents`**. Các bảng FTS riêng theo từng source có thể là implementation detail optional, không phải output bắt buộc.
 
 ### Nhóm input 3: Vector search index
+
 FAISS files:
 
 ```text
 ${AIC_RUNTIME_ROOT}/indexes/visual.faiss
-${AIC_RUNTIME_ROOT}/indexes/visual_index_manifest.json
+${AIC_RUNTIME_ROOT}/indexes/index_version.json
 ```
 
 FAISS giúp search theo visual embedding.
 
 ### Nhóm input 4: Media files
+
 Media không được embed vào SQLite. SQLite chỉ lưu logical refs. Backend dùng `MediaStorePort` để resolve ra file thật hoặc URL.
 
 Media gồm:
@@ -239,6 +243,7 @@ Media gồm:
 - thumbnails
 
 ### Nhóm input 5: Query từ user hoặc agent
+
 Khi app chạy, user hoặc agent gửi thêm:
 
 - query text
@@ -269,6 +274,7 @@ System 2 input = app-ready database + indexes + media refs + user/agent query
 Project tách storage thành 3 vùng rõ ràng. Mục tiêu là tránh repo phình to, tránh hardcode path máy cá nhân, và giúp runtime chạy nhanh hơn.
 
 ### Vùng 1: `${REPO_ROOT}`
+
 Đây là repo code.
 
 Dùng để lưu:
@@ -288,23 +294,25 @@ Không dùng để lưu:
 - database runtime lớn
 
 ### Vùng 2: `${AIC_DATA_ROOT}`
+
 Đây là nơi lưu dữ liệu lớn, thường nằm trên HDD hoặc ổ ngoài.
 
 Dùng để lưu:
 
 - raw videos
-- raw/original keyframes
+- optional organizer-provided/imported keyframes nếu có adapter riêng
 - original metadata
 - processed videos
 - processed keyframes
 - thumbnails
 - staging shards
 - validation reports
-- DuckDB warehouse
+- DuckDB staging/preprocessing
 
 Lý do: media rất nặng, không nên để trong git repo.
 
 ### Vùng 3: `${AIC_RUNTIME_ROOT}`
+
 Đây là nơi lưu artifact runtime nóng, tốt nhất nằm trên SSD.
 
 Dùng để lưu:
@@ -318,6 +326,7 @@ Dùng để lưu:
 Lý do: app search cần đọc SQLite và FAISS nhanh.
 
 ### Cách lưu path trong SQLite
+
 SQLite không lưu absolute path như:
 
 ```text
@@ -328,9 +337,9 @@ D:/AIC/videos/L01_V028.mp4
 SQLite chỉ lưu logical refs như:
 
 ```text
-raw_videos/L01_V028.mp4
-keyframes/L01_V028/L01_V028_f0025300.jpg
-thumbnails/L01_V028/L01_V028_f0025300.webp
+media://raw_videos/L01_V028.mp4
+media://keyframes/L01_V028/L01_V028_f0025300.jpg
+media://thumbnails/L01_V028/L01_V028_f0025300.webp
 ```
 
 Backend sẽ dùng config + `MediaStorePort` để resolve logical ref đó thành file thật.
@@ -373,7 +382,7 @@ Nói cách khác:
 2. Processed media files
 3. Runtime SQLite database
 4. Runtime FAISS index files
-5. DuckDB warehouse/staging files
+5. DuckDB staging/preprocessing files
 6. Validation/report/manifests
 7. Runtime cache files
 
@@ -381,12 +390,12 @@ Nếu nhìn theo “loại file cốt lõi mà app phụ thuộc để chạy”
 
 1. `app.sqlite`
 2. `visual.faiss`
-3. `visual_index_manifest.json`
+3. `index_version.json`
 4. video files đã chuẩn hóa
 5. keyframe image files đã chuẩn hóa
 6. thumbnail image files đã chuẩn hóa
 7. validation report file
-8. `warehouse.duckdb` cho preprocessing side
+8. `staging.duckdb` cho preprocessing side
 
 Nhưng cần nhớ rằng các nhóm media gồm **nhiều file**, không phải một file duy nhất.
 
@@ -401,7 +410,7 @@ Nhưng cần nhớ rằng các nhóm media gồm **nhiều file**, không phải
 Dạng file thường gặp:
 
 - `.mp4`
-- có thể có format video khác nếu organizer cung cấp, nhưng canonical raw-video logical ref hiện là `raw_videos/{video_id}.mp4`
+- có thể có format video khác nếu organizer cung cấp, nhưng canonical raw-video logical ref hiện là `media://raw_videos/{video_id}.mp4`
 
 Chứa gì:
 
@@ -409,18 +418,7 @@ Chứa gì:
 - audio gốc để sinh ASR
 - timeline gốc để map timestamp
 
-### A2. Keyframe gốc
-
-Dạng file thường gặp:
-
-- `.jpg`
-- có thể có image format khác ở raw input, nhưng runtime canonical đang dùng keyframe ref kiểu `.jpg`
-
-Chứa gì:
-
-- các keyframe organizer cung cấp hoặc keyframe raw trước khi normalize
-
-### A3. Metadata gốc
+### A2. Metadata gốc
 
 Dạng file thường gặp:
 
@@ -434,9 +432,19 @@ Chứa gì:
 - description
 - source/channel
 - duration
-- fps
-- annotations
-- object metadata hoặc các bảng mô tả khác tùy nguồn
+- fps metadata nếu có
+- annotations hoặc các bảng mô tả khác tùy nguồn
+
+Canonical input của System 1 v1.1 là `raw_videos/` + `metadata/`. Keyframes và thumbnails do System 1 generate. Nếu sau này organizer cung cấp keyframes sẵn, phần đó cần import adapter riêng và không đổi core contract.
+
+### A3. Ghi chú về keyframe/thumbnails
+
+Trong System 1 v1.1, keyframes và thumbnails là **output được generate**, không phải canonical input.
+
+- `keyframe_ref` canonical: `media://keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg`
+- `thumbnail_ref` canonical: `media://thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp`
+
+Nếu sau này có organizer-provided keyframes, cần adapter import riêng để map chúng vào contract này, thay vì đổi core contract.
 
 ## B. Trong `${AIC_DATA_ROOT}/processed/media/`
 
@@ -493,45 +501,39 @@ Dạng file:
 
 Chứa gì:
 
-- catalog dữ liệu
+- catalog dữ liệu read-only do System 1 release
 - evidence relations
-- query sessions
-- candidates
-- agent runs
 - vector mapping
-- FTS5 tables
+- `text_documents`
+- FTS5-backed text search
 
 Có những bảng chính nào?
 
 | Bảng | Vai trò |
 | --- | --- |
-| `datasets` | Thông tin dataset/build đang chạy. |
 | `videos` | Một row cho mỗi video. |
+| `scenes` | Scene-level inspection context. |
+| `shots` | Shot-level inspection context. |
 | `keyframes` | Một row cho mỗi keyframe. |
-| `captions` | Caption gắn với `keyframe_id`. |
-| `ocr_texts` | OCR gắn với `keyframe_id`. |
 | `asr_segments` | Transcript gắn với `video_id` và time range. |
-| `keyframe_asr_segments` | Bảng align optional giữa keyframe và ASR segment. |
+| `shot_transcript_links` | Link transcript segment với shot. |
+| `scene_transcript_links` | Link transcript segment với scene. |
+| `ocr` | OCR gắn với keyframe/frame. |
 | `objects` | Object/concept detections gắn với `keyframe_id`. |
-| `embedding_indexes` | Metadata về các index embedding. |
+| `image_captions` | Caption gắn với image/keyframe. |
+| `shot_captions` | Caption gắn với shot. |
+| `scene_summaries_initial` | Summary scene ban đầu. |
+| `scene_summaries_enriched` | Summary scene enriched nếu có. |
+| `embeddings_meta` | Metadata về embeddings/model/index build. |
+| `text_documents` | Global text search contract. |
 | `vector_map` | Map `(index_name, vector_id)` về `keyframe_id`. |
 | `feature_availability` | Cho UI/runtime biết evidence nào có sẵn hoặc degraded theo từng entity. |
 | `release_capabilities` | Cờ capability của dataset/release để runtime bật/tắt feature an toàn. |
-| `query_sessions` | Session truy vấn của người dùng/nhóm. |
-| `query_clues` | Các clue hoặc câu hỏi trong session. |
-| `search_runs` | Metadata của từng lần search. |
-| `search_results` | Snapshot ranked results cho debug/repro. |
-| `candidates` | Candidate đã lưu. |
-| `agent_runs` | Metadata của lần chạy agent. |
-| `agent_steps` | Trace từng bước agent đã làm. |
 
-Ngoài ra còn có các FTS5 tables:
+Các bảng như `query_sessions`, `query_clues`, `search_runs`, `search_results`, `candidates`, `agent_runs`, `agent_steps` thuộc **System 2 runtime behavior/state**, không phải System 1 release output contract.
 
-- `caption_fts`
-- `ocr_fts`
-- `asr_fts`
-- `object_fts`
-- `metadata_fts`
+FTS5 canonical của System 1 v1.1 được build từ global `text_documents`. Nếu implementation có thêm các bảng FTS riêng theo source thì đó là detail tùy chọn, không phải contract bắt buộc.
+
 - optional `evidence_fts`
 
 ### C1.1. “Một bảng có phải là một quan hệ không?”
@@ -547,15 +549,17 @@ Nói ngắn gọn để dễ hình dung:
 - quan hệ = khái niệm logic;
 - bảng = hình thức lưu trữ/biểu diễn của quan hệ trong database.
 
-Trong tài liệu này, khi nói `videos`, `keyframes`, `captions`... thì bạn có thể hiểu gần như là “các quan hệ chính của runtime database”.
+Trong tài liệu này, khi nói `videos`, `keyframes`, `ocr`, `objects`, `image_captions`... thì bạn có thể hiểu gần như là “các quan hệ chính của runtime database”.
 
 ### C1.2. Thuộc tính và ví dụ dữ liệu cho từng quan hệ chính
 
 Lưu ý: canonical docs chưa chốt đủ DDL chi tiết cho mọi cột nhỏ, nhưng đã chốt rất rõ **vai trò bảng**, **khóa định danh**, và **các field cốt lõi**. Phần dưới đây viết theo mức “đủ để hình dung đúng logic chương trình”.
 
-#### Quan hệ `datasets`
+#### Dataset/release metadata
 
-Dùng để lưu thông tin về bộ dữ liệu app đang chạy.
+System 1 v1.1 dùng `dataset_manifest.json`, `validation_report.json`, và `release_capabilities` làm source of truth cho metadata build/release.
+
+Nếu implementation có bảng `datasets` trong SQLite thì nên hiểu đó là mirror tiện query, không phải canonical source of truth.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
@@ -563,7 +567,7 @@ Dùng để lưu thông tin về bộ dữ liệu app đang chạy.
 | `build_id` | ID lần build | `2026-06-13T00-00-00Z` |
 | `status` | trạng thái dataset | `ready` |
 | `created_at` | thời điểm tạo build | `2026-06-13T00:00:00Z` |
-| `source_summary` | mô tả nguồn dữ liệu | `raw videos + keyframes + metadata v1` |
+| `source_summary` | mô tả nguồn dữ liệu | `raw videos + metadata v1` |
 
 Ví dụ một dòng:
 
@@ -573,7 +577,7 @@ Ví dụ một dòng:
   "build_id": "2026-06-13T00-00-00Z",
   "status": "ready",
   "created_at": "2026-06-13T00:00:00Z",
-  "source_summary": "raw videos + keyframes + metadata v1"
+  "source_summary": "raw videos + metadata v1"
 }
 ```
 
@@ -584,9 +588,13 @@ Mỗi dòng là một video.
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
 | `video_id` | ID video canonical | `L01_V028` |
-| `video_ref` | logical ref tới raw video | `raw_videos/L01_V028.mp4` |
+| `video_ref` | logical ref tới raw video | `media://raw_videos/L01_V028.mp4` |
 | `duration_sec` | độ dài video theo giây | `843.33` |
-| `fps` | số frame mỗi giây | `30.0` |
+| `fps_detected` | FPS detect thực tế | `30.0` |
+| `fps_source` | nguồn detect FPS | `avg_frame_rate` |
+| `is_vfr` | video có VFR hay không | `false` |
+| `frame_id_method` | cách xác định `frame_id` | `decoded_frame_index` |
+| `fps_expected_default` | default planning/reference FPS | `25.0` |
 | `width` | chiều rộng video | `1920` |
 | `height` | chiều cao video | `1080` |
 | `metadata_json` | metadata mở rộng | `{"source":"youtube"}` |
@@ -596,9 +604,13 @@ Ví dụ một dòng:
 ```json
 {
   "video_id": "L01_V028",
-  "video_ref": "raw_videos/L01_V028.mp4",
+  "video_ref": "media://raw_videos/L01_V028.mp4",
   "duration_sec": 843.33,
-  "fps": 30.0,
+  "fps_detected": 30.0,
+  "fps_source": "avg_frame_rate",
+  "is_vfr": false,
+  "frame_id_method": "decoded_frame_index",
+  "fps_expected_default": 25.0,
   "width": 1920,
   "height": 1080,
   "metadata_json": {"source": "youtube"}
@@ -615,8 +627,8 @@ Mỗi dòng là một keyframe. Đây là quan hệ trung tâm của retrieval a
 | `video_id` | video mà frame thuộc về | `L01_V028` |
 | `frame_id` | số frame | `25300` |
 | `timestamp_sec` | thời điểm xuất hiện trong video | `843.33` |
-| `keyframe_ref` | logical ref tới ảnh keyframe | `keyframes/L01_V028/L01_V028_f0025300.jpg` |
-| `thumbnail_ref` | logical ref tới thumbnail | `thumbnails/L01_V028/L01_V028_f0025300.webp` |
+| `keyframe_ref` | logical ref tới ảnh keyframe | `media://keyframes/L01_V028/L01_V028_f0025300.jpg` |
+| `thumbnail_ref` | logical ref tới thumbnail | `media://thumbnails/L01_V028/L01_V028_f0025300.webp` |
 
 Ví dụ một dòng:
 
@@ -626,14 +638,14 @@ Ví dụ một dòng:
   "video_id": "L01_V028",
   "frame_id": 25300,
   "timestamp_sec": 843.33,
-  "keyframe_ref": "keyframes/L01_V028/L01_V028_f0025300.jpg",
-  "thumbnail_ref": "thumbnails/L01_V028/L01_V028_f0025300.webp"
+  "keyframe_ref": "media://keyframes/L01_V028/L01_V028_f0025300.jpg",
+  "thumbnail_ref": "media://thumbnails/L01_V028/L01_V028_f0025300.webp"
 }
 ```
 
-#### Quan hệ `captions`
+#### Quan hệ `image_captions` / `shot_captions`
 
-Mỗi dòng là một caption gắn với keyframe.
+System 1 v1.1 dùng `image_captions` cho caption cấp image/keyframe và `shot_captions` cho caption cấp shot.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
@@ -655,7 +667,7 @@ Ví dụ một dòng:
 }
 ```
 
-#### Quan hệ `ocr_texts`
+#### Quan hệ `ocr`
 
 Mỗi dòng là một OCR snippet trên keyframe.
 
@@ -705,13 +717,13 @@ Ví dụ một dòng:
 }
 ```
 
-#### Quan hệ `keyframe_asr_segments`
+#### Quan hệ `shot_transcript_links` / `scene_transcript_links`
 
-Đây là quan hệ nối giữa keyframe và ASR segment khi cần align.
+System 1 v1.1 canonical dùng liên kết transcript với shot/scene. Nếu implementation có `keyframe_asr_segments` để debug/align phụ thì nên coi đó là detail tùy chọn, không phải canonical release table.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
-| `keyframe_id` | keyframe được align | `L01_V028:25300` |
+| `shot_id` hoặc `scene_id` | shot/scene được align | `L01_V028_SH00042` |
 | `asr_segment_id` | segment transcript liên quan | `asr_0001` |
 | `overlap_score` | mức độ liên quan theo time overlap | `0.93` |
 
@@ -753,14 +765,14 @@ Quan hệ timeline để inspect từ keyframe về shot/scene chứa nó.
 | `end_frame` | frame kết thúc interval, exclusive | `25480` |
 | `detection_method` | cách tạo shot/scene | `shot_boundary_detector` |
 
-#### Quan hệ `embedding_indexes`
+#### Quan hệ `embeddings_meta`
 
-Mô tả metadata của mỗi embedding index.
+Mô tả metadata của embedding/model/index build.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
 | `index_name` | tên index | `visual` |
-| `model_name` | model tạo embedding | `openclip_vit_l_14` |
+| `embedding_model` | model tạo embedding | `openclip_vit_l_14` |
 | `dimension` | số chiều vector | `768` |
 | `metric` | độ đo | `cosine` |
 | `index_ref` | logical ref hoặc path index | `indexes/visual.faiss` |
@@ -788,6 +800,10 @@ Ví dụ một dòng:
   "frame_id": 25300
 }
 ```
+
+### Các quan hệ dưới đây thuộc **System 2 runtime behavior/state**
+
+Chúng hữu ích để hiểu app chạy thật, nhưng không phải một phần của **System 1 release output contract**.
 
 #### Quan hệ `query_sessions`
 
@@ -883,21 +899,32 @@ Mỗi dòng là một bước agent đã thực hiện.
 
 Bạn có thể hình dung nhanh bằng sơ đồ logic sau:
 
+#### System 1 release data
+
 ```text
-datasets
+dataset_manifest.json / validation_report.json / release_capabilities
   -> videos
-      -> keyframes
-          -> captions
-          -> ocr_texts
-          -> objects
-          -> shots / scenes
-          -> vector_map
-
-videos
+      -> scenes
+          -> shots
+              -> keyframes
+                  -> ocr
+                  -> objects
+                  -> image_captions
+                  -> vector_map
+              -> shot_captions
+              -> shot_transcript_links
+          -> scene_transcript_links
+          -> scene_summaries_initial
+          -> scene_summaries_enriched
   -> asr_segments
+  -> embeddings_meta
+  -> text_documents
+  -> feature_availability
+```
 
-keyframes <-> keyframe_asr_segments <-> asr_segments
+#### System 2 runtime state
 
+```text
 query_sessions
   -> query_clues
   -> search_runs
@@ -909,10 +936,11 @@ query_sessions
 
 Đây là cách nhìn rất gần với logic chương trình:
 
-- `videos` và `keyframes` là phần lõi media identity;
-- `captions`, `ocr_texts`, `asr_segments`, `objects` là evidence;
+- `videos`, `scenes`, `shots`, `keyframes` là phần lõi media/timeline identity;
+- `ocr`, `asr_segments`, `objects`, `image_captions`, `shot_captions`, `scene_summaries_*` là evidence;
+- `text_documents` là global text search contract;
 - `vector_map` nối FAISS với keyframes;
-- `query_sessions` và các bảng con là phần trạng thái làm việc của người dùng/agent.
+- `query_sessions` và các bảng con là System 2 runtime state.
 
 ### C2. WAL/SHM runtime files
 
@@ -933,7 +961,8 @@ Chứa gì:
 Cách hiểu đúng là:
 
 - runtime relational data chính nằm trong **một file SQLite chính**: `app.sqlite`;
-- các bảng catalog, evidence, sessions, candidates, agent traces, `embedding_indexes`, `vector_map`, và các FTS5 tables đều nằm trong file này;
+- các bảng catalog/evidence/vector mapping/text search read-only của System 1 release nằm trong file này;
+- query/session/candidate/agent state thuộc System 2 runtime behavior và nên được tách khỏi phần mô tả System 1 output contract;
 - ngoài `app.sqlite` có thêm `app.sqlite-wal` và `app.sqlite-shm`, nhưng đó là file runtime phụ của WAL mode, không phải “một database schema riêng”.
 
 Vậy ở MVP hiện tại, system **không yêu cầu tách ra nhiều file DB runtime khác nhau**.
@@ -962,7 +991,8 @@ MVP media = file riêng trên filesystem
 Cần tách ra làm 2 ý khác nhau:
 
 #### Ý 1: Metadata mô tả embedding/index
-Metadata về index được lưu trong SQLite, ở quan hệ `embedding_indexes`.
+
+Metadata về embedding/index được lưu trong SQLite, ở quan hệ `embeddings_meta`.
 
 Ví dụ nó lưu các thông tin như:
 
@@ -973,6 +1003,7 @@ Ví dụ nó lưu các thông tin như:
 - logical ref tới file index
 
 #### Ý 2: Bản thân vector embeddings runtime
+
 Theo contract MVP hiện tại, **vector runtime để search được lưu trong FAISS file**, không lưu trực tiếp trong SQLite dưới dạng cột vector lớn.
 
 Ví dụ:
@@ -985,7 +1016,7 @@ Ví dụ:
 Nếu là **image embedding / visual embedding** từ CLIP hoặc OpenCLIP, thì theo contract hiện tại:
 
 - vector runtime dùng để search nằm trong FAISS file, ví dụ `visual.faiss`;
-- metadata của index nằm ở `embedding_indexes`;
+- metadata của index nằm ở `embeddings_meta`;
 - mapping từ `vector_id` về `keyframe_id` nằm ở `vector_map`.
 
 Tức là flow là:
@@ -994,7 +1025,7 @@ Tức là flow là:
 CLIP image embedding
   -> build FAISS index
   -> lưu vector runtime trong visual.faiss
-  -> lưu metadata index trong embedding_indexes
+  -> lưu metadata index trong embeddings_meta
   -> lưu mapping trong vector_map
 ```
 
@@ -1003,23 +1034,21 @@ CLIP image embedding
 Phần này cần phân biệt rất rõ giữa **contract hiện tại** và **khả năng mở rộng tương lai**.
 
 #### Theo contract MVP hiện tại
+
 Text retrieval chính thức đang dùng:
 
-- SQLite FTS5 cho captions
-- SQLite FTS5 cho OCR
-- SQLite FTS5 cho ASR
-- SQLite FTS5 cho objects
-- SQLite FTS5 cho metadata
+- SQLite FTS5 build từ `text_documents` bên trong `app.sqlite`
 
 Nghĩa là ở thời điểm hiện tại, **text search canonical chưa bắt buộc phải có một FAISS index riêng cho text embeddings**.
 
 Vì vậy, nếu bạn đang hỏi “transcript embeddings” hoặc “description embeddings” trong MVP hiện tại, thì câu trả lời chuẩn là:
 
-- text nội dung canonical được lưu ở các bảng relational (`captions`, `ocr_texts`, `asr_segments`, `objects`, `metadata`);
+- text nội dung canonical được hợp nhất vào `text_documents`; per-source tables chỉ là nguồn/intermediate để build document;
 - text search runtime canonical được thực hiện qua FTS5;
 - canonical docs chưa chốt một file vector index riêng cho text embeddings ở MVP.
 
 #### Nếu sau này muốn dùng text encoder embeddings
+
 Nếu về sau hệ thống mở rộng để dùng:
 
 - caption embeddings
@@ -1029,7 +1058,7 @@ Nếu về sau hệ thống mở rộng để dùng:
 thì cách lưu **hợp logic nhất theo contract hiện tại** sẽ là:
 
 1. thêm một index mới trong FAISS hoặc vector backend tương đương;
-2. đăng ký index đó trong `embedding_indexes`;
+2. đăng ký metadata index đó trong `embeddings_meta`;
 3. thêm mapping vào `vector_map` với `index_name` khác, ví dụ `caption_text`, `asr_text`, hoặc `multimodal_text`;
 4. vẫn giữ text gốc trong SQLite relational + FTS5 để explain/filter/debug.
 
@@ -1037,9 +1066,9 @@ Ví dụ tư duy lưu trữ:
 
 ```text
 caption text
-  -> lưu text gốc trong captions + caption_fts
+  -> lưu text gốc vào per-source tables và hợp nhất vào `text_documents` + FTS5
   -> nếu có text embedding runtime, build thêm FAISS index riêng
-  -> đăng ký index trong embedding_indexes
+  -> đăng ký metadata index trong embeddings_meta
   -> map vector rows bằng vector_map
 ```
 
@@ -1076,7 +1105,7 @@ Chứa gì:
 - FAISS không chứa trực tiếp `video_id` hay `frame_id`
 - nó chỉ chứa vector rows và cấu trúc index phục vụ nearest-neighbor search
 
-### D2. `visual_index_manifest.json`
+### D2. `index_version.json`
 
 Dạng file:
 
@@ -1088,9 +1117,9 @@ Chứa gì:
 - có thể gồm tên index, model, dimension, metric, build info, version
 - được dùng để biết index hiện tại là index nào và tương thích ra sao
 
-## E. Trong `${AIC_DATA_ROOT}/warehouse/`
+## E. Trong `${AIC_DATA_ROOT}/staging/`
 
-### E1. `warehouse.duckdb`
+### E1. `staging.duckdb`
 
 Dạng file:
 
@@ -1159,9 +1188,10 @@ Chứa gì:
 
 Nhìn theo data model logic, có thể chia dữ liệu thành **6 nhóm chính**:
 
-1. **Dataset/build model**
-   - `datasets`
-   - build manifest
+1. **Dataset/release metadata model**
+   - `dataset_manifest.json`
+   - `validation_report.json`
+   - `release_capabilities`
 
 2. **Media identity model**
    - `videos`
@@ -1169,26 +1199,31 @@ Nhìn theo data model logic, có thể chia dữ liệu thành **6 nhóm chính*
    - logical media refs
 
 3. **Evidence model**
-   - `captions`
-   - `ocr_texts`
    - `asr_segments`
+   - `shot_transcript_links`
+   - `scene_transcript_links`
+   - `ocr`
    - `objects`
-   - `shots` / `scenes`
+   - `image_captions`
+   - `shot_captions`
+   - `scene_summaries_initial`
+   - `scene_summaries_enriched`
    - `feature_availability`
 
-4. **Index model**
-   - `embedding_indexes`
+4. **Index/text model**
+   - `embeddings_meta`
    - `vector_map`
    - FAISS files
-   - FTS5 tables
+   - `text_documents`
+   - FTS5 build từ `text_documents`
 
-5. **Search/session model**
+5. **System 2 search/session model**
    - `query_sessions`
    - `query_clues`
    - `search_runs`
    - `search_results`
 
-6. **Decision/output model**
+6. **System 2 decision/output model**
    - `candidates`
    - `agent_runs`
    - `agent_steps`
@@ -1199,12 +1234,12 @@ Nhìn theo data model logic, có thể chia dữ liệu thành **6 nhóm chính*
 
 Nếu ai hỏi “project này có những file data gì?”, bạn có thể trả lời ngắn như sau:
 
-- raw videos/keyframes/metadata ở `${AIC_DATA_ROOT}/raw/`
+- raw videos/metadata ở `${AIC_DATA_ROOT}/raw/`
 - processed videos/keyframes/thumbnails ở `${AIC_DATA_ROOT}/processed/media/`
 - runtime SQLite DB ở `${AIC_RUNTIME_ROOT}/db/app.sqlite`
 - runtime FAISS index ở `${AIC_RUNTIME_ROOT}/indexes/visual.faiss`
-- FAISS manifest ở `${AIC_RUNTIME_ROOT}/indexes/visual_index_manifest.json`
-- preprocessing warehouse ở `${AIC_DATA_ROOT}/warehouse/warehouse.duckdb`
+- FAISS manifest ở `${AIC_RUNTIME_ROOT}/indexes/index_version.json`
+- DuckDB staging/preprocessing ở `${AIC_DATA_ROOT}/staging/staging.duckdb` nếu implementation bật staging/preprocessing
 - validation reports ở `${AIC_DATA_ROOT}/staging/reports/`
 - optional shard/intermediate files ở `${AIC_DATA_ROOT}/staging/shards/`
 
@@ -1227,6 +1262,7 @@ Nếu ai hỏi “project này có những file data gì?”, bạn có thể tr
 System có 2 nhóm index chính để search, cộng thêm 1 lớp mapping bắt buộc.
 
 ## 6.1) FAISS vector index
+
 FAISS dùng để search bằng vector embedding.
 
 Trong MVP hiện tại, canonical artifact là:
@@ -1244,23 +1280,23 @@ Dùng cho:
 FAISS trả về `vector_id`, không trả về trực tiếp `video_id` hay `frame_id`. Vì vậy cần `vector_map` trong SQLite để dịch kết quả.
 
 ## 6.2) SQLite FTS5 text indexes
+
 FTS5 dùng cho text search.
 
-Các FTS5 tables bắt buộc:
+Contract System 1 v1.1 là:
 
-| FTS5 table | Dùng để search gì? |
-| --- | --- |
-| `caption_fts` | caption hoặc mô tả nội dung. |
-| `ocr_fts` | chữ xuất hiện trong hình/frame. |
-| `asr_fts` | transcript từ audio. |
-| `object_fts` | object/concept labels. |
-| `metadata_fts` | title, tags, source, annotation, metadata. |
+```text
+text_sources.parquet      # per-video/intermediate
+text_documents.parquet    # global text search contract
+app.sqlite FTS5           # built from text_documents
+```
 
-Optional:
+Nghĩa là `text_documents` là nguồn canonical cho text search global. FTS5 nên được build từ `text_documents`.
 
-- `evidence_fts`: bảng unified nếu muốn gom nhiều evidence text vào một index chung.
+Các bảng FTS riêng theo source có thể tồn tại nếu implementation muốn tối ưu/debug theo source, nhưng không phải canonical required outputs của System 1 v1.1.
 
 ## 6.3) SQLite relational mapping layer
+
 Đây không phải search index kiểu FAISS/FTS5, nhưng bắt buộc để hệ thống hoạt động.
 
 Bao gồm:
@@ -1269,13 +1305,14 @@ Bao gồm:
 - `videos`
 - `keyframes`
 - evidence tables
-- session/candidate tables
+- System 1 read-only release tables
+- System 2 session/candidate tables ở runtime state riêng
 
 Tóm tắt số lượng:
 
 - **1 nhóm vector index**: FAISS.
-- **5 FTS5 text indexes bắt buộc**.
-- **1 FTS5 unified optional**.
+- **1 FTS5-backed text search contract** build từ `text_documents`.
+- **Per-source FTS5 tables optional** nếu implementation cần.
 - **1 relational mapping layer** trong SQLite.
 
 ### Evidence
@@ -1344,6 +1381,7 @@ metadata adapter
 Mỗi adapter trả về một danh sách result riêng. Sau đó `FusionEngine` sẽ normalize score, merge theo `keyframe_id`, apply weight, diversify, và rerank nếu cần.
 
 ## 8.1) Visual retrieval
+
 Dùng FAISS trên visual embeddings.
 
 Phù hợp khi:
@@ -1360,6 +1398,7 @@ Ví dụ:
 ```
 
 ## 8.2) Text retrieval
+
 Dùng FTS5 trên caption/OCR/ASR/object/metadata.
 
 Phù hợp khi:
@@ -1377,6 +1416,7 @@ Ví dụ:
 ```
 
 ## 8.3) Object/concept retrieval
+
 Dùng object labels như một nguồn search/filter/scoring.
 
 Phù hợp khi query nhắc đến vật thể rõ:
@@ -1387,10 +1427,11 @@ person, car, bus, screen, microphone, stage
 
 Object có thể được dùng theo 2 cách:
 
-1. Search text qua `object_fts`.
+1. Search text qua `text_documents`/FTS5 với `source_type = object_labels`, hoặc qua per-source FTS optional nếu implementation có bảng này.
 2. Filter hoặc boost score nếu result có object đó.
 
 ## 8.4) Metadata retrieval
+
 Dùng metadata để thu hẹp phạm vi search.
 
 Phù hợp khi query liên quan:
@@ -1402,6 +1443,7 @@ Phù hợp khi query liên quan:
 - video context đã biết.
 
 ## 8.5) Hybrid fusion
+
 Đây là cách kết hợp nhiều method.
 
 Flow cơ bản:
@@ -1503,7 +1545,7 @@ FAISS vector_id
   -> keyframe_id
   -> video_id + frame_id
   -> keyframe_ref + thumbnail_ref
-  -> captions / OCR / ASR / objects / metadata
+  -> image_captions / ocr / asr_segments / objects / metadata-derived text_documents
 ```
 
 Giải thích từng bước:
@@ -1514,7 +1556,7 @@ Giải thích từng bước:
 4. Backend lookup `vector_map` trong SQLite.
 5. `vector_map` cho biết vector đó thuộc `keyframe_id` nào.
 6. Từ `keyframe_id`, backend lấy `video_id`, `frame_id`, timestamp, media refs.
-7. Backend join thêm evidence: captions, OCR, ASR, objects, metadata.
+7. Backend join thêm evidence: image captions, OCR, ASR, objects, metadata-derived text documents.
 8. UI nhận result đã đầy đủ thông tin để hiển thị.
 
 Text search cũng cần mapping:
@@ -1562,18 +1604,16 @@ ASR hơi đặc biệt:
 ## 11.1) Giai đoạn chuẩn bị dữ liệu: System 1
 
 ### Bước 1: Raw data đi vào
-Input ban đầu có thể gồm:
 
-- videos;
-- keyframes;
-- metadata;
-- object detections;
-- OCR;
-- ASR;
-- captions;
-- embeddings nếu organizer cung cấp.
+Input canonical ban đầu gồm:
+
+- `raw_videos/`;
+- `metadata/`.
+
+Keyframes/OCR/ASR/captions/objects/embeddings nếu organizer cung cấp thì là optional imported evidence qua adapter, không phải required MVP input.
 
 ### Bước 2: Normalize data
+
 System 1 chuẩn hóa:
 
 - `video_id`;
@@ -1584,23 +1624,27 @@ System 1 chuẩn hóa:
 - metadata fields.
 
 ### Bước 3: Generate hoặc import evidence
-System 1 tạo hoặc import:
 
-- captions;
-- OCR text;
-- ASR transcript;
-- object/concept labels;
-- scene/location/attribute tags nếu có.
+System 1 tạo hoặc import qua adapter:
+
+- `image_captions`, `shot_captions`;
+- `ocr`;
+- `asr_segments`;
+- `objects`;
+- `scene_summaries_initial`, `scene_summaries_enriched`;
+- `text_documents` cho text search global.
 
 ### Bước 4: Build indexes
+
 System 1 build:
 
 - FAISS visual index;
-- SQLite FTS5 indexes;
+- FTS5-backed text search contract built from global `text_documents` inside `app.sqlite`;
 - `vector_map`;
 - index manifest.
 
 ### Bước 5: Validate
+
 System 1 kiểm tra:
 
 - không duplicate `video_id`;
@@ -1617,6 +1661,7 @@ Nếu validation fail, dataset chưa nên được xem là app-ready.
 ## 11.2) Giai đoạn app chạy: System 2
 
 ### Bước 6: User tạo query session
+
 User mở UI và tạo hoặc chọn Query Session.
 
 Session lưu:
@@ -1630,6 +1675,7 @@ Session lưu:
 - optional agent runs.
 
 ### Bước 7: User search
+
 User nhập query, ví dụ:
 
 ```text
@@ -1646,16 +1692,18 @@ Request có thể gồm:
 - rerank top-K.
 
 ### Bước 8: System 2 chạy adapters
+
 Tùy query type, system chạy một hoặc nhiều adapter:
 
 - visual adapter query FAISS;
-- caption adapter query `caption_fts`;
-- OCR adapter query `ocr_fts`;
-- ASR adapter query `asr_fts`;
-- object adapter query `object_fts`;
-- metadata adapter query `metadata_fts` hoặc metadata tables.
+- caption adapter query `text_documents`/FTS5 với source caption;
+- OCR adapter query `text_documents`/FTS5 với source OCR;
+- ASR adapter query `text_documents`/FTS5 với source ASR;
+- object adapter query `text_documents`/FTS5 với `source_type = object_labels`;
+- metadata adapter query `text_documents`/FTS5 hoặc metadata tables.
 
 ### Bước 9: Fusion và rerank
+
 System:
 
 - normalize score từng adapter;
@@ -1666,6 +1714,7 @@ System:
 - build evidence summary.
 
 ### Bước 10: Trả result cho UI
+
 Mỗi result phải có đủ:
 
 - `keyframe_id`;
@@ -1681,6 +1730,7 @@ Mỗi result phải có đủ:
 - warnings.
 
 ### Bước 11: User inspect candidate
+
 User click result để xem:
 
 - thumbnail/keyframe lớn;
@@ -1690,6 +1740,7 @@ User click result để xem:
 - score breakdown.
 
 ### Bước 12: User save/export hoặc agent đề xuất
+
 User có thể:
 
 - pin candidate;
