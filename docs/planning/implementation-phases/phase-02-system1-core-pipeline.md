@@ -11,6 +11,8 @@
 Mở rộng từ System 1 mini thành các pipeline lõi trên raw videos và metadata JSON đã pair theo stem:
 
 - visual embeddings
+- shot detection and fallback full-video shot generation
+- frame timeline / timestamp-to-frame mapping for VFR safety
 - OCR + metadata normalization
 - ASR transcription
 
@@ -25,6 +27,12 @@ Mở rộng từ System 1 mini thành các pipeline lõi trên raw videos và me
 - chọn model CLIP/OpenCLIP
 - xử lý theo shard
 - output embeddings/manifest trung gian
+
+### A2. Structure/timeline pipeline
+
+- detect shots, with `fallback_full_video` shot when detector fails but video is readable
+- build `frame_timeline` staging rows or equivalent mapping proof when accurate timestamp-to-frame mapping is needed
+- keep keyframe extraction in MVP stable mode: depends on shots + raw video + keyframe config, not scene heuristics
 
 ### B. OCR + metadata pipeline
 
@@ -46,6 +54,7 @@ Mở rộng từ System 1 mini thành các pipeline lõi trên raw videos và me
 4. Implement ASR transcription flow
 5. Add shard/resume strategy
 6. Add output manifests for each modality
+7. Add frame/timeline and shot fallback validation
 
 ## Done Criteria
 
@@ -53,6 +62,7 @@ Mở rộng từ System 1 mini thành các pipeline lõi trên raw videos và me
 2. Có output trung gian cho OCR/metadata pipeline.
 3. Có output trung gian cho ASR pipeline.
 4. Mỗi pipeline có rule naming, shard boundary, và resume logic tối thiểu.
+5. Shot/timeline outputs preserve enough data to map time ranges to frame ids safely.
 
 ## Validation
 
@@ -60,6 +70,7 @@ Mở rộng từ System 1 mini thành các pipeline lõi trên raw videos và me
 - output shape checks
 - metadata/ID consistency checks
 - ASR time-range sanity checks
+- timestamp-to-frame mapping checks using decoded frame ids when available
 
 ## Risks
 

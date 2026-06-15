@@ -23,9 +23,9 @@ MVP scope, but no implementation proof exists yet.
 | Story | Contract | Unit | Integration | E2E | Platform | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | MVP-0 | Canonical docs, decisions, and supersession markers match accepted architecture | no | no | no | no | implemented | `docs/onboarding/doc-conflicts.md`, `docs/architecture/overview.md`, `docs/architecture/ingestion.md` (no ADRs required) |
-| MVP-0.5 | App-ready Data Contract defines organizer raw-video/metadata input, stem-based `video_id`, roots, logical refs, IDs, SQLite/FTS5/FAISS boundaries, and validation rules | no | no | no | no | implemented | `docs/architecture/data-contracts.md`, `docs/architecture/system1-ingestion.md`, `docs/stories/backlog.md` |
+| MVP-0.5 | App-ready Data Contract defines organizer raw-video/metadata input, stem-based `video_id`, `video_ref`/derived logical refs, frame/timeline policy, SQLite/FTS5/FAISS boundaries, and validation rules | no | no | no | no | implemented | `docs/architecture/data-contracts.md`, `docs/architecture/system1-ingestion.md`, `docs/stories/backlog.md` |
 | MVP-0.6 | System 1 mini creates a tiny paired raw-video/metadata subset and validation report proving the contract is executable | no | no | no | no | planned | planned |
-| MVP-1 | System 1 artifact builder produces validated runtime SQLite/FTS5/FAISS artifacts for System 2 | no | no | no | no | planned | planned |
+| MVP-1 | System 1 artifact builder produces validated runtime SQLite/FTS5/FAISS, `vector_map`, feature availability, release capability, and logical-ref artifacts for System 2 | no | no | no | no | planned | planned |
 | MVP-2 | Backend API vertical slice reads System 1 app-ready artifacts and returns keyframe-first payloads | no | no | no | no | planned | planned |
 | MVP-3 | One React/Vite SPA provides keyframe-first query and inspection workflow | no | no | no | no | planned | planned |
 | MVP-4 | FAISS visual retrieval returns ranked keyframe results through FastAPI | no | no | no | no | planned | planned |
@@ -38,7 +38,7 @@ MVP scope, but no implementation proof exists yet.
 | SYS1-001 | Vision embedding notebook pipeline produces shard-safe visual embeddings | no | no | no | no | planned | durable matrix |
 | SYS1-002 | OCR and metadata notebook pipeline produces shard-safe outputs | no | no | no | no | planned | durable matrix |
 | SYS1-003 | Audio transcription notebook pipeline produces ASR time-range outputs | no | no | no | no | planned | durable matrix |
-| SYS1-004 | DuckDB aggregation merges System 1 outputs into validated SQLite, FTS5, FAISS, and mapping artifacts | no | no | no | no | planned | durable matrix |
+| SYS1-004 | DuckDB/staging aggregation merges System 1 outputs into validated SQLite, FTS5, FAISS, vector mapping, feature availability, and release capability artifacts | no | no | no | no | planned | durable matrix |
 | SYS2-001 | FastAPI runtime scaffold exposes core retrieval endpoints | no | no | no | no | planned | durable matrix |
 | SYS2-002 | React/Vite runtime scaffold supports Query Session workflow | no | no | no | no | planned | durable matrix |
 | SYS2-003 | FAISS runtime adapter queries vector index and resolves SQLite mappings | no | no | no | no | planned | durable matrix |

@@ -39,6 +39,8 @@ Pipeline tối thiểu cần làm được:
 - media discovery
 - raw video / metadata JSON pairing theo filename stem
 - metadata normalization ở mức đủ dùng
+- `video_ref` and logical media refs, without absolute paths in runtime DB
+- frame probing with `fps_detected`, VFR flag/method metadata, and decoded-frame-count preference
 - keyframe extraction từ raw video
 - keyframe normalization
 - thumbnail generation hoặc placeholder rõ ràng
@@ -52,6 +54,7 @@ Output mong muốn:
 - processed media refs đúng contract
 - `app.sqlite`
 - normalized video registry với `video_id = source_video_stem`
+- `video_ref`, `keyframe_ref`, and `thumbnail_ref` rows that resolve through the media store
 - FTS5 fixture tối thiểu hoặc seed text-search rows
 - `vector_map` fixture tối thiểu
 - validation report
@@ -83,6 +86,8 @@ Output mong muốn:
 - inspect `app.sqlite`
 - verify raw video / metadata stem pairing
 - verify logical refs
+- verify `video_ref` / derived logical refs resolve
+- verify frame id/count method fields are present
 - verify `vector_map` resolution
 - verify validator catches broken cases
 

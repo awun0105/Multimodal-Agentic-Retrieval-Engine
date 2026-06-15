@@ -13,6 +13,8 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 - FTS5 tables
 - FAISS index
 - `vector_map`
+- `feature_availability`
+- `release_capabilities`
 - validation report
 
 ## Main Question This Phase Answers
@@ -33,6 +35,8 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 - write FTS5 tables
 - write `embedding_indexes`
 - write `vector_map`
+- write `feature_availability`
+- write `release_capabilities`
 - write FAISS index + manifest
 
 ### C. Full validation
@@ -41,6 +45,8 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 - no unresolved refs
 - no broken vector mappings
 - no absolute paths
+- `video_ref`, `keyframe_ref`, and `thumbnail_ref` resolve through the media store
+- `app.sqlite.vector_map` is the runtime source of truth; parquet mapping is debug/export mirror only
 - evidence rows point đúng targets
 
 ## Suggested Issue Breakdown
@@ -51,7 +57,8 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 4. Build FTS5 tables
 5. Build FAISS index and manifest
 6. Write vector_map
-7. Emit full validation report
+7. Write feature availability and release capability tables
+8. Emit full validation report
 
 ## Done Criteria
 
@@ -65,6 +72,7 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 - artifact directory inspection
 - SQLite integrity checks
 - `vector_map`/FAISS consistency checks
+- feature availability and release capability checks
 - FTS5 row checks
 - report review
 
