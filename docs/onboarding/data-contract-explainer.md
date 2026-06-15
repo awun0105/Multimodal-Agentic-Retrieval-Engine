@@ -60,7 +60,9 @@ Các ID quan trọng nhất:
 | `frame_id` | Số frame chính thức, ví dụ `25300`. |
 | `keyframe_id` | ID nối giữa video và frame, format `"{video_id}:{frame_id}"`. |
 | `vector_id` | Row ID do FAISS trả về. |
-| `media_ref` | Đường dẫn logic tới video/keyframe/thumbnail, không phải absolute path. |
+| `video_ref` | Đường dẫn logic tới raw video, không phải absolute path. |
+| `keyframe_ref` | Đường dẫn logic tới ảnh keyframe đã generate. |
+| `thumbnail_ref` | Đường dẫn logic tới thumbnail đã generate. |
 
 Ví dụ một keyframe canonical:
 
@@ -68,8 +70,9 @@ Ví dụ một keyframe canonical:
 video_id = "L01_V028"
 frame_id = 25300
 keyframe_id = "L01_V028:25300"
-keyframe_ref = "keyframes/L01_V028/025300.jpg"
-thumbnail_ref = "thumbnails/L01_V028/025300.webp"
+video_ref = "raw_videos/L01_V028.mp4"
+keyframe_ref = "keyframes/L01_V028/L01_V028_f0025300.jpg"
+thumbnail_ref = "thumbnails/L01_V028/L01_V028_f0025300.webp"
 ```
 
 Điểm cần check theo ý bạn: nếu app muốn hoạt động ổn định, mọi thứ phải quay về được `video_id`, `frame_id`, `keyframe_id`. Đây là xương sống của toàn bộ retrieval system.
@@ -130,7 +133,8 @@ Output gồm:
 - `ocr_texts`: chữ xuất hiện trong frame.
 - `asr_segments`: transcript từ audio theo time range.
 - `objects`: object/concept như person, car, bus, screen.
-- optional `scene_tags`: scene/location/attribute tags nếu có.
+- `shots` / `scenes`: ngữ cảnh thời gian để inspect sâu hơn từ keyframe về shot/scene/video.
+- `feature_availability`: cho UI biết entity nào có ASR/OCR/object/caption/inspection evidence.
 
 Tác dụng: đây là nguồn dữ liệu để search text, filter, giải thích vì sao một result match query.
 
@@ -155,9 +159,10 @@ Tác dụng: app không nên chạy trên dataset hỏng. Ví dụ thiếu thumb
 Ví dụ artifact vật lý:
 
 ```text
-${AIC_DATA_ROOT}/processed/media/videos/{video_id}.mp4
-${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{frame_id_padded}.jpg
-${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{frame_id_padded}.webp
+${AIC_DATA_ROOT}/raw/videos/{video_id}.mp4
+${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg
+${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp
+${AIC_DATA_ROOT}/staging/frame_timeline/{video_id}.parquet
 ${AIC_DATA_ROOT}/warehouse/warehouse.duckdb
 ${AIC_DATA_ROOT}/staging/reports/{dataset_id}-validation.json
 ${AIC_RUNTIME_ROOT}/db/app.sqlite
@@ -323,9 +328,9 @@ D:/AIC/videos/L01_V028.mp4
 SQLite chỉ lưu logical refs như:
 
 ```text
-videos/L01_V028.mp4
-keyframes/L01_V028/025300.jpg
-thumbnails/L01_V028/025300.webp
+raw_videos/L01_V028.mp4
+keyframes/L01_V028/L01_V028_f0025300.jpg
+thumbnails/L01_V028/L01_V028_f0025300.webp
 ```
 
 Backend sẽ dùng config + `MediaStorePort` để resolve logical ref đó thành file thật.
@@ -396,7 +401,7 @@ Nhưng cần nhớ rằng các nhóm media gồm **nhiều file**, không phải
 Dạng file thường gặp:
 
 - `.mp4`
-- có thể có format video khác nếu organizer cung cấp, nhưng canonical ref hiện đang chuẩn hóa về video runtime kiểu `videos/{video_id}.mp4`
+- có thể có format video khác nếu organizer cung cấp, nhưng canonical raw-video logical ref hiện là `raw_videos/{video_id}.mp4`
 
 Chứa gì:
 
@@ -442,7 +447,7 @@ Chứa gì:
 Ví dụ path:
 
 ```text
-${AIC_DATA_ROOT}/processed/media/videos/{video_id}.mp4
+${AIC_DATA_ROOT}/raw/videos/{video_id}.mp4
 ```
 
 Chứa gì:
@@ -455,7 +460,7 @@ Chứa gì:
 Ví dụ path:
 
 ```text
-${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{frame_id_padded}.jpg
+${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg
 ```
 
 Chứa gì:
@@ -468,7 +473,7 @@ Chứa gì:
 Ví dụ path:
 
 ```text
-${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{frame_id_padded}.webp
+${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp
 ```
 
 Chứa gì:
@@ -508,9 +513,10 @@ Có những bảng chính nào?
 | `asr_segments` | Transcript gắn với `video_id` và time range. |
 | `keyframe_asr_segments` | Bảng align optional giữa keyframe và ASR segment. |
 | `objects` | Object/concept detections gắn với `keyframe_id`. |
-| `scene_tags` | Optional scene/location/attribute tags. |
 | `embedding_indexes` | Metadata về các index embedding. |
 | `vector_map` | Map `(index_name, vector_id)` về `keyframe_id`. |
+| `feature_availability` | Cho UI/runtime biết evidence nào có sẵn hoặc degraded theo từng entity. |
+| `release_capabilities` | Cờ capability của dataset/release để runtime bật/tắt feature an toàn. |
 | `query_sessions` | Session truy vấn của người dùng/nhóm. |
 | `query_clues` | Các clue hoặc câu hỏi trong session. |
 | `search_runs` | Metadata của từng lần search. |
@@ -578,7 +584,7 @@ Mỗi dòng là một video.
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
 | `video_id` | ID video canonical | `L01_V028` |
-| `video_ref` | logical ref tới file video | `videos/L01_V028.mp4` |
+| `video_ref` | logical ref tới raw video | `raw_videos/L01_V028.mp4` |
 | `duration_sec` | độ dài video theo giây | `843.33` |
 | `fps` | số frame mỗi giây | `30.0` |
 | `width` | chiều rộng video | `1920` |
@@ -590,7 +596,7 @@ Ví dụ một dòng:
 ```json
 {
   "video_id": "L01_V028",
-  "video_ref": "videos/L01_V028.mp4",
+  "video_ref": "raw_videos/L01_V028.mp4",
   "duration_sec": 843.33,
   "fps": 30.0,
   "width": 1920,
@@ -609,8 +615,8 @@ Mỗi dòng là một keyframe. Đây là quan hệ trung tâm của retrieval a
 | `video_id` | video mà frame thuộc về | `L01_V028` |
 | `frame_id` | số frame | `25300` |
 | `timestamp_sec` | thời điểm xuất hiện trong video | `843.33` |
-| `keyframe_ref` | logical ref tới ảnh keyframe | `keyframes/L01_V028/025300.jpg` |
-| `thumbnail_ref` | logical ref tới thumbnail | `thumbnails/L01_V028/025300.webp` |
+| `keyframe_ref` | logical ref tới ảnh keyframe | `keyframes/L01_V028/L01_V028_f0025300.jpg` |
+| `thumbnail_ref` | logical ref tới thumbnail | `thumbnails/L01_V028/L01_V028_f0025300.webp` |
 
 Ví dụ một dòng:
 
@@ -620,8 +626,8 @@ Ví dụ một dòng:
   "video_id": "L01_V028",
   "frame_id": 25300,
   "timestamp_sec": 843.33,
-  "keyframe_ref": "keyframes/L01_V028/025300.jpg",
-  "thumbnail_ref": "thumbnails/L01_V028/025300.webp"
+  "keyframe_ref": "keyframes/L01_V028/L01_V028_f0025300.jpg",
+  "thumbnail_ref": "thumbnails/L01_V028/L01_V028_f0025300.webp"
 }
 ```
 
@@ -735,16 +741,17 @@ Ví dụ một dòng:
 }
 ```
 
-#### Quan hệ `scene_tags`
+#### Quan hệ `shots` / `scenes`
 
-Quan hệ optional để gắn tag ngữ cảnh cho keyframe.
+Quan hệ timeline để inspect từ keyframe về shot/scene chứa nó.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
-| `scene_tag_id` | ID tag | `scene_0001` |
-| `keyframe_id` | keyframe được gắn tag | `L01_V028:25300` |
-| `tag` | tag ngữ cảnh | `rainy_street` |
-| `score` | độ tin cậy | `0.77` |
+| `scene_id` | scene chứa shot/keyframe | `L01_V028_SC00001` |
+| `shot_id` | shot chứa keyframe | `L01_V028_SH00042` |
+| `start_frame` | frame bắt đầu interval | `25200` |
+| `end_frame` | frame kết thúc interval, exclusive | `25480` |
+| `detection_method` | cách tạo shot/scene | `shot_boundary_detector` |
 
 #### Quan hệ `embedding_indexes`
 
@@ -883,7 +890,7 @@ datasets
           -> captions
           -> ocr_texts
           -> objects
-          -> scene_tags
+          -> shots / scenes
           -> vector_map
 
 videos
@@ -1166,7 +1173,8 @@ Nhìn theo data model logic, có thể chia dữ liệu thành **6 nhóm chính*
    - `ocr_texts`
    - `asr_segments`
    - `objects`
-   - `scene_tags`
+   - `shots` / `scenes`
+   - `feature_availability`
 
 4. **Index model**
    - `embedding_indexes`

@@ -14,7 +14,7 @@ Every search result may include these normalized components:
 | `caption` | Caption FTS5 or caption embedding adapter. |
 | `ocr` | OCR FTS5. |
 | `asr` | ASR transcript FTS5/time evidence. |
-| `object` | Object/concept FTS5 or structured filters. |
+| `object` | Object/concept FTS5 or structured filters; text source rows use `source_type = object_labels`. |
 | `metadata` | Title, source/channel, tags, annotations. |
 | `rerank` | Optional top-K reranker output. |
 

@@ -102,7 +102,10 @@ Any earlier `data/` tree in docs should be read as a logical app-ready artifact 
 | `frame_id` | Integer frame number | `25300` | Frame number in the video. |
 | `keyframe_id` | `{video_id}:{frame_id}` | `L01_V028:25300` | Canonical keyframe key. |
 | `vector_id` | FAISS row integer | `123456` | Resolved through SQLite `vector_map`. |
-| `media_ref` | Logical relative path | `keyframes/L01_V028/025300.jpg` | Never absolute. |
+| `video_ref` | Canonical raw-video logical ref | `raw_videos/L01_V028.mp4` | Never absolute. |
+| `keyframe_ref` | Canonical keyframe logical ref | `keyframes/L01_V028/L01_V028_f0025300.jpg` | Never absolute. |
+| `thumbnail_ref` | Canonical thumbnail logical ref | `thumbnails/L01_V028/L01_V028_f0025300.webp` | Never absolute. |
+| `media_ref` | Generic adapter/media abstraction field | `keyframes/L01_V028/L01_V028_f0025300.jpg` | Use only where a table truly needs one abstract media column. |
 
 `video_id` is derived from the raw video filename stem and must not be derived from `watch_url`. `video_id + frame_id` remains the user-facing submit/copy unit. `keyframe_id` is the DB/API glue key.
 
@@ -114,9 +117,9 @@ SQLite stores logical refs only. It must not store absolute or machine-specific 
 
 | Asset | Ref Pattern | Example |
 | --- | --- | --- |
-| Video | `videos/{video_id}.mp4` | `videos/L01_V028.mp4` |
-| Keyframe | `keyframes/{video_id}/{frame_id_padded}.jpg` | `keyframes/L01_V028/025300.jpg` |
-| Thumbnail | `thumbnails/{video_id}/{frame_id_padded}.webp` | `thumbnails/L01_V028/025300.webp` |
+| Video | `raw_videos/{video_id}.mp4` | `raw_videos/L01_V028.mp4` |
+| Keyframe | `keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg` | `keyframes/L01_V028/L01_V028_f0025300.jpg` |
+| Thumbnail | `thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp` | `thumbnails/L01_V028/L01_V028_f0025300.webp` |
 
 Backend resolves refs through `MediaStorePort`. MVP implementation is `LocalFileMediaStore` using `${AIC_DATA_ROOT}`. MinIO is optional future work behind the same port.
 
@@ -133,16 +136,17 @@ The app-ready contract covers these categories:
 7. OCR text and optional boxes
 8. ASR transcript segments
 9. Object/concept detections
-10. Scene/location/attribute tags
+10. Scene/shot inspection context
 11. Image embeddings
 12. FAISS index
 13. Vector mapping
-14. Query sessions
-15. Query clues
-16. Search runs/results
-17. Candidates
-18. Agent runs/steps
-19. Validation reports/manifests
+14. Feature availability
+15. Query sessions
+16. Query clues
+17. Search runs/results
+18. Candidates
+19. Agent runs/steps
+20. Validation reports/manifests
 
 ## Runtime SQLite Schema
 
@@ -163,16 +167,19 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | Table | Purpose |
 | --- | --- |
 | `datasets` | Dataset identity and build metadata. |
-| `videos` | One row per video; stores `video_id`, `source_video_stem`, `video_ref`, duration, fps, dimensions, normalized metadata, and selected raw metadata fields. |
-| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `keyframe_ref`, `thumbnail_ref`. |
+| `videos` | One row per video; stores `video_id`, `source_video_stem`, `video_ref`, duration, fps, VFR/frame-count metadata, dimensions, normalized metadata, and selected raw metadata fields. |
+| `shots` | One row per shot or fallback full-video shot; stores `shot_id`, `video_id`, frame/time ranges, detection method, and degraded/full-fidelity status. |
+| `scenes` | Scene-level inspection context derived from shots and metadata/ASR; enriches runtime inspection but should not control MVP keyframe extraction. |
+| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `pts_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
 | `captions` | Caption evidence mapped to `keyframe_id`. |
 | `ocr_texts` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
 | `asr_segments` | Transcript segments mapped to `video_id` and time range; optional keyframe alignment through `keyframe_asr_segments`. |
 | `keyframe_asr_segments` | Optional many-to-many alignment between keyframes and ASR segments. |
-| `objects` | Object/concept detections mapped to `keyframe_id`. |
-| `scene_tags` | Optional scene, location, or attribute tags mapped to `keyframe_id`. |
+| `objects` | Object/concept detections mapped to `keyframe_id`; text source type is `object_labels`. |
 | `embedding_indexes` | Registered vector index metadata: name, model, dimension, metric, path/ref. |
 | `vector_map` | Mandatory mapping from `(index_name, vector_id)` to `keyframe_id`, `video_id`, `frame_id`. |
+| `feature_availability` | Runtime/UI convenience table describing whether ASR/OCR/object/caption/inspection evidence exists per entity and whether it is pass/degraded/missing/failed. |
+| `release_capabilities` | Dataset/release capability flags for runtime gating and degraded behavior. |
 | `query_sessions` | Human/team query session state. |
 | `query_clues` | Clues/questions attached to a query session. |
 | `search_runs` | Search execution metadata and parameters. |
@@ -228,7 +235,8 @@ Required checks:
 - No duplicate `(video_id, frame_id)`.
 - Every `videos.source_video_stem` equals `videos.video_id` for this dataset contract.
 - Every video has probed `fps`; mismatch from expected `25` must be reported until current-year FPS is confirmed.
-- Every `media_ref` resolves through `MediaStorePort`.
+- Every `video_ref`, `keyframe_ref`, and `thumbnail_ref` resolves through `MediaStorePort`.
+- `frame_id` uses decoded original frame index when available; fallback timestamp-to-fps mapping must be marked estimated/degraded when it is the only method.
 - Every keyframe has `keyframe_ref` and `thumbnail_ref`.
 - Every FAISS vector has a corresponding `vector_map` row.
 - Every `vector_map.keyframe_id` exists in `keyframes`.

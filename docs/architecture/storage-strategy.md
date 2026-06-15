@@ -22,19 +22,24 @@ Do not store real competition media in the repository. Any earlier `data/` examp
 | Text search | SQLite FTS5 tables inside `app.sqlite` |
 | Visual vectors | FAISS files under `${AIC_RUNTIME_ROOT}/indexes/` |
 | Vector-to-keyframe mapping | SQLite `vector_map` |
-| Videos/keyframes/thumbnails | Logical refs in SQLite, resolved through `MediaStorePort` |
+| Videos/keyframes/thumbnails | `video_ref`, `keyframe_ref`, and `thumbnail_ref` in SQLite, resolved through `MediaStorePort` |
 | Raw JSON/CSV/Parquet | Input, staging, debug, or validation only |
 | DuckDB | Offline preprocessing, staging, analytics, and validation only |
 
 ## Media Resolution
 
-SQLite stores logical refs such as:
+SQLite stores canonical logical refs such as:
 
 ```text
-videos/{video_id}.mp4
-keyframes/{video_id}/{frame_id_padded}.jpg
-thumbnails/{video_id}/{frame_id_padded}.webp
+raw_videos/{video_id}.mp4
+keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg
+thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp
 ```
+
+`video_ref` is the canonical raw-video logical ref. `keyframe_ref` and
+`thumbnail_ref` are the canonical logical refs for generated images. Use a
+generic `media_ref` field only in adapter-style tables that genuinely need one
+abstract media column.
 
 The backend resolves those refs through `MediaStorePort`. MVP uses `LocalFileMediaStore`; MinIO can be added later behind the same port.
 

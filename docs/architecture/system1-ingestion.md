@@ -14,12 +14,14 @@ raw video folder + metadata JSON folder
   -> dataset pairing by filename stem
   -> media discovery
   -> metadata normalization
-  -> keyframe extraction
-  -> thumbnail generation
-  -> OCR / ASR / caption / object extraction or import
-  -> embedding generation/import
+  -> structure artifact per video
+  -> feature artifact per video
+  -> merge structural + feature artifacts
+  -> global text document construction
+  -> SQLite WAL + FTS5 build
+  -> FAISS + vector_map build
   -> DuckDB staging and validation
-  -> SQLite WAL + FTS5 + FAISS + validation reports
+  -> validation reports + release package
 ```
 
 ## Required Stages
@@ -31,6 +33,9 @@ raw video folder + metadata JSON folder
 | Media discovery | `videos`, discovered media manifest | Discover videos from configurable roots; do not hardcode personal paths or filename regexes. |
 | Metadata normalization | normalized staging tables | Preserve raw metadata; normalize title, author/channel, duration, publish date, keywords, description, watch URL, and thumbnail URL. |
 | Video probing | probed media facts | Probe fps, duration, dimensions, codec/container facts; last-year evidence suggests 25 fps, but actual fps must be persisted per video. |
+| Timeline mapping | `frame_timeline` staging rows or equivalent mapping proof | Persist enough timing metadata to map timestamps to frame ids safely, especially for VFR or unreliable FPS metadata. |
+| Shot detection | `shots` rows | If shot detection fails but the video is otherwise readable, emit a fallback full-video shot and mark degraded status instead of dropping the whole video immediately. |
+| Scene construction | `scenes` rows | Scenes enrich inspection/runtime context, but MVP keyframe extraction should not depend on scene heuristics. |
 | Keyframe extraction | `keyframes` rows and media refs | Generate keyframes from raw videos; use `keyframe_id = "{video_id}:{frame_id}"`; compute timestamps from actual probed fps; store logical refs only. |
 | Thumbnail generation | `thumbnail_ref` per keyframe | Generate missing thumbnails under `${AIC_DATA_ROOT}/processed/media/thumbnails/`. |
 | OCR import/generation | `ocr_texts`, `ocr_fts` | Preserve confidence and optional boxes when available. |
@@ -59,6 +64,8 @@ CLI rules:
 - Accept input roots and output roots as config or flags.
 - Treat the raw video stem as canonical `video_id` after uniqueness validation.
 - Do not derive `video_id` from `watch_url`, YouTube ID, title, or channel metadata.
+- Treat `video_ref` as the canonical logical raw-video reference.
+- Treat `keyframe_ref` and `thumbnail_ref` as canonical logical refs for derived images.
 - Write large media/staging artifacts under `${AIC_DATA_ROOT}`.
 - Write hot runtime artifacts under `${AIC_RUNTIME_ROOT}`.
 - Emit machine-readable validation reports.
@@ -69,9 +76,10 @@ CLI rules:
 ## Artifact Outputs
 
 ```text
-${AIC_DATA_ROOT}/processed/media/videos/{video_id}.mp4
-${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{frame_id_padded}.jpg
-${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{frame_id_padded}.webp
+${AIC_DATA_ROOT}/raw/videos/{video_id}.mp4
+${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg
+${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp
+${AIC_DATA_ROOT}/staging/frame_timeline/{video_id}.parquet
 ${AIC_DATA_ROOT}/warehouse/warehouse.duckdb
 ${AIC_DATA_ROOT}/staging/reports/{dataset_id}-validation.json
 ${AIC_RUNTIME_ROOT}/db/app.sqlite
@@ -79,7 +87,7 @@ ${AIC_RUNTIME_ROOT}/indexes/visual.faiss
 ${AIC_RUNTIME_ROOT}/indexes/visual_index_manifest.json
 ```
 
-The earlier `data/` tree in source material is a logical artifact layout, not a physical repository layout.
+The earlier `data/` tree in source material is a logical artifact layout, not a physical repository layout. Raw videos are referenced by `video_ref = raw_videos/{video_id}.mp4` and are resolved through `MediaStorePort`; compact releases may omit raw-video copies. `frame_timeline` is staging/debug and may be per-video, merged, sampled, or omitted from compact release when key tables retain enough frame/timestamp mapping fields.
 
 ## Validation Gate
 
@@ -89,7 +97,9 @@ System 1 must prove:
 - Every raw video has exactly one metadata JSON with the same stem, and every metadata JSON has exactly one raw video.
 - Every video has probed fps; non-25 fps is reported against the planning/default expected value until current-year FPS is confirmed.
 - Every `keyframe_id` matches `"{video_id}:{frame_id}"`.
-- Every logical media ref resolves through `MediaStorePort`.
+- Every `video_ref`, `keyframe_ref`, and `thumbnail_ref` resolves through `MediaStorePort`.
+- `frame_id` uses decoded original frame index when available; fallback `timestamp * fps` mapping must be marked as estimated/degraded when it is the only available method.
+- Runtime SQLite includes `vector_map`, `feature_availability`, and enough logical refs for System 2 inspection flows.
 - Every keyframe has a thumbnail ref.
 - Every FAISS vector has a `vector_map` row.
 - Every `vector_map.keyframe_id` exists in `keyframes`.
