@@ -1,1 +1,40 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"videos","type":"object"}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "videos.schema.json",
+  "type": "object",
+  "required": [
+    "video_id",
+    "video_ref",
+    "fps_detected"
+  ],
+  "properties": {
+    "video_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "video_ref": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "fps_detected": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "shot_captions.schema.json",
+  "type": "object",
+  "required": [
+    "shot_id",
+    "caption"
+  ],
+  "properties": {
+    "shot_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "caption": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,1 +1,30 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"embeddings_meta","type":"object"}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "embeddings_meta.schema.json",
+  "type": "object",
+  "required": [
+    "embedding_id",
+    "keyframe_id"
+  ],
+  "properties": {
+    "embedding_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "keyframe_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

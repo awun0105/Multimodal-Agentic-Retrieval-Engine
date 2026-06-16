@@ -1,1 +1,40 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"feature_availability","type":"object"}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "feature_availability.schema.json",
+  "type": "object",
+  "required": [
+    "entity_type",
+    "entity_id",
+    "status"
+  ],
+  "properties": {
+    "entity_type": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "entity_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "status": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

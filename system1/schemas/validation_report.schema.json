@@ -1,1 +1,40 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"validation_report","type":"object"}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "validation_report.schema.json",
+  "type": "object",
+  "required": [
+    "status",
+    "error_count",
+    "release_usable"
+  ],
+  "properties": {
+    "status": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "error_count": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "release_usable": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

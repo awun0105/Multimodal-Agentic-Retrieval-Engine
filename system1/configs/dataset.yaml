@@ -1,0 +1,7 @@
+mode: debug_small_sample
+release_id: competition_dataset_v001
+input:
+  raw_videos: system1/input/raw_videos
+  metadata: system1/input/metadata
+output: system1/output
+video_id_policy: filename_stem

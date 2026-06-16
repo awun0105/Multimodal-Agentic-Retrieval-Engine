@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import json
-import sqlite3
 from pathlib import Path
 
-import pandas as pd
-
+from system1.batch.writer import write_batches
+from system1.config import load_provider_plan
+from system1.db.duckdb_builder import write_duckdb
+from system1.db.sqlite_builder import write_sqlite
+from system1.indexes.builder import write_index_files
+from system1.ingest.discovery import discover_paired_inputs
+from system1.ingest.pipeline import build_tables
+from system1.release.artifacts import write_worker_artifacts
+from system1.release.checkpoint import read_checkpoint, write_checkpoint
+from system1.release.smoke import write_smoke_report
+from system1.release.types import BuildOptions, RELEASE_NAME, config_dir, create_release_directories, default_input_dir, write_json
+from system1.release.writer import package_release, write_manifest, write_parquet_tables
 from system1.validation.release_validator import validate_release
-
-
-RELEASE_NAME = "competition_dataset_v001"
-VIDEO_ID = "L01_V001"
-FRAME_ID = 250
-KEYFRAME_ID = f"{VIDEO_ID}:{FRAME_ID}"
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
 
 
 def build_mini_seed(
@@ -21,270 +22,39 @@ def build_mini_seed(
     *,
     input_dir: Path | str | None = None,
     validate: bool = True,
+    mode: str = "debug_small_sample",
+    providers: str = "mock",
 ) -> Path:
     release_dir = Path(output_dir) / RELEASE_NAME
-    _create_directories(release_dir)
+    create_release_directories(release_dir)
 
-    tables = _build_tables_from_input(Path(input_dir)) if input_dir else _build_fixture_tables()
-    _write_parquet_tables(release_dir, tables)
-    _write_index_version(release_dir)
-    _write_sqlite(release_dir / "db" / "app.sqlite", tables)
-    _write_manifest(release_dir)
+    provider_plan = load_provider_plan(config_dir(), providers)
+    options = BuildOptions(mode=mode, providers=providers, provider_plan=provider_plan)
+    pairs = discover_paired_inputs(input_dir or default_input_dir())
+    previous_checkpoint = read_checkpoint(release_dir)
+    tables = build_tables(pairs, release_dir, options, previous_checkpoint)
+
+    write_parquet_tables(release_dir, tables)
+    write_batches(release_dir, pairs)
+    index_kind = write_index_files(release_dir, tables, previous_checkpoint)
+    write_sqlite(release_dir / "db" / "app.sqlite", tables)
+    write_duckdb(release_dir / "db" / "staging.duckdb", tables)
+    write_manifest(release_dir, tables, index_kind, options)
+    write_checkpoint(release_dir, options, tables)
 
     if validate:
         validate_release(release_dir)
     else:
-        _write_json(release_dir / "manifests" / "validation_report.json", {"status": "not_run", "errors": []})
+        write_json(release_dir / "manifests" / "validation_report.json", {"status": "not_run", "errors": []})
         (release_dir / "manifests" / "validation_errors.jsonl").write_text("", encoding="utf-8")
 
     return release_dir
 
 
-def _create_directories(release_dir: Path) -> None:
-    for relative_path in ("db", "indexes", "tables", "manifests"):
-        (release_dir / relative_path).mkdir(parents=True, exist_ok=True)
-
-
-def _build_fixture_tables() -> dict[str, pd.DataFrame]:
-    videos = pd.DataFrame(
-        [
-            {
-                "video_id": VIDEO_ID,
-                "video_ref": "media://raw_videos/L01_V001.mp4",
-                "source_stem": VIDEO_ID,
-                "fps_detected": 25.0,
-                "frame_count_method": "seed_fixture",
-                "is_vfr": False,
-            }
-        ]
-    )
-    keyframes = pd.DataFrame(
-        [
-            {
-                "keyframe_id": KEYFRAME_ID,
-                "video_id": VIDEO_ID,
-                "frame_id": FRAME_ID,
-                "keyframe_ref": "media://keyframes/L01_V001/L01_V001_f0000250.jpg",
-                "thumbnail_ref": "media://thumbnails/L01_V001/L01_V001_f0000250.webp",
-            }
-        ]
-    )
-    text_documents = pd.DataFrame(
-        [
-            {
-                "document_id": "doc:L01_V001:250:caption",
-                "entity_type": "keyframe",
-                "entity_id": KEYFRAME_ID,
-                "text_kind": "caption",
-                "text": "A minimal seed keyframe for System 1 validation.",
-            }
-        ]
-    )
-    vector_map = pd.DataFrame(
-        [
-            {
-                "vector_id": 0,
-                "embedding_model": "seed-fixture",
-                "keyframe_id": KEYFRAME_ID,
-            }
-        ]
-    )
-    feature_availability = pd.DataFrame(
-        [
-            {
-                "entity_type": "keyframe",
-                "entity_id": KEYFRAME_ID,
-                "has_caption": True,
-                "has_embedding": True,
-                "has_ocr": False,
-                "has_asr": False,
-            }
-        ]
-    )
-    return {
-        "videos": videos,
-        "keyframes": keyframes,
-        "text_documents": text_documents,
-        "vector_map": vector_map,
-        "feature_availability": feature_availability,
-    }
-
-
-def _build_tables_from_input(input_dir: Path) -> dict[str, pd.DataFrame]:
-    pairs = discover_paired_inputs(input_dir)
-    video_rows: list[dict[str, object]] = []
-    keyframe_rows: list[dict[str, object]] = []
-    text_rows: list[dict[str, object]] = []
-    vector_rows: list[dict[str, object]] = []
-    feature_rows: list[dict[str, object]] = []
-
-    for vector_id, pair in enumerate(pairs):
-        video_id = str(pair["video_id"])
-        video_path = Path(pair["video_path"])
-        metadata = _read_metadata(Path(pair["metadata_path"]))
-        keyframe_id = f"{video_id}:{FRAME_ID}"
-        title = str(metadata.get("title") or video_id)
-        description = str(metadata.get("description") or "")
-        keywords = metadata.get("keywords") or []
-        keyword_text = ", ".join(str(keyword) for keyword in keywords) if isinstance(keywords, list) else str(keywords)
-        text = "\n".join(part for part in (title, description, keyword_text) if part)
-
-        video_rows.append(
-            {
-                "video_id": video_id,
-                "video_ref": f"media://raw_videos/{video_path.name}",
-                "source_stem": video_id,
-                "fps_detected": None,
-                "frame_count_method": "not_probed_phase_1_pairing",
-                "is_vfr": None,
-            }
-        )
-        keyframe_rows.append(
-            {
-                "keyframe_id": keyframe_id,
-                "video_id": video_id,
-                "frame_id": FRAME_ID,
-                "keyframe_ref": f"media://keyframes/{video_id}/{video_id}_f0000250.jpg",
-                "thumbnail_ref": f"media://thumbnails/{video_id}/{video_id}_f0000250.webp",
-            }
-        )
-        text_rows.append(
-            {
-                "document_id": f"doc:{video_id}:metadata",
-                "entity_type": "video",
-                "entity_id": video_id,
-                "text_kind": "metadata",
-                "text": text or video_id,
-            }
-        )
-        vector_rows.append(
-            {
-                "vector_id": vector_id,
-                "embedding_model": "seed-fixture",
-                "keyframe_id": keyframe_id,
-            }
-        )
-        feature_rows.append(
-            {
-                "entity_type": "keyframe",
-                "entity_id": keyframe_id,
-                "has_caption": bool(text),
-                "has_embedding": True,
-                "has_ocr": False,
-                "has_asr": False,
-            }
-        )
-
-    return {
-        "videos": pd.DataFrame(video_rows),
-        "keyframes": pd.DataFrame(keyframe_rows),
-        "text_documents": pd.DataFrame(text_rows),
-        "vector_map": pd.DataFrame(vector_rows),
-        "feature_availability": pd.DataFrame(feature_rows),
-    }
-
-
-def discover_paired_inputs(input_dir: Path | str) -> list[dict[str, Path | str]]:
-    input_path = Path(input_dir)
-    raw_videos_dir = input_path / "raw_videos"
-    metadata_dir = input_path / "metadata"
-    if not raw_videos_dir.is_dir():
-        raise FileNotFoundError(f"missing raw videos directory: {raw_videos_dir}")
-    if not metadata_dir.is_dir():
-        raise FileNotFoundError(f"missing metadata directory: {metadata_dir}")
-
-    videos = {
-        path.stem: path
-        for path in raw_videos_dir.iterdir()
-        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
-    }
-    metadata = {path.stem: path for path in metadata_dir.glob("*.json") if path.is_file()}
-
-    missing_metadata = sorted(set(videos) - set(metadata))
-    missing_videos = sorted(set(metadata) - set(videos))
-    if missing_metadata or missing_videos:
-        raise ValueError(
-            "input pairing failed: "
-            f"missing_metadata={missing_metadata}, missing_videos={missing_videos}"
-        )
-    if not videos:
-        raise ValueError(f"no supported video files found in {raw_videos_dir}")
-
-    return [
-        {"video_id": stem, "video_path": videos[stem], "metadata_path": metadata[stem]}
-        for stem in sorted(videos)
-    ]
-
-
-def _read_metadata(path: Path) -> dict[str, object]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"metadata must be a JSON object: {path}")
-    return payload
-
-
-def _write_parquet_tables(release_dir: Path, tables: dict[str, pd.DataFrame]) -> None:
-    for table_name, data_frame in tables.items():
-        data_frame.to_parquet(release_dir / "tables" / f"{table_name}.parquet", index=False)
-
-
-def _write_index_version(release_dir: Path) -> None:
-    _write_json(
-        release_dir / "indexes" / "index_version.json",
-        {
-            "release_name": RELEASE_NAME,
-            "index_version": "seed-v001",
-            "vector_index": "not_built_phase_1_seed_fixture",
-        },
-    )
-
-
-def _write_manifest(release_dir: Path) -> None:
-    _write_json(
-        release_dir / "manifests" / "dataset_manifest.json",
-        {
-            "release_name": RELEASE_NAME,
-            "dataset_version": "v001",
-            "system": "system1",
-            "tables": [
-                "videos",
-                "keyframes",
-                "text_documents",
-                "vector_map",
-                "feature_availability",
-            ],
-        },
-    )
-
-
-def _write_sqlite(sqlite_path: Path, tables: dict[str, pd.DataFrame]) -> None:
-    with sqlite3.connect(sqlite_path) as connection:
-        for table_name, data_frame in tables.items():
-            data_frame.to_sql(table_name, connection, if_exists="replace", index=False)
-
-        connection.execute(
-            """
-            CREATE TABLE release_capabilities (
-                capability TEXT PRIMARY KEY,
-                enabled INTEGER NOT NULL,
-                detail TEXT NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            "INSERT INTO release_capabilities VALUES (?, ?, ?)",
-            ("sqlite_fts5_text_search", 1, "Phase 1 seed text search fixture"),
-        )
-        connection.execute(
-            "CREATE VIRTUAL TABLE text_documents_fts USING fts5(document_id, entity_type, entity_id, text)"
-        )
-        connection.execute(
-            """
-            INSERT INTO text_documents_fts (document_id, entity_type, entity_id, text)
-            SELECT document_id, entity_type, entity_id, text FROM text_documents
-            """
-        )
-
-
-def _write_json(path: Path, payload: dict[str, object]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+__all__ = [
+    "build_mini_seed",
+    "discover_paired_inputs",
+    "package_release",
+    "write_smoke_report",
+    "write_worker_artifacts",
+]

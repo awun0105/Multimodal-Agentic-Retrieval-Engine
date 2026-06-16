@@ -1,8 +1,12 @@
-from pathlib import Path
+from __future__ import annotations
 
 import typer
 
-from system1.release.mini_seed import build_mini_seed
+from system1.commands import (
+    register_import_commands,
+    register_pipeline_commands,
+    register_release_commands,
+)
 
 app = typer.Typer(help="System 1 data factory commands.")
 
@@ -12,20 +16,9 @@ def root() -> None:
     """System 1 data factory commands."""
 
 
-@app.command()
-def hello() -> None:
-    """Smoke command for checking the System 1 CLI."""
-    typer.echo("System 1 CLI is ready.")
-
-
-@app.command("build-mini-seed")
-def build_mini_seed_command(
-    output: Path = typer.Option(..., "--output", "-o", help="Directory where the seed release is written."),
-    input_dir: Path | None = typer.Option(None, "--input", "-i", help="Optional input directory with raw_videos/ and metadata/."),
-) -> None:
-    """Build the Phase 1 mini seed release."""
-    release_dir = build_mini_seed(output, input_dir=input_dir)
-    typer.echo(f"Built mini seed release: {release_dir}")
+register_import_commands(app)
+register_pipeline_commands(app)
+register_release_commands(app)
 
 
 def main() -> None:

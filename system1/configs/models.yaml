@@ -1,0 +1,29 @@
+providers:
+  asr: mock
+  ocr: mock
+  embedding: mock
+  object_detection: mock
+  image_caption: mock
+  shot_caption: mock
+  scene_summary: mock
+
+mock:
+  embedding_model: mock-embedding-v1
+  embedding_dim: 4
+
+real_adapters:
+  whisper:
+    enabled: false
+    dependency: optional
+  paddleocr:
+    enabled: false
+    dependency: optional
+  openclip:
+    enabled: false
+    dependency: optional
+  yolo:
+    enabled: false
+    dependency: optional
+  blip:
+    enabled: false
+    dependency: optional

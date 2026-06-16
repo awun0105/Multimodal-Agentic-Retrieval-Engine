@@ -1,3 +1,3 @@
-from system1.release.mini_seed import build_mini_seed
+"""System 1 release package."""
 
-__all__ = ["build_mini_seed"]
+__all__ = []
