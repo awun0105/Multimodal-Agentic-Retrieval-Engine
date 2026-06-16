@@ -1,1 +1,10 @@
-# Placeholder config for System 1.
+# Informational config for the current MVP implementation.
+# The CLI phase pipeline does not consume this file as a runtime dependency yet.
+
+keyframe:
+  extension: .jpg
+  naming: "{video_id}_f{frame_id:07d}"
+thumbnail:
+  extension: .webp
+  width: 256
+  naming: "{video_id}_f{frame_id:07d}"

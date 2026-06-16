@@ -63,6 +63,9 @@ def text_source_row(
 
 
 def text_document_row(document_id: str, video_id: str, text: str) -> dict[str, object]:
+    normalized_no_diacritics = "".join(
+        char for char in unicodedata.normalize("NFD", text) if unicodedata.category(char) != "Mn"
+    )
     return {
         "doc_id": document_id,
         "document_id": document_id,
@@ -71,6 +74,6 @@ def text_document_row(document_id: str, video_id: str, text: str) -> dict[str, o
         "entity_id": video_id,
         "source_type": "metadata",
         "normalized_text": text,
-        "normalized_no_diacritics": text,
+        "normalized_no_diacritics": normalized_no_diacritics,
         "text": text,
     }

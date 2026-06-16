@@ -10,6 +10,11 @@ from system1.release.writer import copy_if_exists
 
 
 def write_worker_artifacts(release_dir: Path | str, *, batch_id: str, phase: str, worker_id: str = "worker_000") -> Path:
+    """Legacy dev helper for `build-mini-seed` only.
+
+    Do not use this helper for the phase-based worker pipeline. Real structure
+    and feature phases write artifacts directly under phase-specific folders.
+    """
     release_path = Path(release_dir).resolve()
     manifests_dir = release_path / "manifests"
     manifests_dir.mkdir(parents=True, exist_ok=True)

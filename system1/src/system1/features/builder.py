@@ -345,13 +345,21 @@ def _write_video_feature_artifact(
             "batch_id": batch_id,
             "worker_id": worker_id,
             "embedding_model_slug": getattr(embedding_provider, "model_slug", "unknown"),
-            "source_structure_artifact": str(structure_dir),
+            "source_structure_artifact": _relative_structure_artifact(structure_dir, artifact_dir),
             "visual_embeddings_shape": list(vectors.shape),
             "provider_plan": provider_plan.__dict__,
             "errors": errors,
         },
     )
     return errors
+
+
+def _relative_structure_artifact(structure_dir: Path, artifact_dir: Path) -> str:
+    release_dir = artifact_dir.parent.parent.parent
+    try:
+        return str(structure_dir.relative_to(release_dir))
+    except ValueError:
+        return str(structure_dir)
 
 
 def _text_source(video_id: str, entity_type: str, entity_id: str, source_type: str, raw_text: str, provider: str, status: str) -> dict[str, Any]:

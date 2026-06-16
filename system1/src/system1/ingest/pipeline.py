@@ -117,6 +117,11 @@ def build_tables(
     options: BuildOptions,
     previous_checkpoint: dict[str, Any] | None,
 ) -> dict[str, pd.DataFrame]:
+    """Legacy dev helper for `build-mini-seed` only.
+
+    Do not use this monolithic builder for the phase-based worker pipeline.
+    The main MVP path runs dedicated phase commands and merges outputs later.
+    """
     plan = options.provider_plan or load_provider_plan(config_dir(), options.providers)
     embedding_provider, text_provider = providers_for_plan(plan)
     rows: dict[str, list[dict[str, Any]]] = {name: [] for name in (

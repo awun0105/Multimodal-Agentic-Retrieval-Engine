@@ -9,6 +9,12 @@ from system1.release.types import BuildOptions, RELEASE_NAME, write_json
 
 
 def write_parquet_tables(release_dir: Path, tables: dict[str, pd.DataFrame]) -> None:
+    """Legacy dev helper for `build-mini-seed` only.
+
+    Do not use this helper for the phase-based worker pipeline. Real phase
+    commands write ingestion, structure, feature, and merged outputs
+    incrementally instead of dumping all tables at once.
+    """
     table_dir = release_dir / "tables"
     raw_mapping_dir = release_dir / "raw_mapping"
     for name, frame in tables.items():
@@ -19,6 +25,11 @@ def write_parquet_tables(release_dir: Path, tables: dict[str, pd.DataFrame]) -> 
 
 
 def write_manifest(release_dir: Path, tables: dict[str, pd.DataFrame], index_kind: str, options: BuildOptions) -> None:
+    """Legacy dev helper for `build-mini-seed` only.
+
+    Do not use this helper for the phase-based worker pipeline. The phase-based
+    flow writes runtime manifests during merge, validation, and smoke-test.
+    """
     capabilities = {row["capability"]: row["status"] for row in tables["release_capabilities"].to_dict("records")}
     manifest = {
         "release_id": RELEASE_NAME,

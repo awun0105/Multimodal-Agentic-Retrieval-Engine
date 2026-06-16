@@ -10,7 +10,7 @@ def shot_row(video_id: str, frame_id: int, duration_seconds: float | None) -> di
         "shot_id": shot_id(video_id),
         "video_id": video_id,
         "start_frame": 0,
-        "end_frame": max(frame_id, 0),
+        "end_frame": max(frame_id + 1, 1),
         "start_seconds": 0.0,
         "end_seconds": duration_seconds or 0.0,
         "detection_method": "single_shot_fallback",

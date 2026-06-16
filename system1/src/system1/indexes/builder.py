@@ -60,6 +60,11 @@ def build_visual_index(release_dir: Path | str) -> Path:
 
 
 def write_index_files(release_dir: Path, tables: dict[str, pd.DataFrame], previous_checkpoint: dict | None) -> str:
+    """Legacy dev helper for `build-mini-seed` only.
+
+    Do not use this helper for the phase-based worker pipeline. The main path
+    uses `build_visual_index()` after merge has produced release-level tables.
+    """
     vectors = [row["vector"] for row in tables["_embeddings"].to_dict("records")]
     vector_rows = []
     for vector_id, row in enumerate(tables["vector_map"].to_dict("records")):

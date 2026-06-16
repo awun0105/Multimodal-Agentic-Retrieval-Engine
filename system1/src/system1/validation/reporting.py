@@ -38,6 +38,14 @@ def write_validation_outputs(release_path: Path, result: ValidationResult) -> No
         "capabilities": capabilities,
     }
     (manifests_dir / "validation_report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    dataset_manifest_path = manifests_dir / "dataset_manifest.json"
+    if dataset_manifest_path.exists():
+        dataset_manifest = json.loads(dataset_manifest_path.read_text(encoding="utf-8"))
+        dataset_manifest["release_usable"] = release_usable
+        dataset_manifest["validation_status"] = result.status
+        dataset_manifest["validation_error_count"] = len(result.errors)
+        dataset_manifest["validation_warning_count"] = len(result.degraded)
+        dataset_manifest_path.write_text(json.dumps(dataset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     with (manifests_dir / "validation_errors.jsonl").open("w", encoding="utf-8") as error_file:
         for error in result.errors:
             error_file.write(json.dumps({"error": error}, sort_keys=True) + "\n")

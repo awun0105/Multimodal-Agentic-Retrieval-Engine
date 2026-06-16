@@ -23,6 +23,13 @@ def build_mini_seed(
     mode: str = "debug_small_sample",
     providers: str = "mock",
 ) -> Path:
+    """Legacy dev helper for `build-mini-seed` only.
+
+    Do not use this helper for the phase-based worker pipeline.
+    The main MVP path is the CLI sequence:
+    ingest -> assign-batches -> process-batch -> feature-batch -> merge
+    -> build-index -> build-db -> validate -> smoke-test.
+    """
     release_dir = Path(output_dir) / RELEASE_NAME
     create_release_directories(release_dir)
 
