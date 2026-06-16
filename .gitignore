@@ -226,6 +226,7 @@ __marimo__/
 *.duckdb
 
 # Large/generated data
+system1/output/
 data/
 datasets/
 runtime/
