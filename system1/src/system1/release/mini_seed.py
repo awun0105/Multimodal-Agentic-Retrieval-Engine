@@ -13,13 +13,19 @@ RELEASE_NAME = "competition_dataset_v001"
 VIDEO_ID = "L01_V001"
 FRAME_ID = 250
 KEYFRAME_ID = f"{VIDEO_ID}:{FRAME_ID}"
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
 
 
-def build_mini_seed(output_dir: Path | str, *, validate: bool = True) -> Path:
+def build_mini_seed(
+    output_dir: Path | str,
+    *,
+    input_dir: Path | str | None = None,
+    validate: bool = True,
+) -> Path:
     release_dir = Path(output_dir) / RELEASE_NAME
     _create_directories(release_dir)
 
-    tables = _build_tables()
+    tables = _build_tables_from_input(Path(input_dir)) if input_dir else _build_fixture_tables()
     _write_parquet_tables(release_dir, tables)
     _write_index_version(release_dir)
     _write_sqlite(release_dir / "db" / "app.sqlite", tables)
@@ -39,7 +45,7 @@ def _create_directories(release_dir: Path) -> None:
         (release_dir / relative_path).mkdir(parents=True, exist_ok=True)
 
 
-def _build_tables() -> dict[str, pd.DataFrame]:
+def _build_fixture_tables() -> dict[str, pd.DataFrame]:
     videos = pd.DataFrame(
         [
             {
@@ -102,6 +108,119 @@ def _build_tables() -> dict[str, pd.DataFrame]:
         "vector_map": vector_map,
         "feature_availability": feature_availability,
     }
+
+
+def _build_tables_from_input(input_dir: Path) -> dict[str, pd.DataFrame]:
+    pairs = discover_paired_inputs(input_dir)
+    video_rows: list[dict[str, object]] = []
+    keyframe_rows: list[dict[str, object]] = []
+    text_rows: list[dict[str, object]] = []
+    vector_rows: list[dict[str, object]] = []
+    feature_rows: list[dict[str, object]] = []
+
+    for vector_id, pair in enumerate(pairs):
+        video_id = str(pair["video_id"])
+        video_path = Path(pair["video_path"])
+        metadata = _read_metadata(Path(pair["metadata_path"]))
+        keyframe_id = f"{video_id}:{FRAME_ID}"
+        title = str(metadata.get("title") or video_id)
+        description = str(metadata.get("description") or "")
+        keywords = metadata.get("keywords") or []
+        keyword_text = ", ".join(str(keyword) for keyword in keywords) if isinstance(keywords, list) else str(keywords)
+        text = "\n".join(part for part in (title, description, keyword_text) if part)
+
+        video_rows.append(
+            {
+                "video_id": video_id,
+                "video_ref": f"media://raw_videos/{video_path.name}",
+                "source_stem": video_id,
+                "fps_detected": None,
+                "frame_count_method": "not_probed_phase_1_pairing",
+                "is_vfr": None,
+            }
+        )
+        keyframe_rows.append(
+            {
+                "keyframe_id": keyframe_id,
+                "video_id": video_id,
+                "frame_id": FRAME_ID,
+                "keyframe_ref": f"media://keyframes/{video_id}/{video_id}_f0000250.jpg",
+                "thumbnail_ref": f"media://thumbnails/{video_id}/{video_id}_f0000250.webp",
+            }
+        )
+        text_rows.append(
+            {
+                "document_id": f"doc:{video_id}:metadata",
+                "entity_type": "video",
+                "entity_id": video_id,
+                "text_kind": "metadata",
+                "text": text or video_id,
+            }
+        )
+        vector_rows.append(
+            {
+                "vector_id": vector_id,
+                "embedding_model": "seed-fixture",
+                "keyframe_id": keyframe_id,
+            }
+        )
+        feature_rows.append(
+            {
+                "entity_type": "keyframe",
+                "entity_id": keyframe_id,
+                "has_caption": bool(text),
+                "has_embedding": True,
+                "has_ocr": False,
+                "has_asr": False,
+            }
+        )
+
+    return {
+        "videos": pd.DataFrame(video_rows),
+        "keyframes": pd.DataFrame(keyframe_rows),
+        "text_documents": pd.DataFrame(text_rows),
+        "vector_map": pd.DataFrame(vector_rows),
+        "feature_availability": pd.DataFrame(feature_rows),
+    }
+
+
+def discover_paired_inputs(input_dir: Path | str) -> list[dict[str, Path | str]]:
+    input_path = Path(input_dir)
+    raw_videos_dir = input_path / "raw_videos"
+    metadata_dir = input_path / "metadata"
+    if not raw_videos_dir.is_dir():
+        raise FileNotFoundError(f"missing raw videos directory: {raw_videos_dir}")
+    if not metadata_dir.is_dir():
+        raise FileNotFoundError(f"missing metadata directory: {metadata_dir}")
+
+    videos = {
+        path.stem: path
+        for path in raw_videos_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+    }
+    metadata = {path.stem: path for path in metadata_dir.glob("*.json") if path.is_file()}
+
+    missing_metadata = sorted(set(videos) - set(metadata))
+    missing_videos = sorted(set(metadata) - set(videos))
+    if missing_metadata or missing_videos:
+        raise ValueError(
+            "input pairing failed: "
+            f"missing_metadata={missing_metadata}, missing_videos={missing_videos}"
+        )
+    if not videos:
+        raise ValueError(f"no supported video files found in {raw_videos_dir}")
+
+    return [
+        {"video_id": stem, "video_path": videos[stem], "metadata_path": metadata[stem]}
+        for stem in sorted(videos)
+    ]
+
+
+def _read_metadata(path: Path) -> dict[str, object]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"metadata must be a JSON object: {path}")
+    return payload
 
 
 def _write_parquet_tables(release_dir: Path, tables: dict[str, pd.DataFrame]) -> None:

@@ -230,6 +230,7 @@ data/
 datasets/
 runtime/
 artifacts/
+system1/input/
 competition_dataset*/
 *.faiss
 *.npy

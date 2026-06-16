@@ -21,9 +21,10 @@ def hello() -> None:
 @app.command("build-mini-seed")
 def build_mini_seed_command(
     output: Path = typer.Option(..., "--output", "-o", help="Directory where the seed release is written."),
+    input_dir: Path | None = typer.Option(None, "--input", "-i", help="Optional input directory with raw_videos/ and metadata/."),
 ) -> None:
     """Build the Phase 1 mini seed release."""
-    release_dir = build_mini_seed(output)
+    release_dir = build_mini_seed(output, input_dir=input_dir)
     typer.echo(f"Built mini seed release: {release_dir}")
 
 
