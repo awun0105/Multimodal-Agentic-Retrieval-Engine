@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from pathlib import Path
+
+import pandas as pd
 
 from system1.validation.constants import MEDIA_REF_COLUMNS, REQUIRED_TABLES
 
@@ -19,7 +23,9 @@ def check_sqlite(sqlite_path, errors: list[str], degraded: list[str]) -> dict[st
         check_vector_map(connection, errors)
         check_text_documents(connection, table_names, errors)
         check_fts(connection, errors)
-        return check_release_capabilities(connection, degraded)
+        capabilities = check_release_capabilities(connection, degraded)
+    check_index_consistency(Path(sqlite_path).resolve().parent.parent, errors, degraded, capabilities)
+    return capabilities
 
 
 def table_names_for(connection: sqlite3.Connection) -> set[str]:
@@ -42,9 +48,7 @@ def check_media_refs(connection: sqlite3.Connection, errors: list[str]) -> None:
 
 
 def check_videos(connection: sqlite3.Connection, errors: list[str]) -> None:
-    duplicate_rows = connection.execute(
-        "SELECT video_id, COUNT(*) FROM videos GROUP BY video_id HAVING COUNT(*) > 1"
-    ).fetchall()
+    duplicate_rows = connection.execute("SELECT video_id, COUNT(*) FROM videos GROUP BY video_id HAVING COUNT(*) > 1").fetchall()
     for video_id, count in duplicate_rows:
         errors.append(f"duplicate video_id: {video_id} ({count})")
 
@@ -73,14 +77,7 @@ def check_keyframes(connection: sqlite3.Connection, errors: list[str]) -> None:
 
 
 def check_vector_map(connection: sqlite3.Connection, errors: list[str]) -> None:
-    rows = connection.execute(
-        """
-        SELECT vector_map.keyframe_id
-        FROM vector_map
-        LEFT JOIN keyframes ON vector_map.keyframe_id = keyframes.keyframe_id
-        WHERE keyframes.keyframe_id IS NULL
-        """
-    ).fetchall()
+    rows = connection.execute("SELECT vector_map.keyframe_id FROM vector_map LEFT JOIN keyframes ON vector_map.keyframe_id = keyframes.keyframe_id WHERE keyframes.keyframe_id IS NULL").fetchall()
     for (keyframe_id,) in rows:
         errors.append(f"vector_map.keyframe_id does not resolve: {keyframe_id}")
 
@@ -95,21 +92,34 @@ def check_text_documents(connection: sqlite3.Connection, table_names: set[str], 
         if entity_table is None or entity_table not in table_names:
             errors.append(f"text_documents.entity_type is not implemented for {document_id}: {entity_type}")
             continue
-        id_column = "keyframe_id" if entity_table == "keyframes" else "video_id"
-        exists = connection.execute(
-            f"SELECT 1 FROM {entity_table} WHERE {id_column} = ? LIMIT 1", (entity_id,)
-        ).fetchone()
+        id_column = {"keyframes": "keyframe_id", "shots": "shot_id", "scenes": "scene_id"}.get(entity_table, "video_id")
+        exists = connection.execute(f"SELECT 1 FROM {entity_table} WHERE {id_column} = ? LIMIT 1", (entity_id,)).fetchone()
         if exists is None:
             errors.append(f"text_documents.entity_id does not resolve for {document_id}: {entity_id}")
 
 
 def check_fts(connection: sqlite3.Connection, errors: list[str]) -> None:
-    row = connection.execute(
-        "SELECT document_id FROM text_documents_fts WHERE text_documents_fts MATCH ? LIMIT 1",
-        ("L21 OR mock OR validation",),
-    ).fetchone()
+    exists = connection.execute("SELECT name FROM sqlite_master WHERE name='text_documents_fts'").fetchone()
+    if exists is None:
+        errors.append("text_documents_fts is missing")
+        return
+    token_row = connection.execute("SELECT normalized_text, normalized_no_diacritics FROM text_documents").fetchall()
+    token = None
+    for normalized_text, normalized_no_diacritics in token_row:
+        for candidate in (normalized_text, normalized_no_diacritics):
+            if isinstance(candidate, str):
+                words = [word for word in candidate.replace('\n', ' ').split() if len(word) >= 2]
+                if words:
+                    token = words[0]
+                    break
+        if token:
+            break
+    if token is None:
+        errors.append("text_documents contains no searchable token")
+        return
+    row = connection.execute("SELECT document_id FROM text_documents_fts WHERE text_documents_fts MATCH ? LIMIT 1", (token,)).fetchone()
     if row is None:
-        errors.append("FTS5 query returned no rows")
+        errors.append(f"FTS5 query returned no rows for sampled token: {token}")
 
 
 def check_release_capabilities(connection: sqlite3.Connection, degraded: list[str]) -> dict[str, str]:
@@ -122,5 +132,30 @@ def check_release_capabilities(connection: sqlite3.Connection, degraded: list[st
     return capabilities
 
 
+def check_index_consistency(release_path: Path, errors: list[str], degraded: list[str], capabilities: dict[str, str]) -> None:
+    index_version_path = release_path / "indexes" / "index_version.json"
+    vector_map_path = release_path / "indexes" / "vector_map.parquet"
+    if not index_version_path.exists() or not vector_map_path.exists():
+        errors.append("visual index metadata missing; run system1 build-index before validate")
+        capabilities["visual_search"] = "fail"
+        return
+    index_version = json.loads(index_version_path.read_text(encoding='utf-8'))
+    vector_map = pd.read_parquet(vector_map_path)
+    backend = index_version.get("index_backend", "stub")
+    if backend in {"stub", "empty_stub"}:
+        if not any(item.startswith("visual_search:") for item in degraded):
+            degraded.append("visual_search: stub index backend")
+        capabilities["visual_search"] = "degraded"
+        return
+    if backend == "faiss":
+        try:
+            import faiss  # type: ignore
+            index = faiss.read_index(str(release_path / "indexes" / "visual.faiss"))
+            if index.ntotal != len(vector_map):
+                errors.append(f"faiss ntotal mismatch: {index.ntotal} != {len(vector_map)}")
+        except Exception as exc:
+            errors.append(f"faiss load failed: {exc}")
+
+
 def entity_table_for(entity_type: str) -> str | None:
-    return {"video": "videos", "keyframe": "keyframes"}.get(entity_type)
+    return {"video": "videos", "keyframe": "keyframes", "shot": "shots", "scene": "scenes"}.get(entity_type)

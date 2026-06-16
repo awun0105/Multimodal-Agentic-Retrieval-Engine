@@ -5,14 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-
 class ASRProvider(Protocol):
     def transcribe(self, video_path: Path) -> str: ...
 
-
 class OCRProvider(Protocol):
     def read_text(self, image_path: Path) -> str: ...
-
 
 class EmbeddingProvider(Protocol):
     model_slug: str
@@ -20,22 +17,17 @@ class EmbeddingProvider(Protocol):
 
     def embed_image(self, image_path: Path) -> list[float]: ...
 
-
 class ObjectDetectionProvider(Protocol):
     def detect(self, image_path: Path) -> list[str]: ...
 
-
 class ImageCaptionProvider(Protocol):
-    def caption(self, image_path: Path, fallback_text: str) -> str: ...
-
+    def caption_image(self, image_path: Path, fallback_text: str) -> str: ...
 
 class ShotCaptionProvider(Protocol):
-    def caption(self, shot_id: str, fallback_text: str) -> str: ...
-
+    def caption_shot(self, shot_id: str, fallback_text: str) -> str: ...
 
 class SceneSummaryProvider(Protocol):
-    def summarize(self, scene_id: str, fallback_text: str) -> str: ...
-
+    def summarize_scene(self, scene_id: str, fallback_text: str) -> str: ...
 
 @dataclass(frozen=True)
 class MockEmbeddingProvider:
@@ -45,7 +37,6 @@ class MockEmbeddingProvider:
     def embed_image(self, image_path: Path) -> list[float]:
         digest = hashlib.sha256(image_path.read_bytes()).digest()
         return [round(int(digest[index]) / 255.0, 6) for index in range(self.embedding_dim)]
-
 
 @dataclass(frozen=True)
 class MockTextProvider:
@@ -60,12 +51,14 @@ class MockTextProvider:
     def detect(self, image_path: Path) -> list[str]:
         return ["mock_object"]
 
-    def caption(self, image_path: Path, fallback_text: str) -> str:
+    def caption_image(self, image_path: Path, fallback_text: str) -> str:
         return fallback_text
 
-    def summarize(self, scene_id: str, fallback_text: str) -> str:
-        return fallback_text
+    def caption_shot(self, shot_id: str, fallback_text: str) -> str:
+        return f"{fallback_text} [shot:{shot_id}]" if fallback_text else f"shot:{shot_id}"
 
+    def summarize_scene(self, scene_id: str, fallback_text: str) -> str:
+        return fallback_text
 
 @dataclass(frozen=True)
 class RealProviderUnavailable:
@@ -80,12 +73,14 @@ class RealProviderUnavailable:
     def detect(self, image_path: Path) -> list[str]:
         return ["real_provider_unavailable"]
 
-    def caption(self, image_path: Path, fallback_text: str) -> str:
+    def caption_image(self, image_path: Path, fallback_text: str) -> str:
         return fallback_text
 
-    def summarize(self, scene_id: str, fallback_text: str) -> str:
+    def caption_shot(self, shot_id: str, fallback_text: str) -> str:
         return fallback_text
 
+    def summarize_scene(self, scene_id: str, fallback_text: str) -> str:
+        return fallback_text
 
 @dataclass(frozen=True)
 class RealEmbeddingUnavailable:

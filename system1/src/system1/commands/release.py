@@ -5,7 +5,11 @@ from pathlib import Path
 import typer
 
 from system1.commands.common import default_output, release_dir, require_supported_mode
-from system1.release.mini_seed import package_release, write_smoke_report
+from system1.db.sqlite_builder import build_app_sqlite
+from system1.indexes.builder import build_visual_index
+from system1.release.mini_seed import build_mini_seed
+from system1.release.smoke import write_smoke_report
+from system1.release.writer import package_release
 from system1.validation.release_validator import validate_release
 
 
@@ -17,9 +21,10 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Report app.sqlite path for the generated debug release."""
         require_supported_mode(mode)
-        sqlite_path = release_dir(output) / "db" / "app.sqlite"
-        if not sqlite_path.exists():
-            raise typer.BadParameter(f"missing app.sqlite; run system1 ingest first: {sqlite_path}")
+        try:
+            sqlite_path = build_app_sqlite(release_dir(output))
+        except (FileNotFoundError, NotImplementedError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
         typer.echo(f"Built app.sqlite: {sqlite_path}")
 
     @app.command("build-index")
@@ -29,10 +34,23 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Report visual mock index path for the generated debug release."""
         require_supported_mode(mode)
-        index_path = release_dir(output) / "indexes" / "visual.faiss"
-        if not index_path.exists():
-            raise typer.BadParameter(f"missing visual.faiss; run system1 ingest first: {index_path}")
+        try:
+            index_path = build_visual_index(release_dir(output))
+        except (FileNotFoundError, NotImplementedError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
         typer.echo(f"Built visual index: {index_path}")
+
+    @app.command("build-mini-seed")
+    def build_mini_seed_command(
+        mode: str = typer.Option("debug_small_sample", "--mode"),
+        providers: str = typer.Option("mock", "--providers"),
+        output: Path = typer.Option(default_output(), "--output", "-o"),
+        input_dir: Path | None = typer.Option(None, "--input", "-i"),
+    ) -> None:
+        """Build the full dev/test mini release in one command."""
+        require_supported_mode(mode)
+        release_path = build_mini_seed(output, input_dir=input_dir, validate=True, mode=mode, providers=providers)
+        typer.echo(f"Built mini seed release: {release_path}")
 
     @app.command("validate")
     def validate(

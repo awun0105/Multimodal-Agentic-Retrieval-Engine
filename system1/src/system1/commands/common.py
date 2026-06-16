@@ -6,7 +6,6 @@ import typer
 
 SUPPORTED_MODES = {"debug_small_sample", "bronze_fast", "silver_balanced", "gold_full"}
 SUPPORTED_PROVIDERS = {"mock", "real", "config", "rule_based", "vlm"}
-SUPPORTED_BATCHES = {"batch_000"}
 RELEASE_NAME = "competition_dataset_v001"
 
 
@@ -32,6 +31,11 @@ def require_supported_providers(providers: str) -> None:
         )
 
 
-def require_supported_batch(batch_id: str) -> None:
-    if batch_id not in SUPPORTED_BATCHES:
-        raise typer.BadParameter("only batch_000 exists in debug_small_sample")
+def require_supported_batch(batch_id: str, output: Path) -> None:
+    manifest_path = release_dir(output) / "manifests" / f"{batch_id}.txt"
+    if manifest_path.exists():
+        return
+    manifests_dir = release_dir(output) / "manifests"
+    generated = sorted(path.stem for path in manifests_dir.glob("batch_*.txt")) if manifests_dir.exists() else []
+    allowed = ", ".join(generated) if generated else "none generated yet"
+    raise typer.BadParameter(f"missing batch manifest for {batch_id}; generated batches: {allowed}")

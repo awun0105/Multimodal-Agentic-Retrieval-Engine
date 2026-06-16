@@ -239,7 +239,7 @@ competition_dataset*/
 
 # Node
 node_modules/
-
+GOAL.md
 # Harness durable layer
 #harness.db
 #harness.db-wal

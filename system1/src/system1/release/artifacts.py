@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pandas as pd
 
 from system1.release.types import write_json
 from system1.release.writer import copy_if_exists
-import shutil
 
 
 def write_worker_artifacts(release_dir: Path | str, *, batch_id: str, phase: str, worker_id: str = "worker_000") -> Path:
@@ -17,7 +17,7 @@ def write_worker_artifacts(release_dir: Path | str, *, batch_id: str, phase: str
     videos = sorted(set(str(video_id) for video_id in keyframes["video_id"].tolist()))
     artifact_paths: list[str] = []
     for video_id in videos:
-        stage_dir = release_path / "artifacts" / phase / video_id / video_id
+        stage_dir = release_path / "artifacts" / phase / video_id
         stage_dir.mkdir(parents=True, exist_ok=True)
         copy_if_exists(release_path / "tables" / "asr_segments.parquet", stage_dir / "asr_segments.parquet")
         copy_if_exists(release_path / "tables" / "shots.parquet", stage_dir / "shots.parquet")
@@ -38,7 +38,7 @@ def write_worker_artifacts(release_dir: Path | str, *, batch_id: str, phase: str
         write_json(stage_dir / "manifest.json", {"video_id": video_id, "phase": phase, "batch_id": batch_id})
         (stage_dir / "errors.jsonl").write_text("", encoding="utf-8")
         suffix = "structure" if phase == "structure" else "features"
-        archive_path = shutil.make_archive(str((release_path / "artifacts" / phase / f"{video_id}_{suffix}")), "zip", stage_dir.parent, video_id)
+        archive_path = shutil.make_archive(str((release_path / "artifacts" / phase / f"{video_id}_{suffix}")), "zip", stage_dir)
         artifact_paths.append(str(Path(archive_path).relative_to(release_path)))
     report = {"worker_id": worker_id, "batch_id": batch_id, "phase": phase, "artifact_paths": artifact_paths, "status": "pass"}
     report_path = manifests_dir / f"worker_runtime_report_{phase}.json"

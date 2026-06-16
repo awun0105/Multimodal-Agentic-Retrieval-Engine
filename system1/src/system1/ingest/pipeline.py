@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -7,13 +8,107 @@ import pandas as pd
 
 from system1.config import load_provider_plan
 from system1.features.builder import capability_states, feature_rows, providers_for_plan, release_capability_rows
-from system1.ingest.discovery import read_metadata
+from system1.ingest.discovery import discover_paired_inputs, read_metadata
 from system1.keyframes.builder import keyframe_id, keyframe_refs, materialize_keyframe
 from system1.media.probe import probe_video
-from system1.release.types import DEFAULT_FRAME_ID, BuildOptions, config_dir
+from system1.release.types import DEFAULT_FRAME_ID, RELEASE_NAME, BuildOptions, config_dir, default_input_dir, write_json
 from system1.scenes.builder import scene_id, scene_row
 from system1.shots.builder import shot_id, shot_row
 from system1.text.builder import doc_id, metadata_text, text_document_row, text_source_rows
+
+
+def run_ingestion(
+    output_dir: Path | str,
+    *,
+    input_dir: Path | str | None = None,
+    mode: str = "debug_small_sample",
+) -> Path:
+    release_dir = Path(output_dir) / RELEASE_NAME
+    tables_dir = release_dir / "tables"
+    manifests_dir = release_dir / "manifests"
+    raw_mapping_dir = release_dir / "raw_mapping"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    raw_mapping_dir.mkdir(parents=True, exist_ok=True)
+
+    pairs = discover_paired_inputs(input_dir or default_input_dir())
+    video_rows: list[dict[str, Any]] = []
+    mapping_rows: list[dict[str, Any]] = []
+    error_records: list[dict[str, Any]] = []
+
+    for pair in pairs:
+        video_path = Path(pair["video_path"])
+        metadata_path = Path(pair["metadata_path"])
+        video_id = pair["video_id"]
+        metadata = read_metadata(metadata_path)
+        probe = probe_video(video_path)
+        video_ref = f"media://raw_videos/{video_path.name}"
+        metadata_ref = f"media://metadata/{metadata_path.name}"
+        estimated_compute_cost = probe.duration_seconds or probe.frame_count or 1
+        video_rows.append(
+            {
+                "video_id": video_id,
+                "video_ref": video_ref,
+                "metadata_ref": metadata_ref,
+                "source_filename": video_path.name,
+                "source_extension": video_path.suffix.lower(),
+                "fps_detected": probe.fps_detected,
+                "fps_source": probe.fps_source,
+                "duration_seconds": probe.duration_seconds,
+                "width": probe.width,
+                "height": probe.height,
+                "frame_count": probe.frame_count,
+                "frame_count_estimated": probe.frame_count_estimated,
+                "frame_count_method": probe.frame_count_method,
+                "estimated_compute_cost": estimated_compute_cost,
+                "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
+            }
+        )
+        mapping_rows.append(
+            {
+                "video_id": video_id,
+                "video_ref": video_ref,
+                "metadata_ref": metadata_ref,
+                "video_filename": video_path.name,
+                "metadata_filename": metadata_path.name,
+                "video_local_path": str(video_path.resolve()),
+                "metadata_local_path": str(metadata_path.resolve()),
+                "video_size_bytes": video_path.stat().st_size,
+                "metadata_size_bytes": metadata_path.stat().st_size,
+            }
+        )
+        if probe.fps_detected is None or probe.duration_seconds is None:
+            error_records.append(
+                {
+                    "video_id": video_id,
+                    "level": "warning",
+                    "kind": "probe_partial",
+                    "message": "ffprobe metadata incomplete; some fields unavailable",
+                }
+            )
+
+    videos_df = pd.DataFrame(video_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+    mapping_df = pd.DataFrame(mapping_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+    videos_df.to_parquet(tables_dir / "videos.parquet", index=False)
+    mapping_df.to_parquet(raw_mapping_dir / "media_store_manifest.parquet", index=False)
+    errors_path = manifests_dir / "ingestion_errors.jsonl"
+    errors_path.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in error_records),
+        encoding="utf-8",
+    )
+    report_path = manifests_dir / "dataset_report.json"
+    write_json(
+        report_path,
+        {
+            "release_id": RELEASE_NAME,
+            "mode": mode,
+            "video_count": int(len(videos_df)),
+            "ingestion_error_count": len(error_records),
+            "videos_table": "tables/videos.parquet",
+            "media_store_manifest": "raw_mapping/media_store_manifest.parquet",
+        },
+    )
+    return report_path
 
 
 def build_tables(

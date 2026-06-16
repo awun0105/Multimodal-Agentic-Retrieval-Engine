@@ -1,0 +1,209 @@
+from __future__ import annotations
+
+import json
+import shutil
+import unicodedata
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from system1.release.types import RELEASE_NAME, write_json
+
+STRUCTURE_TABLES = [
+    "asr_segments",
+    "shots",
+    "scenes",
+    "keyframes",
+    "shot_transcript_links",
+    "scene_transcript_links",
+    "scene_summaries_initial",
+]
+FEATURE_TABLES = [
+    "embeddings_meta",
+    "ocr",
+    "objects",
+    "image_captions",
+    "shot_captions",
+    "scene_summaries_enriched",
+    "text_sources",
+]
+
+
+def merge_worker_outputs(release_dir: Path | str) -> Path:
+    release_path = Path(release_dir)
+    structure_root = release_path / "artifacts" / "structure"
+    feature_root = release_path / "artifacts" / "features"
+    if not structure_root.exists():
+        raise FileNotFoundError(f"missing structure artifacts root: {structure_root}")
+    if not feature_root.exists():
+        raise FileNotFoundError(f"missing feature artifacts root: {feature_root}")
+
+    videos_df = pd.read_parquet(release_path / "tables" / "videos.parquet")
+    merged: dict[str, list[pd.DataFrame]] = {name: [] for name in STRUCTURE_TABLES + FEATURE_TABLES}
+    quality_rows: list[dict[str, Any]] = []
+    artifact_manifest_rows: list[dict[str, Any]] = []
+    video_status_rows: list[dict[str, Any]] = []
+
+    for video_id in videos_df["video_id"].astype(str).tolist():
+        structure_dir = structure_root / video_id
+        feature_dir = feature_root / video_id
+        if not structure_dir.exists() or not feature_dir.exists():
+            raise FileNotFoundError(f"missing artifact pair for video_id={video_id}")
+        for table in STRUCTURE_TABLES:
+            path = structure_dir / f"{table}.parquet"
+            if not path.exists():
+                raise FileNotFoundError(f"missing structure parquet for {video_id}: {path}")
+            merged[table].append(pd.read_parquet(path))
+        for table in FEATURE_TABLES:
+            path = feature_dir / f"{table}.parquet"
+            if not path.exists():
+                raise FileNotFoundError(f"missing feature parquet for {video_id}: {path}")
+            merged[table].append(pd.read_parquet(path))
+        structure_manifest = json.loads((structure_dir / "manifest.json").read_text(encoding="utf-8"))
+        feature_manifest = json.loads((feature_dir / "feature_manifest.json").read_text(encoding="utf-8"))
+        _materialize_runtime_media(release_path, video_id, structure_dir)
+        video_status_rows.append({
+            "video_id": video_id,
+            "structure_status": structure_manifest.get("status", "unknown"),
+            "feature_status": feature_manifest.get("status", "unknown"),
+            "status": "complete" if structure_manifest.get("status") == "pass" and feature_manifest.get("status") == "pass" else "partial",
+        })
+        quality_rows.append({
+            "video_id": video_id,
+            "structure_errors": len(structure_manifest.get("errors", [])),
+            "feature_errors": len(feature_manifest.get("errors", [])),
+        })
+        for root in (structure_dir, feature_dir):
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    artifact_manifest_rows.append({
+                        "video_id": video_id,
+                        "artifact_path": str(path.relative_to(release_path)),
+                        "artifact_type": path.suffix.lstrip(".") or "file",
+                        "phase": "structure" if root == structure_dir else "features",
+                    })
+
+    tables_dir = release_path / "tables"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    counts: dict[str, int] = {}
+    for table_name, frames in merged.items():
+        combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        combined.to_parquet(tables_dir / f"{table_name}.parquet", index=False)
+        counts[table_name] = len(combined)
+
+    text_documents = _build_text_documents(pd.concat(merged["text_sources"], ignore_index=True))
+    text_documents.to_parquet(tables_dir / "text_documents.parquet", index=False)
+    counts["text_documents"] = len(text_documents)
+
+    feature_availability = _build_feature_availability(
+        pd.concat(merged["keyframes"], ignore_index=True),
+        pd.concat(merged["asr_segments"], ignore_index=True),
+        pd.concat(merged["ocr"], ignore_index=True),
+        pd.concat(merged["image_captions"], ignore_index=True),
+        pd.concat(merged["embeddings_meta"], ignore_index=True),
+    )
+    feature_availability.to_parquet(tables_dir / "feature_availability.parquet", index=False)
+    counts["feature_availability"] = len(feature_availability)
+
+    release_capabilities = _build_release_capabilities(feature_availability, counts)
+    release_capabilities.to_parquet(tables_dir / "release_capabilities.parquet", index=False)
+
+    manifests_dir = release_path / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(artifact_manifest_rows).to_parquet(manifests_dir / "artifact_manifest.parquet", index=False)
+    pd.DataFrame(video_status_rows).to_parquet(manifests_dir / "video_processing_status.parquet", index=False)
+    write_json(manifests_dir / "quality_report.json", {"videos": quality_rows, "status": "pass"})
+    write_json(
+        manifests_dir / "dataset_manifest.json",
+        {
+            "release_id": RELEASE_NAME,
+            "counts": counts,
+            "app_sqlite": "db/app.sqlite",
+            "fts5": "app.sqlite:text_documents_fts",
+            "visual_index": "indexes/visual.faiss",
+            "vector_map": "indexes/vector_map.parquet",
+            "release_usable": False,
+        },
+    )
+    report_path = manifests_dir / "merge_report.json"
+    write_json(report_path, {"status": "pass", "video_count": len(video_status_rows), "counts": counts})
+    return report_path
+
+
+def _build_text_documents(text_sources: pd.DataFrame) -> pd.DataFrame:
+    grouped_rows = []
+    for (video_id, entity_type, entity_id), group in text_sources.groupby(["video_id", "entity_type", "entity_id"], dropna=False):
+        normalized_text = "\n".join(str(value) for value in group["normalized_text"].fillna("") if str(value))
+        source_types = sorted(set(str(value) for value in group["source_type"].fillna("") if str(value)))
+        normalized_no_diacritics = "".join(
+            ch for ch in unicodedata.normalize("NFD", normalized_text) if unicodedata.category(ch) != "Mn"
+        )
+        document_id = f"doc:{video_id}:{entity_type}:{entity_id}"
+        grouped_rows.append({
+            "doc_id": document_id,
+            "document_id": document_id,
+            "video_id": video_id,
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "source_types": ",".join(source_types),
+            "level": entity_type,
+            "normalized_text": normalized_text,
+            "normalized_no_diacritics": normalized_no_diacritics,
+            "language": group["language"].dropna().iloc[0] if not group["language"].dropna().empty else "vi",
+            "text": normalized_text,
+        })
+    return pd.DataFrame(grouped_rows)
+
+
+def _build_feature_availability(keyframes: pd.DataFrame, asr: pd.DataFrame, ocr: pd.DataFrame, captions: pd.DataFrame, embeddings: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    asr_video_ids = set(asr["video_id"].astype(str)) if not asr.empty else set()
+    ocr_keyframes = set(ocr[ocr["status"] != "failed"]["keyframe_id"].astype(str)) if not ocr.empty else set()
+    caption_keyframes = set(captions[captions["status"] != "failed"]["keyframe_id"].astype(str)) if not captions.empty else set()
+    embedding_keyframes = set(embeddings[embeddings["status"] != "failed"]["keyframe_id"].astype(str)) if not embeddings.empty else set()
+    for row in keyframes.to_dict("records"):
+        keyframe_id = str(row["keyframe_id"])
+        video_id = str(row["video_id"])
+        has_embedding = keyframe_id in embedding_keyframes
+        has_ocr = keyframe_id in ocr_keyframes
+        has_caption = keyframe_id in caption_keyframes
+        has_asr = video_id in asr_video_ids
+        status = "pass" if all([has_embedding, has_caption]) else "degraded"
+        rows.append({
+            "entity_type": "keyframe",
+            "entity_id": keyframe_id,
+            "video_id": video_id,
+            "has_embedding": has_embedding,
+            "has_ocr": has_ocr,
+            "has_caption": has_caption,
+            "has_asr": has_asr,
+            "status": status,
+        })
+    return pd.DataFrame(rows)
+
+
+def _build_release_capabilities(feature_availability: pd.DataFrame, counts: dict[str, int]) -> pd.DataFrame:
+    has_embeddings = bool(counts.get("embeddings_meta"))
+    has_text = bool(counts.get("text_documents"))
+    has_context = bool(counts.get("keyframes")) and bool(counts.get("shots")) and bool(counts.get("scenes"))
+    enrichment_status = "pass" if not feature_availability.empty and (feature_availability["status"] == "pass").all() else "degraded"
+    rows = [
+        {"capability": "core_runtime", "status": "pass", "reason": "merged release tables available"},
+        {"capability": "visual_search", "status": "degraded" if has_embeddings else "fail", "reason": "index built later"},
+        {"capability": "text_search", "status": "pass" if has_text else "fail", "reason": "text_documents merged"},
+        {"capability": "inspection_context", "status": "pass" if has_context else "fail", "reason": "structure tables merged"},
+        {"capability": "enrichment_overall", "status": enrichment_status, "reason": "feature availability merged"},
+    ]
+    return pd.DataFrame(rows)
+
+
+def _materialize_runtime_media(release_path: Path, video_id: str, structure_dir: Path) -> None:
+    target_keyframes = release_path / "media" / "keyframes" / video_id
+    target_thumbnails = release_path / "media" / "thumbnails" / video_id
+    target_keyframes.mkdir(parents=True, exist_ok=True)
+    target_thumbnails.mkdir(parents=True, exist_ok=True)
+    for source in sorted((structure_dir / "keyframes").glob("*.jpg")):
+        shutil.copy2(source, target_keyframes / source.name)
+    for source in sorted((structure_dir / "thumbnails").glob("*.webp")):
+        shutil.copy2(source, target_thumbnails / source.name)

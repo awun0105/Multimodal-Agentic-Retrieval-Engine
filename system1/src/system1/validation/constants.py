@@ -14,8 +14,6 @@ REQUIRED_FILES = {
     "tables/feature_availability.parquet",
     "tables/embeddings_meta.parquet",
     "manifests/dataset_manifest.json",
-    "manifests/validation_report.json",
-    "manifests/validation_errors.jsonl",
     "raw_mapping/media_store_manifest.parquet",
 }
 

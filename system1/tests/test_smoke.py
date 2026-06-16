@@ -1,15 +1,21 @@
 import shutil
 import json
 import sqlite3
+import csv
 from pathlib import Path
+from unittest.mock import patch
 
+import pandas as pd
+import numpy as np
 import pytest
 from typer.testing import CliRunner
 
 from system1.cli import app
 from system1.config import REQUIRED_CONFIGS, load_configs, load_provider_plan
+from system1.ingest.discovery import discover_paired_inputs
 from system1.ingest.source_importer import import_organizer_source
-from system1.release.mini_seed import build_mini_seed, discover_paired_inputs, write_worker_artifacts
+from system1.release.artifacts import write_worker_artifacts
+from system1.release.mini_seed import build_mini_seed
 from system1.validation.release_validator import validate_release
 
 runner = CliRunner()
@@ -125,18 +131,250 @@ def test_cli_debug_pipeline_end_to_end(tmp_path):
     output_dir = tmp_path / "output"
     commands = [
         ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"],
-        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)],
         ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["merge", "--mode", "debug_small_sample", "--output", str(output_dir)],
-        ["build-db", "--mode", "debug_small_sample", "--output", str(output_dir)],
-        ["build-index", "--mode", "debug_small_sample", "--output", str(output_dir)],
-        ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)],
     ]
     for command in commands:
         result = runner.invoke(app, command)
         assert result.exit_code == 0, result.stdout
     release_dir = output_dir / "competition_dataset_v001"
+    assert (release_dir / "manifests" / "dataset_report.json").exists()
+    assert (release_dir / "manifests" / "batch_000.txt").exists()
+    assert (release_dir / "manifests" / "worker_runtime_report_structure.json").exists()
+    assert not (release_dir / "manifests" / "merge_report.json").exists()
+    assert not (release_dir / "db" / "app.sqlite").exists()
+    assert not (release_dir / "indexes" / "visual.faiss").exists()
+
+def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
+    output_dir = tmp_path / "output"
+    command = ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"]
+    first = runner.invoke(app, command)
+    second = runner.invoke(app, command)
+    assert first.exit_code == 0, first.stdout
+    assert second.exit_code == 0, second.stdout
+    release_dir = output_dir / "competition_dataset_v001"
+    videos = pd.read_parquet(release_dir / "tables" / "videos.parquet")
+    manifest = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet")
+    assert videos["video_id"].tolist() == ["L21_V001", "L21_V002", "L21_V003"]
+    assert videos["video_id"].is_unique
+    assert videos["video_ref"].str.startswith("media://raw_videos/").all()
+    assert videos["source_extension"].eq(".mp4").all()
+    assert "fps_detected" in videos.columns
+    assert "duration_seconds" in videos.columns
+    assert manifest["video_local_path"].str.startswith("/").all()
+    assert not (release_dir / "db" / "app.sqlite").exists()
+    assert not (release_dir / "indexes" / "visual.faiss").exists()
+
+def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_path):
+    output_dir = tmp_path / "output"
+    ingest = runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    assigned = runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
+    assert ingest.exit_code == 0, ingest.stdout
+    assert assigned.exit_code == 0, assigned.stdout
+    release_dir = output_dir / "competition_dataset_v001"
+    assert (release_dir / "manifests" / "batch_000.txt").exists()
+    assert (release_dir / "manifests" / "batch_001.txt").exists()
+    with (release_dir / "manifests" / "batch_manifest.csv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert {"batch_000", "batch_001"}.issubset({row["batch_id"] for row in rows})
+    assert set(rows[0]) == {
+        "batch_id",
+        "video_id",
+        "estimated_compute_cost",
+        "assigned_worker",
+        "status",
+        "structure_artifact_path",
+        "feature_artifact_path",
+        "error_note",
+    }
+    assert not (release_dir / "db" / "app.sqlite").exists()
+
+def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_path):
+    output_dir = tmp_path / "output"
+    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    release_dir = output_dir / "competition_dataset_v001"
+    videos_before = (release_dir / "tables" / "videos.parquet").stat().st_mtime_ns
+    result = runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    assert result.exit_code == 0, result.stdout
+    artifact_dir = release_dir / "artifacts" / "structure" / "L21_V001"
+    assert artifact_dir.exists()
+    for name in [
+        "metadata_normalized.json",
+        "asr_segments.parquet",
+        "shots.parquet",
+        "scenes.parquet",
+        "keyframes.parquet",
+        "shot_transcript_links.parquet",
+        "scene_transcript_links.parquet",
+        "scene_summaries_initial.parquet",
+        "manifest.json",
+        "errors.jsonl",
+    ]:
+        assert (artifact_dir / name).exists()
+    assert (artifact_dir / "keyframes").exists()
+    assert (artifact_dir / "thumbnails").exists()
+    assert not (artifact_dir / "L21_V001").exists()
+    assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
+    assert (release_dir / "artifacts" / "structure_batches" / "batch_000" / "L21_V001.json").exists()
+    assert not (release_dir / "artifacts" / "features").exists()
+    assert not (release_dir / "db" / "app.sqlite").exists()
+    assert not (release_dir / "indexes" / "visual.faiss").exists()
+    assert (release_dir / "tables" / "videos.parquet").stat().st_mtime_ns == videos_before
+    for name in [
+        "asr_segments.parquet",
+        "shots.parquet",
+        "scenes.parquet",
+        "keyframes.parquet",
+        "shot_transcript_links.parquet",
+        "scene_transcript_links.parquet",
+        "scene_summaries_initial.parquet",
+    ]:
+        assert not (release_dir / "tables" / name).exists()
+    keyframes = pd.read_parquet(artifact_dir / "keyframes.parquet")
+    assert keyframes.iloc[0]["keyframe_ref"] == "media://keyframes/L21_V001/L21_V001_f0000000.jpg"
+    assert keyframes.iloc[0]["thumbnail_ref"] == "media://thumbnails/L21_V001/L21_V001_f0000000.webp"
+    assert keyframes.iloc[0]["frame_id_method"] == "first_frame_extraction_assumed_frame_0"
+    assert str(keyframes.iloc[0]["thumbnail_ref"]).endswith(".webp")
+    shots = pd.read_parquet(artifact_dir / "shots.parquet")
+    assert shots.iloc[0]["boundary_convention"] == "[start_frame, end_frame)"
+
+def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
+    output_dir = tmp_path / "output"
+    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    with patch("subprocess.run", side_effect=__import__("subprocess").CalledProcessError(1, "ffmpeg")):
+        result = runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    assert result.exit_code == 0, result.stdout
+    artifact_dir = output_dir / "competition_dataset_v001" / "artifacts" / "structure" / "L21_V001"
+    jpg = next((artifact_dir / "keyframes").glob("*.jpg"))
+    webp = next((artifact_dir / "thumbnails").glob("*.webp"))
+    assert jpg.read_bytes().startswith(b"\xff\xd8\xff")
+    assert webp.read_bytes().startswith(b"RIFF")
+    assert b"WEBP" in webp.read_bytes()[:16]
+
+def test_process_batch_missing_batch_file_fails_clearly(tmp_path):
+    output_dir = tmp_path / "output"
+    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    result = runner.invoke(app, ["process-batch", "--batch-id", "batch_999", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    assert result.exit_code != 0
+
+def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
+    output_dir = tmp_path / "output"
+    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    release_dir = output_dir / "competition_dataset_v001"
+    structure_manifest = release_dir / "artifacts" / "structure" / "L21_V001" / "manifest.json"
+    structure_before = structure_manifest.stat().st_mtime_ns
+    result = runner.invoke(app, ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    assert result.exit_code == 0, result.stdout
+    artifact_dir = release_dir / "artifacts" / "features" / "L21_V001"
+    assert artifact_dir.exists()
+    for name in [
+        "visual_embeddings.npy",
+        "embeddings_meta.parquet",
+        "ocr.parquet",
+        "objects.parquet",
+        "image_captions.parquet",
+        "shot_captions.parquet",
+        "scene_summaries_enriched.parquet",
+        "text_sources.parquet",
+        "feature_manifest.json",
+        "errors.jsonl",
+    ]:
+        assert (artifact_dir / name).exists()
+    assert not (artifact_dir / "L21_V001").exists()
+    assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
+    assert (release_dir / "manifests" / "worker_runtime_report_features.json").exists()
+    embeddings = np.load(artifact_dir / "visual_embeddings.npy")
+    embeddings_meta = pd.read_parquet(artifact_dir / "embeddings_meta.parquet")
+    text_sources = pd.read_parquet(artifact_dir / "text_sources.parquet")
+    assert embeddings.shape[0] == len(embeddings_meta)
+    assert {"embedding_id", "keyframe_id", "video_id", "frame_id", "embedding_model", "model_slug", "embedding_dim", "vector_dim", "status", "provider"}.issubset(embeddings_meta.columns)
+    assert embeddings.shape[1] == int(embeddings_meta.iloc[0]["vector_dim"])
+    assert {"source_id", "video_id", "entity_type", "entity_id", "source_type", "raw_text", "normalized_text", "normalized_no_diacritics", "language", "provider", "status"}.issubset(text_sources.columns)
+    assert "image_caption" in set(text_sources["source_type"])
+    manifest = json.loads((artifact_dir / "feature_manifest.json").read_text(encoding="utf-8"))
+    assert "source_structure_artifact" in manifest
+    assert "visual_embeddings_shape" in manifest
+    assert "provider_plan" in manifest
+    assert any(source_id.count(":") >= 4 for source_id in text_sources["source_id"])
+    assert not (release_dir / "indexes" / "visual.faiss").exists()
+    assert not (release_dir / "db" / "app.sqlite").exists()
+    assert not (release_dir / "tables" / "embeddings_meta.parquet").exists()
+    assert structure_manifest.stat().st_mtime_ns == structure_before
+
+def test_feature_batch_missing_structure_artifact_fails_clearly(tmp_path):
+    output_dir = tmp_path / "output"
+    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    result = runner.invoke(app, ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    assert result.exit_code != 0
+
+def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
+    output_dir = tmp_path / "output"
+    commands = [
+        ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)],
+        ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["merge", "--mode", "debug_small_sample", "--output", str(output_dir)],
+    ]
+    for command in commands:
+        result = runner.invoke(app, command)
+        assert result.exit_code == 0, result.stdout
+    release_dir = output_dir / "competition_dataset_v001"
+    assert (release_dir / "tables" / "text_documents.parquet").exists()
+    assert (release_dir / "manifests" / "artifact_manifest.parquet").exists()
+    assert list((release_dir / "media" / "keyframes").rglob("*.jpg"))
+    assert list((release_dir / "media" / "thumbnails").rglob("*.webp"))
+    assert not (release_dir / "db" / "app.sqlite").exists()
+    assert not (release_dir / "indexes" / "visual.faiss").exists()
+
+    index = runner.invoke(app, ["build-index", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    db = runner.invoke(app, ["build-db", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    smoke = runner.invoke(app, ["smoke-test", "--release", str(release_dir)])
+    assert index.exit_code == 0, index.stdout
+    assert db.exit_code == 0, db.stdout
+    assert validate.exit_code == 0, validate.stdout
+    assert smoke.exit_code == 0, smoke.stdout
+    assert (release_dir / "db" / "app.sqlite").exists()
+    assert (release_dir / "indexes" / "vector_map.parquet").exists()
+    assert (release_dir / "indexes" / "visual.faiss").exists()
+    vector_map = pd.read_parquet(release_dir / "indexes" / "vector_map.parquet")
+    embeddings_meta = pd.read_parquet(release_dir / "tables" / "embeddings_meta.parquet")
+    assert len(vector_map) == len(embeddings_meta)
+    text_documents = pd.read_parquet(release_dir / "tables" / "text_documents.parquet")
+    assert any(text_documents["normalized_text"] != text_documents["normalized_no_diacritics"])
+    with sqlite3.connect(release_dir / "db" / "app.sqlite") as connection:
+        refs = connection.execute("SELECT video_ref FROM videos").fetchall()
+        media_refs = connection.execute("SELECT keyframe_ref, thumbnail_ref FROM keyframes LIMIT 1").fetchone()
+        assert all(ref[0].startswith("media://") for ref in refs)
+        assert not any(ref[0].startswith("/") for ref in refs)
+        assert connection.execute("SELECT document_id FROM text_documents_fts WHERE text_documents_fts MATCH 'L21' LIMIT 1").fetchone()
+    smoke_report = json.loads((release_dir / "manifests" / "smoke_test_report.json").read_text(encoding="utf-8"))
+    assert smoke_report["media_resolved"] is True
+    assert media_refs is not None
+
+def test_validate_fails_before_runtime_artifacts(tmp_path):
+    output_dir = tmp_path / "output"
+    result = runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    assert result.exit_code == 0, result.stdout
+    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    assert validate.exit_code != 0
+
+def test_build_mini_seed_command_keeps_dev_helper_path(tmp_path):
+    output_dir = tmp_path / "output"
+    result = runner.invoke(
+        app,
+        ["build-mini-seed", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+    )
+    assert result.exit_code == 0, result.stdout
+    release_dir = output_dir / "competition_dataset_v001"
+    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    assert validate.exit_code == 0, validate.stdout
     smoke = runner.invoke(app, ["smoke-test", "--release", str(release_dir)])
     assert smoke.exit_code == 0, smoke.stdout
     packaged = runner.invoke(app, ["release", "--mode", "debug_small_sample", "--output", str(output_dir)])
@@ -149,9 +387,8 @@ def test_cli_bronze_pipeline_end_to_end(tmp_path):
     output_dir = tmp_path / "output"
     commands = [
         ["ingest", "--mode", "bronze_fast", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--mode", "bronze_fast", "--num-batches", "1", "--output", str(output_dir)],
         ["process-batch", "--batch-id", "batch_000", "--mode", "bronze_fast", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["feature-batch", "--batch-id", "batch_000", "--mode", "bronze_fast", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["validate", "--mode", "bronze_fast", "--output", str(output_dir)],
     ]
     for command in commands:
         result = runner.invoke(app, command)
@@ -204,16 +441,15 @@ def test_cli_gold_pipeline_end_to_end(tmp_path):
     output_dir = tmp_path / "output"
     commands = [
         ["ingest", "--mode", "gold_full", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--mode", "gold_full", "--num-batches", "1", "--output", str(output_dir)],
         ["process-batch", "--batch-id", "batch_000", "--mode", "gold_full", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["feature-batch", "--batch-id", "batch_000", "--mode", "gold_full", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["validate", "--mode", "gold_full", "--output", str(output_dir)],
     ]
     for command in commands:
         result = runner.invoke(app, command)
         assert result.exit_code == 0, result.stdout
     release_dir = output_dir / "competition_dataset_v001"
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
-    assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
+    assert not (release_dir / "artifacts" / "features").exists()
 
 
 def test_provider_plan_supports_named_modes():
