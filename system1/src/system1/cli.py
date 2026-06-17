@@ -3,6 +3,7 @@ from __future__ import annotations
 import typer
 
 from system1.commands import (
+    register_checkpoint_commands,
     register_import_commands,
     register_pipeline_commands,
     register_release_commands,
@@ -19,6 +20,7 @@ def root() -> None:
 register_import_commands(app)
 register_pipeline_commands(app)
 register_release_commands(app)
+register_checkpoint_commands(app)
 
 
 def main() -> None:
