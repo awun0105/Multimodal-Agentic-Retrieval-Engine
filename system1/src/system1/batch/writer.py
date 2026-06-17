@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from system1.release.types import RELEASE_NAME
+from system1.release.types import release_root
 
 
 def write_batches(release_dir: Path, videos: list[dict[str, object]], num_batches: int = 1) -> list[Path]:
@@ -44,7 +44,7 @@ def assign_batches(
 ) -> Path:
     if num_batches < 1:
         raise ValueError("num_batches must be >= 1")
-    release_dir = Path(output_dir) / RELEASE_NAME
+    release_dir = release_root(output_dir)
     videos_path = release_dir / "tables" / "videos.parquet"
     if not videos_path.exists():
         raise FileNotFoundError(f"missing ingestion output: {videos_path}")

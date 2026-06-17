@@ -4,17 +4,18 @@ from pathlib import Path
 
 import typer
 
+from system1.runtime.environment import resolve_runtime_environment
+from system1.release.types import release_root
+
 SUPPORTED_MODES = {"debug_small_sample", "bronze_fast", "silver_balanced", "gold_full"}
 SUPPORTED_PROVIDERS = {"mock", "real", "config", "rule_based", "vlm"}
-RELEASE_NAME = "competition_dataset_v001"
-
 
 def default_output() -> Path:
-    return Path(__file__).resolve().parents[3] / "output"
+    return resolve_runtime_environment().output_root
 
 
 def release_dir(output: Path) -> Path:
-    return output / RELEASE_NAME
+    return release_root(output)
 
 
 def require_supported_mode(mode: str) -> None:

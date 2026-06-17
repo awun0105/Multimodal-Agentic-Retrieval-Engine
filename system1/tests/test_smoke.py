@@ -26,7 +26,6 @@ def test_system1_package_imports():
 
     assert system1 is not None
 
-
 def test_config_loading_reads_required_files():
     configs = load_configs(Path("configs"))
     assert set(REQUIRED_CONFIGS) == {f"{name}.yaml" for name in configs}

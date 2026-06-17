@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 
-from system1.release.types import RELEASE_NAME, write_json
+from system1.release.types import write_json
 
 STRUCTURE_TABLES = [
     "asr_segments",
@@ -117,7 +117,7 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
     write_json(
         manifests_dir / "dataset_manifest.json",
         {
-            "release_id": RELEASE_NAME,
+            "release_id": release_path.name,
             "counts": counts,
             "app_sqlite": "db/app.sqlite",
             "fts5": "app.sqlite:text_documents_fts",

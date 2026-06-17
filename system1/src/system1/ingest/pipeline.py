@@ -11,7 +11,7 @@ from system1.features.builder import capability_states, feature_rows, providers_
 from system1.ingest.discovery import discover_paired_inputs, read_metadata
 from system1.keyframes.builder import keyframe_id, keyframe_refs, materialize_keyframe
 from system1.media.probe import probe_video
-from system1.release.types import DEFAULT_FRAME_ID, RELEASE_NAME, BuildOptions, config_dir, default_input_dir, write_json
+from system1.release.types import DEFAULT_FRAME_ID, BuildOptions, config_dir, default_input_dir, release_root, write_json
 from system1.scenes.builder import scene_id, scene_row
 from system1.shots.builder import shot_id, shot_row
 from system1.text.builder import doc_id, metadata_text, text_document_row, text_source_rows
@@ -23,7 +23,7 @@ def run_ingestion(
     input_dir: Path | str | None = None,
     mode: str = "debug_small_sample",
 ) -> Path:
-    release_dir = Path(output_dir) / RELEASE_NAME
+    release_dir = release_root(output_dir)
     tables_dir = release_dir / "tables"
     manifests_dir = release_dir / "manifests"
     raw_mapping_dir = release_dir / "raw_mapping"
@@ -100,7 +100,7 @@ def run_ingestion(
     write_json(
         report_path,
         {
-            "release_id": RELEASE_NAME,
+            "release_id": release_dir.name,
             "mode": mode,
             "video_count": int(len(videos_df)),
             "ingestion_error_count": len(error_records),

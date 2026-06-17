@@ -12,7 +12,7 @@ import pandas as pd
 
 from system1.config import ProviderPlan, load_provider_plan
 from system1.features.providers import MockEmbeddingProvider, MockTextProvider, RealEmbeddingUnavailable, RealProviderUnavailable
-from system1.release.types import RELEASE_NAME, config_dir, write_json
+from system1.release.types import config_dir, release_root, write_json
 
 FEATURE_ARTIFACT_FILES = (
     "visual_embeddings.npy",
@@ -37,7 +37,7 @@ def process_feature_batch(
     providers: str = "mock",
     worker_id: str = "worker_000",
 ) -> Path:
-    release_dir = Path(output_dir) / RELEASE_NAME
+    release_dir = release_root(output_dir)
     videos_path = release_dir / "tables" / "videos.parquet"
     media_manifest_path = release_dir / "raw_mapping" / "media_store_manifest.parquet"
     batch_path = release_dir / "manifests" / f"{batch_id}.txt"

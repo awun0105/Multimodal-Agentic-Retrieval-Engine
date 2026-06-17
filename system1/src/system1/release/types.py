@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from system1.config import ProviderPlan
+from system1.runtime.environment import resolve_runtime_environment
 
-RELEASE_NAME = "competition_dataset_v001"
+DEFAULT_RELEASE_ID = "competition_dataset_v001"
+RELEASE_NAME = DEFAULT_RELEASE_ID  # legacy alias for old code/tests
 DEFAULT_FRAME_ID = 0
 INDEX_NAME = "visual"
 INDEX_VERSION = "v001"
@@ -22,12 +24,19 @@ class BuildOptions:
     provider_plan: ProviderPlan | None = None
 
 
+
+def current_release_id() -> str:
+    return resolve_runtime_environment().release_name
+
+def release_root(output_dir: Path | str) -> Path:
+    return Path(output_dir) / current_release_id()
+
 def default_input_dir() -> Path:
-    return Path(__file__).resolve().parents[3] / "input"
+    return resolve_runtime_environment().input_root
 
 
 def config_dir() -> Path:
-    return Path(__file__).resolve().parents[3] / "configs"
+    return resolve_runtime_environment().config_root
 
 
 def create_release_directories(release_dir: Path) -> None:

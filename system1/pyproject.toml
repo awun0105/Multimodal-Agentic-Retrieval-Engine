@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-system1 = "system1.cli:app"
+system1 = "system1.cli:main"
 
 [dependency-groups]
 dev = [

@@ -10,7 +10,7 @@ import pandas as pd
 from system1.features.providers import MockTextProvider, RealProviderUnavailable
 from system1.ingest.discovery import read_metadata
 from system1.keyframes.extractor import extract_keyframe_and_thumbnail
-from system1.release.types import RELEASE_NAME, write_json
+from system1.release.types import release_root, write_json
 from system1.text.builder import metadata_text
 
 STRUCTURE_PARQUET_FILES = (
@@ -33,7 +33,7 @@ def process_structure_batch(
     providers: str = "mock",
     worker_id: str = "worker_000",
 ) -> Path:
-    release_dir = Path(output_dir) / RELEASE_NAME
+    release_dir = release_root(output_dir)
     videos_path = release_dir / "tables" / "videos.parquet"
     media_manifest_path = release_dir / "raw_mapping" / "media_store_manifest.parquet"
     batch_path = release_dir / "manifests" / f"{batch_id}.txt"
