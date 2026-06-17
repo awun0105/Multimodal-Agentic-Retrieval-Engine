@@ -11,7 +11,8 @@ from system1.artifacts.checkpoint import (
     restore_checkpoint,
     save_checkpoint,
 )
-from system1.artifacts.store import make_artifact_store
+from system1.artifacts.factory import make_artifact_store_from_env
+from system1.artifacts.hf_store import HF_EXPECTED_ERRORS
 from system1.runtime.environment import resolve_runtime_environment
 from system1.runtime.environment import resolve_runtime_paths
 from system1.release.types import release_root
@@ -27,6 +28,21 @@ def runtime_paths():
 
 def default_artifact_root() -> Path:
     return resolve_runtime_paths().artifact_root
+
+def default_artifact_backend() -> str:
+    return os.environ.get("AIC_ARTIFACT_BACKEND", "local")
+
+def default_hf_repo_id() -> str | None:
+    return os.environ.get("AIC_HF_REPO_ID")
+
+def default_hf_repo_type() -> str:
+    return os.environ.get("AIC_HF_REPO_TYPE", "dataset")
+
+def default_hf_revision() -> str:
+    return os.environ.get("AIC_HF_REVISION", "main")
+
+def default_hf_prefix() -> str:
+    return os.environ.get("AIC_HF_PREFIX", "")
 
 def default_cli_resume() -> bool:
     """CLI checkpoint resume is opt-in unless AIC_RESUME is explicitly set."""
@@ -78,18 +94,41 @@ def try_restore_checkpoint(
     *,
     output: Path,
     artifact_root: Path,
+    artifact_backend: str = "local",
+    hf_repo_id: str | None = None,
+    hf_repo_type: str = "dataset",
+    hf_revision: str = "main",
+    hf_prefix: str = "",
     phase: str,
     batch_id: str | None = None,
     release_id: str | None = None,
 ) -> bool:
     runtime = runtime_paths()
     resolved_release_id = release_id or runtime.release_id
-    store = make_artifact_store(artifact_root)
+    store = make_artifact_store_from_env(
+        artifact_root=artifact_root,
+        backend=artifact_backend,
+        hf_repo_id=hf_repo_id,
+        hf_repo_type=hf_repo_type,
+        hf_revision=hf_revision,
+        hf_prefix=hf_prefix,
+    )
     relative_path = checkpoint_relative_path(phase, batch_id)
     if not store.exists(relative_path):
         typer.echo(f"No checkpoint found for {relative_path}; continuing.")
         return False
-    restore_checkpoint(output, artifact_root, phase, batch_id=batch_id, release_id=resolved_release_id)
+    restore_checkpoint(
+        output,
+        artifact_root,
+        phase,
+        batch_id=batch_id,
+        release_id=resolved_release_id,
+        artifact_backend=artifact_backend,
+        hf_repo_id=hf_repo_id,
+        hf_repo_type=hf_repo_type,
+        hf_revision=hf_revision,
+        hf_prefix=hf_prefix,
+    )
     typer.echo(f"Restored checkpoint: {relative_path}")
     return True
 
@@ -97,6 +136,11 @@ def save_phase_checkpoint(
     *,
     release: Path,
     artifact_root: Path,
+    artifact_backend: str = "local",
+    hf_repo_id: str | None = None,
+    hf_repo_type: str = "dataset",
+    hf_revision: str = "main",
+    hf_prefix: str = "",
     phase: str,
     batch_id: str | None = None,
     worker_id: str | None = None,
@@ -109,8 +153,19 @@ def save_phase_checkpoint(
         batch_id=batch_id,
         worker_id=worker_id,
         status=status,
+        artifact_backend=artifact_backend,
+        hf_repo_id=hf_repo_id,
+        hf_repo_type=hf_repo_type,
+        hf_revision=hf_revision,
+        hf_prefix=hf_prefix,
     )
     typer.echo(f"Saved checkpoint: {checkpoint_path}")
     return checkpoint_path
 
-EXPECTED_CHECKPOINT_ERRORS = (FileNotFoundError, FileExistsError, ValueError, zipfile.BadZipFile)
+EXPECTED_CHECKPOINT_ERRORS = (
+    FileNotFoundError,
+    FileExistsError,
+    ValueError,
+    zipfile.BadZipFile,
+    *HF_EXPECTED_ERRORS,
+)

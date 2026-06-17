@@ -178,3 +178,30 @@ def test_merge_help_does_not_expose_checkpoint_options() -> None:
     assert "--artifact-root" not in result.output
     assert "--sync" not in result.output
     assert "--resume" not in result.output
+
+
+def test_phase_command_help_includes_artifact_backend() -> None:
+    result = runner.invoke(app, ["assign-batches", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--artifact-backend" in result.output
+    assert "--hf-repo-id" in result.output
+
+
+def test_phase_workflow_hf_error_exits_cleanly(monkeypatch, tmp_path: Path) -> None:
+    class FakeHFError(Exception):
+        pass
+
+    def fake_save_phase_checkpoint(**kwargs):
+        raise FakeHFError("hf upload failed")
+
+    monkeypatch.setattr("system1.commands.pipeline.EXPECTED_CHECKPOINT_ERRORS", (FakeHFError,))
+    monkeypatch.setattr("system1.commands.pipeline.save_phase_checkpoint", fake_save_phase_checkpoint)
+    output_dir = tmp_path / "output"
+    artifact_root = tmp_path / "artifact-store"
+
+    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync"])
+    result = runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir), "--sync", "--artifact-backend", "hf_dataset", "--hf-repo-id", "org/repo", "--artifact-root", str(artifact_root)])
+
+    assert result.exit_code != 0
+    assert "Error:" in result.output

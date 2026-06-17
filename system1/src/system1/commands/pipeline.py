@@ -7,9 +7,14 @@ import typer
 from system1.commands.common import (
     EXPECTED_CHECKPOINT_ERRORS,
     checkpoint_error,
+    default_artifact_backend,
     default_artifact_root,
     default_cli_resume,
     default_cli_sync,
+    default_hf_prefix,
+    default_hf_repo_id,
+    default_hf_repo_type,
+    default_hf_revision,
     default_output,
     release_dir,
     require_supported_batch,
@@ -31,7 +36,12 @@ def register(app: typer.Typer) -> None:
         mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
+        artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
         artifact_root: Path = typer.Option(default_artifact_root(), "--artifact-root"),
+        hf_repo_id: str | None = typer.Option(default_hf_repo_id(), "--hf-repo-id"),
+        hf_repo_type: str = typer.Option(default_hf_repo_type(), "--hf-repo-type"),
+        hf_revision: str = typer.Option(default_hf_revision(), "--hf-revision"),
+        hf_prefix: str = typer.Option(default_hf_prefix(), "--hf-prefix"),
         resume: bool = typer.Option(default_cli_resume(), "--resume/--no-resume"),
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
@@ -39,7 +49,7 @@ def register(app: typer.Typer) -> None:
         require_supported_mode(mode)
         if resume:
             try:
-                if try_restore_checkpoint(output=output, artifact_root=artifact_root, phase="phase00_ingest_assignment"):
+                if try_restore_checkpoint(output=output, artifact_root=artifact_root, artifact_backend=artifact_backend, hf_repo_id=hf_repo_id, hf_repo_type=hf_repo_type, hf_revision=hf_revision, hf_prefix=hf_prefix, phase="phase00_ingest_assignment"):
                     typer.echo("Restored phase00 checkpoint; skipping ingest.")
                     return
             except EXPECTED_CHECKPOINT_ERRORS as exc:
@@ -52,7 +62,12 @@ def register(app: typer.Typer) -> None:
         mode: str = typer.Option("debug_small_sample", "--mode"),
         num_batches: int = typer.Option(1, "--num-batches"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
+        artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
         artifact_root: Path = typer.Option(default_artifact_root(), "--artifact-root"),
+        hf_repo_id: str | None = typer.Option(default_hf_repo_id(), "--hf-repo-id"),
+        hf_repo_type: str = typer.Option(default_hf_repo_type(), "--hf-repo-type"),
+        hf_revision: str = typer.Option(default_hf_revision(), "--hf-revision"),
+        hf_prefix: str = typer.Option(default_hf_prefix(), "--hf-prefix"),
         resume: bool = typer.Option(default_cli_resume(), "--resume/--no-resume"),
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
@@ -68,6 +83,11 @@ def register(app: typer.Typer) -> None:
                 save_phase_checkpoint(
                     release=release_dir(output),
                     artifact_root=artifact_root,
+                    artifact_backend=artifact_backend,
+                    hf_repo_id=hf_repo_id,
+                    hf_repo_type=hf_repo_type,
+                    hf_revision=hf_revision,
+                    hf_prefix=hf_prefix,
                     phase="phase00_ingest_assignment",
                 )
             except EXPECTED_CHECKPOINT_ERRORS as exc:
@@ -81,7 +101,12 @@ def register(app: typer.Typer) -> None:
         providers: str = typer.Option("mock", "--providers"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
+        artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
         artifact_root: Path = typer.Option(default_artifact_root(), "--artifact-root"),
+        hf_repo_id: str | None = typer.Option(default_hf_repo_id(), "--hf-repo-id"),
+        hf_repo_type: str = typer.Option(default_hf_repo_type(), "--hf-repo-type"),
+        hf_revision: str = typer.Option(default_hf_revision(), "--hf-revision"),
+        hf_prefix: str = typer.Option(default_hf_prefix(), "--hf-prefix"),
         resume: bool = typer.Option(default_cli_resume(), "--resume/--no-resume"),
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
@@ -93,6 +118,11 @@ def register(app: typer.Typer) -> None:
                 if try_restore_checkpoint(
                     output=output,
                     artifact_root=artifact_root,
+                    artifact_backend=artifact_backend,
+                    hf_repo_id=hf_repo_id,
+                    hf_repo_type=hf_repo_type,
+                    hf_revision=hf_revision,
+                    hf_prefix=hf_prefix,
                     phase="phase01_structure",
                     batch_id=batch_id,
                 ):
@@ -110,6 +140,11 @@ def register(app: typer.Typer) -> None:
                 save_phase_checkpoint(
                     release=release_dir(output),
                     artifact_root=artifact_root,
+                    artifact_backend=artifact_backend,
+                    hf_repo_id=hf_repo_id,
+                    hf_repo_type=hf_repo_type,
+                    hf_revision=hf_revision,
+                    hf_prefix=hf_prefix,
                     phase="phase01_structure",
                     batch_id=batch_id,
                     worker_id=worker_id,
@@ -125,7 +160,12 @@ def register(app: typer.Typer) -> None:
         providers: str = typer.Option("mock", "--providers"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
+        artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
         artifact_root: Path = typer.Option(default_artifact_root(), "--artifact-root"),
+        hf_repo_id: str | None = typer.Option(default_hf_repo_id(), "--hf-repo-id"),
+        hf_repo_type: str = typer.Option(default_hf_repo_type(), "--hf-repo-type"),
+        hf_revision: str = typer.Option(default_hf_revision(), "--hf-revision"),
+        hf_prefix: str = typer.Option(default_hf_prefix(), "--hf-prefix"),
         resume: bool = typer.Option(default_cli_resume(), "--resume/--no-resume"),
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
@@ -137,6 +177,11 @@ def register(app: typer.Typer) -> None:
                 if try_restore_checkpoint(
                     output=output,
                     artifact_root=artifact_root,
+                    artifact_backend=artifact_backend,
+                    hf_repo_id=hf_repo_id,
+                    hf_repo_type=hf_repo_type,
+                    hf_revision=hf_revision,
+                    hf_prefix=hf_prefix,
                     phase="phase02_features",
                     batch_id=batch_id,
                 ):
@@ -154,6 +199,11 @@ def register(app: typer.Typer) -> None:
                 save_phase_checkpoint(
                     release=release_dir(output),
                     artifact_root=artifact_root,
+                    artifact_backend=artifact_backend,
+                    hf_repo_id=hf_repo_id,
+                    hf_repo_type=hf_repo_type,
+                    hf_revision=hf_revision,
+                    hf_prefix=hf_prefix,
                     phase="phase02_features",
                     batch_id=batch_id,
                     worker_id=worker_id,

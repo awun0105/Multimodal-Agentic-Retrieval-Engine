@@ -6,6 +6,7 @@ import zipfile
 import pytest
 
 from system1.artifacts import (
+    checkpoint_metadata_relative_path,
     checkpoint_name,
     checkpoint_relative_path,
     checkpoint_status,
@@ -49,15 +50,19 @@ def test_save_checkpoint_phase00_creates_zip_and_registry(tmp_path: Path) -> Non
 
     checkpoint_path = save_checkpoint(release_dir, artifact_root, "phase00_ingest_assignment")
     registry = checkpoint_status(artifact_root, release_id=release_dir.name)
+    metadata_path = artifact_root / checkpoint_metadata_relative_path("phase00_ingest_assignment")
 
     assert checkpoint_path == artifact_root.resolve() / checkpoint_relative_path("phase00_ingest_assignment")
     assert checkpoint_path.exists()
+    assert metadata_path.exists()
     assert registry["release_id"] == release_dir.name
     latest = registry["latest"]["phase00_ingest_assignment"]
     assert latest["path"] == "checkpoints/phase00_ingest_assignment.zip"
     assert latest["checksum"]
     assert latest["size_bytes"] > 0
     assert latest["created_at"].endswith("Z")
+    assert latest["phase"] == "phase00_ingest_assignment"
+    assert latest["release_id"] == DEFAULT_RELEASE_ID
 
 
 def test_restore_checkpoint_phase00_restores_required_files(tmp_path: Path) -> None:
@@ -88,6 +93,60 @@ def test_checkpoint_status_empty_then_populated(tmp_path: Path) -> None:
     save_checkpoint(release_dir, artifact_root, "phase00_ingest_assignment")
     populated = checkpoint_status(artifact_root, release_id=release_dir.name)
     assert "phase00_ingest_assignment" in populated["latest"]
+
+
+def test_checkpoint_status_prefers_individual_metadata_over_legacy_registry(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "artifact-store"
+    release_dir = _build_phase00_release(tmp_path / "output")
+    save_checkpoint(release_dir, artifact_root, "phase00_ingest_assignment")
+
+    legacy_registry = artifact_root / "manifests" / "checkpoint_registry.json"
+    legacy_registry.write_text('{"release_id":"competition_dataset_v001","latest":{}}\n', encoding="utf-8")
+
+    status = checkpoint_status(artifact_root, release_id=release_dir.name)
+    assert "phase00_ingest_assignment" in status["latest"]
+
+
+def test_checkpoint_status_legacy_fallback_still_works(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "artifact-store"
+    (artifact_root / "manifests").mkdir(parents=True)
+    (artifact_root / "manifests" / "checkpoint_registry.json").write_text(
+        '{"release_id":"competition_dataset_v001","latest":{"phase00_ingest_assignment":{"path":"checkpoints/phase00_ingest_assignment.zip","status":"pass","checksum":"abc","size_bytes":1,"created_at":"2026-01-01T00:00:00Z","phase":"phase00_ingest_assignment","batch_id":null,"worker_id":null,"release_id":"competition_dataset_v001"}}}\n',
+        encoding="utf-8",
+    )
+
+    status = checkpoint_status(artifact_root)
+    assert "phase00_ingest_assignment" in status["latest"]
+
+
+def test_multiple_checkpoint_metadata_files_aggregate(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "artifact-store"
+    release_dir = _build_phase00_release(tmp_path / "output")
+    save_checkpoint(release_dir, artifact_root, "phase00_ingest_assignment")
+    phase01_metadata = artifact_root / checkpoint_metadata_relative_path("phase01_structure", "batch_000")
+    phase01_metadata.parent.mkdir(parents=True, exist_ok=True)
+    phase01_metadata.write_text(
+        '{"path":"checkpoints/phase01_structure_batch_000.zip","status":"pass","checksum":"def","size_bytes":2,"created_at":"2026-01-01T00:00:00Z","phase":"phase01_structure","batch_id":"batch_000","worker_id":"worker_123","release_id":"competition_dataset_v001"}\n',
+        encoding="utf-8",
+    )
+
+    status = checkpoint_status(artifact_root)
+    assert "phase00_ingest_assignment" in status["latest"]
+    assert "phase01_structure_batch_000" in status["latest"]
+
+
+def test_corrupt_metadata_raises_value_error(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "artifact-store"
+    bad = artifact_root / "manifests" / "checkpoints" / "bad.json"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_text('{"status":"pass"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        checkpoint_status(artifact_root)
+
+
+def test_checkpoint_metadata_relative_path_helper() -> None:
+    assert checkpoint_metadata_relative_path("phase00_ingest_assignment") == Path("manifests/checkpoints/phase00_ingest_assignment.json")
 
 
 def test_restore_checkpoint_overwrite_false_raises_if_target_exists(tmp_path: Path) -> None:

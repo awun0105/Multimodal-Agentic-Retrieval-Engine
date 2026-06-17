@@ -10,11 +10,12 @@ import shutil
 import tempfile
 import zipfile
 
-from system1.artifacts.store import ArtifactStore, make_artifact_store
+from system1.artifacts.factory import make_artifact_store_from_env
 from system1.release.types import DEFAULT_RELEASE_ID
 
 
 _REGISTRY_PATH = Path("manifests") / "checkpoint_registry.json"
+_CHECKPOINT_METADATA_DIR = Path("manifests") / "checkpoints"
 
 
 def sha256_file(path: Path) -> str:
@@ -39,6 +40,9 @@ def checkpoint_name(phase: str, batch_id: str | None = None) -> str:
 
 def checkpoint_relative_path(phase: str, batch_id: str | None = None) -> Path:
     return Path("checkpoints") / f"{checkpoint_name(phase, batch_id)}.zip"
+
+def checkpoint_metadata_relative_path(phase: str, batch_id: str | None = None) -> Path:
+    return _CHECKPOINT_METADATA_DIR / f"{checkpoint_name(phase, batch_id)}.json"
 
 
 def _phase_required_paths(phase: str, batch_id: str | None = None) -> list[Path]:
@@ -116,6 +120,52 @@ def _registry_key(phase: str, batch_id: str | None = None) -> str:
 def _utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
+def _make_checkpoint_record(
+    *,
+    release_id: str,
+    phase: str,
+    batch_id: str | None,
+    worker_id: str | None,
+    status: str,
+    checksum: str,
+    size_bytes: int,
+) -> dict[str, Any]:
+    return {
+        "path": checkpoint_relative_path(phase, batch_id).as_posix(),
+        "status": status,
+        "checksum": checksum,
+        "size_bytes": size_bytes,
+        "created_at": _utc_now(),
+        "phase": phase,
+        "batch_id": batch_id,
+        "worker_id": worker_id,
+        "release_id": release_id,
+    }
+
+def _metadata_key(payload: dict[str, Any]) -> str:
+    required = {"path", "status", "checksum", "size_bytes", "created_at", "phase", "release_id"}
+    missing = sorted(required - set(payload))
+    if missing:
+        raise ValueError(f"Checkpoint metadata missing required fields: {', '.join(missing)}")
+    phase = payload["phase"]
+    if not isinstance(phase, str):
+        raise ValueError("Checkpoint metadata phase must be a string")
+    batch_id = payload.get("batch_id")
+    if batch_id is not None and not isinstance(batch_id, str):
+        raise ValueError("Checkpoint metadata batch_id must be string or null")
+    return checkpoint_name(phase, batch_id)
+
+def _status_from_individual_metadata(store, release_id: str) -> dict[str, Any] | None:
+    metadata_files = [path for path in store.list_files(_CHECKPOINT_METADATA_DIR) if path.suffix == ".json"]
+    if not metadata_files:
+        return None
+    latest: dict[str, Any] = {}
+    for metadata_path in sorted(metadata_files):
+        payload = store.read_json(metadata_path)
+        key = _metadata_key(payload)
+        latest[key] = payload
+    return {"release_id": release_id, "latest": dict(sorted(latest.items()))}
+
 
 def save_checkpoint(
     release_dir: Path,
@@ -124,12 +174,26 @@ def save_checkpoint(
     batch_id: str | None = None,
     worker_id: str | None = None,
     status: str = "pass",
-) -> Path:
+    artifact_backend: str | None = None,
+    hf_repo_id: str | None = None,
+    hf_repo_type: str | None = None,
+    hf_revision: str | None = None,
+    hf_token: str | None = None,
+    hf_prefix: str | None = None,
+) -> Path | str:
     release_dir = Path(release_dir).resolve()
     if not release_dir.exists() or not release_dir.is_dir():
         raise FileNotFoundError(release_dir)
 
-    store = make_artifact_store(artifact_root)
+    store = make_artifact_store_from_env(
+        artifact_root=artifact_root,
+        backend=artifact_backend,
+        hf_repo_id=hf_repo_id,
+        hf_repo_type=hf_repo_type,
+        hf_revision=hf_revision,
+        hf_token=hf_token,
+        hf_prefix=hf_prefix,
+    )
     members = _iter_phase_members(release_dir, phase, batch_id)
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -137,21 +201,34 @@ def save_checkpoint(
         with zipfile.ZipFile(temp_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for member in members:
                 archive.write(release_dir / member, arcname=member.as_posix())
+        checksum = sha256_file(temp_zip)
+        size_bytes = temp_zip.stat().st_size
         uploaded = store.upload_file(temp_zip, checkpoint_relative_path(phase, batch_id))
 
-    registry = checkpoint_status(artifact_root, release_id=release_dir.name)
+    record = _make_checkpoint_record(
+        release_id=release_dir.name,
+        phase=phase,
+        batch_id=batch_id,
+        worker_id=worker_id,
+        status=status,
+        checksum=checksum,
+        size_bytes=size_bytes,
+    )
+    store.write_json(checkpoint_metadata_relative_path(phase, batch_id), record)
+
+    registry = checkpoint_status(
+        artifact_root,
+        release_id=release_dir.name,
+        artifact_backend=artifact_backend,
+        hf_repo_id=hf_repo_id,
+        hf_repo_type=hf_repo_type,
+        hf_revision=hf_revision,
+        hf_token=hf_token,
+        hf_prefix=hf_prefix,
+    )
     registry["release_id"] = release_dir.name
     registry.setdefault("latest", {})
-    registry["latest"][_registry_key(phase, batch_id)] = {
-        "path": checkpoint_relative_path(phase, batch_id).as_posix(),
-        "status": status,
-        "checksum": sha256_file(uploaded),
-        "size_bytes": uploaded.stat().st_size,
-        "created_at": _utc_now(),
-        "phase": phase,
-        "batch_id": batch_id,
-        "worker_id": worker_id,
-    }
+    registry["latest"][_registry_key(phase, batch_id)] = record
     store.write_json(_REGISTRY_PATH, registry)
     return uploaded
 
@@ -178,8 +255,22 @@ def restore_checkpoint(
     batch_id: str | None = None,
     release_id: str = DEFAULT_RELEASE_ID,
     overwrite: bool = True,
+    artifact_backend: str | None = None,
+    hf_repo_id: str | None = None,
+    hf_repo_type: str | None = None,
+    hf_revision: str | None = None,
+    hf_token: str | None = None,
+    hf_prefix: str | None = None,
 ) -> Path:
-    store = make_artifact_store(artifact_root)
+    store = make_artifact_store_from_env(
+        artifact_root=artifact_root,
+        backend=artifact_backend,
+        hf_repo_id=hf_repo_id,
+        hf_repo_type=hf_repo_type,
+        hf_revision=hf_revision,
+        hf_token=hf_token,
+        hf_prefix=hf_prefix,
+    )
     relative_path = checkpoint_relative_path(phase, batch_id)
     if not store.exists(relative_path):
         raise FileNotFoundError(store.path(relative_path))
@@ -217,8 +308,28 @@ def restore_checkpoint(
 def checkpoint_status(
     artifact_root: Path,
     release_id: str = DEFAULT_RELEASE_ID,
+    artifact_backend: str | None = None,
+    hf_repo_id: str | None = None,
+    hf_repo_type: str | None = None,
+    hf_revision: str | None = None,
+    hf_token: str | None = None,
+    hf_prefix: str | None = None,
 ) -> dict[str, Any]:
-    store = make_artifact_store(artifact_root)
+    store = make_artifact_store_from_env(
+        artifact_root=artifact_root,
+        backend=artifact_backend,
+        hf_repo_id=hf_repo_id,
+        hf_repo_type=hf_repo_type,
+        hf_revision=hf_revision,
+        hf_token=hf_token,
+        hf_prefix=hf_prefix,
+    )
     if not store.exists(_REGISTRY_PATH):
+        metadata_status = _status_from_individual_metadata(store, release_id)
+        if metadata_status is not None:
+            return metadata_status
         return {"release_id": release_id, "latest": {}}
+    metadata_status = _status_from_individual_metadata(store, release_id)
+    if metadata_status is not None:
+        return metadata_status
     return store.read_json(_REGISTRY_PATH)
