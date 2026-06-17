@@ -234,6 +234,9 @@ runtime/
 !system1/src/system1/runtime/__init__.py
 !system1/src/system1/runtime/environment.py
 artifacts/
+!system1/src/system1/artifacts/
+!system1/src/system1/artifacts/__init__.py
+!system1/src/system1/artifacts/store.py
 system1/input/
 competition_dataset*/
 *.faiss
