@@ -52,8 +52,9 @@ def run_ingestion(
     raw_mapping_dir.mkdir(parents=True, exist_ok=True)
 
     pairs = discover_paired_inputs(input_dir or default_input_dir())
-    video_rows: list[dict[str, Any]] = []
-    mapping_rows: list[dict[str, Any]] = []
+
+    video_dfs: list[pd.DataFrame] = []
+    mapping_dfs: list[pd.DataFrame] = []
     error_records: list[dict[str, Any]] = []
 
     # --- HÀM TRỢ LÝ ĐA LUỒNG XỬ LÝ CHO TỪNG CẶP DỮ LIỆU ĐẦU VÀO ---
@@ -107,19 +108,36 @@ def run_ingestion(
             }
         return v_row, m_row, err_rec
 
-    # --- TỐI ƯU HIỆU NĂNG CPU: Chạy song song tác vụ gọi ffprobe hệ thống ---
+    # --- TỐI ƯU BỘ NHỚ: Ghi dữ liệu cuốn chiếu ra DataFrame thay vì List Dictionaries ---
+    CHUNK_SIZE = 2000
+    v_buffer: list[dict[str, Any]] = []
+    m_buffer: list[dict[str, Any]] = []
+
     max_workers = min(32, (os.cpu_count() or 4) * 2)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(_process_single_pair, pairs))
+        for v_row, m_row, err_rec in executor.map(_process_single_pair, pairs):
+            v_buffer.append(v_row)
+            m_buffer.append(m_row)
+            if err_rec:
+                error_records.append(err_rec)
 
-    for v_row, m_row, err_rec in results:
-        video_rows.append(v_row)
-        mapping_rows.append(m_row)
-        if err_rec:
-            error_records.append(err_rec)
+            if len(v_buffer) >= CHUNK_SIZE:
+                video_dfs.append(pd.DataFrame(v_buffer))
+                mapping_dfs.append(pd.DataFrame(m_buffer))
+                v_buffer.clear()
+                m_buffer.clear()
 
-    videos_df = pd.DataFrame(video_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
-    mapping_df = pd.DataFrame(mapping_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+    if v_buffer:
+        video_dfs.append(pd.DataFrame(v_buffer))
+        mapping_dfs.append(pd.DataFrame(m_buffer))
+
+    if video_dfs:
+        videos_df = pd.concat(video_dfs, ignore_index=True).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+        mapping_df = pd.concat(mapping_dfs, ignore_index=True).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+    else:
+        videos_df = pd.DataFrame()
+        mapping_df = pd.DataFrame()
+
     videos_df.to_parquet(tables_dir / "videos.parquet", index=False)
     mapping_df.to_parquet(raw_mapping_dir / "media_store_manifest.parquet", index=False)
 
@@ -173,25 +191,31 @@ def run_canonical_hf_ingestion(
     if staging_parent:
         staging_parent.mkdir(parents=True, exist_ok=True)
 
-    video_rows: list[dict[str, Any]] = []
-    mapping_rows: list[dict[str, Any]] = []
+    video_dfs: list[pd.DataFrame] = []
+    mapping_dfs: list[pd.DataFrame] = []
     error_records: list[dict[str, Any]] = []
 
     with tempfile.TemporaryDirectory(prefix="system1_canonical_ingest_", dir=staging_parent) as tmp:
         tmp_path = Path(tmp)
         manifest_path = store.download_file("manifests/canonical_file_manifest.jsonl", tmp_path / "canonical_file_manifest.jsonl")
         rows = _read_canonical_manifest(manifest_path)
-        for row in rows:
-            if row.get("status") not in {None, "pass", "skipped"}:
-                continue
+        valid_rows = [row for row in rows if row.get("status") in {None, "pass", "skipped"}]
+
+        # --- HÀM TRỢ LÝ ĐA LUỒNG CHO HUGGING FACE ---
+        def _process_hf_pair(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
             video_id = str(row["video_id"])
             video_remote_path = str(row["video_path"])
             metadata_remote_path = str(row["metadata_path"])
             video_filename = str(row.get("video_filename") or Path(video_remote_path).name)
             metadata_filename = str(row.get("metadata_filename") or Path(metadata_remote_path).name)
 
-            video_path = store.download_file(video_remote_path, tmp_path / "raw_videos" / video_filename)
-            metadata_path = store.download_file(metadata_remote_path, tmp_path / "metadata" / metadata_filename)
+            video_path = tmp_path / "raw_videos" / video_filename
+            metadata_path = tmp_path / "metadata" / metadata_filename
+            video_path.parent.mkdir(parents=True, exist_ok=True)
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+
+            store.download_file(video_remote_path, video_path)
+            store.download_file(metadata_remote_path, metadata_path)
 
             metadata = read_metadata(metadata_path)
             probe = probe_video(video_path)
@@ -199,54 +223,50 @@ def run_canonical_hf_ingestion(
             metadata_ref = f"media://metadata/{metadata_filename}"
             estimated_compute_cost = probe.duration_seconds or probe.frame_count or 1
 
-            video_rows.append(
-                {
-                    "video_id": video_id,
-                    "video_ref": video_ref,
-                    "metadata_ref": metadata_ref,
-                    "source_filename": video_filename,
-                    "source_extension": Path(video_filename).suffix.lower(),
-                    "fps_detected": probe.fps_detected,
-                    "fps_source": probe.fps_source,
-                    "duration_seconds": probe.duration_seconds,
-                    "width": probe.width,
-                    "height": probe.height,
-                    "frame_count": probe.frame_count,
-                    "frame_count_estimated": probe.frame_count_estimated,
-                    "frame_count_method": probe.frame_count_method,
-                    "estimated_compute_cost": estimated_compute_cost,
-                    "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
-                }
-            )
-            mapping_rows.append(
-                {
-                    "video_id": video_id,
-                    "video_ref": video_ref,
-                    "metadata_ref": metadata_ref,
-                    "video_filename": video_filename,
-                    "metadata_filename": metadata_filename,
-                    "video_size_bytes": row.get("video_size_bytes"),
-                    "metadata_size_bytes": row.get("metadata_size_bytes"),
-                    "canonical_backend": "hf_dataset",
-                    "canonical_repo_id": repo_id,
-                    "canonical_repo_type": repo_type,
-                    "canonical_revision": revision,
-                    "canonical_prefix": prefix,
-                    "canonical_video_path": video_remote_path,
-                    "canonical_metadata_path": metadata_remote_path,
-                }
-            )
-            if probe.fps_detected is None or probe.duration_seconds is None:
-                error_records.append(
-                    {
-                        "video_id": video_id,
-                        "level": "warning",
-                        "kind": "probe_partial",
-                        "message": "ffprobe metadata incomplete; some fields unavailable",
-                    }
-                )
+            v_row = {
+                "video_id": video_id,
+                "video_ref": video_ref,
+                "metadata_ref": metadata_ref,
+                "source_filename": video_filename,
+                "source_extension": Path(video_filename).suffix.lower(),
+                "fps_detected": probe.fps_detected,
+                "fps_source": probe.fps_source,
+                "duration_seconds": probe.duration_seconds,
+                "width": probe.width,
+                "height": probe.height,
+                "frame_count": probe.frame_count,
+                "frame_count_estimated": probe.frame_count_estimated,
+                "frame_count_method": probe.frame_count_method,
+                "estimated_compute_cost": estimated_compute_cost,
+                "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
+            }
+            m_row = {
+                "video_id": video_id,
+                "video_ref": video_ref,
+                "metadata_ref": metadata_ref,
+                "video_filename": video_filename,
+                "metadata_filename": metadata_filename,
+                "video_size_bytes": row.get("video_size_bytes"),
+                "metadata_size_bytes": row.get("metadata_size_bytes"),
+                "canonical_backend": "hf_dataset",
+                "canonical_repo_id": repo_id,
+                "canonical_repo_type": repo_type,
+                "canonical_revision": revision,
+                "canonical_prefix": prefix,
+                "canonical_video_path": video_remote_path,
+                "canonical_metadata_path": metadata_remote_path,
+            }
 
-            # --- TỐI ƯU LƯU TRỮ: Xóa tệp tạm cuốn chiếu ngăn tràn bộ nhớ ổ cứng ---
+            err_rec = None
+            if probe.fps_detected is None or probe.duration_seconds is None:
+                err_rec = {
+                    "video_id": video_id,
+                    "level": "warning",
+                    "kind": "probe_partial",
+                    "message": "ffprobe metadata incomplete; some fields unavailable",
+                }
+
+            # TỐI ƯU LƯU TRỮ: Xóa tệp tạm cuốn chiếu ngăn tràn bộ nhớ ổ cứng
             try:
                 if video_path.exists():
                     video_path.unlink()
@@ -255,10 +275,41 @@ def run_canonical_hf_ingestion(
             except Exception:
                 pass
 
-    videos_df = pd.DataFrame(video_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
-    mapping_df = pd.DataFrame(mapping_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+            return v_row, m_row, err_rec
+
+        # --- TỐI ƯU BỘ NHỚ VÀ MẠNG: Đa luồng tải và Chunking bộ nhớ ---
+        CHUNK_SIZE = 2000
+        v_buffer: list[dict[str, Any]] = []
+        m_buffer: list[dict[str, Any]] = []
+
+        max_workers = min(32, (os.cpu_count() or 4) * 2)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for v_row, m_row, err_rec in executor.map(_process_hf_pair, valid_rows):
+                v_buffer.append(v_row)
+                m_buffer.append(m_row)
+                if err_rec:
+                    error_records.append(err_rec)
+
+                if len(v_buffer) >= CHUNK_SIZE:
+                    video_dfs.append(pd.DataFrame(v_buffer))
+                    mapping_dfs.append(pd.DataFrame(m_buffer))
+                    v_buffer.clear()
+                    m_buffer.clear()
+
+        if v_buffer:
+            video_dfs.append(pd.DataFrame(v_buffer))
+            mapping_dfs.append(pd.DataFrame(m_buffer))
+
+    if video_dfs:
+        videos_df = pd.concat(video_dfs, ignore_index=True).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+        mapping_df = pd.concat(mapping_dfs, ignore_index=True).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+    else:
+        videos_df = pd.DataFrame()
+        mapping_df = pd.DataFrame()
+
     videos_df.to_parquet(tables_dir / "videos.parquet", index=False)
     mapping_df.to_parquet(raw_mapping_dir / "media_store_manifest.parquet", index=False)
+
     (manifests_dir / "ingestion_errors.jsonl").write_text(
         "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in error_records),
         encoding="utf-8",
@@ -303,7 +354,7 @@ def build_tables(
     options: BuildOptions,
     previous_checkpoint: dict[str, Any] | None,
 ) -> dict[str, pd.DataFrame]:
-    """Legacy dev helper for `build-mini-seed` only.
+    """Legacy dev helper for build-mini-seed only.
 
     Do not use this monolithic builder for the phase-based worker pipeline.
     The main MVP path runs dedicated phase commands and merges outputs later.
