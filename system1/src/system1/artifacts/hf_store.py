@@ -73,14 +73,14 @@ class HuggingFaceDatasetArtifactStore:
         return Path(f"hf://{self.repo_id}") / remote_path
 
     def exists(self, relative_path: str | Path) -> bool:
+        # --- 🚀 TỐI ƯU CỐT LÕI: Sử dụng file_info để check metadata thay vì hf_hub_download làm tải file gây chậm ---
         remote_path = self._remote_path(relative_path)
         try:
-            hf_hub_download(
+            HfApi(token=self.token).file_info(
                 repo_id=self.repo_id,
                 repo_type=self.repo_type,
                 revision=self.revision,
                 filename=remote_path,
-                token=self.token,
             )
             return True
         except (EntryNotFoundError, LocalEntryNotFoundError):
