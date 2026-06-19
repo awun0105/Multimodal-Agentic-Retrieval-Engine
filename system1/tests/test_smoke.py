@@ -13,7 +13,14 @@ from typer.testing import CliRunner
 from system1.cli import app
 from system1.config import REQUIRED_CONFIGS, load_configs, load_provider_plan
 from system1.ingest.discovery import discover_paired_inputs
-from system1.ingest.source_importer import import_organizer_source
+from system1.ingest.source_importer import (
+    ArchiveStandardizeResult,
+    DriveShadowResult,
+    import_organizer_source,
+    import_source_to_hf_canonical,
+    shadow_google_drive_folder,
+    standardize_archive_source,
+)
 from system1.release.artifacts import write_worker_artifacts
 from system1.release.mini_seed import build_mini_seed
 from system1.validation.release_validator import validate_release
@@ -65,7 +72,14 @@ def test_schema_files_are_complete_and_loadable():
 
 def test_notebooks_are_operator_ready_thin_orchestration_shells():
     expected_commands = {
-        "00_master_ingestion_and_assignment.ipynb": ["import-source", "ingest", "assign-batches"],
+        "00_master_ingestion_and_assignment.ipynb": [
+            "drive-shadow",
+            "standardize-archives",
+            "ingest",
+            "assign-batches",
+            "sync-release",
+            "AIC_HF_REPO_ID",
+        ],
         "01_worker_structure_pipeline.ipynb": ["process-batch"],
         "02_worker_feature_enrichment.ipynb": ["feature-batch"],
         "03_merge_validate_index_release.ipynb": ["merge", "build-db", "build-index", "validate", "smoke-test", "release"],
@@ -88,10 +102,11 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         assert "AIC_DATA_ROOT" in joined
         assert "AIC_RUNTIME_ROOT" in joined
         assert "AIC_ARTIFACT_ROOT" in joined
-        assert "worker_id" in joined
-        assert "batch_id" in joined
         assert "execution_mode" in joined
-        assert "provider_mode" in joined
+        if path.name != "00_master_ingestion_and_assignment.ipynb":
+            assert "worker_id" in joined
+            assert "batch_id" in joined
+            assert "provider_mode" in joined
         assert "run_cli" in joined
         for command in expected_commands[path.name]:
             assert command in joined
@@ -533,3 +548,370 @@ def test_import_organizer_source_rejects_duplicate_video_stems(tmp_path):
 
     with pytest.raises(ValueError, match="duplicate video stem"):
         import_organizer_source(str(source_root), tmp_path / "drive_data")
+
+
+def test_import_source_to_hf_canonical_uploads_standard_layout(monkeypatch, tmp_path):
+    source_root = tmp_path / "organizer_source"
+    (source_root / "videos").mkdir(parents=True)
+    (source_root / "metadata").mkdir(parents=True)
+    sample_video = Path("input/raw_videos/L21_V001.mp4").resolve()
+    sample_metadata = Path("input/metadata/L21_V001.json").resolve()
+    shutil.copy2(sample_video, source_root / "videos" / "L21_V001.mp4")
+    shutil.copy2(sample_metadata, source_root / "metadata" / "L21_V001.json")
+    uploaded: dict[str, bytes] = {}
+
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": [])
+
+    def fake_upload(self, source: Path, relative_path):
+        uploaded[str(relative_path)] = source.read_bytes()
+        return Path("hf:/org/repo") / str(relative_path)
+
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_file", fake_upload)
+
+    result = import_source_to_hf_canonical(
+        str(source_root),
+        repo_id="org/repo",
+        staging_root=tmp_path / "staging",
+    )
+
+    assert result.video_count == 1
+    assert "raw_videos/L21_V001.mp4" in uploaded
+    assert "metadata/L21_V001.json" in uploaded
+    assert "manifests/canonical_file_manifest.jsonl" in uploaded
+    assert "manifests/canonical_import_report.json" in uploaded
+
+
+def test_standardize_archive_source_flattens_zip_inputs(tmp_path):
+    source_dir = tmp_path / "raw_dataset"
+    source_dir.mkdir()
+    archive_root = tmp_path / "archive_root"
+    (archive_root / "nested").mkdir(parents=True)
+    (archive_root / "nested" / "L21_V001.mp4").write_bytes(b"video")
+    (archive_root / "nested" / "L21_V001.wav").write_bytes(b"audio")
+    (archive_root / "nested" / "L21_V001.json").write_text('{"title":"sample"}\n', encoding="utf-8")
+    archive_path = source_dir / "batch_a.zip"
+    shutil.make_archive(str(archive_path.with_suffix("")), "zip", archive_root)
+
+    result = standardize_archive_source(
+        source_dir,
+        tmp_path / "standardized",
+        temp_dir=tmp_path / "temp_extract",
+    )
+
+    assert result.zip_count == 1
+    assert result.video_count == 2
+    assert result.metadata_count == 1
+    assert (tmp_path / "standardized" / "raw_videos" / "batch_a_L21_V001.mp4").exists()
+    assert (tmp_path / "standardized" / "raw_videos" / "batch_a_L21_V001.wav").exists()
+    assert (tmp_path / "standardized" / "metadata" / "batch_a_L21_V001.json").exists()
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "pass"
+
+    rerun = standardize_archive_source(
+        source_dir,
+        tmp_path / "standardized",
+        temp_dir=tmp_path / "temp_extract",
+    )
+
+    assert rerun.video_count == 0
+    assert rerun.metadata_count == 0
+    assert rerun.skipped_count == 3
+    rerun_report = json.loads(rerun.report_path.read_text(encoding="utf-8"))
+    assert rerun_report["status"] == "pass"
+    assert {item["status"] for item in rerun_report["items"]} == {"skipped_existing"}
+
+
+def test_standardize_archives_cli_fails_on_partial_unless_allowed(tmp_path):
+    source_dir = tmp_path / "raw_dataset"
+    source_dir.mkdir()
+    (source_dir / "broken.zip").write_text("not a zip", encoding="utf-8")
+    target_dir = tmp_path / "standardized"
+
+    result = runner.invoke(
+        app,
+        [
+            "standardize-archives",
+            "--source-dir",
+            str(source_dir),
+            "--target-dir",
+            str(target_dir),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Archive standardization failed with errors" in result.output
+
+    allowed = runner.invoke(
+        app,
+        [
+            "standardize-archives",
+            "--source-dir",
+            str(source_dir),
+            "--target-dir",
+            str(target_dir),
+            "--allow-partial",
+        ],
+    )
+    assert allowed.exit_code == 0
+
+
+def test_shadow_google_drive_folder_copies_nested_regular_files(tmp_path):
+    class FakeExecute:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def execute(self):
+            return self.payload
+
+    class FakeFiles:
+        def __init__(self):
+            self.children = {
+                "src": [
+                    {"id": "folder_a", "name": "folder_a", "mimeType": "application/vnd.google-apps.folder"},
+                    {"id": "file_1", "name": "video.mp4", "mimeType": "video/mp4"},
+                    {"id": "doc_1", "name": "notes", "mimeType": "application/vnd.google-apps.document"},
+                ],
+                "folder_a": [
+                    {"id": "file_2", "name": "meta.json", "mimeType": "application/json"},
+                ],
+            }
+            self.created: list[dict[str, object]] = []
+            self.copied: list[tuple[str, dict[str, object]]] = []
+
+        def list(self, q, fields, pageToken=None):
+            folder_id = q.split("'", 2)[1]
+            return FakeExecute({"files": self.children.get(folder_id, [])})
+
+        def create(self, body, fields):
+            new_id = f"new_{body['name']}"
+            self.created.append(body)
+            return FakeExecute({"id": new_id})
+
+        def copy(self, fileId, body):
+            self.copied.append((fileId, body))
+            return FakeExecute({"id": f"copy_{fileId}"})
+
+    class FakeService:
+        def __init__(self):
+            self.fake_files = FakeFiles()
+
+        def files(self):
+            return self.fake_files
+
+    service = FakeService()
+    result = shadow_google_drive_folder(
+        "src",
+        "dest",
+        report_path=tmp_path / "drive_shadow_report.json",
+        service=service,
+    )
+
+    assert result.copied_files == 2
+    assert result.created_folders == 1
+    assert result.skipped_google_apps == 1
+    assert service.fake_files.copied[0][0] == "file_2"
+    assert service.fake_files.copied[1][0] == "file_1"
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "pass"
+
+
+def test_shadow_google_drive_folder_skips_existing_matching_targets(tmp_path):
+    class FakeExecute:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def execute(self):
+            return self.payload
+
+    class FakeFiles:
+        def __init__(self):
+            self.children = {
+                "src": [
+                    {"id": "folder_a", "name": "folder_a", "mimeType": "application/vnd.google-apps.folder"},
+                    {"id": "file_1", "name": "video.mp4", "mimeType": "video/mp4", "size": "5"},
+                ],
+                "folder_a": [
+                    {"id": "file_2", "name": "meta.json", "mimeType": "application/json", "size": "2"},
+                ],
+                "dest": [
+                    {"id": "existing_folder_a", "name": "folder_a", "mimeType": "application/vnd.google-apps.folder"},
+                    {"id": "existing_file_1", "name": "video.mp4", "mimeType": "video/mp4", "size": "5"},
+                ],
+                "existing_folder_a": [
+                    {"id": "existing_file_2", "name": "meta.json", "mimeType": "application/json", "size": "2"},
+                ],
+            }
+            self.created: list[dict[str, object]] = []
+            self.copied: list[tuple[str, dict[str, object]]] = []
+
+        def list(self, q, fields, pageToken=None):
+            folder_id = q.split("'", 2)[1]
+            return FakeExecute({"files": self.children.get(folder_id, [])})
+
+        def create(self, body, fields):
+            self.created.append(body)
+            return FakeExecute({"id": f"new_{body['name']}"})
+
+        def copy(self, fileId, body):
+            self.copied.append((fileId, body))
+            return FakeExecute({"id": f"copy_{fileId}"})
+
+    class FakeService:
+        def __init__(self):
+            self.fake_files = FakeFiles()
+
+        def files(self):
+            return self.fake_files
+
+    service = FakeService()
+    result = shadow_google_drive_folder(
+        "src",
+        "dest",
+        report_path=tmp_path / "drive_shadow_report.json",
+        service=service,
+    )
+
+    assert result.copied_files == 0
+    assert result.created_folders == 0
+    assert result.skipped_existing == 3
+    assert result.error_count == 0
+    assert service.fake_files.created == []
+    assert service.fake_files.copied == []
+
+
+def test_drive_shadow_cli_fails_on_partial_unless_allowed(monkeypatch, tmp_path):
+    from system1.commands import imports as import_commands
+
+    def fake_shadow_google_drive_folder(source_folder_id, dest_folder_id, *, report_path, service=None):
+        Path(report_path).write_text('{"status":"partial"}\n', encoding="utf-8")
+        return DriveShadowResult(
+            source_folder_id=source_folder_id,
+            dest_folder_id=dest_folder_id,
+            copied_files=0,
+            created_folders=0,
+            skipped_google_apps=0,
+            skipped_existing=0,
+            error_count=1,
+            report_path=Path(report_path),
+        )
+
+    monkeypatch.setattr(import_commands, "shadow_google_drive_folder", fake_shadow_google_drive_folder)
+
+    report_path = tmp_path / "drive_shadow_report.json"
+    result = runner.invoke(
+        app,
+        [
+            "drive-shadow",
+            "--source-folder-id",
+            "src",
+            "--dest-folder-id",
+            "dest",
+            "--report-path",
+            str(report_path),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Drive shadow failed with errors" in result.output
+
+    allowed = runner.invoke(
+        app,
+        [
+            "drive-shadow",
+            "--source-folder-id",
+            "src",
+            "--dest-folder-id",
+            "dest",
+            "--report-path",
+            str(report_path),
+            "--allow-partial",
+        ],
+    )
+    assert allowed.exit_code == 0
+
+
+def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
+    from system1.ingest.pipeline import run_ingestion
+
+    source_root = tmp_path / "canonical_repo"
+    (source_root / "raw_videos").mkdir(parents=True)
+    (source_root / "metadata").mkdir(parents=True)
+    shutil.copy2(Path("input/raw_videos/L21_V001.mp4").resolve(), source_root / "raw_videos" / "L21_V001.mp4")
+    shutil.copy2(Path("input/metadata/L21_V001.json").resolve(), source_root / "metadata" / "L21_V001.json")
+    manifest = {
+        "video_id": "L21_V001",
+        "video_filename": "L21_V001.mp4",
+        "metadata_filename": "L21_V001.json",
+        "video_path": "raw_videos/L21_V001.mp4",
+        "metadata_path": "metadata/L21_V001.json",
+        "video_size_bytes": (source_root / "raw_videos" / "L21_V001.mp4").stat().st_size,
+        "metadata_size_bytes": (source_root / "metadata" / "L21_V001.json").stat().st_size,
+        "status": "pass",
+    }
+    (source_root / "manifests").mkdir()
+    (source_root / "manifests" / "canonical_file_manifest.jsonl").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def download_file(self, relative_path, target: Path):
+            source = source_root / str(relative_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            return target
+
+    monkeypatch.setattr("system1.ingest.pipeline.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    report_path = run_ingestion(
+        tmp_path / "output",
+        mode="debug_small_sample",
+        canonical_hf_repo_id="org/repo",
+        canonical_hf_prefix="",
+        canonical_staging_root=tmp_path / "staging",
+    )
+    release_dir = report_path.parent.parent
+    videos = pd.read_parquet(release_dir / "tables" / "videos.parquet")
+    mapping = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet")
+
+    assert videos["video_id"].tolist() == ["L21_V001"]
+    assert mapping.loc[0, "canonical_backend"] == "hf_dataset"
+    assert mapping.loc[0, "canonical_repo_id"] == "org/repo"
+
+
+def test_release_sync_uploads_and_restores_release(monkeypatch, tmp_path):
+    from system1.release.sync import download_release_from_hf, upload_release_to_hf
+
+    release_dir = tmp_path / "output" / "competition_dataset_v001"
+    (release_dir / "tables").mkdir(parents=True)
+    (release_dir / "manifests").mkdir(parents=True)
+    (release_dir / "tables" / "videos.parquet").write_bytes(b"videos")
+    (release_dir / "manifests" / "dataset_report.json").write_text('{"ok": true}\n', encoding="utf-8")
+    uploaded: dict[str, bytes] = {}
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def upload_file(self, source: Path, relative_path):
+            uploaded[str(relative_path)] = source.read_bytes()
+            return Path("hf:/org/repo") / str(relative_path)
+
+        def list_files(self, prefix=""):
+            return [Path(path) for path in uploaded if path.startswith(str(prefix))]
+
+        def download_file(self, relative_path, target: Path):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(uploaded[str(relative_path)])
+            return target
+
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    upload = upload_release_to_hf(release_dir, repo_id="org/repo")
+    restored_root = tmp_path / "restored"
+    restore = download_release_from_hf(restored_root, release_id="competition_dataset_v001", repo_id="org/repo")
+
+    assert upload.file_count == 2
+    assert "releases/competition_dataset_v001/tables/videos.parquet" in uploaded
+    assert "releases/competition_dataset_v001/manifests/dataset_report.json" in uploaded
+    assert "releases/competition_dataset_v001/manifests/release_sync_manifest.json" in uploaded
+    assert (restored_root / "competition_dataset_v001" / "tables" / "videos.parquet").read_bytes() == b"videos"
+    assert restore.file_count == 3

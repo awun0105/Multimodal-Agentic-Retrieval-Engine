@@ -36,6 +36,11 @@ def register(app: typer.Typer) -> None:
         mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
+        canonical_hf_repo_id: str | None = typer.Option(None, "--canonical-hf-repo-id"),
+        canonical_hf_prefix: str = typer.Option("", "--canonical-hf-prefix"),
+        canonical_hf_repo_type: str = typer.Option("dataset", "--canonical-hf-repo-type"),
+        canonical_hf_revision: str = typer.Option("main", "--canonical-hf-revision"),
+        canonical_staging_root: Path | None = typer.Option(None, "--canonical-staging-root"),
         artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
         artifact_root: Path = typer.Option(default_artifact_root(), "--artifact-root"),
         hf_repo_id: str | None = typer.Option(default_hf_repo_id(), "--hf-repo-id"),
@@ -54,7 +59,16 @@ def register(app: typer.Typer) -> None:
                     return
             except EXPECTED_CHECKPOINT_ERRORS as exc:
                 checkpoint_error(exc)
-        report_path = run_ingestion(output, input_dir=input_dir, mode=mode)
+        report_path = run_ingestion(
+            output,
+            input_dir=input_dir,
+            mode=mode,
+            canonical_hf_repo_id=canonical_hf_repo_id,
+            canonical_hf_prefix=canonical_hf_prefix,
+            canonical_hf_repo_type=canonical_hf_repo_type,
+            canonical_hf_revision=canonical_hf_revision,
+            canonical_staging_root=canonical_staging_root,
+        )
         typer.echo(f"Ingested sample inputs: {report_path}")
 
     @app.command("assign-batches")

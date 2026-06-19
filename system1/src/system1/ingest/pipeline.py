@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.config import load_provider_plan
 from system1.features.builder import capability_states, feature_rows, providers_for_plan, release_capability_rows
 from system1.ingest.discovery import discover_paired_inputs, read_metadata
@@ -22,7 +25,23 @@ def run_ingestion(
     *,
     input_dir: Path | str | None = None,
     mode: str = "debug_small_sample",
+    canonical_hf_repo_id: str | None = None,
+    canonical_hf_prefix: str = "",
+    canonical_hf_repo_type: str = "dataset",
+    canonical_hf_revision: str = "main",
+    canonical_staging_root: Path | str | None = None,
 ) -> Path:
+    if canonical_hf_repo_id:
+        return run_canonical_hf_ingestion(
+            output_dir,
+            mode=mode,
+            repo_id=canonical_hf_repo_id,
+            prefix=canonical_hf_prefix,
+            repo_type=canonical_hf_repo_type,
+            revision=canonical_hf_revision,
+            staging_root=canonical_staging_root,
+        )
+
     release_dir = release_root(output_dir)
     tables_dir = release_dir / "tables"
     manifests_dir = release_dir / "manifests"
@@ -109,6 +128,147 @@ def run_ingestion(
         },
     )
     return report_path
+
+
+def run_canonical_hf_ingestion(
+    output_dir: Path | str,
+    *,
+    mode: str,
+    repo_id: str,
+    prefix: str = "",
+    repo_type: str = "dataset",
+    revision: str = "main",
+    staging_root: Path | str | None = None,
+) -> Path:
+    release_dir = release_root(output_dir)
+    tables_dir = release_dir / "tables"
+    manifests_dir = release_dir / "manifests"
+    raw_mapping_dir = release_dir / "raw_mapping"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    raw_mapping_dir.mkdir(parents=True, exist_ok=True)
+
+    store = HuggingFaceDatasetArtifactStore(
+        repo_id=repo_id,
+        repo_type=repo_type,
+        revision=revision,
+        token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
+        prefix=prefix,
+    )
+    staging_parent = Path(staging_root).expanduser().resolve() if staging_root else None
+    if staging_parent:
+        staging_parent.mkdir(parents=True, exist_ok=True)
+
+    video_rows: list[dict[str, Any]] = []
+    mapping_rows: list[dict[str, Any]] = []
+    error_records: list[dict[str, Any]] = []
+
+    with tempfile.TemporaryDirectory(prefix="system1_canonical_ingest_", dir=staging_parent) as tmp:
+        tmp_path = Path(tmp)
+        manifest_path = store.download_file("manifests/canonical_file_manifest.jsonl", tmp_path / "canonical_file_manifest.jsonl")
+        rows = _read_canonical_manifest(manifest_path)
+        for row in rows:
+            if row.get("status") not in {None, "pass", "skipped"}:
+                continue
+            video_id = str(row["video_id"])
+            video_remote_path = str(row["video_path"])
+            metadata_remote_path = str(row["metadata_path"])
+            video_filename = str(row.get("video_filename") or Path(video_remote_path).name)
+            metadata_filename = str(row.get("metadata_filename") or Path(metadata_remote_path).name)
+            video_path = store.download_file(video_remote_path, tmp_path / "raw_videos" / video_filename)
+            metadata_path = store.download_file(metadata_remote_path, tmp_path / "metadata" / metadata_filename)
+            metadata = read_metadata(metadata_path)
+            probe = probe_video(video_path)
+            video_ref = f"media://raw_videos/{video_filename}"
+            metadata_ref = f"media://metadata/{metadata_filename}"
+            estimated_compute_cost = probe.duration_seconds or probe.frame_count or 1
+            video_rows.append(
+                {
+                    "video_id": video_id,
+                    "video_ref": video_ref,
+                    "metadata_ref": metadata_ref,
+                    "source_filename": video_filename,
+                    "source_extension": Path(video_filename).suffix.lower(),
+                    "fps_detected": probe.fps_detected,
+                    "fps_source": probe.fps_source,
+                    "duration_seconds": probe.duration_seconds,
+                    "width": probe.width,
+                    "height": probe.height,
+                    "frame_count": probe.frame_count,
+                    "frame_count_estimated": probe.frame_count_estimated,
+                    "frame_count_method": probe.frame_count_method,
+                    "estimated_compute_cost": estimated_compute_cost,
+                    "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
+                }
+            )
+            mapping_rows.append(
+                {
+                    "video_id": video_id,
+                    "video_ref": video_ref,
+                    "metadata_ref": metadata_ref,
+                    "video_filename": video_filename,
+                    "metadata_filename": metadata_filename,
+                    "video_size_bytes": row.get("video_size_bytes"),
+                    "metadata_size_bytes": row.get("metadata_size_bytes"),
+                    "canonical_backend": "hf_dataset",
+                    "canonical_repo_id": repo_id,
+                    "canonical_repo_type": repo_type,
+                    "canonical_revision": revision,
+                    "canonical_prefix": prefix,
+                    "canonical_video_path": video_remote_path,
+                    "canonical_metadata_path": metadata_remote_path,
+                }
+            )
+            if probe.fps_detected is None or probe.duration_seconds is None:
+                error_records.append(
+                    {
+                        "video_id": video_id,
+                        "level": "warning",
+                        "kind": "probe_partial",
+                        "message": "ffprobe metadata incomplete; some fields unavailable",
+                    }
+                )
+
+    videos_df = pd.DataFrame(video_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+    mapping_df = pd.DataFrame(mapping_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
+    videos_df.to_parquet(tables_dir / "videos.parquet", index=False)
+    mapping_df.to_parquet(raw_mapping_dir / "media_store_manifest.parquet", index=False)
+    (manifests_dir / "ingestion_errors.jsonl").write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in error_records),
+        encoding="utf-8",
+    )
+    report_path = manifests_dir / "dataset_report.json"
+    write_json(
+        report_path,
+        {
+            "release_id": release_dir.name,
+            "mode": mode,
+            "source_backend": "hf_dataset",
+            "source_repo_id": repo_id,
+            "source_prefix": prefix,
+            "video_count": int(len(videos_df)),
+            "ingestion_error_count": len(error_records),
+            "videos_table": "tables/videos.parquet",
+            "media_store_manifest": "raw_mapping/media_store_manifest.parquet",
+        },
+    )
+    return report_path
+
+
+def _read_canonical_manifest(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        required = {"video_id", "video_path", "metadata_path"}
+        missing = sorted(required - set(payload))
+        if missing:
+            raise ValueError(f"canonical manifest line {line_number} missing fields: {', '.join(missing)}")
+        rows.append(payload)
+    if not rows:
+        raise ValueError("canonical manifest is empty")
+    return rows
 
 
 def build_tables(

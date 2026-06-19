@@ -9,6 +9,7 @@ from system1.db.sqlite_builder import build_app_sqlite
 from system1.indexes.builder import build_visual_index
 from system1.release.mini_seed import build_mini_seed
 from system1.release.smoke import write_smoke_report
+from system1.release.sync import download_release_from_hf, upload_release_to_hf
 from system1.release.writer import package_release
 from system1.validation.release_validator import validate_release
 
@@ -79,3 +80,43 @@ def register(app: typer.Typer) -> None:
         require_supported_mode(mode)
         archive_path = package_release(release_dir(output))
         typer.echo(f"Packaged release: {archive_path}")
+
+    @app.command("sync-release")
+    def sync_release(
+        output: Path = typer.Option(default_output(), "--output", "-o"),
+        hf_repo_id: str = typer.Option(..., "--hf-repo-id"),
+        hf_prefix: str = typer.Option("", "--hf-prefix"),
+        hf_repo_type: str = typer.Option("dataset", "--hf-repo-type"),
+        hf_revision: str = typer.Option("main", "--hf-revision"),
+    ) -> None:
+        """Upload the current release folder into a Hugging Face Dataset repo."""
+        result = upload_release_to_hf(
+            release_dir(output),
+            repo_id=hf_repo_id,
+            prefix=hf_prefix,
+            repo_type=hf_repo_type,
+            revision=hf_revision,
+        )
+        typer.echo(f"Synced release files={result.file_count}: {result.manifest_path}")
+
+    @app.command("restore-release")
+    def restore_release(
+        output: Path = typer.Option(default_output(), "--output", "-o"),
+        release_id: str = typer.Option("competition_dataset_v001", "--release-id"),
+        hf_repo_id: str = typer.Option(..., "--hf-repo-id"),
+        hf_prefix: str = typer.Option("", "--hf-prefix"),
+        hf_repo_type: str = typer.Option("dataset", "--hf-repo-type"),
+        hf_revision: str = typer.Option("main", "--hf-revision"),
+        overwrite: bool = typer.Option(True, "--overwrite/--no-overwrite"),
+    ) -> None:
+        """Restore a synced release folder from a Hugging Face Dataset repo."""
+        result = download_release_from_hf(
+            output,
+            release_id=release_id,
+            repo_id=hf_repo_id,
+            prefix=hf_prefix,
+            repo_type=hf_repo_type,
+            revision=hf_revision,
+            overwrite=overwrite,
+        )
+        typer.echo(f"Restored release files={result.file_count}: {result.release_dir}")

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.features.providers import MockTextProvider, RealProviderUnavailable
 from system1.ingest.discovery import read_metadata
 from system1.keyframes.extractor import extract_keyframe_and_thumbnail
@@ -112,8 +114,9 @@ def _write_video_structure_artifact(
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     video_id = str(video["video_id"])
     errors: list[dict[str, Any]] = []
-    video_path = _resolve_video_path(mapping, input_dir)
-    metadata_path = _resolve_metadata_path(mapping, input_dir)
+    canonical_cache_dir = artifact_dir / "_canonical_cache"
+    video_path = _resolve_video_path(mapping, input_dir, canonical_cache_dir)
+    metadata_path = _resolve_metadata_path(mapping, input_dir, canonical_cache_dir)
     metadata = _read_metadata_or_empty(metadata_path, errors, video_id)
     normalized_text = metadata_text(video_id, metadata)
     frame_id = 0
@@ -238,26 +241,54 @@ def _write_batch_debug_copy(path: Path, *, video_id: str, tables: dict[str, list
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _resolve_video_path(mapping: dict[str, Any], input_dir: Path | str | None) -> Path:
+def _resolve_video_path(mapping: dict[str, Any], input_dir: Path | str | None, cache_dir: Path | None = None) -> Path:
     for key in ("video_local_path", "debug_video_local_path", "source_video_path"):
         value = mapping.get(key)
         if value:
             return Path(str(value))
+    canonical = _download_canonical(mapping, "canonical_video_path", cache_dir)
+    if canonical is not None:
+        return canonical
     filename = mapping.get("video_filename") or Path(str(mapping.get("video_ref", ""))).name
     if input_dir and filename:
         return Path(input_dir) / "raw_videos" / str(filename)
     raise FileNotFoundError("media mapping has no video debug/source path")
 
 
-def _resolve_metadata_path(mapping: dict[str, Any], input_dir: Path | str | None) -> Path | None:
+def _resolve_metadata_path(mapping: dict[str, Any], input_dir: Path | str | None, cache_dir: Path | None = None) -> Path | None:
     for key in ("metadata_local_path", "debug_metadata_local_path", "source_metadata_path"):
         value = mapping.get(key)
         if value:
             return Path(str(value))
+    canonical = _download_canonical(mapping, "canonical_metadata_path", cache_dir)
+    if canonical is not None:
+        return canonical
     filename = mapping.get("metadata_filename") or Path(str(mapping.get("metadata_ref", ""))).name
     if input_dir and filename:
         return Path(input_dir) / "metadata" / str(filename)
     return None
+
+
+def _download_canonical(mapping: dict[str, Any], path_key: str, cache_dir: Path | None) -> Path | None:
+    if mapping.get("canonical_backend") != "hf_dataset":
+        return None
+    relative_path = mapping.get(path_key)
+    repo_id = mapping.get("canonical_repo_id")
+    if not relative_path or not repo_id:
+        return None
+    if cache_dir is None:
+        raise FileNotFoundError("canonical media requires a cache directory")
+    target = cache_dir / Path(str(relative_path)).name
+    if target.exists():
+        return target
+    store = HuggingFaceDatasetArtifactStore(
+        repo_id=str(repo_id),
+        repo_type=str(mapping.get("canonical_repo_type") or "dataset"),
+        revision=str(mapping.get("canonical_revision") or "main"),
+        token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
+        prefix=str(mapping.get("canonical_prefix") or ""),
+    )
+    return store.download_file(str(relative_path), target)
 
 
 def _read_metadata_or_empty(path: Path | None, errors: list[dict[str, Any]], video_id: str) -> dict[str, Any]:

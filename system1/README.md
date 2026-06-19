@@ -33,20 +33,77 @@ input/metadata/L21_V001.json
 
 A clean clone will not run E2E until this input directory is prepared.
 
-Two supported ways to prepare sample input:
+Primary Notebook 00 workflow for Colab/Drive:
 
-Option A, copy an existing local sample input directory:
+```text
+organizer Google Drive folder
+  -> drive-shadow into your Drive folder
+  -> standardize-archives into input/raw_videos + input/metadata
+  -> validate standardized input
+  -> ingest
+  -> assign-batches
+  -> sync-release to Hugging Face Dataset
+```
+
+Use these commands directly only when debugging outside the notebook:
+
+```bash
+system1 drive-shadow \
+  --source-folder-id organizer-folder-id \
+  --dest-folder-id your-drive-folder-id \
+  --report-path output/drive_shadow_report.json
+
+system1 standardize-archives \
+  --source-dir /content/drive/MyDrive/AIC2026/raw_dataset \
+  --target-dir input \
+  --temp-dir /content/temp_extraction
+
+system1 ingest \
+  --mode debug_small_sample \
+  --input input \
+  --output output
+
+system1 assign-batches \
+  --mode debug_small_sample \
+  --num-batches 1 \
+  --output output
+
+system1 sync-release \
+  --output output \
+  --hf-repo-id your-org/aic2026-phase00 \
+  --hf-prefix competition_dataset_v001
+```
+
+`standardize-archives` writes:
+
+```text
+input/
+  raw_videos/
+  metadata/
+  standardize_archives_report.json
+```
+
+By default it moves `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, and `.wav`
+files into `raw_videos/`, and `.json` files into `metadata/`.
+Both commands fail non-zero when item-level errors are recorded. Existing
+matching archive outputs are skipped on rerun; use `--overwrite` only when you
+intend to replace target files. Use `--allow-partial` only for manual recovery
+when ingest should proceed despite a partial input-prep report.
+
+Fallback, use an existing standardized input directory:
 
 ```bash
 cp -R /path/to/sample/input ./input
 ```
 
-Option B, import from an organizer source:
+Worker notebooks restore phase00 output from the same HF Dataset repo:
 
 ```bash
-system1 import-source \
-  --source-uri /path/or/google-drive-folder-url \
-  --data-root input
+system1 restore-release \
+  --release-id competition_dataset_v001 \
+  --hf-repo-id your-org/aic2026-phase00 \
+  --hf-prefix competition_dataset_v001 \
+  --output output
 ```
 
 ## Local setup
