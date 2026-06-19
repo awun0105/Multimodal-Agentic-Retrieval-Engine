@@ -5,6 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
@@ -55,7 +56,8 @@ def run_ingestion(
     mapping_rows: list[dict[str, Any]] = []
     error_records: list[dict[str, Any]] = []
 
-    for pair in pairs:
+    # --- HÀM TRỢ LÝ ĐA LUỒNG XỬ LÝ CHO TỪNG CẶP DỮ LIỆU ĐẦU VÀO ---
+    def _process_single_pair(pair: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         video_path = Path(pair["video_path"])
         metadata_path = Path(pair["metadata_path"])
         video_id = pair["video_id"]
@@ -64,57 +66,69 @@ def run_ingestion(
         video_ref = f"media://raw_videos/{video_path.name}"
         metadata_ref = f"media://metadata/{metadata_path.name}"
         estimated_compute_cost = probe.duration_seconds or probe.frame_count or 1
-        video_rows.append(
-            {
-                "video_id": video_id,
-                "video_ref": video_ref,
-                "metadata_ref": metadata_ref,
-                "source_filename": video_path.name,
-                "source_extension": video_path.suffix.lower(),
-                "fps_detected": probe.fps_detected,
-                "fps_source": probe.fps_source,
-                "duration_seconds": probe.duration_seconds,
-                "width": probe.width,
-                "height": probe.height,
-                "frame_count": probe.frame_count,
-                "frame_count_estimated": probe.frame_count_estimated,
-                "frame_count_method": probe.frame_count_method,
-                "estimated_compute_cost": estimated_compute_cost,
-                "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
-            }
-        )
-        mapping_rows.append(
-            {
-                "video_id": video_id,
-                "video_ref": video_ref,
-                "metadata_ref": metadata_ref,
-                "video_filename": video_path.name,
-                "metadata_filename": metadata_path.name,
-                "video_local_path": str(video_path.resolve()),
-                "metadata_local_path": str(metadata_path.resolve()),
-                "video_size_bytes": video_path.stat().st_size,
-                "metadata_size_bytes": metadata_path.stat().st_size,
-            }
-        )
+
+        v_row = {
+            "video_id": video_id,
+            "video_ref": video_ref,
+            "metadata_ref": metadata_ref,
+            "source_filename": video_path.name,
+            "source_extension": video_path.suffix.lower(),
+            "fps_detected": probe.fps_detected,
+            "fps_source": probe.fps_source,
+            "duration_seconds": probe.duration_seconds,
+            "width": probe.width,
+            "height": probe.height,
+            "frame_count": probe.frame_count,
+            "frame_count_estimated": probe.frame_count_estimated,
+            "frame_count_method": probe.frame_count_method,
+            "estimated_compute_cost": estimated_compute_cost,
+            "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
+        }
+
+        m_row = {
+            "video_id": video_id,
+            "video_ref": video_ref,
+            "metadata_ref": metadata_ref,
+            "video_filename": video_path.name,
+            "metadata_filename": metadata_path.name,
+            "video_local_path": str(video_path.resolve()),
+            "metadata_local_path": str(metadata_path.resolve()),
+            "video_size_bytes": video_path.stat().st_size,
+            "metadata_size_bytes": metadata_path.stat().st_size,
+        }
+
+        err_rec = None
         if probe.fps_detected is None or probe.duration_seconds is None:
-            error_records.append(
-                {
-                    "video_id": video_id,
-                    "level": "warning",
-                    "kind": "probe_partial",
-                    "message": "ffprobe metadata incomplete; some fields unavailable",
-                }
-            )
+            err_rec = {
+                "video_id": video_id,
+                "level": "warning",
+                "kind": "probe_partial",
+                "message": "ffprobe metadata incomplete; some fields unavailable",
+            }
+        return v_row, m_row, err_rec
+
+    # --- TỐI ƯU HIỆU NĂNG CPU: Chạy song song tác vụ gọi ffprobe hệ thống ---
+    max_workers = min(32, (os.cpu_count() or 4) * 2)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(_process_single_pair, pairs))
+
+    for v_row, m_row, err_rec in results:
+        video_rows.append(v_row)
+        mapping_rows.append(m_row)
+        if err_rec:
+            error_records.append(err_rec)
 
     videos_df = pd.DataFrame(video_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
     mapping_df = pd.DataFrame(mapping_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
     videos_df.to_parquet(tables_dir / "videos.parquet", index=False)
     mapping_df.to_parquet(raw_mapping_dir / "media_store_manifest.parquet", index=False)
+
     errors_path = manifests_dir / "ingestion_errors.jsonl"
     errors_path.write_text(
         "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in error_records),
         encoding="utf-8",
     )
+
     report_path = manifests_dir / "dataset_report.json"
     write_json(
         report_path,
@@ -175,13 +189,16 @@ def run_canonical_hf_ingestion(
             metadata_remote_path = str(row["metadata_path"])
             video_filename = str(row.get("video_filename") or Path(video_remote_path).name)
             metadata_filename = str(row.get("metadata_filename") or Path(metadata_remote_path).name)
+
             video_path = store.download_file(video_remote_path, tmp_path / "raw_videos" / video_filename)
             metadata_path = store.download_file(metadata_remote_path, tmp_path / "metadata" / metadata_filename)
+
             metadata = read_metadata(metadata_path)
             probe = probe_video(video_path)
             video_ref = f"media://raw_videos/{video_filename}"
             metadata_ref = f"media://metadata/{metadata_filename}"
             estimated_compute_cost = probe.duration_seconds or probe.frame_count or 1
+
             video_rows.append(
                 {
                     "video_id": video_id,
@@ -228,6 +245,15 @@ def run_canonical_hf_ingestion(
                         "message": "ffprobe metadata incomplete; some fields unavailable",
                     }
                 )
+
+            # --- TỐI ƯU LƯU TRỮ: Xóa tệp tạm cuốn chiếu ngăn tràn bộ nhớ ổ cứng ---
+            try:
+                if video_path.exists():
+                    video_path.unlink()
+                if metadata_path.exists():
+                    metadata_path.unlink()
+            except Exception:
+                pass
 
     videos_df = pd.DataFrame(video_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
     mapping_df = pd.DataFrame(mapping_rows).drop_duplicates(subset=["video_id"]).sort_values("video_id")
