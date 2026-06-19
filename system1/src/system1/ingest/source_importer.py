@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,6 +20,7 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".wav"}
 METADATA_EXTENSIONS = {".json"}
 VIDEO_DIR_NAMES = {"raw_videos", "videos", "video", "raw", "clips"}
 METADATA_DIR_NAMES = {"metadata", "metadatas", "json", "annotations"}
+GENERIC_CONTEXT_NAMES = VIDEO_DIR_NAMES | METADATA_DIR_NAMES | {"dataset", "train", "val", "test", "data"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,22 @@ class ArchiveStandardizeResult:
     skipped_count: int
     error_count: int
     report_path: Path
+
+
+@dataclass(frozen=True)
+class _StandardizeCandidate:
+    kind: str
+    source_mode: str
+    source_path: str
+    actual_path: Path | None
+    relative_path: Path
+    original_stem: str
+    extension: str
+    context_parts: tuple[str, ...]
+    group_key: tuple[str, ...]
+    archive_stem: str | None = None
+    zip_path: Path | None = None
+    zip_member: str | None = None
 
 
 def import_organizer_source(source_uri: str, data_root: Path | str) -> SourceImportResult:
@@ -227,75 +245,6 @@ def shadow_google_drive_folder(
     )
 
 
-def _safe_extract_zip_and_process_inline(
-    zip_path: Path,
-    raw_root: Path,
-    metadata_root: Path,
-    accepted_media_extensions: set[str],
-    overwrite: bool,
-    counters: dict[str, int],
-    rows: list[dict[str, Any]],
-    temp_root: Path | None = None
-) -> None:
-    """Extract, filter, rename, flatten, and clear archive files one-by-one to avoid disk inflation."""
-    with zipfile.ZipFile(zip_path, "r") as archive:
-        for member in archive.infolist():
-            member_path = Path(member.filename)
-            if member_path.is_absolute():
-                raise ValueError(f"archive member must be relative: {member.filename}")
-
-            # Bỏ qua các chỉ mục thư mục rỗng bên trong zip công cụ tạo ra
-            if member.is_dir():
-                continue
-
-            suffix = member_path.suffix.lower()
-            is_media = suffix in accepted_media_extensions
-            is_meta = suffix in METADATA_EXTENSIONS
-
-            if not (is_media or is_meta):
-                counters["skipped_count"] += 1
-                rows.append({"archive": str(zip_path), "kind": "unsupported", "source": member.filename, "status": "skipped"})
-                continue
-
-            # Thực hiện trích xuất cô lập phần tử hiện tại vào một thư mục tạm tối thiểu
-            with tempfile.TemporaryDirectory(prefix="member_extract_", dir=temp_root) as clean_tmp:
-                clean_tmp_path = Path(clean_tmp).resolve()
-
-                # Kiểm tra ranh giới bảo mật tránh lỗ hổng Zip Slip (Directory Traversal)
-                destination = (clean_tmp_path / member_path).resolve()
-                try:
-                    destination.relative_to(clean_tmp_path)
-                except ValueError as exc:
-                    raise ValueError(f"archive member escapes target directory: {member.filename}") from exc
-
-                archive.extract(member, path=clean_tmp_path)
-                extracted_file = clean_tmp_path / member.filename
-
-                if not extracted_file.is_file():
-                    continue
-
-                if is_media:
-                    target = raw_root / f"{zip_path.stem}_{extracted_file.name}"
-                    kind_str = "media"
-                else:
-                    target = metadata_root / f"{zip_path.stem}_{extracted_file.name}"
-                    kind_str = "metadata"
-
-                try:
-                    status = _move_flattened_file(extracted_file, target, overwrite=overwrite)
-                    if status == "moved":
-                        if is_media:
-                            counters["video_count"] += 1
-                        else:
-                            counters["metadata_count"] += 1
-                    else:
-                        counters["skipped_count"] += 1
-                    rows.append({"archive": str(zip_path), "kind": kind_str, "source": member.filename, "target": str(target), "status": status})
-                except OSError as exc:
-                    counters["error_count"] += 1
-                    rows.append({"archive": str(zip_path), "kind": kind_str, "source": member.filename, "target": str(target), "status": "failed", "error": str(exc)})
-
-
 def standardize_archive_source(
     source_dir: Path | str,
     target_dir: Path | str,
@@ -304,7 +253,7 @@ def standardize_archive_source(
     media_extensions: set[str] | None = None,
     overwrite: bool = False,
 ) -> ArchiveStandardizeResult:
-    """Extract nested zip archives into target raw_videos/ and metadata/ folders."""
+    """Normalize archives, existing layouts, and loose files into System 1 input layout."""
     source_root = Path(source_dir).expanduser().resolve()
     target_root = Path(target_dir).expanduser().resolve()
     if not source_root.exists() or not source_root.is_dir():
@@ -327,20 +276,82 @@ def standardize_archive_source(
         "error_count": 0,
     }
 
-    for zip_path in sorted(source_root.rglob("*.zip")):
-        counters["zip_count"] += 1
+    print(
+        "[standardize] "
+        f"source_dir={source_root} target_dir={target_root} temp_dir={temp_root} "
+        f"overwrite={overwrite} media_extensions={sorted(accepted_media_extensions)}",
+        flush=True,
+    )
+
+    zip_paths, non_zip_candidates = _discover_standardize_files(
+        source_root,
+        target_root,
+        temp_root,
+        accepted_media_extensions,
+    )
+    counters["zip_count"] = len(zip_paths)
+    print(f"[standardize] discovered zip_files={len(zip_paths)}", flush=True)
+    print(
+        "[standardize] discovered non_zip "
+        f"media={sum(1 for candidate in non_zip_candidates if candidate.kind == 'media')} "
+        f"metadata={sum(1 for candidate in non_zip_candidates if candidate.kind == 'metadata')}",
+        flush=True,
+    )
+
+    zip_candidates: list[_StandardizeCandidate] = []
+    for index, zip_path in enumerate(zip_paths, start=1):
+        print(f"[standardize] discovering zip [{index}/{len(zip_paths)}]: {zip_path}", flush=True)
         try:
-            # Xử lý trích xuất và di chuyển cuốn chiếu từng tệp tin mà không ghi đè ổ cứng local
-            _safe_extract_zip_and_process_inline(
-                zip_path, raw_root, metadata_root, accepted_media_extensions, overwrite, counters, rows, temp_root
-            )
+            discovered, skipped = _discover_zip_candidates(zip_path, source_root, accepted_media_extensions)
+            zip_candidates.extend(discovered)
+            rows.extend(skipped)
+            counters["skipped_count"] += len(skipped)
         except (OSError, zipfile.BadZipFile, ValueError) as exc:
             counters["error_count"] += 1
-            rows.append({"archive": str(zip_path), "status": "failed", "error": str(exc)})
-            continue
+            rows.append({"source_mode": "zip", "kind": "archive", "source": str(zip_path), "status": "failed", "error": str(exc)})
 
-    if temp_root.exists() and not temp_dir:
-        shutil.rmtree(temp_root, ignore_errors=True)
+    candidates = [*non_zip_candidates, *zip_candidates]
+    try:
+        canonical_by_group, rename_reason_by_group = _assign_canonical_stems(candidates)
+    except ValueError as exc:
+        counters["error_count"] += 1
+        rows.append({"kind": "canonical_stem", "status": "failed", "error": str(exc)})
+        canonical_by_group = {}
+        rename_reason_by_group = {}
+
+    if canonical_by_group:
+        _copy_non_zip_candidates(
+            non_zip_candidates,
+            raw_root,
+            metadata_root,
+            canonical_by_group,
+            rename_reason_by_group,
+            overwrite,
+            counters,
+            rows,
+        )
+        _process_zip_candidates(
+            zip_paths,
+            zip_candidates,
+            raw_root,
+            metadata_root,
+            temp_root,
+            canonical_by_group,
+            rename_reason_by_group,
+            overwrite,
+            counters,
+            rows,
+        )
+
+    _generate_missing_metadata(raw_root, metadata_root, source_root, counters, rows, accepted_media_extensions)
+    _report_extra_metadata(raw_root, metadata_root, rows, accepted_media_extensions)
+    validation_error: ValueError | None = None
+    try:
+        _validate_pairing(raw_root, metadata_root)
+    except ValueError as exc:
+        validation_error = exc
+        counters["error_count"] += 1
+        rows.append({"kind": "pairing_validation", "status": "failed", "error": str(exc)})
 
     report = {
         "status": "pass" if counters["error_count"] == 0 else "partial",
@@ -354,7 +365,445 @@ def standardize_archive_source(
     }
     report_path = target_root / "standardize_archives_report.json"
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(
+        "[standardize] completed "
+        f"video_count={counters['video_count']} metadata_count={counters['metadata_count']} "
+        f"skipped_count={counters['skipped_count']} error_count={counters['error_count']} "
+        f"report_path={report_path}",
+        flush=True,
+    )
+    if temp_root.exists() and not temp_dir:
+        shutil.rmtree(temp_root, ignore_errors=True)
+    if validation_error is not None:
+        raise ValueError(f"standardized input pairing validation failed: {validation_error}; report: {report_path}") from validation_error
     return ArchiveStandardizeResult(report_path=report_path, **counters)
+
+
+def _discover_standardize_files(
+    source_root: Path,
+    target_root: Path,
+    temp_root: Path,
+    accepted_media_extensions: set[str],
+) -> tuple[list[Path], list[_StandardizeCandidate]]:
+    zip_paths: list[Path] = []
+    candidates: list[_StandardizeCandidate] = []
+    skip_roots = [target_root, temp_root]
+    for path in sorted(source_root.rglob("*")):
+        resolved = path.resolve()
+        if _should_skip_standardize_path(resolved, skip_roots):
+            continue
+        if not path.is_file() or path.name == "standardize_archives_report.json":
+            continue
+        suffix = path.suffix.lower()
+        if suffix == ".zip":
+            zip_paths.append(resolved)
+            continue
+        if suffix not in accepted_media_extensions and suffix not in METADATA_EXTENSIONS:
+            continue
+        kind = "media" if suffix in accepted_media_extensions else "metadata"
+        relative_path = resolved.relative_to(source_root)
+        context_parts = _meaningful_context(relative_path.parent.parts)
+        source_mode = "existing_layout" if _has_layout_context(relative_path.parent.parts) else "loose_files"
+        group_key = (*context_parts, path.stem)
+        candidates.append(
+            _StandardizeCandidate(
+                kind=kind,
+                source_mode=source_mode,
+                source_path=str(resolved),
+                actual_path=resolved,
+                relative_path=relative_path,
+                original_stem=path.stem,
+                extension=path.suffix,
+                context_parts=context_parts,
+                group_key=group_key,
+            )
+        )
+    return zip_paths, candidates
+
+
+def _discover_zip_candidates(
+    zip_path: Path,
+    source_root: Path,
+    accepted_media_extensions: set[str],
+) -> tuple[list[_StandardizeCandidate], list[dict[str, Any]]]:
+    candidates: list[_StandardizeCandidate] = []
+    skipped: list[dict[str, Any]] = []
+    archive_stem = zip_path.stem
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        for member in archive.infolist():
+            member_path = Path(member.filename)
+            _validate_zip_member_path(member_path)
+            if member.is_dir():
+                continue
+            suffix = member_path.suffix.lower()
+            is_media = suffix in accepted_media_extensions
+            is_metadata = suffix in METADATA_EXTENSIONS
+            if not is_media and not is_metadata:
+                skipped.append(
+                    {
+                        "source_mode": "zip",
+                        "kind": "unsupported",
+                        "source": f"{zip_path}::{member.filename}",
+                        "status": "skipped",
+                        "archive_stem": archive_stem,
+                        "source_inner_path": member.filename,
+                    }
+                )
+                continue
+            kind = "media" if is_media else "metadata"
+            try:
+                zip_relative = zip_path.relative_to(source_root)
+            except ValueError:
+                zip_relative = Path(zip_path.name)
+            context_parts = (archive_stem, *_meaningful_context(member_path.parent.parts))
+            group_key = (*context_parts, member_path.stem)
+            candidates.append(
+                _StandardizeCandidate(
+                    kind=kind,
+                    source_mode="zip",
+                    source_path=f"{zip_path}::{member.filename}",
+                    actual_path=None,
+                    relative_path=zip_relative / member_path,
+                    original_stem=member_path.stem,
+                    extension=member_path.suffix,
+                    context_parts=context_parts,
+                    group_key=group_key,
+                    archive_stem=archive_stem,
+                    zip_path=zip_path,
+                    zip_member=member.filename,
+                )
+            )
+    return candidates, skipped
+
+
+def _should_skip_standardize_path(path: Path, skip_roots: list[Path]) -> bool:
+    if ".tmp_archive_extract" in path.parts:
+        return True
+    return any(path == root or root in path.parents for root in skip_roots)
+
+
+def _has_layout_context(parts: tuple[str, ...]) -> bool:
+    names = {part.lower() for part in parts}
+    return bool(names & (VIDEO_DIR_NAMES | METADATA_DIR_NAMES))
+
+
+def _meaningful_context(parts: tuple[str, ...]) -> tuple[str, ...]:
+    context = []
+    for part in parts:
+        if part.lower() in GENERIC_CONTEXT_NAMES:
+            continue
+        sanitized = _sanitize_stem(part)
+        if sanitized:
+            context.append(sanitized)
+    return tuple(context)
+
+
+def _assign_canonical_stems(
+    candidates: list[_StandardizeCandidate],
+) -> tuple[dict[tuple[str, ...], str], dict[tuple[str, ...], str]]:
+    grouped: dict[tuple[str, ...], list[_StandardizeCandidate]] = {}
+    for candidate in candidates:
+        grouped.setdefault(candidate.group_key, []).append(candidate)
+    media_groups = {
+        group_key
+        for group_key, group_candidates in grouped.items()
+        if any(candidate.kind == "media" for candidate in group_candidates)
+    }
+    original_media_counts: dict[str, int] = {}
+    for group_key in media_groups:
+        original = grouped[group_key][0].original_stem
+        original_media_counts[original] = original_media_counts.get(original, 0) + 1
+
+    assigned: dict[tuple[str, ...], str] = {}
+    reasons: dict[tuple[str, ...], str] = {}
+    media_depths: dict[tuple[str, ...], int] = {}
+    for group_key in media_groups:
+        representative = grouped[group_key][0]
+        original_is_unique = original_media_counts.get(representative.original_stem, 0) <= 1
+        media_depths[group_key] = 0 if original_is_unique else 1
+    while media_depths:
+        stems_by_group = {
+            group_key: _stem_for_context_depth(grouped[group_key][0], depth)
+            for group_key, depth in media_depths.items()
+        }
+        groups_by_stem: dict[str, list[tuple[str, ...]]] = {}
+        for group_key, stem in stems_by_group.items():
+            groups_by_stem.setdefault(stem, []).append(group_key)
+        duplicates = [group_keys for group_keys in groups_by_stem.values() if len(group_keys) > 1]
+        if not duplicates:
+            break
+        progressed = False
+        for duplicate_group_keys in duplicates:
+            for group_key in duplicate_group_keys:
+                representative = grouped[group_key][0]
+                if media_depths[group_key] >= len(representative.context_parts):
+                    continue
+                media_depths[group_key] += 1
+                progressed = True
+        if not progressed:
+            example = duplicates[0][0]
+            representative = grouped[example][0]
+            raise ValueError(
+                "unable to assign unique canonical stem for duplicate media groups "
+                f"original_stem={representative.original_stem!r}"
+            )
+    used: set[str] = set()
+    for group_key in sorted(media_groups):
+        depth = media_depths[group_key]
+        stem = _stem_for_context_depth(grouped[group_key][0], depth)
+        assigned[group_key] = stem
+        reasons[group_key] = "original_unique" if depth == 0 else "context_disambiguation"
+        used.add(stem)
+    for group_key in sorted(set(grouped) - media_groups):
+        representative = grouped[group_key][0]
+        stem, reason = _choose_canonical_stem(representative, used, allow_original=True)
+        assigned[group_key] = stem
+        reasons[group_key] = reason
+        used.add(stem)
+    return assigned, reasons
+
+
+def _stem_for_context_depth(candidate: _StandardizeCandidate, depth: int) -> str:
+    if depth <= 0:
+        return _sanitize_stem(candidate.original_stem)
+    context = list(candidate.context_parts)[-depth:]
+    return _sanitize_stem("_".join([*context, candidate.original_stem]))
+
+
+def _choose_canonical_stem(candidate: _StandardizeCandidate, used: set[str], *, allow_original: bool) -> tuple[str, str]:
+    original = _sanitize_stem(candidate.original_stem)
+    if allow_original and original and original not in used:
+        return original, "original_unique"
+    context_parts = list(candidate.context_parts)
+    for depth in range(1, len(context_parts) + 1):
+        context = context_parts[-depth:]
+        stem = _sanitize_stem("_".join([*context, candidate.original_stem]))
+        if stem and stem not in used:
+            return stem, "context_disambiguation"
+    if original and original not in used:
+        return original, "metadata_only_original"
+    raise ValueError(
+        "unable to assign unique canonical stem for "
+        f"source={candidate.source_path} original_stem={candidate.original_stem!r} "
+        f"context={list(candidate.context_parts)}"
+    )
+
+
+def _copy_non_zip_candidates(
+    candidates: list[_StandardizeCandidate],
+    raw_root: Path,
+    metadata_root: Path,
+    canonical_by_group: dict[tuple[str, ...], str],
+    rename_reason_by_group: dict[tuple[str, ...], str],
+    overwrite: bool,
+    counters: dict[str, int],
+    rows: list[dict[str, Any]],
+) -> None:
+    for candidate in candidates:
+        if candidate.actual_path is None:
+            continue
+        target = _target_for_candidate(candidate, raw_root, metadata_root, canonical_by_group[candidate.group_key])
+        try:
+            status = _copy_standardized_file(candidate.actual_path, target, overwrite=overwrite)
+            _update_standardize_counters(candidate, status, counters)
+            rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, status))
+        except OSError as exc:
+            counters["error_count"] += 1
+            rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, "failed", error=str(exc)))
+            print(f"[standardize] error source={candidate.source_path} target={target}: {exc}", flush=True)
+    print(f"[standardize] after non_zip counters={counters}", flush=True)
+
+
+def _process_zip_candidates(
+    zip_paths: list[Path],
+    candidates: list[_StandardizeCandidate],
+    raw_root: Path,
+    metadata_root: Path,
+    temp_root: Path,
+    canonical_by_group: dict[tuple[str, ...], str],
+    rename_reason_by_group: dict[tuple[str, ...], str],
+    overwrite: bool,
+    counters: dict[str, int],
+    rows: list[dict[str, Any]],
+) -> None:
+    by_zip: dict[Path, list[_StandardizeCandidate]] = {}
+    for candidate in candidates:
+        if candidate.zip_path is not None:
+            by_zip.setdefault(candidate.zip_path, []).append(candidate)
+    for index, zip_path in enumerate(zip_paths, start=1):
+        zip_candidates = by_zip.get(zip_path, [])
+        if not zip_candidates:
+            continue
+        print(f"[standardize] processing zip [{index}/{len(zip_paths)}]: {zip_path}", flush=True)
+        try:
+            with zipfile.ZipFile(zip_path, "r") as archive:
+                for candidate in zip_candidates:
+                    target = _target_for_candidate(candidate, raw_root, metadata_root, canonical_by_group[candidate.group_key])
+                    try:
+                        member_info = archive.getinfo(candidate.zip_member or "")
+                        if target.exists() and not overwrite:
+                            if target.stat().st_size == member_info.file_size:
+                                status = "skipped_existing"
+                                _update_standardize_counters(candidate, status, counters)
+                                rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, status))
+                                continue
+                            raise FileExistsError(f"target already exists with different size: {target}")
+                        extracted_file = _extract_zip_candidate_member(archive, candidate, temp_root)
+                        status = _move_flattened_file(extracted_file, target, overwrite=overwrite)
+                        _update_standardize_counters(candidate, status, counters)
+                        rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, status))
+                    except (OSError, ValueError, KeyError) as exc:
+                        counters["error_count"] += 1
+                        rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, "failed", error=str(exc)))
+                        print(f"[standardize] error source={candidate.source_path} target={target}: {exc}", flush=True)
+        except (OSError, zipfile.BadZipFile) as exc:
+            counters["error_count"] += 1
+            rows.append({"source_mode": "zip", "kind": "archive", "source": str(zip_path), "status": "failed", "error": str(exc)})
+        print(f"[standardize] after zip [{index}/{len(zip_paths)}] counters={counters}", flush=True)
+
+
+def _extract_zip_candidate_member(archive: zipfile.ZipFile, candidate: _StandardizeCandidate, temp_root: Path) -> Path:
+    if candidate.zip_member is None:
+        raise ValueError("zip candidate missing member path")
+    member = archive.getinfo(candidate.zip_member)
+    member_path = Path(member.filename)
+    _validate_zip_member_path(member_path)
+    with tempfile.TemporaryDirectory(prefix="member_extract_", dir=temp_root) as clean_tmp:
+        clean_tmp_path = Path(clean_tmp).resolve()
+        destination = (clean_tmp_path / member_path).resolve()
+        try:
+            destination.relative_to(clean_tmp_path)
+        except ValueError as exc:
+            raise ValueError(f"archive member escapes target directory: {member.filename}") from exc
+        archive.extract(member, path=clean_tmp_path)
+        extracted_file = clean_tmp_path / member.filename
+        if not extracted_file.is_file():
+            raise FileNotFoundError(f"extracted zip member is not a file: {member.filename}")
+        stable_dir = Path(tempfile.mkdtemp(prefix="member_stage_", dir=temp_root))
+        stable_temp = stable_dir / extracted_file.name
+        shutil.move(str(extracted_file), str(stable_temp))
+        return stable_temp
+
+
+def _validate_zip_member_path(member_path: Path) -> None:
+    if member_path.is_absolute():
+        raise ValueError(f"archive member must be relative: {member_path}")
+    if any(part == ".." for part in member_path.parts):
+        raise ValueError(f"archive member escapes target directory: {member_path}")
+
+
+def _target_for_candidate(candidate: _StandardizeCandidate, raw_root: Path, metadata_root: Path, canonical_stem: str) -> Path:
+    if candidate.kind == "media":
+        return raw_root / f"{canonical_stem}{candidate.extension}"
+    return metadata_root / f"{canonical_stem}.json"
+
+
+def _update_standardize_counters(candidate: _StandardizeCandidate, status: str, counters: dict[str, int]) -> None:
+    if status in {"copied", "moved"}:
+        if candidate.kind == "media":
+            counters["video_count"] += 1
+        else:
+            counters["metadata_count"] += 1
+    elif status == "skipped_existing":
+        counters["skipped_count"] += 1
+
+
+def _candidate_report_item(
+    candidate: _StandardizeCandidate,
+    target: Path,
+    canonical_by_group: dict[tuple[str, ...], str],
+    rename_reason_by_group: dict[tuple[str, ...], str],
+    status: str,
+    *,
+    error: str | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "source_mode": candidate.source_mode,
+        "kind": candidate.kind,
+        "source": candidate.source_path,
+        "target": str(target),
+        "status": status,
+        "original_stem": candidate.original_stem,
+        "canonical_stem": canonical_by_group.get(candidate.group_key),
+        "context": list(candidate.context_parts),
+        "rename_reason": rename_reason_by_group.get(candidate.group_key),
+    }
+    if candidate.archive_stem is not None:
+        item["archive_stem"] = candidate.archive_stem
+    if candidate.zip_member is not None:
+        item["source_inner_path"] = candidate.zip_member
+    if error is not None:
+        item["error"] = error
+    return item
+
+
+def _copy_standardized_file(source: Path, target: Path, *, overwrite: bool) -> str:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        if not overwrite and target.stat().st_size == source.stat().st_size:
+            return "skipped_existing"
+        if not overwrite:
+            raise FileExistsError(f"target already exists with different size: {target}")
+        target.unlink()
+    shutil.copy2(source, target)
+    return "copied"
+
+
+def _generate_missing_metadata(
+    raw_root: Path,
+    metadata_root: Path,
+    source_root: Path,
+    counters: dict[str, int],
+    rows: list[dict[str, Any]],
+    accepted_media_extensions: set[str],
+) -> None:
+    for video_path in sorted(raw_root.iterdir()):
+        if not video_path.is_file() or video_path.suffix.lower() not in accepted_media_extensions:
+            continue
+        metadata_path = metadata_root / f"{video_path.stem}.json"
+        if metadata_path.exists():
+            continue
+        _write_minimal_metadata(metadata_path, video_path.stem, str(source_root))
+        counters["metadata_count"] += 1
+        rows.append(
+            {
+                "kind": "metadata_generated",
+                "status": "generated",
+                "canonical_stem": video_path.stem,
+                "target": str(metadata_path),
+                "source_mode": "generated",
+            }
+        )
+
+
+def _report_extra_metadata(
+    raw_root: Path,
+    metadata_root: Path,
+    rows: list[dict[str, Any]],
+    accepted_media_extensions: set[str],
+) -> None:
+    video_stems = {
+        path.stem
+        for path in raw_root.iterdir()
+        if path.is_file() and path.suffix.lower() in accepted_media_extensions
+    }
+    for metadata_path in sorted(metadata_root.glob("*.json")):
+        if metadata_path.stem in video_stems:
+            continue
+        rows.append(
+            {
+                "kind": "metadata",
+                "status": "warning_extra_metadata",
+                "canonical_stem": metadata_path.stem,
+                "target": str(metadata_path),
+            }
+        )
+
+
+def _sanitize_stem(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "_", value)
+    sanitized = re.sub(r"_+", "_", sanitized)
+    return sanitized.strip("_") or "item"
 
 
 def import_source_to_hf_canonical(

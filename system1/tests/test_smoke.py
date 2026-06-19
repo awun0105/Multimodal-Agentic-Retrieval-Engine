@@ -601,11 +601,12 @@ def test_standardize_archive_source_flattens_zip_inputs(tmp_path):
     assert result.zip_count == 1
     assert result.video_count == 2
     assert result.metadata_count == 1
-    assert (tmp_path / "standardized" / "raw_videos" / "batch_a_L21_V001.mp4").exists()
-    assert (tmp_path / "standardized" / "raw_videos" / "batch_a_L21_V001.wav").exists()
-    assert (tmp_path / "standardized" / "metadata" / "batch_a_L21_V001.json").exists()
+    assert (tmp_path / "standardized" / "raw_videos" / "L21_V001.mp4").exists()
+    assert (tmp_path / "standardized" / "raw_videos" / "L21_V001.wav").exists()
+    assert (tmp_path / "standardized" / "metadata" / "L21_V001.json").exists()
     report = json.loads(result.report_path.read_text(encoding="utf-8"))
     assert report["status"] == "pass"
+    assert any(item.get("source_mode") == "zip" for item in report["items"])
 
     rerun = standardize_archive_source(
         source_dir,
@@ -619,6 +620,58 @@ def test_standardize_archive_source_flattens_zip_inputs(tmp_path):
     rerun_report = json.loads(rerun.report_path.read_text(encoding="utf-8"))
     assert rerun_report["status"] == "pass"
     assert {item["status"] for item in rerun_report["items"]} == {"skipped_existing"}
+
+
+def test_standardize_archive_source_handles_layout_loose_duplicates_and_missing_metadata(tmp_path):
+    source_dir = tmp_path / "source"
+    (source_dir / "raw_videos").mkdir(parents=True)
+    (source_dir / "metadata").mkdir(parents=True)
+    (source_dir / "raw_videos" / "A.mp4").write_bytes(b"layout-video")
+    (source_dir / "metadata" / "A.json").write_text('{"title":"layout"}\n', encoding="utf-8")
+    (source_dir / "loose.mp4").write_bytes(b"loose-video")
+    (source_dir / "loose.json").write_text('{"title":"loose"}\n', encoding="utf-8")
+    (source_dir / "L21" / "V001.mp4").parent.mkdir(parents=True)
+    (source_dir / "L21" / "V001.mp4").write_bytes(b"l21-video")
+    (source_dir / "L21" / "V001.json").write_text('{"title":"l21"}\n', encoding="utf-8")
+    (source_dir / "L22" / "V001.mp4").parent.mkdir(parents=True)
+    (source_dir / "L22" / "V001.mp4").write_bytes(b"l22-video")
+    (source_dir / "L22" / "V001.json").write_text('{"title":"l22"}\n', encoding="utf-8")
+    (source_dir / "deep" / "A" / "L21").mkdir(parents=True)
+    (source_dir / "deep" / "A" / "L21" / "V002.mp4").write_bytes(b"deep-a")
+    (source_dir / "deep" / "B" / "L21").mkdir(parents=True)
+    (source_dir / "deep" / "B" / "L21" / "V002.mp4").write_bytes(b"deep-b")
+    (source_dir / "missing.mp4").write_bytes(b"missing-meta")
+
+    result = standardize_archive_source(source_dir, tmp_path / "standardized")
+
+    assert result.error_count == 0
+    for stem in ["A", "loose", "L21_V001", "L22_V001", "A_L21_V002", "B_L21_V002", "missing"]:
+        assert (tmp_path / "standardized" / "raw_videos" / f"{stem}.mp4").exists()
+        assert (tmp_path / "standardized" / "metadata" / f"{stem}.json").exists()
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    assert any(item.get("source_mode") == "existing_layout" for item in report["items"])
+    assert any(item.get("source_mode") == "loose_files" for item in report["items"])
+    assert any(item.get("kind") == "metadata_generated" and item.get("canonical_stem") == "missing" for item in report["items"])
+
+
+def test_standardize_archive_source_handles_mixed_zip_and_loose_inputs(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "loose.mp4").write_bytes(b"loose-video")
+    (source_dir / "loose.json").write_text('{"title":"loose"}\n', encoding="utf-8")
+    archive_root = tmp_path / "archive_root"
+    archive_root.mkdir()
+    (archive_root / "Z.mp4").write_bytes(b"zip-video")
+    (archive_root / "Z.json").write_text('{"title":"zip"}\n', encoding="utf-8")
+    shutil.make_archive(str(source_dir / "pack"), "zip", archive_root)
+
+    result = standardize_archive_source(source_dir, tmp_path / "standardized")
+
+    assert result.zip_count == 1
+    assert result.error_count == 0
+    for stem in ["loose", "Z"]:
+        assert (tmp_path / "standardized" / "raw_videos" / f"{stem}.mp4").exists()
+        assert (tmp_path / "standardized" / "metadata" / f"{stem}.json").exists()
 
 
 def test_standardize_archives_cli_fails_on_partial_unless_allowed(tmp_path):
