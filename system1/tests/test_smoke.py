@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 
 from system1.cli import app
 from system1.config import REQUIRED_CONFIGS, load_configs, load_provider_plan
-from system1.ingest.discovery import discover_paired_inputs
+from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs
 from system1.ingest.source_importer import (
     ArchiveStandardizeResult,
     DriveShadowResult,
@@ -133,6 +133,24 @@ def test_input_discovery_pairs_real_subset():
     assert [pair["video_id"] for pair in pairs] == ["L21_V001", "L21_V002", "L21_V003"]
 
 
+def test_tolerant_input_discovery_reports_missing_and_unmatched_metadata(tmp_path):
+    source = tmp_path / "standardize"
+    (source / "raw_videos").mkdir(parents=True)
+    (source / "metadata").mkdir()
+    shutil.copy2(Path("input/raw_videos/L21_V001.mp4"), source / "raw_videos" / "A.mp4")
+    shutil.copy2(Path("input/raw_videos/L21_V002.mp4"), source / "raw_videos" / "B.mp4")
+    (source / "metadata" / "A.json").write_text('{"video_id":"A","title":"A title"}\n', encoding="utf-8")
+    (source / "metadata" / "C.json").write_text('{"video_id":"C"}\n', encoding="utf-8")
+
+    discovered = discover_media_inputs_tolerant(source)
+
+    assert [pair["video_id"] for pair in discovered["pairs"]] == ["A", "B"]
+    assert discovered["pairs"][0]["metadata_missing"] is False
+    assert discovered["pairs"][1]["metadata_missing"] is True
+    assert discovered["missing_metadata"] == ["B"]
+    assert discovered["unmatched_metadata"] == [str(source / "metadata" / "C.json")]
+
+
 def test_debug_release_generates_valid_release(tmp_path):
     release_dir = build_mini_seed(tmp_path, input_dir="input")
     sqlite_path = release_dir / "db" / "app.sqlite"
@@ -195,6 +213,54 @@ def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
     assert manifest["video_local_path"].str.startswith("/").all()
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "indexes" / "visual.faiss").exists()
+
+
+def test_local_ingest_video_primary_tolerates_missing_and_unmatched_metadata(tmp_path):
+    source = tmp_path / "standardize"
+    output_dir = tmp_path / "output"
+    (source / "raw_videos").mkdir(parents=True)
+    (source / "metadata").mkdir()
+    shutil.copy2(Path("input/raw_videos/L21_V001.mp4"), source / "raw_videos" / "A.mp4")
+    shutil.copy2(Path("input/raw_videos/L21_V002.mp4"), source / "raw_videos" / "B.mp4")
+    (source / "metadata" / "A.json").write_text('{"video_id":"A","title":"A title"}\n', encoding="utf-8")
+    (source / "metadata" / "C.json").write_text('{"video_id":"C"}\n', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--mode",
+            "debug_small_sample",
+            "--output",
+            str(output_dir),
+            "--source-uri",
+            str(source),
+            "--max-workers",
+            "1",
+            "--pairing-policy",
+            "video-primary",
+            "--no-resume",
+            "--no-sync",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    release_dir = output_dir / "competition_dataset_v001"
+    videos = pd.read_parquet(release_dir / "tables" / "videos.parquet")
+    manifest = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet")
+    report = json.loads((release_dir / "manifests" / "dataset_report.json").read_text(encoding="utf-8"))
+    missing_metadata = json.loads((release_dir / "manifests" / "missing_metadata.json").read_text(encoding="utf-8"))
+    unmatched_metadata = json.loads((release_dir / "manifests" / "unmatched_metadata.json").read_text(encoding="utf-8"))
+
+    assert videos["video_id"].tolist() == ["A", "B"]
+    assert manifest.sort_values("video_id")["metadata_missing"].tolist() == [False, True]
+    assert report["pairing_policy"] == "video_primary_tolerant"
+    assert report["video_count"] == 2
+    assert report["missing_metadata_count"] == 1
+    assert report["unmatched_metadata_count"] == 1
+    assert missing_metadata["missing_metadata"] == ["B"]
+    assert unmatched_metadata["unmatched_metadata"] == [str(source / "metadata" / "C.json")]
+
 
 def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_path):
     output_dir = tmp_path / "output"

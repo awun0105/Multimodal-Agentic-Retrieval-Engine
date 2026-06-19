@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ import pandas as pd
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.config import load_provider_plan
 from system1.features.builder import capability_states, feature_rows, providers_for_plan, release_capability_rows
-from system1.ingest.discovery import discover_paired_inputs, read_metadata
+from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs, read_metadata
 from system1.keyframes.builder import keyframe_id, keyframe_refs, materialize_keyframe
 from system1.media.probe import probe_video
 from system1.release.types import DEFAULT_FRAME_ID, BuildOptions, config_dir, default_input_dir, release_root, write_json
@@ -29,6 +30,8 @@ def run_ingestion(
     source_uri: Path | str | None = None,
     mode: str = "debug_small_sample",
     max_workers: int | None = None,
+    pairing_policy: str = "video-primary",
+    quarantine_unmatched_metadata: bool = False,
     canonical_hf_repo_id: str | None = None,
     canonical_hf_prefix: str = "",
     canonical_hf_repo_type: str = "dataset",
@@ -62,27 +65,42 @@ def run_ingestion(
 
     source_root = _resolve_local_source_root(input_dir=input_dir, source_uri=source_uri)
     resolved_max_workers = _resolve_ingest_max_workers(source_root, max_workers)
+    resolved_pairing_policy = _resolve_pairing_policy(pairing_policy)
     print(
         f"[ingest] source_backend=local source_root={source_root} "
-        f"max_workers={resolved_max_workers}",
+        f"max_workers={resolved_max_workers} pairing_policy={resolved_pairing_policy}",
         flush=True,
     )
 
-    pairs = discover_paired_inputs(source_root)
+    discovery = _discover_local_inputs(source_root, resolved_pairing_policy)
+    pairs = discovery["pairs"]
+    missing_metadata = discovery["missing_metadata"]
+    unmatched_metadata = discovery["unmatched_metadata"]
+    quarantine_records = (
+        _quarantine_unmatched_metadata(source_root, unmatched_metadata)
+        if quarantine_unmatched_metadata and unmatched_metadata
+        else []
+    )
 
     video_dfs: list[pd.DataFrame] = []
     mapping_dfs: list[pd.DataFrame] = []
     error_records: list[dict[str, Any]] = []
 
     # --- HÀM TRỢ LÝ ĐA LUỒNG XỬ LÝ CHO TỪNG CẶP DỮ LIỆU ĐẦU VÀO ---
-    def _process_single_pair(pair: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    def _process_single_pair(pair: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
         video_path = Path(pair["video_path"])
-        metadata_path = Path(pair["metadata_path"])
         video_id = pair["video_id"]
-        metadata = read_metadata(metadata_path)
+        metadata_path = Path(pair["metadata_path"]) if pair.get("metadata_path") else None
+        metadata_missing = bool(pair.get("metadata_missing"))
+        metadata = (
+            _minimal_metadata(video_id)
+            if metadata_path is None
+            else read_metadata(metadata_path)
+        )
         probe = probe_video(video_path)
         video_ref = f"media://raw_videos/{video_path.name}"
-        metadata_ref = f"media://metadata/{metadata_path.name}"
+        metadata_filename = metadata_path.name if metadata_path else f"{video_id}.json"
+        metadata_ref = f"media://metadata/{metadata_filename}"
         estimated_compute_cost = probe.duration_seconds or probe.frame_count or 1
 
         v_row = {
@@ -108,11 +126,13 @@ def run_ingestion(
             "video_ref": video_ref,
             "metadata_ref": metadata_ref,
             "video_filename": video_path.name,
-            "metadata_filename": metadata_path.name,
+            "metadata_filename": metadata_filename,
+            "metadata_missing": metadata_missing,
+            "metadata_generated": metadata_missing,
             "video_local_path": str(video_path.resolve()),
-            "metadata_local_path": str(metadata_path.resolve()),
+            "metadata_local_path": str(metadata_path.resolve()) if metadata_path else None,
             "video_size_bytes": video_path.stat().st_size,
-            "metadata_size_bytes": metadata_path.stat().st_size,
+            "metadata_size_bytes": metadata_path.stat().st_size if metadata_path else None,
         }
 
         err_rec = None
@@ -162,8 +182,27 @@ def run_ingestion(
         "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in error_records),
         encoding="utf-8",
     )
+    missing_metadata_path = manifests_dir / "missing_metadata.json"
+    unmatched_metadata_path = manifests_dir / "unmatched_metadata.json"
+    write_json(
+        missing_metadata_path,
+        {
+            "missing_metadata": missing_metadata,
+            "count": len(missing_metadata),
+        },
+    )
+    write_json(
+        unmatched_metadata_path,
+        {
+            "unmatched_metadata": unmatched_metadata,
+            "count": len(unmatched_metadata),
+            "quarantine_enabled": quarantine_unmatched_metadata,
+            "quarantine_records": quarantine_records,
+        },
+    )
 
     report_path = manifests_dir / "dataset_report.json"
+    matched_metadata_count = int(sum(1 for pair in pairs if not pair.get("metadata_missing")))
     write_json(
         report_path,
         {
@@ -172,7 +211,15 @@ def run_ingestion(
             "source_backend": "local",
             "source_root": str(source_root),
             "max_workers": resolved_max_workers,
+            "pairing_policy": _report_pairing_policy(resolved_pairing_policy),
             "video_count": int(len(videos_df)),
+            "metadata_count": matched_metadata_count,
+            "missing_metadata_count": len(missing_metadata),
+            "missing_metadata": missing_metadata[:100],
+            "missing_metadata_manifest": "manifests/missing_metadata.json",
+            "unmatched_metadata_count": len(unmatched_metadata),
+            "unmatched_metadata": unmatched_metadata[:100],
+            "unmatched_metadata_manifest": "manifests/unmatched_metadata.json",
             "ingestion_error_count": len(error_records),
             "videos_table": "tables/videos.parquet",
             "media_store_manifest": "raw_mapping/media_store_manifest.parquet",
@@ -373,6 +420,63 @@ def _read_canonical_manifest(path: Path) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError("canonical manifest is empty")
     return rows
+
+
+def _discover_local_inputs(source_root: Path, pairing_policy: str) -> dict[str, Any]:
+    if pairing_policy == "strict":
+        pairs = discover_paired_inputs(source_root)
+        return {
+            "pairs": [
+                {**pair, "metadata_missing": False}
+                for pair in pairs
+            ],
+            "missing_metadata": [],
+            "unmatched_metadata": [],
+        }
+    if pairing_policy == "video-primary":
+        return discover_media_inputs_tolerant(source_root)
+    raise ValueError(f"unsupported pairing_policy={pairing_policy!r}; expected strict or video-primary")
+
+
+def _minimal_metadata(video_id: str) -> dict[str, Any]:
+    return {
+        "video_id": video_id,
+        "source": "generated_minimal",
+        "metadata_missing": True,
+    }
+
+
+def _resolve_pairing_policy(pairing_policy: str) -> str:
+    normalized = pairing_policy.strip().lower().replace("_", "-")
+    if normalized in {"strict", "video-primary"}:
+        return normalized
+    raise ValueError(f"unsupported pairing_policy={pairing_policy!r}; expected strict or video-primary")
+
+
+def _report_pairing_policy(pairing_policy: str) -> str:
+    return "video_primary_tolerant" if pairing_policy == "video-primary" else "strict"
+
+
+def _quarantine_unmatched_metadata(source_root: Path, unmatched_metadata: list[str]) -> list[dict[str, str]]:
+    quarantine_root = source_root / "_unmatched_metadata"
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    records = []
+    for source_text in unmatched_metadata:
+        source = Path(source_text)
+        target = _unique_quarantine_path(quarantine_root / source.name)
+        shutil.move(str(source), str(target))
+        records.append({"source": str(source), "target": str(target)})
+    return records
+
+
+def _unique_quarantine_path(target: Path) -> Path:
+    if not target.exists():
+        return target
+    for index in range(1, 10000):
+        candidate = target.with_name(f"{target.stem}_{index}{target.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"unable to choose unique quarantine target for {target}")
 
 
 def _resolve_local_source_root(

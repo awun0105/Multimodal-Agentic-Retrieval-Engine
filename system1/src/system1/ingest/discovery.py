@@ -25,5 +25,39 @@ def discover_paired_inputs(input_dir: Path | str) -> list[dict[str, str]]:
     return [{"video_id": stem, "video_path": str(videos[stem]), "metadata_path": str(metadata[stem])} for stem in sorted(videos)]
 
 
+def discover_media_inputs_tolerant(input_dir: Path | str) -> dict[str, Any]:
+    root = Path(input_dir)
+    raw_root = root / "raw_videos"
+    metadata_root = root / "metadata"
+    if not raw_root.exists():
+        raise FileNotFoundError(f"missing raw video directory: {raw_root}")
+
+    videos = {path.stem: path for path in raw_root.iterdir() if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS}
+    if not videos:
+        raise ValueError(f"no videos found under raw_videos: {raw_root}")
+
+    metadata = (
+        {path.stem: path for path in metadata_root.glob("*.json") if path.is_file()}
+        if metadata_root.exists()
+        else {}
+    )
+    missing_metadata = sorted(set(videos) - set(metadata))
+    unmatched_metadata = sorted(str(metadata[stem]) for stem in set(metadata) - set(videos))
+    pairs = [
+        {
+            "video_id": stem,
+            "video_path": str(videos[stem]),
+            "metadata_path": str(metadata[stem]) if stem in metadata else None,
+            "metadata_missing": stem not in metadata,
+        }
+        for stem in sorted(videos)
+    ]
+    return {
+        "pairs": pairs,
+        "missing_metadata": missing_metadata,
+        "unmatched_metadata": unmatched_metadata,
+    }
+
+
 def read_metadata(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))

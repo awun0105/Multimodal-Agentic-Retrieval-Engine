@@ -47,6 +47,16 @@ def register(app: typer.Typer) -> None:
             min=1,
             help="Maximum parallel metadata/probe workers.",
         ),
+        pairing_policy: str = typer.Option(
+            "video-primary",
+            "--pairing-policy",
+            help="Local input pairing policy: strict or video-primary.",
+        ),
+        quarantine_unmatched_metadata: bool = typer.Option(
+            False,
+            "--quarantine-unmatched-metadata/--no-quarantine-unmatched-metadata",
+            help="Move local metadata JSON files without matching videos into _unmatched_metadata/.",
+        ),
         canonical_hf_repo_id: str | None = typer.Option(None, "--canonical-hf-repo-id"),
         canonical_hf_prefix: str = typer.Option("", "--canonical-hf-prefix"),
         canonical_hf_repo_type: str = typer.Option("dataset", "--canonical-hf-repo-type"),
@@ -70,6 +80,9 @@ def register(app: typer.Typer) -> None:
             )
         if source_uri is not None and input_dir:
             raise typer.BadParameter("pass only one local input option: --source-uri or --input")
+        normalized_pairing_policy = pairing_policy.strip().lower().replace("_", "-")
+        if normalized_pairing_policy not in {"strict", "video-primary"}:
+            raise typer.BadParameter("pairing policy must be strict or video-primary")
         if resume:
             try:
                 if try_restore_checkpoint(output=output, artifact_root=artifact_root, artifact_backend=artifact_backend, hf_repo_id=hf_repo_id, hf_repo_type=hf_repo_type, hf_revision=hf_revision, hf_prefix=hf_prefix, phase="phase00_ingest_assignment"):
@@ -83,6 +96,8 @@ def register(app: typer.Typer) -> None:
             source_uri=source_uri,
             mode=mode,
             max_workers=max_workers,
+            pairing_policy=normalized_pairing_policy,
+            quarantine_unmatched_metadata=quarantine_unmatched_metadata,
             canonical_hf_repo_id=canonical_hf_repo_id,
             canonical_hf_prefix=canonical_hf_prefix,
             canonical_hf_repo_type=canonical_hf_repo_type,
