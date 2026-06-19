@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -25,13 +26,20 @@ def run_ingestion(
     output_dir: Path | str,
     *,
     input_dir: Path | str | None = None,
+    source_uri: Path | str | None = None,
     mode: str = "debug_small_sample",
+    max_workers: int | None = None,
     canonical_hf_repo_id: str | None = None,
     canonical_hf_prefix: str = "",
     canonical_hf_repo_type: str = "dataset",
     canonical_hf_revision: str = "main",
     canonical_staging_root: Path | str | None = None,
 ) -> Path:
+    if source_uri is not None and canonical_hf_repo_id:
+        raise ValueError(
+            "pass only one source: --source-uri for local standardized input "
+            "or --canonical-hf-repo-id for HF fallback"
+        )
     if canonical_hf_repo_id:
         return run_canonical_hf_ingestion(
             output_dir,
@@ -41,6 +49,7 @@ def run_ingestion(
             repo_type=canonical_hf_repo_type,
             revision=canonical_hf_revision,
             staging_root=canonical_staging_root,
+            max_workers=max_workers,
         )
 
     release_dir = release_root(output_dir)
@@ -51,7 +60,15 @@ def run_ingestion(
     manifests_dir.mkdir(parents=True, exist_ok=True)
     raw_mapping_dir.mkdir(parents=True, exist_ok=True)
 
-    pairs = discover_paired_inputs(input_dir or default_input_dir())
+    source_root = _resolve_local_source_root(input_dir=input_dir, source_uri=source_uri)
+    resolved_max_workers = _resolve_ingest_max_workers(source_root, max_workers)
+    print(
+        f"[ingest] source_backend=local source_root={source_root} "
+        f"max_workers={resolved_max_workers}",
+        flush=True,
+    )
+
+    pairs = discover_paired_inputs(source_root)
 
     video_dfs: list[pd.DataFrame] = []
     mapping_dfs: list[pd.DataFrame] = []
@@ -113,8 +130,7 @@ def run_ingestion(
     v_buffer: list[dict[str, Any]] = []
     m_buffer: list[dict[str, Any]] = []
 
-    max_workers = min(32, (os.cpu_count() or 4) * 2)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadPoolExecutor(max_workers=resolved_max_workers) as executor:
         for v_row, m_row, err_rec in executor.map(_process_single_pair, pairs):
             v_buffer.append(v_row)
             m_buffer.append(m_row)
@@ -153,6 +169,9 @@ def run_ingestion(
         {
             "release_id": release_dir.name,
             "mode": mode,
+            "source_backend": "local",
+            "source_root": str(source_root),
+            "max_workers": resolved_max_workers,
             "video_count": int(len(videos_df)),
             "ingestion_error_count": len(error_records),
             "videos_table": "tables/videos.parquet",
@@ -171,6 +190,7 @@ def run_canonical_hf_ingestion(
     repo_type: str = "dataset",
     revision: str = "main",
     staging_root: Path | str | None = None,
+    max_workers: int | None = None,
 ) -> Path:
     release_dir = release_root(output_dir)
     tables_dir = release_dir / "tables"
@@ -190,6 +210,13 @@ def run_canonical_hf_ingestion(
     staging_parent = Path(staging_root).expanduser().resolve() if staging_root else None
     if staging_parent:
         staging_parent.mkdir(parents=True, exist_ok=True)
+    resolved_max_workers = _resolve_ingest_max_workers(None, max_workers)
+    print(
+        "[ingest] "
+        f"source_backend=hf_dataset repo_id={repo_id} prefix={prefix} "
+        f"max_workers={resolved_max_workers}",
+        flush=True,
+    )
 
     video_dfs: list[pd.DataFrame] = []
     mapping_dfs: list[pd.DataFrame] = []
@@ -282,8 +309,7 @@ def run_canonical_hf_ingestion(
         v_buffer: list[dict[str, Any]] = []
         m_buffer: list[dict[str, Any]] = []
 
-        max_workers = min(32, (os.cpu_count() or 4) * 2)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=resolved_max_workers) as executor:
             for v_row, m_row, err_rec in executor.map(_process_hf_pair, valid_rows):
                 v_buffer.append(v_row)
                 m_buffer.append(m_row)
@@ -323,6 +349,7 @@ def run_canonical_hf_ingestion(
             "source_backend": "hf_dataset",
             "source_repo_id": repo_id,
             "source_prefix": prefix,
+            "max_workers": resolved_max_workers,
             "video_count": int(len(videos_df)),
             "ingestion_error_count": len(error_records),
             "videos_table": "tables/videos.parquet",
@@ -346,6 +373,57 @@ def _read_canonical_manifest(path: Path) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError("canonical manifest is empty")
     return rows
+
+
+def _resolve_local_source_root(
+    *,
+    input_dir: Path | str | None,
+    source_uri: Path | str | None,
+) -> Path:
+    if source_uri is not None and input_dir is not None:
+        raise ValueError("pass only one local input option: --source-uri or --input")
+    selected = source_uri if source_uri is not None else input_dir
+    if selected is None:
+        selected = default_input_dir()
+
+    selected_text = str(selected)
+    parsed = urlparse(selected_text)
+    if parsed.scheme and parsed.scheme != "file":
+        raise ValueError(
+            "local ingest --source-uri must be a local path or file:// URI; "
+            "use --canonical-hf-repo-id for HF Dataset fallback"
+        )
+    source_root = Path(parsed.path if parsed.scheme == "file" else selected_text).expanduser().resolve()
+    if not source_root.exists() or not source_root.is_dir():
+        raise FileNotFoundError(f"local ingest source directory does not exist: {source_root}")
+    return source_root
+
+
+def _resolve_ingest_max_workers(source_root: Path | None, requested_max_workers: int | None) -> int:
+    if requested_max_workers is not None:
+        workers = requested_max_workers
+    else:
+        env_value = os.environ.get("AIC_INGEST_MAX_WORKERS")
+        if env_value:
+            try:
+                workers = int(env_value)
+            except ValueError as exc:
+                raise ValueError(f"AIC_INGEST_MAX_WORKERS must be a positive integer, got {env_value!r}") from exc
+        else:
+            workers = 1 if _is_content_drive_source(source_root) else 4
+
+    if workers < 1:
+        raise ValueError(f"ingest max_workers must be >= 1, got {workers}")
+    if _is_content_drive_source(source_root):
+        return min(workers, 2)
+    return workers
+
+
+def _is_content_drive_source(source_root: Path | None) -> bool:
+    if source_root is None:
+        return False
+    parts = source_root.resolve().parts
+    return len(parts) >= 3 and parts[1:3] == ("content", "drive")
 
 
 def build_tables(
