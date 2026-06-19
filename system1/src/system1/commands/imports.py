@@ -66,13 +66,25 @@ def register(app: typer.Typer) -> None:
             report_path=report_path,
         )
         typer.echo(
-            "Drive shadow copied "
-            f"files={result.copied_files} folders={result.created_folders} "
-            f"skipped_google_apps={result.skipped_google_apps} skipped_existing={result.skipped_existing} "
-            f"errors={result.error_count}: {result.report_path}"
+            "Drive shadow summary: "
+            f"files_copied={result.copied_files} "
+            f"folders_created={result.created_folders} "
+            f"skipped_existing={result.skipped_existing} "
+            f"skipped_google_apps={result.skipped_google_apps} "
+            f"errors={result.error_count} "
+            f"report_path={result.report_path}"
+        )
+        no_actions = (
+            result.copied_files == 0
+            and result.created_folders == 0
+            and result.skipped_existing == 0
+            and result.skipped_google_apps == 0
         )
         if result.error_count and not allow_partial:
             typer.echo(f"Drive shadow failed with errors. Review report: {result.report_path}", err=True)
+            raise typer.Exit(code=1)
+        if no_actions and not allow_partial:
+            typer.echo(f"Drive shadow made no changes or skips. Review report: {result.report_path}", err=True)
             raise typer.Exit(code=1)
 
     @app.command("standardize-archives")

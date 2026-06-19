@@ -2,6 +2,8 @@ import shutil
 import json
 import sqlite3
 import csv
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,6 +34,21 @@ def test_system1_package_imports():
     import system1
 
     assert system1 is not None
+
+
+def test_system1_module_entrypoint_exposes_drive_shadow_help():
+    completed = subprocess.run(
+        [sys.executable, "-m", "system1.cli", "drive-shadow", "--help"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--source-folder-id" in completed.stdout
+    assert "--dest-folder-id" in completed.stdout
+
 
 def test_config_loading_reads_required_files():
     configs = load_configs(Path("configs"))
@@ -717,6 +734,10 @@ def test_shadow_google_drive_folder_copies_nested_regular_files(tmp_path):
 
     class FakeFiles:
         def __init__(self):
+            self.metadata = {
+                "src": {"id": "src", "name": "source", "mimeType": "application/vnd.google-apps.folder"},
+                "dest": {"id": "dest", "name": "destination", "mimeType": "application/vnd.google-apps.folder"},
+            }
             self.children = {
                 "src": [
                     {"id": "folder_a", "name": "folder_a", "mimeType": "application/vnd.google-apps.folder"},
@@ -730,16 +751,26 @@ def test_shadow_google_drive_folder_copies_nested_regular_files(tmp_path):
             self.created: list[dict[str, object]] = []
             self.copied: list[tuple[str, dict[str, object]]] = []
 
-        def list(self, q, fields, pageToken=None):
+        def get(self, fileId, fields, supportsAllDrives=False):
+            assert supportsAllDrives is True
+            return FakeExecute(self.metadata[fileId])
+
+        def list(self, q, fields, pageToken=None, supportsAllDrives=False, includeItemsFromAllDrives=False, pageSize=None):
+            assert supportsAllDrives is True
+            assert includeItemsFromAllDrives is True
+            assert pageSize == 1000
+            assert "parents" in fields
             folder_id = q.split("'", 2)[1]
             return FakeExecute({"files": self.children.get(folder_id, [])})
 
-        def create(self, body, fields):
+        def create(self, body, fields, supportsAllDrives=False):
+            assert supportsAllDrives is True
             new_id = f"new_{body['name']}"
             self.created.append(body)
             return FakeExecute({"id": new_id})
 
-        def copy(self, fileId, body):
+        def copy(self, fileId, body, supportsAllDrives=False):
+            assert supportsAllDrives is True
             self.copied.append((fileId, body))
             return FakeExecute({"id": f"copy_{fileId}"})
 
@@ -777,6 +808,10 @@ def test_shadow_google_drive_folder_skips_existing_matching_targets(tmp_path):
 
     class FakeFiles:
         def __init__(self):
+            self.metadata = {
+                "src": {"id": "src", "name": "source", "mimeType": "application/vnd.google-apps.folder"},
+                "dest": {"id": "dest", "name": "destination", "mimeType": "application/vnd.google-apps.folder"},
+            }
             self.children = {
                 "src": [
                     {"id": "folder_a", "name": "folder_a", "mimeType": "application/vnd.google-apps.folder"},
@@ -796,15 +831,25 @@ def test_shadow_google_drive_folder_skips_existing_matching_targets(tmp_path):
             self.created: list[dict[str, object]] = []
             self.copied: list[tuple[str, dict[str, object]]] = []
 
-        def list(self, q, fields, pageToken=None):
+        def get(self, fileId, fields, supportsAllDrives=False):
+            assert supportsAllDrives is True
+            return FakeExecute(self.metadata[fileId])
+
+        def list(self, q, fields, pageToken=None, supportsAllDrives=False, includeItemsFromAllDrives=False, pageSize=None):
+            assert supportsAllDrives is True
+            assert includeItemsFromAllDrives is True
+            assert pageSize == 1000
+            assert "parents" in fields
             folder_id = q.split("'", 2)[1]
             return FakeExecute({"files": self.children.get(folder_id, [])})
 
-        def create(self, body, fields):
+        def create(self, body, fields, supportsAllDrives=False):
+            assert supportsAllDrives is True
             self.created.append(body)
             return FakeExecute({"id": f"new_{body['name']}"})
 
-        def copy(self, fileId, body):
+        def copy(self, fileId, body, supportsAllDrives=False):
+            assert supportsAllDrives is True
             self.copied.append((fileId, body))
             return FakeExecute({"id": f"copy_{fileId}"})
 
@@ -829,6 +874,57 @@ def test_shadow_google_drive_folder_skips_existing_matching_targets(tmp_path):
     assert result.error_count == 0
     assert service.fake_files.created == []
     assert service.fake_files.copied == []
+
+
+def test_shadow_google_drive_folder_reports_empty_source_as_failure(tmp_path):
+    class FakeExecute:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def execute(self):
+            return self.payload
+
+    class FakeFiles:
+        def __init__(self):
+            self.metadata = {
+                "src": {"id": "src", "name": "source", "mimeType": "application/vnd.google-apps.folder"},
+                "dest": {"id": "dest", "name": "destination", "mimeType": "application/vnd.google-apps.folder"},
+            }
+            self.children = {"src": [], "dest": []}
+
+        def get(self, fileId, fields, supportsAllDrives=False):
+            assert supportsAllDrives is True
+            return FakeExecute(self.metadata[fileId])
+
+        def list(self, q, fields, pageToken=None, supportsAllDrives=False, includeItemsFromAllDrives=False, pageSize=None):
+            assert supportsAllDrives is True
+            assert includeItemsFromAllDrives is True
+            assert pageSize == 1000
+            folder_id = q.split("'", 2)[1]
+            return FakeExecute({"files": self.children.get(folder_id, [])})
+
+    class FakeService:
+        def __init__(self):
+            self.fake_files = FakeFiles()
+
+        def files(self):
+            return self.fake_files
+
+    result = shadow_google_drive_folder(
+        "src",
+        "dest",
+        report_path=tmp_path / "drive_shadow_report.json",
+        service=FakeService(),
+    )
+
+    assert result.copied_files == 0
+    assert result.created_folders == 0
+    assert result.skipped_existing == 0
+    assert result.skipped_google_apps == 0
+    assert result.error_count == 1
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["items"][0]["kind"] == "source_empty_or_not_listable"
 
 
 def test_drive_shadow_cli_fails_on_partial_unless_allowed(monkeypatch, tmp_path):
@@ -864,6 +960,56 @@ def test_drive_shadow_cli_fails_on_partial_unless_allowed(monkeypatch, tmp_path)
     )
     assert result.exit_code == 1
     assert "Drive shadow failed with errors" in result.output
+
+    allowed = runner.invoke(
+        app,
+        [
+            "drive-shadow",
+            "--source-folder-id",
+            "src",
+            "--dest-folder-id",
+            "dest",
+            "--report-path",
+            str(report_path),
+            "--allow-partial",
+        ],
+    )
+    assert allowed.exit_code == 0
+
+
+def test_drive_shadow_cli_fails_when_no_actions(monkeypatch, tmp_path):
+    from system1.commands import imports as import_commands
+
+    def fake_shadow_google_drive_folder(source_folder_id, dest_folder_id, *, report_path, service=None):
+        Path(report_path).write_text('{"status":"fail"}\n', encoding="utf-8")
+        return DriveShadowResult(
+            source_folder_id=source_folder_id,
+            dest_folder_id=dest_folder_id,
+            copied_files=0,
+            created_folders=0,
+            skipped_google_apps=0,
+            skipped_existing=0,
+            error_count=0,
+            report_path=Path(report_path),
+        )
+
+    monkeypatch.setattr(import_commands, "shadow_google_drive_folder", fake_shadow_google_drive_folder)
+
+    report_path = tmp_path / "drive_shadow_report.json"
+    result = runner.invoke(
+        app,
+        [
+            "drive-shadow",
+            "--source-folder-id",
+            "src",
+            "--dest-folder-id",
+            "dest",
+            "--report-path",
+            str(report_path),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Drive shadow made no changes or skips" in result.output
 
     allowed = runner.invoke(
         app,

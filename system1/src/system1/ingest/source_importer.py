@@ -140,7 +140,7 @@ def shadow_google_drive_folder(
     if not dest_folder_id:
         raise ValueError("dest_folder_id is required")
 
-    drive_service = service or _build_google_drive_service()
+    resolved_report_path = Path(report_path).expanduser().resolve()
     rows: list[dict[str, Any]] = []
     counters = {
         "copied_files": 0,
@@ -149,9 +149,24 @@ def shadow_google_drive_folder(
         "skipped_existing": 0,
         "error_count": 0,
     }
+    source_folder_name: str | None = None
+    dest_folder_name: str | None = None
+    fatal_error: str | None = None
+    root_child_count: int | None = None
+
+    print(
+        "[drive-shadow] "
+        f"source_folder_id={source_folder_id} dest_folder_id={dest_folder_id} "
+        f"report_path={resolved_report_path}",
+        flush=True,
+    )
 
     def copy_folder_contents(source_id: str, target_id: str, logical_path: str = "") -> None:
+        nonlocal root_child_count
         source_children = _list_drive_children(drive_service, source_id)
+        if logical_path == "":
+            root_child_count = len(source_children)
+        print(f"[drive-shadow] listing path={logical_path or '/'} items={len(source_children)}", flush=True)
         source_children_by_name = _group_drive_children_by_name(source_children)
         target_children_by_name = _group_drive_children_by_name(_list_drive_children(drive_service, target_id))
         for item in source_children:
@@ -177,6 +192,7 @@ def shadow_google_drive_folder(
                         continue
                     counters["skipped_existing"] += 1
                     rows.append({"kind": "folder", "source_id": item_id, "target_id": existing_target.get("id"), "name": item_name, "path": item_path, "status": "skipped_existing"})
+                    print(f"[drive-shadow] skipped existing: {item_path}", flush=True)
                     copy_folder_contents(item_id, str(existing_target["id"]), item_path)
                     continue
                 folder_metadata = {
@@ -185,18 +201,25 @@ def shadow_google_drive_folder(
                     "parents": [target_id],
                 }
                 try:
-                    new_folder = drive_service.files().create(body=folder_metadata, fields="id").execute()
+                    new_folder = drive_service.files().create(
+                        body=folder_metadata,
+                        fields="id",
+                        supportsAllDrives=True,
+                    ).execute()
                     counters["created_folders"] += 1
-                    rows.append({"kind": "folder", "source_id": item_id, "name": item_name, "path": item_path, "status": "created"})
+                    rows.append({"kind": "folder", "source_id": item_id, "target_id": new_folder.get("id"), "name": item_name, "path": item_path, "status": "created"})
+                    print(f"[drive-shadow] created folder: {item_path}", flush=True)
                     copy_folder_contents(item_id, str(new_folder["id"]), item_path)
                 except Exception as exc:
                     counters["error_count"] += 1
                     rows.append({"kind": "folder", "source_id": item_id, "name": item_name, "path": item_path, "status": "failed", "error": str(exc)})
+                    print(f"[drive-shadow] error creating folder: {item_path}: {exc}", flush=True)
                 continue
 
             if mime_type.startswith("application/vnd.google-apps"):
                 counters["skipped_google_apps"] += 1
                 rows.append({"kind": "google_app", "source_id": item_id, "name": item_name, "path": item_path, "status": "skipped"})
+                print(f"[drive-shadow] skipped google app: {item_path}", flush=True)
                 continue
 
             if existing_target is not None:
@@ -208,6 +231,7 @@ def shadow_google_drive_folder(
                 if _drive_file_sizes_match(item, existing_target):
                     counters["skipped_existing"] += 1
                     rows.append({"kind": "file", "source_id": item_id, "target_id": existing_target.get("id"), "name": item_name, "path": item_path, "status": "skipped_existing"})
+                    print(f"[drive-shadow] skipped existing: {item_path}", flush=True)
                     continue
                 counters["error_count"] += 1
                 rows.append({"kind": "file", "source_id": item_id, "name": item_name, "path": item_path, "status": "failed", "error": "target file exists but size does not match source"})
@@ -215,24 +239,76 @@ def shadow_google_drive_folder(
 
             copy_metadata = {"name": item_name, "parents": [target_id]}
             try:
-                drive_service.files().copy(fileId=item_id, body=copy_metadata).execute()
+                copied_file = drive_service.files().copy(
+                    fileId=item_id,
+                    body=copy_metadata,
+                    supportsAllDrives=True,
+                ).execute()
                 counters["copied_files"] += 1
-                rows.append({"kind": "file", "source_id": item_id, "name": item_name, "path": item_path, "status": "copied"})
+                rows.append({"kind": "file", "source_id": item_id, "target_id": copied_file.get("id"), "name": item_name, "path": item_path, "status": "copied"})
+                print(f"[drive-shadow] copied: {item_path}", flush=True)
             except Exception as exc:
                 counters["error_count"] += 1
                 rows.append({"kind": "file", "source_id": item_id, "name": item_name, "path": item_path, "status": "failed", "error": str(exc)})
+                print(f"[drive-shadow] error copying file: {item_path}: {exc}", flush=True)
 
-    copy_folder_contents(source_folder_id, dest_folder_id)
-    report = {
-        "status": "pass" if counters["error_count"] == 0 else "partial",
-        "source_folder_id": source_folder_id,
-        "dest_folder_id": dest_folder_id,
-        **counters,
-        "items": rows,
-    }
-    resolved_report_path = Path(report_path).expanduser().resolve()
-    resolved_report_path.parent.mkdir(parents=True, exist_ok=True)
-    resolved_report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    try:
+        drive_service = service or _build_google_drive_service()
+        source_metadata = _get_drive_folder_metadata(drive_service, source_folder_id, "source")
+        dest_metadata = _get_drive_folder_metadata(drive_service, dest_folder_id, "destination")
+        source_folder_name = str(source_metadata.get("name", ""))
+        dest_folder_name = str(dest_metadata.get("name", ""))
+        copy_folder_contents(source_folder_id, dest_folder_id)
+    except Exception as exc:
+        fatal_error = str(exc)
+        counters["error_count"] += 1
+        rows.append({"kind": "fatal_error", "status": "failed", "error": fatal_error})
+        print(f"[drive-shadow] fatal error: {fatal_error}", flush=True)
+    finally:
+        action_count = (
+            counters["copied_files"]
+            + counters["created_folders"]
+            + counters["skipped_existing"]
+            + counters["skipped_google_apps"]
+        )
+        if root_child_count == 0:
+            counters["error_count"] += 1
+            rows.append(
+                {
+                    "kind": "source_empty_or_not_listable",
+                    "status": "failed",
+                    "error": "source folder has no visible children or cannot be listed",
+                }
+            )
+        elif action_count == 0:
+            counters["error_count"] += 1
+            rows.append(
+                {
+                    "kind": "no_action",
+                    "status": "failed",
+                    "error": "drive shadow completed without copying, creating, skipping existing, or skipping google-app items",
+                }
+            )
+        status = "pass" if counters["error_count"] == 0 else ("partial" if action_count > 0 else "fail")
+        report = {
+            "status": status,
+            "source_folder_id": source_folder_id,
+            "dest_folder_id": dest_folder_id,
+            "source_folder_name": source_folder_name,
+            "dest_folder_name": dest_folder_name,
+            "fatal_error": fatal_error,
+            **counters,
+            "items": rows,
+        }
+        resolved_report_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(
+            "[drive-shadow] completed "
+            f"files_copied={counters['copied_files']} folders_created={counters['created_folders']} "
+            f"skipped_existing={counters['skipped_existing']} skipped_google_apps={counters['skipped_google_apps']} "
+            f"errors={counters['error_count']} report_path={resolved_report_path}",
+            flush=True,
+        )
     return DriveShadowResult(
         source_folder_id=source_folder_id,
         dest_folder_id=dest_folder_id,
@@ -1075,15 +1151,40 @@ def _build_google_drive_service():
     return build("drive", "v3", credentials=credentials)
 
 
+def _get_drive_folder_metadata(service: Any, folder_id: str, label: str) -> dict[str, Any]:
+    try:
+        metadata = service.files().get(
+            fileId=folder_id,
+            fields="id, name, mimeType",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as exc:
+        raise RuntimeError(f"{label} folder is not accessible: folder_id={folder_id}: {exc}") from exc
+    mime_type = str(metadata.get("mimeType", ""))
+    if mime_type != "application/vnd.google-apps.folder":
+        raise ValueError(
+            f"{label} ID is not a Google Drive folder: "
+            f"folder_id={folder_id} name={metadata.get('name')} mimeType={mime_type}"
+        )
+    print(f"[drive-shadow] {label} folder: {metadata.get('name')} ({metadata.get('id')})", flush=True)
+    return metadata
+
+
 def _list_drive_children(service: Any, folder_id: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     page_token: str | None = None
     while True:
-        result = service.files().list(
-            q=f"'{folder_id}' in parents and trashed=false",
-            fields="nextPageToken, files(id, name, mimeType, size)",
-            pageToken=page_token,
-        ).execute()
+        try:
+            result = service.files().list(
+                q=f"'{folder_id}' in parents and trashed=false",
+                fields="nextPageToken, files(id, name, mimeType, size, parents)",
+                pageToken=page_token,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                pageSize=1000,
+            ).execute()
+        except Exception as exc:
+            raise RuntimeError(f"failed to list Google Drive folder children: folder_id={folder_id}: {exc}") from exc
         items.extend(result.get("files", []))
         page_token = result.get("nextPageToken")
         if not page_token:
