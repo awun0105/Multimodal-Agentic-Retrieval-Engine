@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -225,6 +227,75 @@ def shadow_google_drive_folder(
     )
 
 
+def _safe_extract_zip_and_process_inline(
+    zip_path: Path,
+    raw_root: Path,
+    metadata_root: Path,
+    accepted_media_extensions: set[str],
+    overwrite: bool,
+    counters: dict[str, int],
+    rows: list[dict[str, Any]],
+    temp_root: Path | None = None
+) -> None:
+    """Extract, filter, rename, flatten, and clear archive files one-by-one to avoid disk inflation."""
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        for member in archive.infolist():
+            member_path = Path(member.filename)
+            if member_path.is_absolute():
+                raise ValueError(f"archive member must be relative: {member.filename}")
+
+            # Bỏ qua các chỉ mục thư mục rỗng bên trong zip công cụ tạo ra
+            if member.is_dir():
+                continue
+
+            suffix = member_path.suffix.lower()
+            is_media = suffix in accepted_media_extensions
+            is_meta = suffix in METADATA_EXTENSIONS
+
+            if not (is_media or is_meta):
+                counters["skipped_count"] += 1
+                rows.append({"archive": str(zip_path), "kind": "unsupported", "source": member.filename, "status": "skipped"})
+                continue
+
+            # Thực hiện trích xuất cô lập phần tử hiện tại vào một thư mục tạm tối thiểu
+            with tempfile.TemporaryDirectory(prefix="member_extract_", dir=temp_root) as clean_tmp:
+                clean_tmp_path = Path(clean_tmp).resolve()
+
+                # Kiểm tra ranh giới bảo mật tránh lỗ hổng Zip Slip (Directory Traversal)
+                destination = (clean_tmp_path / member_path).resolve()
+                try:
+                    destination.relative_to(clean_tmp_path)
+                except ValueError as exc:
+                    raise ValueError(f"archive member escapes target directory: {member.filename}") from exc
+
+                archive.extract(member, path=clean_tmp_path)
+                extracted_file = clean_tmp_path / member.filename
+
+                if not extracted_file.is_file():
+                    continue
+
+                if is_media:
+                    target = raw_root / f"{zip_path.stem}_{extracted_file.name}"
+                    kind_str = "media"
+                else:
+                    target = metadata_root / f"{zip_path.stem}_{extracted_file.name}"
+                    kind_str = "metadata"
+
+                try:
+                    status = _move_flattened_file(extracted_file, target, overwrite=overwrite)
+                    if status == "moved":
+                        if is_media:
+                            counters["video_count"] += 1
+                        else:
+                            counters["metadata_count"] += 1
+                    else:
+                        counters["skipped_count"] += 1
+                    rows.append({"archive": str(zip_path), "kind": kind_str, "source": member.filename, "target": str(target), "status": status})
+                except OSError as exc:
+                    counters["error_count"] += 1
+                    rows.append({"archive": str(zip_path), "kind": kind_str, "source": member.filename, "target": str(target), "status": "failed", "error": str(exc)})
+
+
 def standardize_archive_source(
     source_dir: Path | str,
     target_dir: Path | str,
@@ -258,51 +329,18 @@ def standardize_archive_source(
 
     for zip_path in sorted(source_root.rglob("*.zip")):
         counters["zip_count"] += 1
-        batch_temp = temp_root / zip_path.stem
-        if batch_temp.exists():
-            shutil.rmtree(batch_temp)
-        batch_temp.mkdir(parents=True, exist_ok=True)
         try:
-            _safe_extract_zip(zip_path, batch_temp)
+            # Xử lý trích xuất và di chuyển cuốn chiếu từng tệp tin mà không ghi đè ổ cứng local
+            _safe_extract_zip_and_process_inline(
+                zip_path, raw_root, metadata_root, accepted_media_extensions, overwrite, counters, rows, temp_root
+            )
         except (OSError, zipfile.BadZipFile, ValueError) as exc:
             counters["error_count"] += 1
             rows.append({"archive": str(zip_path), "status": "failed", "error": str(exc)})
-            shutil.rmtree(batch_temp, ignore_errors=True)
             continue
 
-        for item in sorted(batch_temp.rglob("*")):
-            # --- 🛡️ CHỐT CHẶN BẢO VỆ: Chỉ xử lý tệp tin thực sự, bỏ qua nếu quét trúng thư mục con lồng nhau ---
-            if not item.is_file():
-                continue
-            suffix = item.suffix.lower()
-            if suffix in accepted_media_extensions:
-                target = raw_root / f"{zip_path.stem}_{item.name}"
-                try:
-                    status = _move_flattened_file(item, target, overwrite=overwrite)
-                    if status == "moved":
-                        counters["video_count"] += 1
-                    else:
-                        counters["skipped_count"] += 1
-                    rows.append({"archive": str(zip_path), "kind": "media", "source": str(item), "target": str(target), "status": status})
-                except OSError as exc:
-                    counters["error_count"] += 1
-                    rows.append({"archive": str(zip_path), "kind": "media", "source": str(item), "target": str(target), "status": "failed", "error": str(exc)})
-            elif suffix in METADATA_EXTENSIONS:
-                target = metadata_root / f"{zip_path.stem}_{item.name}"
-                try:
-                    status = _move_flattened_file(item, target, overwrite=overwrite)
-                    if status == "moved":
-                        counters["metadata_count"] += 1
-                    else:
-                        counters["skipped_count"] += 1
-                    rows.append({"archive": str(zip_path), "kind": "metadata", "source": str(item), "target": str(target), "status": status})
-                except OSError as exc:
-                    counters["error_count"] += 1
-                    rows.append({"archive": str(zip_path), "kind": "metadata", "source": str(item), "target": str(target), "status": "failed", "error": str(exc)})
-            else:
-                counters["skipped_count"] += 1
-                rows.append({"archive": str(zip_path), "kind": "unsupported", "source": str(item), "status": "skipped"})
-        shutil.rmtree(batch_temp, ignore_errors=True)
+    if temp_root.exists() and not temp_dir:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
     report = {
         "status": "pass" if counters["error_count"] == 0 else "partial",
@@ -329,7 +367,7 @@ def import_source_to_hf_canonical(
     token: str | None = None,
     staging_root: Path | str | None = None,
 ) -> CanonicalImportResult:
-    """Normalize an organizer source into a Hugging Face Dataset repository.
+    """Normalize an organizer source into a Hugging Face Dataset repository using parallel multi-threaded uploads.
 
     The source is materialized in a temporary staging directory only long enough
     to discover and upload files. The target repository must already exist.
@@ -361,37 +399,76 @@ def import_source_to_hf_canonical(
         video_by_stem = _index_unique_by_stem(video_files, kind="video")
         metadata_by_stem = _index_unique_by_stem(metadata_files, kind="metadata")
 
+        tasks: list[dict[str, Any]] = []
         for video_id in sorted(video_by_stem):
             video_path = video_by_stem[video_id]
             metadata_path = metadata_by_stem.get(video_id)
             generated_metadata_path: Path | None = None
             if metadata_path is None:
                 generated_metadata_path = Path(tmp) / "generated_metadata" / f"{video_id}.json"
+                generated_metadata_path.parent.mkdir(parents=True, exist_ok=True)
                 _write_minimal_metadata(generated_metadata_path, video_id, source_uri)
                 metadata_path = generated_metadata_path
 
-            video_remote_path = PureCanonicalPath.raw_video(video_path.name)
-            metadata_remote_path = PureCanonicalPath.metadata(f"{video_id}.json")
-            row = {
+            tasks.append({
                 "video_id": video_id,
-                "video_filename": video_path.name,
-                "metadata_filename": f"{video_id}.json",
-                "video_path": video_remote_path,
-                "metadata_path": metadata_remote_path,
-                "video_size_bytes": video_path.stat().st_size,
-                "metadata_size_bytes": metadata_path.stat().st_size,
-                "metadata_generated": generated_metadata_path is not None,
+                "video_path": video_path,
+                "metadata_path": metadata_path,
+                "video_remote_path": PureCanonicalPath.raw_video(video_path.name),
+                "metadata_remote_path": PureCanonicalPath.metadata(f"{video_id}.json"),
+                "metadata_generated": generated_metadata_path is not None
+            })
+
+        # --- TỐI ƯU MẠNG BẰNG THREADPOOL: Upload song song đa luồng ---
+        existing_lock = threading.Lock()
+
+        def _worker_upload(task: dict[str, Any]) -> dict[str, Any]:
+            v_path: Path = task["video_path"]
+            m_path: Path = task["metadata_path"]
+            v_remote: str = task["video_remote_path"]
+            m_remote: str = task["metadata_remote_path"]
+
+            row = {
+                "video_id": task["video_id"],
+                "video_filename": v_path.name,
+                "metadata_filename": m_path.name,
+                "video_path": v_remote,
+                "metadata_path": m_remote,
+                "video_size_bytes": v_path.stat().st_size,
+                "metadata_size_bytes": m_path.stat().st_size,
+                "metadata_generated": task["metadata_generated"],
                 "status": "pending",
             }
             try:
-                _upload_if_needed(store, existing_files, video_path, video_remote_path)
-                _upload_if_needed(store, existing_files, metadata_path, metadata_remote_path)
+                # Đảm bảo thread-safe khi đọc/ghi vào set trạng thái file chung
+                with existing_lock:
+                    v_exists = v_remote in existing_files
+                if not v_exists:
+                    store.upload_file(v_path, v_remote)
+                    with existing_lock:
+                        existing_files.add(v_remote)
+
+                with existing_lock:
+                    m_exists = m_remote in existing_files
+                if not m_exists:
+                    store.upload_file(m_path, m_remote)
+                    with existing_lock:
+                        existing_files.add(m_remote)
+
                 row["status"] = "pass"
             except Exception as exc:
                 row["status"] = "failed"
                 row["error"] = str(exc)
-                errors.append({"video_id": video_id, "message": str(exc)})
+            return row
+
+        max_workers = min(32, (os.cpu_count() or 4) * 2)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(_worker_upload, tasks))
+
+        for row in results:
             uploaded_rows.append(row)
+            if row["status"] == "failed":
+                errors.append({"video_id": row["video_id"], "message": row.get("error", "Unknown error")})
 
     report = {
         "status": "pass" if not errors else "fail",
