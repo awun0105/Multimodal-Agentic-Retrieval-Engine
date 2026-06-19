@@ -271,6 +271,7 @@ def standardize_archive_source(
             continue
 
         for item in sorted(batch_temp.rglob("*")):
+            # --- 🛡️ CHỐT CHẶN BẢO VỆ: Chỉ xử lý tệp tin thực sự, bỏ qua nếu quét trúng thư mục con lồng nhau ---
             if not item.is_file():
                 continue
             suffix = item.suffix.lower()
