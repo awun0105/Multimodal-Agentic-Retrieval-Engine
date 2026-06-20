@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ METADATA_EXTENSIONS = {".json"}
 VIDEO_DIR_NAMES = {"raw_videos", "videos", "video", "raw", "clips"}
 METADATA_DIR_NAMES = {"metadata", "metadatas", "json", "annotations"}
 GENERIC_CONTEXT_NAMES = VIDEO_DIR_NAMES | METADATA_DIR_NAMES | {"dataset", "train", "val", "test", "data"}
+STANDARDIZE_TEMP_PREFIXES = ("member_stage_", "member_extract_", "archive_stage_", "source_stage_")
+BYTES_PER_GB = 1024 ** 3
 
 
 @dataclass(frozen=True)
@@ -341,6 +344,10 @@ def standardize_archive_source(
     overwrite: bool = False,
     resume: bool = True,
     progress_path: Path | str | None = None,
+    min_free_gb: float = 15.0,
+    drive_sync_sleep_seconds: int = 30,
+    cleanup_every_files: int = 1,
+    cleanup_every_gb: float = 50.0,
 ) -> ArchiveStandardizeResult:
     """Normalize archives, existing layouts, and loose files into System 1 input layout."""
     source_root = Path(source_dir).expanduser().resolve()
@@ -351,11 +358,23 @@ def standardize_archive_source(
     raw_root = target_root / "raw_videos"
     metadata_root = target_root / "metadata"
     temp_root = Path(temp_dir).expanduser().resolve() if temp_dir else target_root / ".tmp_archive_extract"
+    if _is_colab_drive_path(temp_root):
+        raise ValueError(
+            "standardize temp_dir must be local scratch, not Google Drive mount: "
+            f"{temp_root}. Use --temp-dir /content/aic_scratch on Colab."
+        )
     resolved_progress_path = Path(progress_path).expanduser().resolve() if progress_path else target_root / "standardize_progress.jsonl"
     raw_root.mkdir(parents=True, exist_ok=True)
     metadata_root.mkdir(parents=True, exist_ok=True)
     temp_root.mkdir(parents=True, exist_ok=True)
     resolved_progress_path.parent.mkdir(parents=True, exist_ok=True)
+    disk_manager = _StandardizeDiskManager(
+        temp_root=temp_root,
+        min_free_gb=min_free_gb,
+        sleep_seconds=drive_sync_sleep_seconds,
+        cleanup_every_files=cleanup_every_files,
+        cleanup_every_gb=cleanup_every_gb,
+    )
 
     accepted_media_extensions = {ext.lower() for ext in (media_extensions or VIDEO_EXTENSIONS)}
     rows: list[dict[str, Any]] = []
@@ -378,6 +397,8 @@ def standardize_archive_source(
         "[standardize] "
         f"source_dir={source_root} target_dir={target_root} temp_dir={temp_root} "
         f"overwrite={overwrite} resume={resume} progress_path={resolved_progress_path} "
+        f"min_free_gb={min_free_gb} drive_sync_sleep_seconds={drive_sync_sleep_seconds} "
+        f"cleanup_every_files={cleanup_every_files} cleanup_every_gb={cleanup_every_gb} "
         f"media_extensions={sorted(accepted_media_extensions)}",
         flush=True,
     )
@@ -493,6 +514,7 @@ def standardize_archive_source(
                 counters,
                 rows,
                 resolved_progress_path,
+                disk_manager,
             )
             last_record = _read_standardize_progress(resolved_progress_path).get(item.source_id)
             if last_record and last_record.get("status") == "failed":
@@ -521,6 +543,10 @@ def standardize_archive_source(
         "media_extensions": sorted(accepted_media_extensions),
         "resume": resume,
         "progress_path": str(resolved_progress_path),
+        "min_free_gb": min_free_gb,
+        "drive_sync_sleep_seconds": drive_sync_sleep_seconds,
+        "cleanup_every_files": cleanup_every_files,
+        "cleanup_every_gb": cleanup_every_gb,
         **progress_stats,
         **counters,
         "items": rows,
@@ -539,6 +565,131 @@ def standardize_archive_source(
     if validation_error is not None:
         raise ValueError(f"standardized input pairing validation failed: {validation_error}; report: {report_path}") from validation_error
     return ArchiveStandardizeResult(report_path=report_path, **counters)
+
+
+def wait_for_drive_sync(
+    *,
+    min_free_gb: float = 15.0,
+    sleep_seconds: int = 30,
+    path: str | Path = "/",
+) -> None:
+    """
+    Pause when free disk is low so DriveFS has time to upload and clear cache.
+    Used on Google Colab when writing large files to /content/drive.
+    """
+    while True:
+        _total, _used, free = shutil.disk_usage(str(path))
+        free_gb = free / BYTES_PER_GB
+
+        if free_gb >= min_free_gb:
+            return
+
+        print(
+            f"[Drive Cache Manager] Free disk is low: "
+            f"{free_gb:.2f}GB < {min_free_gb:.2f}GB. "
+            f"Running sync and sleeping {sleep_seconds}s...",
+            flush=True,
+        )
+        os.system("sync")
+        time.sleep(sleep_seconds)
+
+
+@dataclass
+class _StandardizeDiskManager:
+    temp_root: Path
+    min_free_gb: float = 15.0
+    sleep_seconds: int = 30
+    cleanup_every_files: int = 1
+    cleanup_every_gb: float = 50.0
+    processed_files: int = 0
+    processed_bytes: int = 0
+    _since_cleanup_files: int = 0
+    _since_cleanup_bytes: int = 0
+
+    def before_file(self, size_bytes: int, label: str) -> None:
+        wait_for_drive_sync(min_free_gb=self.min_free_gb, sleep_seconds=self.sleep_seconds, path=self.temp_root)
+        _ensure_temp_disk_available(self.temp_root, size_bytes, self.min_free_gb, label)
+
+    def after_file(self, size_bytes: int, *, reason: str) -> None:
+        self.processed_files += 1
+        self.processed_bytes += max(size_bytes, 0)
+        self._since_cleanup_files += 1
+        self._since_cleanup_bytes += max(size_bytes, 0)
+        if self._cleanup_due():
+            self.cleanup(reason=reason)
+        wait_for_drive_sync(min_free_gb=self.min_free_gb, sleep_seconds=self.sleep_seconds, path="/")
+
+    def cleanup(self, *, reason: str) -> None:
+        removed = _cleanup_standardize_temp(self.temp_root)
+        self._since_cleanup_files = 0
+        self._since_cleanup_bytes = 0
+        free_gb = shutil.disk_usage("/").free / BYTES_PER_GB
+        temp_size_gb = _path_size_bytes(self.temp_root) / BYTES_PER_GB
+        print(
+            "[standardize] cleanup done "
+            f"reason={reason} removed={removed} "
+            f"processed_files={self.processed_files} "
+            f"processed_gb={self.processed_bytes / BYTES_PER_GB:.3f} "
+            f"free_disk_gb={free_gb:.2f} temp_dir_size_gb={temp_size_gb:.3f}",
+            flush=True,
+        )
+
+    def _cleanup_due(self) -> bool:
+        files_due = self.cleanup_every_files > 0 and self._since_cleanup_files >= self.cleanup_every_files
+        gb_due = self.cleanup_every_gb > 0 and self._since_cleanup_bytes >= self.cleanup_every_gb * BYTES_PER_GB
+        return files_due or gb_due
+
+
+def _ensure_temp_disk_available(temp_root: Path, size_bytes: int, min_free_gb: float, label: str) -> None:
+    free_bytes = shutil.disk_usage(str(temp_root)).free
+    required_bytes = max(size_bytes, 0) + int(min_free_gb * BYTES_PER_GB)
+    if free_bytes >= required_bytes:
+        return
+    raise RuntimeError(
+        "not enough local runtime disk before staging "
+        f"{label}: size={size_bytes / BYTES_PER_GB:.2f}GB "
+        f"free={free_bytes / BYTES_PER_GB:.2f}GB "
+        f"required={required_bytes / BYTES_PER_GB:.2f}GB. "
+        "Increase Colab runtime disk, reduce batch/source size, or process fewer archives at a time."
+    )
+
+
+def _cleanup_standardize_temp(temp_root: Path) -> int:
+    if not temp_root.exists() or not temp_root.is_dir():
+        return 0
+    removed = 0
+    for child in temp_root.iterdir():
+        if not child.name.startswith(STANDARDIZE_TEMP_PREFIXES):
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            try:
+                child.unlink()
+            except FileNotFoundError:
+                pass
+        removed += 1
+    return removed
+
+
+def _path_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for child in path.rglob("*"):
+        if child.is_file():
+            try:
+                total += child.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _is_colab_drive_path(path: Path) -> bool:
+    parts = path.resolve().parts
+    return len(parts) >= 3 and parts[0] == "/" and parts[1] == "content" and parts[2] == "drive"
 
 
 def _utc_now_iso() -> str:
@@ -710,6 +861,7 @@ def _process_standardize_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     progress_path: Path,
+    disk_manager: _StandardizeDiskManager,
 ) -> None:
     started_at = _utc_now_iso()
     before = dict(counters)
@@ -717,13 +869,15 @@ def _process_standardize_source_item(
     item_errors: list[str] = []
     try:
         if item.source_mode == "zip":
-            _process_zip_source_item(item, raw_root, metadata_root, temp_root, canonical_by_group, rename_reason_by_group, overwrite, counters, rows, item_errors)
+            _process_zip_source_item(item, raw_root, metadata_root, temp_root, canonical_by_group, rename_reason_by_group, overwrite, counters, rows, item_errors, disk_manager)
         else:
-            _process_non_zip_source_item(item, raw_root, metadata_root, canonical_by_group, rename_reason_by_group, overwrite, counters, rows, item_errors)
+            _process_non_zip_source_item(item, raw_root, metadata_root, canonical_by_group, rename_reason_by_group, overwrite, counters, rows, item_errors, disk_manager)
     except Exception as exc:
         counters["error_count"] += 1
         item_errors.append(f"{type(exc).__name__}: {exc}")
         rows.append({"kind": "source_item", "source_mode": item.source_mode, "source": item.display_path, "source_id": item.source_id, "status": "failed", "error": str(exc)})
+    finally:
+        disk_manager.cleanup(reason=f"source_complete source_id={item.source_id}")
 
     failed = counters["error_count"] > before["error_count"]
     _append_standardize_progress(
@@ -754,16 +908,21 @@ def _process_non_zip_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     item_errors: list[str],
+    disk_manager: _StandardizeDiskManager,
 ) -> None:
     for candidate in item.candidates:
         if candidate.actual_path is None:
             continue
         target = _target_for_candidate(candidate, raw_root, metadata_root, canonical_by_group[candidate.group_key])
         try:
+            size_bytes = candidate.actual_path.stat().st_size
+            disk_manager.before_file(size_bytes, candidate.source_path)
             status = _copy_standardized_file(candidate.actual_path, target, overwrite=overwrite)
+            if status != "skipped_existing":
+                disk_manager.after_file(size_bytes, reason=f"file_complete source={candidate.source_path}")
             _update_standardize_counters(candidate, status, counters)
             rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, status))
-        except OSError as exc:
+        except (OSError, RuntimeError) as exc:
             counters["error_count"] += 1
             item_errors.append(f"{type(exc).__name__}: {exc}")
             rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, "failed", error=str(exc)))
@@ -781,6 +940,7 @@ def _process_zip_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     item_errors: list[str],
+    disk_manager: _StandardizeDiskManager,
 ) -> None:
     rows.extend(item.skipped_rows)
     counters["skipped_count"] += len(item.skipped_rows)
@@ -796,6 +956,7 @@ def _process_zip_source_item(
                         rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, status))
                         continue
                     raise FileExistsError(f"target already exists with different size: {target}")
+                disk_manager.before_file(member_info.file_size, candidate.source_path)
                 extracted_file = _extract_zip_candidate_member(archive, candidate, temp_root)
                 stage_dir = extracted_file.parent
                 try:
@@ -803,9 +964,11 @@ def _process_zip_source_item(
                 finally:
                     if stage_dir.name.startswith("member_stage_"):
                         shutil.rmtree(stage_dir, ignore_errors=True)
+                if status != "skipped_existing":
+                    disk_manager.after_file(member_info.file_size, reason=f"member_complete source={candidate.source_path}")
                 _update_standardize_counters(candidate, status, counters)
                 rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, status))
-            except (OSError, ValueError, KeyError) as exc:
+            except (OSError, RuntimeError, ValueError, KeyError) as exc:
                 counters["error_count"] += 1
                 item_errors.append(f"{type(exc).__name__}: {exc}")
                 rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, "failed", error=str(exc)))

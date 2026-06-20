@@ -103,6 +103,10 @@ def register(app: typer.Typer) -> None:
         overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite"),
         resume: bool = typer.Option(True, "--resume/--no-resume", help="Resume completed source items from the progress JSONL."),
         progress_path: Path | None = typer.Option(None, "--progress-path", help="Optional progress JSONL path."),
+        min_free_gb: float = typer.Option(15.0, "--min-free-gb", help="Minimum free local disk GB to keep before staging files."),
+        drive_sync_sleep_seconds: int = typer.Option(30, "--drive-sync-sleep-seconds", help="Seconds to sleep after sync when DriveFS cache leaves low free disk."),
+        cleanup_every_files: int = typer.Option(1, "--cleanup-every-files", help="Cleanup command-created temp stages after this many processed files."),
+        cleanup_every_gb: float = typer.Option(50.0, "--cleanup-every-gb", help="Cleanup command-created temp stages after this many processed GB."),
         allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when some archives/files fail."),
     ) -> None:
         """Extract zip archives and flatten media/JSON into System 1 input layout."""
@@ -115,6 +119,10 @@ def register(app: typer.Typer) -> None:
             overwrite=overwrite,
             resume=resume,
             progress_path=progress_path,
+            min_free_gb=min_free_gb,
+            drive_sync_sleep_seconds=drive_sync_sleep_seconds,
+            cleanup_every_files=cleanup_every_files,
+            cleanup_every_gb=cleanup_every_gb,
         )
         typer.echo(
             "Standardized archives "
