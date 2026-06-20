@@ -400,7 +400,27 @@ def standardize_archive_source(
     zip_candidates: list[_StandardizeCandidate] = []
     zip_skipped_by_path: dict[Path, list[dict[str, Any]]] = {}
     discovery_failed_zip_paths: set[Path] = set()
+    completed_zip_paths: set[Path] = set()
     for index, zip_path in enumerate(zip_paths, start=1):
+        source_id = _standardize_source_id("zip", zip_path, source_root)
+        completed_record = resume_records.get(source_id)
+        if resume and _standardize_progress_record_completed(completed_record):
+            targets = [target for target in completed_record.get("targets", []) if target]
+            completed_zip_paths.add(zip_path)
+            progress_stats["skipped_completed_count"] += 1
+            counters["skipped_count"] += len(targets)
+            rows.append(
+                {
+                    "kind": "source_item",
+                    "source_mode": "zip",
+                    "source": str(zip_path),
+                    "source_id": source_id,
+                    "status": "skipped_completed",
+                    "targets": targets,
+                }
+            )
+            print(f"[standardize] skipped completed zip from progress: {zip_path}", flush=True)
+            continue
         print(f"[standardize] discovering zip [{index}/{len(zip_paths)}]: {zip_path}", flush=True)
         try:
             discovered, skipped = _discover_zip_candidates(zip_path, source_root, accepted_media_extensions)
@@ -424,6 +444,7 @@ def standardize_archive_source(
             )
 
     candidates = [*non_zip_candidates, *zip_candidates]
+    progress_stats["source_item_count"] = len(completed_zip_paths) + len(discovery_failed_zip_paths)
     try:
         canonical_by_group, rename_reason_by_group = _assign_canonical_stems(candidates)
     except ValueError as exc:
@@ -441,7 +462,7 @@ def standardize_archive_source(
             source_root,
             discovery_failed_zip_paths,
         )
-        progress_stats["source_item_count"] = len(source_items) + len(discovery_failed_zip_paths)
+        progress_stats["source_item_count"] = len(source_items) + len(discovery_failed_zip_paths) + len(completed_zip_paths)
         pending_count = 0
         for item in source_items:
             planned_targets = _planned_targets_for_source_item(item, raw_root, metadata_root, canonical_by_group)
@@ -478,6 +499,8 @@ def standardize_archive_source(
                 progress_stats["failed_count"] += 1
         if pending_count == 0 and source_items:
             print("No pending source items. All source items already standardized.", flush=True)
+    elif completed_zip_paths and counters["error_count"] == 0:
+        print("No pending source items. All source items already standardized.", flush=True)
 
     _generate_missing_metadata(raw_root, metadata_root, source_root, counters, rows, accepted_media_extensions)
     _report_extra_metadata(raw_root, metadata_root, rows, accepted_media_extensions)
@@ -575,7 +598,7 @@ def _standardize_source_id(source_mode: str, path: Path, source_root: Path) -> s
         relative = path.relative_to(source_root).as_posix()
     except ValueError:
         relative = path.name
-    return f"{source_mode}:{relative}:{stat.st_size}:{stat.st_mtime_ns}"
+    return f"{source_mode}:{relative}:{stat.st_size}"
 
 
 def _standardize_group_source_id(
@@ -586,7 +609,6 @@ def _standardize_group_source_id(
     actual_paths = sorted({candidate.actual_path for candidate in candidates if candidate.actual_path is not None})
     relative_parts = []
     size_total = 0
-    mtime_max = 0
     for path in actual_paths:
         stat = path.stat()
         try:
@@ -594,9 +616,8 @@ def _standardize_group_source_id(
         except ValueError:
             relative_parts.append(path.name)
         size_total += stat.st_size
-        mtime_max = max(mtime_max, stat.st_mtime_ns)
     relative_key = "+".join(relative_parts) or "empty"
-    return f"{source_mode}:{relative_key}:{size_total}:{mtime_max}"
+    return f"{source_mode}:{relative_key}:{size_total}"
 
 
 def _build_standardize_source_items(
@@ -668,6 +689,13 @@ def _standardize_item_completed(record: dict[str, Any] | None, planned_targets: 
         return False
     recorded_targets = [Path(target) for target in record.get("targets", []) if target]
     targets = recorded_targets or planned_targets
+    return bool(targets) and all(target.exists() for target in targets)
+
+
+def _standardize_progress_record_completed(record: dict[str, Any] | None) -> bool:
+    if not record or record.get("status") != "pass":
+        return False
+    targets = [Path(target) for target in record.get("targets", []) if target]
     return bool(targets) and all(target.exists() for target in targets)
 
 
@@ -769,7 +797,12 @@ def _process_zip_source_item(
                         continue
                     raise FileExistsError(f"target already exists with different size: {target}")
                 extracted_file = _extract_zip_candidate_member(archive, candidate, temp_root)
-                status = _move_flattened_file(extracted_file, target, overwrite=overwrite)
+                stage_dir = extracted_file.parent
+                try:
+                    status = _move_flattened_file(extracted_file, target, overwrite=overwrite)
+                finally:
+                    if stage_dir.name.startswith("member_stage_"):
+                        shutil.rmtree(stage_dir, ignore_errors=True)
                 _update_standardize_counters(candidate, status, counters)
                 rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, status))
             except (OSError, ValueError, KeyError) as exc:
