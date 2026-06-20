@@ -224,6 +224,9 @@ __marimo__/
 *.sqlite-wal
 *.sqlite-shm
 *.duckdb
+harness.db
+harness.db-shm
+harness.db-wal
 
 # Large/generated data
 system1/output/
