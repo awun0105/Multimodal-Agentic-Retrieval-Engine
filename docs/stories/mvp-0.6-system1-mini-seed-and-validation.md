@@ -142,7 +142,12 @@ Acceptance criteria:
 
 ## Design Notes
 
-- Commands: prefer a small CLI such as `aic-prepare build --dataset-id ... --raw-video-dir ... --metadata-dir ... --data-root ... --runtime-root ... --report ...` when implementation begins.
+- Commands: Notebook 00's phase-based path is Drive shadow, archive
+  standardization into local `raw_videos/` + `metadata/`, local ingest,
+  batch assignment, then `system1 sync-release` to store phase output under
+  `releases/<release_id>/` in the configured Hugging Face Dataset repo.
+  `system1 restore-release` lets worker notebooks reload that output from the
+  same repo.
 - Queries: System 2 should be able to resolve `video_id/frame_id`, `keyframe_id`, and `vector_id -> keyframe_id` from `app.sqlite`.
 - API: no runtime API is required in this story.
 - Tables: seed path should cover `videos`, `shots`, `keyframes`, `vector_map`, `feature_availability`, and minimal FTS/text evidence tables.
@@ -169,5 +174,25 @@ No Harness changes required for story creation. When implemented, update
 
 ## Evidence
 
-No implementation evidence yet. Add commands, reports, and artifact paths after
-the System 1 mini build exists.
+Partial phase00 implementation evidence exists for Drive archive input prep,
+local phase00 ingest, and Hugging Face Dataset release sync:
+
+- `system1 drive-shadow` copies regular Google Drive files/folders from an
+  organizer folder into a user-owned Drive folder, skips existing matching
+  targets on rerun, and writes a JSON report.
+- `system1 standardize-archives` extracts zip archives and flattens media
+  files, including `.wav`, and JSON files into the System 1 `raw_videos/` and
+  `metadata/` input layout. Existing matching flattened files are skipped on
+  rerun.
+- Drive shadow and archive standardization fail non-zero on item-level errors
+  by default; `--allow-partial` is an explicit operator override.
+- Notebook 00 runs Drive shadow, archive standardization, standardized input
+  readiness checks, local phase00 ingest, batch assignment, then required
+  sync-release to the configured Hugging Face Dataset repo under
+  `releases/<release_id>/`.
+- `system1 sync-release` and `system1 restore-release` support worker notebooks
+  loading phase output from the same Hugging Face Dataset repo.
+- `uv run pytest` passed with 103 tests after this phase00 workflow update.
+
+Full MVP-0.6 remains planned until the complete seed path through structure,
+features, SQLite/FTS/vector map, validation report, and smoke proof is closed.
