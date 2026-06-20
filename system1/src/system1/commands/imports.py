@@ -109,7 +109,11 @@ def register(app: typer.Typer) -> None:
         cleanup_every_gb: float = typer.Option(50.0, "--cleanup-every-gb", help="Cleanup command-created temp stages after this many processed GB."),
         allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when some archives/files fail."),
     ) -> None:
-        """Extract zip archives and flatten media/JSON into System 1 input layout."""
+        """Extract zip archives and flatten media/JSON into System 1 input layout.
+
+        Disk-safe options: --min-free-gb --drive-sync-sleep-seconds
+        --cleanup-every-files --cleanup-every-gb.
+        """
         extensions = {item.strip().lower() for item in media_extensions.split(",") if item.strip()}
         result = standardize_archive_source(
             source_dir,
