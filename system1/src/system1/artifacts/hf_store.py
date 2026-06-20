@@ -8,6 +8,10 @@ import os
 import shutil
 import tempfile
 
+if os.environ.get("AIC_HF_PROGRESS", "0") != "1":
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+
 from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 
 try:

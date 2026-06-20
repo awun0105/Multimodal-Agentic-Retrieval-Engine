@@ -28,6 +28,10 @@ RAW_UPLOAD_MAX_RETRIES = 5
 RAW_UPLOAD_RATE_LIMIT_DEFAULT_SLEEP_SECONDS = 120
 
 
+def _aic_verbose() -> bool:
+    return os.environ.get("AIC_VERBOSE", "0") == "1"
+
+
 @dataclass(frozen=True)
 class SourceImportResult:
     video_count: int
@@ -639,16 +643,17 @@ class _StandardizeDiskManager:
         removed = _cleanup_standardize_temp(self.temp_root)
         self._since_cleanup_files = 0
         self._since_cleanup_bytes = 0
-        free_gb = shutil.disk_usage("/").free / BYTES_PER_GB
-        temp_size_gb = _path_size_bytes(self.temp_root) / BYTES_PER_GB
-        print(
-            "[standardize] cleanup done "
-            f"reason={reason} removed={removed} "
-            f"processed_files={self.processed_files} "
-            f"processed_gb={self.processed_bytes / BYTES_PER_GB:.3f} "
-            f"free_disk_gb={free_gb:.2f} temp_dir_size_gb={temp_size_gb:.3f}",
-            flush=True,
-        )
+        if _aic_verbose():
+            free_gb = shutil.disk_usage("/").free / BYTES_PER_GB
+            temp_size_gb = _path_size_bytes(self.temp_root) / BYTES_PER_GB
+            print(
+                "[standardize] cleanup done "
+                f"reason={reason} removed={removed} "
+                f"processed_files={self.processed_files} "
+                f"processed_gb={self.processed_bytes / BYTES_PER_GB:.3f} "
+                f"free_disk_gb={free_gb:.2f} temp_dir_size_gb={temp_size_gb:.3f}",
+                flush=True,
+            )
 
     def _cleanup_due(self) -> bool:
         files_due = self.cleanup_every_files > 0 and self._since_cleanup_files >= self.cleanup_every_files
@@ -1545,6 +1550,17 @@ def upload_standardized_raw_to_hf(
             else:
                 pending_by_phase["metadata"].append(metadata_item)
 
+        skipped_existing_count = skipped_by_phase["raw_videos"] + skipped_by_phase["metadata"]
+        print(
+            "[upload-standardized-raw] "
+            f"phase=scan repo_id={repo_id} raw_import_id={normalized_import_id} "
+            f"source_video_count={len(video_by_stem)} source_metadata_count={len(metadata_by_stem)} "
+            f"pending_video_count={len(pending_by_phase['raw_videos'])} "
+            f"pending_metadata_count={len(pending_by_phase['metadata'])} "
+            f"skipped_existing_count={skipped_existing_count}",
+            flush=True,
+        )
+
         for phase in ("raw_videos", "metadata"):
             phase_errors = _upload_raw_phase_batches(
                 store,
@@ -1646,7 +1662,13 @@ def upload_standardized_raw_to_hf(
             report["error_count"] = len(errors)
             report["errors"] = errors
 
-    print("[upload-standardized-raw] phase=done", flush=True)
+    print(
+        "[upload-standardized-raw] "
+        f"phase=done repo_id={repo_id} raw_import_id={normalized_import_id} "
+        f"videos={int(report['video_count'])} metadata={int(report['metadata_count'])} "
+        f"errors={len(errors)} manifest_path={manifest_remote_path} report_path={report_remote_path}",
+        flush=True,
+    )
     return CanonicalRawUploadResult(
         video_count=int(report["video_count"]),
         metadata_count=int(report["metadata_count"]),
@@ -1697,14 +1719,18 @@ def _upload_raw_phase_batches(
 ) -> list[dict[str, Any]]:
     errors: list[dict[str, Any]] = []
     batches = list(_chunked_raw_upload_items(items, RAW_UPLOAD_BATCH_SIZE))
+    display_phase = "videos" if phase == "raw_videos" else phase
     if not batches:
         print(
-            f"[upload-standardized-raw] phase={phase} uploaded_batch=0/0 "
-            f"file_count=0 skipped_existing={skipped_count}",
+            f"[upload-standardized-raw] phase={display_phase} batch=0/0 "
+            f"uploaded=0 skipped={skipped_count} failed=0 uploaded_mb=0.00",
             flush=True,
         )
         return errors
 
+    uploaded_count = 0
+    uploaded_bytes = 0
+    failed_count = 0
     for batch_index, batch in enumerate(batches, start=1):
         try:
             _upload_raw_batch_with_retry(
@@ -1718,6 +1744,7 @@ def _upload_raw_phase_batches(
             )
         except Exception as exc:
             message = str(exc)
+            failed_count += len(batch)
             for item in batch:
                 item.status = "failed"
                 item.error = message
@@ -1725,8 +1752,9 @@ def _upload_raw_phase_batches(
                 _append_raw_upload_progress(progress_path, item)
                 errors.append({"video_id": item.video_id, "kind": item.kind, "remote_path": item.remote_path, "message": message})
             print(
-                f"[upload-standardized-raw] phase={phase} uploaded_batch={batch_index}/{len(batches)} "
-                f"file_count={len(batch)} skipped_existing={skipped_count} status=failed",
+                f"[upload-standardized-raw] phase={display_phase} batch={batch_index}/{len(batches)} "
+                f"uploaded={uploaded_count} skipped={skipped_count} failed={failed_count} "
+                f"uploaded_mb={uploaded_bytes / (1024 ** 2):.2f} status=failed",
                 flush=True,
             )
             continue
@@ -1737,9 +1765,12 @@ def _upload_raw_phase_batches(
             existing_files.add(item.remote_path)
             _log_standardized_raw_upload_progress(item)
             _append_raw_upload_progress(progress_path, item)
+            uploaded_count += 1
+            uploaded_bytes += item.size_bytes
         print(
-            f"[upload-standardized-raw] phase={phase} uploaded_batch={batch_index}/{len(batches)} "
-            f"file_count={len(batch)} skipped_existing={skipped_count}",
+            f"[upload-standardized-raw] phase={display_phase} batch={batch_index}/{len(batches)} "
+            f"uploaded={uploaded_count} skipped={skipped_count} failed={failed_count} "
+            f"uploaded_mb={uploaded_bytes / (1024 ** 2):.2f}",
             flush=True,
         )
     return errors
@@ -1808,6 +1839,8 @@ def _hf_retry_sleep_seconds(exc: Exception) -> int:
 
 
 def _log_standardized_raw_upload_progress(item: _RawUploadItem) -> None:
+    if not _aic_verbose():
+        return
     size_mb = item.size_bytes / (1024 ** 2)
     print(
         f"[upload-standardized-raw] kind={item.kind} index={item.index}/{item.total} "
