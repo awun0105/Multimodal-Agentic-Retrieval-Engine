@@ -1410,6 +1410,7 @@ def upload_standardized_raw_to_hf(
     repo_type: str = "dataset",
     revision: str = "main",
     token: str | None = None,
+    progress_path: Path | str | None = None,
 ) -> CanonicalRawUploadResult:
     """Upload a standardized raw_videos/metadata layout into a versioned HF raw repo prefix."""
     source_root = Path(source_dir).expanduser().resolve()
@@ -1448,10 +1449,12 @@ def upload_standardized_raw_to_hf(
     metadata_by_stem = _index_unique_by_stem(metadata_files, kind="metadata")
     manifest_rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    resolved_progress_path = Path(progress_path).expanduser() if progress_path is not None else None
 
     with tempfile.TemporaryDirectory(prefix="system1_raw_upload_metadata_") as tmp:
         temp_root = Path(tmp)
-        for video_id in sorted(video_by_stem):
+        total_files = len(video_by_stem)
+        for index, video_id in enumerate(sorted(video_by_stem), start=1):
             video_path = video_by_stem[video_id]
             metadata_path = metadata_by_stem.get(video_id)
             generated_metadata_path: Path | None = None
@@ -1464,6 +1467,10 @@ def upload_standardized_raw_to_hf(
             video_remote_path = _raw_upload_remote_path(normalized_import_id, "raw_videos", video_path.name)
             metadata_filename = f"{video_id}.json"
             metadata_remote_path = _raw_upload_remote_path(normalized_import_id, "metadata", metadata_filename)
+            video_status = "skipped_existing"
+            metadata_status = "skipped_existing"
+            video_error: str | None = None
+            metadata_error: str | None = None
             row = {
                 "video_id": video_id,
                 "video_filename": video_path.name,
@@ -1478,12 +1485,63 @@ def upload_standardized_raw_to_hf(
                 "status": "pass",
             }
             try:
-                _upload_if_missing(store, existing_files, video_path, video_remote_path)
-                _upload_if_missing(store, existing_files, metadata_path, metadata_remote_path)
+                video_status = _upload_if_missing(store, existing_files, video_path, video_remote_path)
             except Exception as exc:
+                video_status = "failed"
+                video_error = str(exc)
+                errors.append({"video_id": video_id, "kind": "video", "message": str(exc)})
+            _log_standardized_raw_upload_progress(
+                kind="video",
+                index=index,
+                total=total_files,
+                status=video_status,
+                local_path=video_path,
+                remote_path=video_remote_path,
+            )
+            _append_jsonl_record(
+                resolved_progress_path,
+                {
+                    "kind": "video",
+                    "local_path": str(video_path),
+                    "remote_path": video_remote_path,
+                    "status": video_status,
+                    "size_bytes": video_path.stat().st_size,
+                    "error": video_error,
+                },
+            )
+
+            try:
+                metadata_status = _upload_if_missing(store, existing_files, metadata_path, metadata_remote_path)
+            except Exception as exc:
+                metadata_status = "failed"
+                metadata_error = str(exc)
+                errors.append({"video_id": video_id, "kind": "metadata", "message": str(exc)})
+            _log_standardized_raw_upload_progress(
+                kind="metadata",
+                index=index,
+                total=total_files,
+                status=metadata_status,
+                local_path=metadata_path,
+                remote_path=metadata_remote_path,
+            )
+            _append_jsonl_record(
+                resolved_progress_path,
+                {
+                    "kind": "metadata",
+                    "local_path": str(metadata_path),
+                    "remote_path": metadata_remote_path,
+                    "status": metadata_status,
+                    "size_bytes": metadata_path.stat().st_size,
+                    "error": metadata_error,
+                },
+            )
+            if video_status == "failed" or metadata_status == "failed":
                 row["status"] = "failed"
-                row["error"] = str(exc)
-                errors.append({"video_id": video_id, "message": str(exc)})
+                if video_error is not None:
+                    row["video_error"] = video_error
+                if metadata_error is not None:
+                    row["metadata_error"] = metadata_error
+                row["error"] = video_error or metadata_error or "upload failed"
             manifest_rows.append(row)
 
     report = {
@@ -1548,11 +1606,43 @@ def _exclude_raw_upload_file(path: Path) -> bool:
     return path.name in RAW_UPLOAD_EXCLUDED_NAMES or (path.name.startswith("batch_") and path.suffix == ".txt")
 
 
-def _upload_if_missing(store: HuggingFaceDatasetArtifactStore, existing_files: set[str], source: Path, relative_path: str) -> None:
+def _upload_if_missing(
+    store: HuggingFaceDatasetArtifactStore,
+    existing_files: set[str],
+    source: Path,
+    relative_path: str,
+) -> str:
     if relative_path in existing_files:
-        return
+        return "skipped_existing"
     store.upload_file(source, relative_path)
     existing_files.add(relative_path)
+    return "uploaded"
+
+
+def _log_standardized_raw_upload_progress(
+    *,
+    kind: str,
+    index: int,
+    total: int,
+    status: str,
+    local_path: Path,
+    remote_path: str,
+) -> None:
+    size_mb = local_path.stat().st_size / (1024 ** 2)
+    print(
+        f"[upload-standardized-raw] {kind}: {index}/{total} {status} "
+        f"{local_path.name} size={size_mb:.2f}MB remote={remote_path}",
+        flush=True,
+    )
+
+
+def _append_jsonl_record(progress_path: Path | None, record: dict[str, Any]) -> None:
+    if progress_path is None:
+        return
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    with progress_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n")
+        handle.flush()
 
 
 def _reset_import_targets(root: Path, raw_root: Path, metadata_root: Path) -> None:

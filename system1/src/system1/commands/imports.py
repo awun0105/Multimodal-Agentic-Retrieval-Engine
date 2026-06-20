@@ -45,6 +45,7 @@ def register(app: typer.Typer) -> None:
             raw_import_id=raw_import_id,
             repo_type=target_hf_repo_type,
             revision=target_hf_revision,
+            progress_path=None,
         )
         typer.echo(
             "Uploaded standardized raw "
