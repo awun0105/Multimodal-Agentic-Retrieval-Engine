@@ -6,9 +6,9 @@ import typer
 
 from system1.ingest.source_importer import (
     import_organizer_source,
-    import_source_to_hf_canonical,
     shadow_google_drive_folder,
     standardize_archive_source,
+    upload_standardized_raw_to_hf,
 )
 
 
@@ -28,29 +28,32 @@ def register(app: typer.Typer) -> None:
             f"Imported source videos={result.video_count} metadata={result.metadata_count}: {result.report_path}"
         )
 
-    @app.command("import-canonical")
-    def import_canonical(
-        source_uri: str = typer.Option(
-            ..., "--source-uri", help="Organizer source folder path, Google Drive folder URL, or supported source URI."
+    @app.command("upload-standardized-raw")
+    def upload_standardized_raw(
+        source_dir: Path = typer.Option(
+            ..., "--source-dir", help="Standardized local folder containing raw_videos/ and metadata/."
         ),
         target_hf_repo_id: str = typer.Option(..., "--target-hf-repo-id", help="Existing Hugging Face Dataset repo for canonical data."),
-        target_hf_prefix: str = typer.Option("", "--target-hf-prefix", help="Optional prefix inside the canonical HF Dataset repo."),
+        raw_import_id: str = typer.Option(..., "--raw-import-id", help="Version prefix inside the raw HF Dataset repo."),
         target_hf_repo_type: str = typer.Option("dataset", "--target-hf-repo-type"),
         target_hf_revision: str = typer.Option("main", "--target-hf-revision"),
-        staging_root: Path | None = typer.Option(None, "--staging-root", help="Temporary local staging root."),
     ) -> None:
-        """Import an organizer source into a canonical Hugging Face Dataset repo."""
-        result = import_source_to_hf_canonical(
-            source_uri,
+        """Upload standardized raw videos and metadata into a versioned HF Dataset prefix."""
+        result = upload_standardized_raw_to_hf(
+            source_dir,
             repo_id=target_hf_repo_id,
-            prefix=target_hf_prefix,
+            raw_import_id=raw_import_id,
             repo_type=target_hf_repo_type,
             revision=target_hf_revision,
-            staging_root=staging_root,
         )
         typer.echo(
-            f"Imported canonical videos={result.video_count} metadata={result.metadata_count}: {result.report_path}"
+            "Uploaded standardized raw "
+            f"videos={result.video_count} metadata={result.metadata_count} "
+            f"errors={result.error_count}: {result.report_path}"
         )
+        if result.error_count:
+            typer.echo(f"Standardized raw upload completed with errors. Review report: {result.report_path}", err=True)
+            raise typer.Exit(code=1)
 
     @app.command("drive-shadow")
     def drive_shadow(

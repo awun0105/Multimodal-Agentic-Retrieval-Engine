@@ -20,9 +20,9 @@ from system1.ingest.source_importer import (
     ArchiveStandardizeResult,
     DriveShadowResult,
     import_organizer_source,
-    import_source_to_hf_canonical,
     shadow_google_drive_folder,
     standardize_archive_source,
+    upload_standardized_raw_to_hf,
 )
 from system1.release.artifacts import write_worker_artifacts
 from system1.release.mini_seed import build_mini_seed
@@ -634,13 +634,13 @@ def test_import_organizer_source_rejects_duplicate_video_stems(tmp_path):
         import_organizer_source(str(source_root), tmp_path / "drive_data")
 
 
-def test_import_source_to_hf_canonical_uploads_standard_layout(monkeypatch, tmp_path):
-    source_root = tmp_path / "organizer_source"
-    (source_root / "videos").mkdir(parents=True)
+def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeypatch, tmp_path):
+    source_root = tmp_path / "standardized"
+    (source_root / "raw_videos").mkdir(parents=True)
     (source_root / "metadata").mkdir(parents=True)
     sample_video = Path("input/raw_videos/L21_V001.mp4").resolve()
     sample_metadata = Path("input/metadata/L21_V001.json").resolve()
-    shutil.copy2(sample_video, source_root / "videos" / "L21_V001.mp4")
+    shutil.copy2(sample_video, source_root / "raw_videos" / "L21_V001.mp4")
     shutil.copy2(sample_metadata, source_root / "metadata" / "L21_V001.json")
     uploaded: dict[str, bytes] = {}
 
@@ -652,17 +652,23 @@ def test_import_source_to_hf_canonical_uploads_standard_layout(monkeypatch, tmp_
 
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_file", fake_upload)
 
-    result = import_source_to_hf_canonical(
-        str(source_root),
+    result = upload_standardized_raw_to_hf(
+        source_root,
         repo_id="org/repo",
-        staging_root=tmp_path / "staging",
+        raw_import_id="canonical_dataset_v001",
     )
 
     assert result.video_count == 1
-    assert "raw_videos/L21_V001.mp4" in uploaded
-    assert "metadata/L21_V001.json" in uploaded
-    assert "manifests/canonical_file_manifest.jsonl" in uploaded
-    assert "manifests/canonical_import_report.json" in uploaded
+    assert result.metadata_count == 1
+    assert result.error_count == 0
+    assert "canonical_dataset_v001/raw_videos/L21_V001.mp4" in uploaded
+    assert "canonical_dataset_v001/metadata/L21_V001.json" in uploaded
+    assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
+    assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
+    manifest_row = json.loads(uploaded["canonical_dataset_v001/manifests/canonical_file_manifest.jsonl"].decode().splitlines()[0])
+    assert manifest_row["raw_repo_id"] == "org/repo"
+    assert manifest_row["raw_import_id"] == "canonical_dataset_v001"
+    assert manifest_row["video_path"] == "canonical_dataset_v001/raw_videos/L21_V001.mp4"
 
 
 def test_standardize_archive_source_flattens_zip_inputs(tmp_path):

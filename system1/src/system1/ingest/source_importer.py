@@ -7,8 +7,6 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-import threading
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,10 +30,12 @@ class SourceImportResult:
 
 
 @dataclass(frozen=True)
-class CanonicalImportResult:
+class CanonicalRawUploadResult:
     video_count: int
     metadata_count: int
-    report_path: Path | str
+    error_count: int
+    manifest_path: str
+    report_path: str
 
 
 @dataclass(frozen=True)
@@ -1239,161 +1239,153 @@ def _sanitize_stem(value: str) -> str:
     return sanitized.strip("_") or "item"
 
 
-def import_source_to_hf_canonical(
-    source_uri: str,
+def upload_standardized_raw_to_hf(
+    source_dir: Path | str,
     *,
     repo_id: str,
-    prefix: str = "",
+    raw_import_id: str,
     repo_type: str = "dataset",
     revision: str = "main",
     token: str | None = None,
-    staging_root: Path | str | None = None,
-) -> CanonicalImportResult:
-    """Normalize an organizer source into a Hugging Face Dataset repository using parallel multi-threaded uploads.
-
-    The source is materialized in a temporary staging directory only long enough
-    to discover and upload files. The target repository must already exist.
-    """
-    if not source_uri:
-        raise ValueError("source_uri is required")
+) -> CanonicalRawUploadResult:
+    """Upload a standardized raw_videos/metadata layout into a versioned HF raw repo prefix."""
+    source_root = Path(source_dir).expanduser().resolve()
+    raw_root = source_root / "raw_videos"
+    metadata_root = source_root / "metadata"
+    if not source_root.exists() or not source_root.is_dir():
+        raise FileNotFoundError(f"standardized source directory does not exist: {source_root}")
+    if not raw_root.exists() or not raw_root.is_dir():
+        raise FileNotFoundError(f"standardized source is missing raw_videos/: {raw_root}")
+    if not metadata_root.exists() or not metadata_root.is_dir():
+        raise FileNotFoundError(f"standardized source is missing metadata/: {metadata_root}")
     if not repo_id:
         raise ValueError("repo_id is required")
+    normalized_import_id = _normalize_raw_import_id(raw_import_id)
 
     store = HuggingFaceDatasetArtifactStore(
         repo_id=repo_id,
         repo_type=repo_type,
         revision=revision,
         token=token or os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
-        prefix=prefix,
+        prefix="",
     )
-    staging_parent = Path(staging_root).expanduser().resolve() if staging_root else None
-    if staging_parent:
-        staging_parent.mkdir(parents=True, exist_ok=True)
 
     existing_files = {path.as_posix() for path in store.list_files("")}
-    uploaded_rows: list[dict[str, Any]] = []
+    video_files = [
+        path
+        for path in sorted(raw_root.iterdir())
+        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS and not _exclude_raw_upload_file(path)
+    ]
+    metadata_files = [
+        path
+        for path in sorted(metadata_root.iterdir())
+        if path.is_file() and path.suffix.lower() in METADATA_EXTENSIONS and not _exclude_raw_upload_file(path)
+    ]
+    video_by_stem = _index_unique_by_stem(video_files, kind="video")
+    metadata_by_stem = _index_unique_by_stem(metadata_files, kind="metadata")
+    manifest_rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
-    with tempfile.TemporaryDirectory(prefix="system1_canonical_import_", dir=staging_parent) as tmp:
-        source_root = _materialize_source(source_uri, Path(tmp))
-        video_files = _find_video_files(source_root)
-        metadata_files = _find_metadata_files(source_root)
-        video_by_stem = _index_unique_by_stem(video_files, kind="video")
-        metadata_by_stem = _index_unique_by_stem(metadata_files, kind="metadata")
-
-        tasks: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="system1_raw_upload_metadata_") as tmp:
+        temp_root = Path(tmp)
         for video_id in sorted(video_by_stem):
             video_path = video_by_stem[video_id]
             metadata_path = metadata_by_stem.get(video_id)
             generated_metadata_path: Path | None = None
             if metadata_path is None:
-                generated_metadata_path = Path(tmp) / "generated_metadata" / f"{video_id}.json"
+                generated_metadata_path = temp_root / "generated_metadata" / f"{video_id}.json"
                 generated_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-                _write_minimal_metadata(generated_metadata_path, video_id, source_uri)
+                _write_minimal_metadata(generated_metadata_path, video_id, str(source_root))
                 metadata_path = generated_metadata_path
 
-            tasks.append({
-                "video_id": video_id,
-                "video_path": video_path,
-                "metadata_path": metadata_path,
-                "video_remote_path": PureCanonicalPath.raw_video(video_path.name),
-                "metadata_remote_path": PureCanonicalPath.metadata(f"{video_id}.json"),
-                "metadata_generated": generated_metadata_path is not None
-            })
-
-        # --- TỐI ƯU MẠNG BẰNG THREADPOOL: Upload song song đa luồng ---
-        existing_lock = threading.Lock()
-
-        def _worker_upload(task: dict[str, Any]) -> dict[str, Any]:
-            v_path: Path = task["video_path"]
-            m_path: Path = task["metadata_path"]
-            v_remote: str = task["video_remote_path"]
-            m_remote: str = task["metadata_remote_path"]
-
+            video_remote_path = _raw_upload_remote_path(normalized_import_id, "raw_videos", video_path.name)
+            metadata_filename = f"{video_id}.json"
+            metadata_remote_path = _raw_upload_remote_path(normalized_import_id, "metadata", metadata_filename)
             row = {
-                "video_id": task["video_id"],
-                "video_filename": v_path.name,
-                "metadata_filename": m_path.name,
-                "video_path": v_remote,
-                "metadata_path": m_remote,
-                "video_size_bytes": v_path.stat().st_size,
-                "metadata_size_bytes": m_path.stat().st_size,
-                "metadata_generated": task["metadata_generated"],
-                "status": "pending",
+                "video_id": video_id,
+                "video_filename": video_path.name,
+                "metadata_filename": metadata_filename,
+                "video_path": video_remote_path,
+                "metadata_path": metadata_remote_path,
+                "video_size_bytes": video_path.stat().st_size,
+                "metadata_size_bytes": metadata_path.stat().st_size,
+                "metadata_generated": generated_metadata_path is not None,
+                "raw_repo_id": repo_id,
+                "raw_import_id": normalized_import_id,
+                "status": "pass",
             }
             try:
-                # Đảm bảo thread-safe khi đọc/ghi vào set trạng thái file chung
-                with existing_lock:
-                    v_exists = v_remote in existing_files
-                if not v_exists:
-                    store.upload_file(v_path, v_remote)
-                    with existing_lock:
-                        existing_files.add(v_remote)
-
-                with existing_lock:
-                    m_exists = m_remote in existing_files
-                if not m_exists:
-                    store.upload_file(m_path, m_remote)
-                    with existing_lock:
-                        existing_files.add(m_remote)
-
-                row["status"] = "pass"
+                _upload_if_missing(store, existing_files, video_path, video_remote_path)
+                _upload_if_missing(store, existing_files, metadata_path, metadata_remote_path)
             except Exception as exc:
                 row["status"] = "failed"
                 row["error"] = str(exc)
-            return row
-
-        max_workers = min(32, (os.cpu_count() or 4) * 2)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = list(executor.map(_worker_upload, tasks))
-
-        for row in results:
-            uploaded_rows.append(row)
-            if row["status"] == "failed":
-                errors.append({"video_id": row["video_id"], "message": row.get("error", "Unknown error")})
+                errors.append({"video_id": video_id, "message": str(exc)})
+            manifest_rows.append(row)
 
     report = {
-        "status": "pass" if not errors else "fail",
-        "source_uri": source_uri,
-        "repo_id": repo_id,
+        "status": "pass" if not errors else "partial",
+        "raw_repo_id": repo_id,
+        "raw_import_id": normalized_import_id,
+        "source_dir": str(source_root),
         "repo_type": repo_type,
         "revision": revision,
-        "prefix": prefix,
-        "video_count": len([row for row in uploaded_rows if row["status"] == "pass"]),
-        "metadata_count": len([row for row in uploaded_rows if row["status"] == "pass"]),
+        "video_count": len(video_by_stem),
+        "metadata_count": len(manifest_rows),
+        "uploaded_pair_count": len([row for row in manifest_rows if row["status"] == "pass"]),
         "error_count": len(errors),
         "errors": errors,
     }
-    manifest_text = "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in uploaded_rows)
-    with tempfile.TemporaryDirectory(prefix="system1_canonical_manifest_") as tmp:
+    manifest_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_file_manifest.jsonl")
+    report_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_import_report.json")
+    manifest_text = "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in manifest_rows)
+    with tempfile.TemporaryDirectory(prefix="system1_raw_upload_manifest_") as tmp:
         tmp_path = Path(tmp)
         manifest_path = tmp_path / "canonical_file_manifest.jsonl"
         report_path = tmp_path / "canonical_import_report.json"
         manifest_path.write_text(manifest_text, encoding="utf-8")
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
-        store.upload_file(manifest_path, "manifests/canonical_file_manifest.jsonl")
-        uploaded_report = store.upload_file(report_path, "manifests/canonical_import_report.json")
+        _upload_if_missing(store, existing_files, manifest_path, manifest_remote_path)
+        _upload_if_missing(store, existing_files, report_path, report_remote_path)
 
-    if errors:
-        raise RuntimeError(f"canonical import failed for {len(errors)} file pair(s); report: {uploaded_report}")
-    return CanonicalImportResult(
+    return CanonicalRawUploadResult(
         video_count=int(report["video_count"]),
         metadata_count=int(report["metadata_count"]),
-        report_path=uploaded_report,
+        error_count=int(report["error_count"]),
+        manifest_path=manifest_remote_path,
+        report_path=report_remote_path,
     )
 
 
-class PureCanonicalPath:
-    @staticmethod
-    def raw_video(filename: str) -> str:
-        return f"raw_videos/{filename}"
+RAW_UPLOAD_EXCLUDED_NAMES = {
+    "standardize_archives_report.json",
+    "standardize_progress.jsonl",
+    "batch_manifest.csv",
+    "videos.parquet",
+    "media_store_manifest.parquet",
+    "drive_shadow_report.json",
+}
 
-    @staticmethod
-    def metadata(filename: str) -> str:
-        return f"metadata/{filename}"
+
+def _normalize_raw_import_id(raw_import_id: str) -> str:
+    normalized = raw_import_id.strip().strip("/")
+    if not normalized:
+        raise ValueError("raw_import_id is required")
+    parts = normalized.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"raw_import_id must be a relative repo prefix: {raw_import_id}")
+    return "/".join(parts)
 
 
-def _upload_if_needed(store: HuggingFaceDatasetArtifactStore, existing_files: set[str], source: Path, relative_path: str) -> None:
+def _raw_upload_remote_path(raw_import_id: str, *parts: str) -> str:
+    return "/".join([raw_import_id, *parts])
+
+
+def _exclude_raw_upload_file(path: Path) -> bool:
+    return path.name in RAW_UPLOAD_EXCLUDED_NAMES or (path.name.startswith("batch_") and path.suffix == ".txt")
+
+
+def _upload_if_missing(store: HuggingFaceDatasetArtifactStore, existing_files: set[str], source: Path, relative_path: str) -> None:
     if relative_path in existing_files:
         return
     store.upload_file(source, relative_path)
