@@ -278,8 +278,8 @@ def run_canonical_hf_ingestion(
         # --- HÀM TRỢ LÝ ĐA LUỒNG CHO HUGGING FACE ---
         def _process_hf_pair(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
             video_id = str(row["video_id"])
-            video_remote_path = str(row["video_path"])
-            metadata_remote_path = str(row["metadata_path"])
+            video_remote_path = _normalize_canonical_manifest_path(str(row["video_path"]), prefix)
+            metadata_remote_path = _normalize_canonical_manifest_path(str(row["metadata_path"]), prefix)
             video_filename = str(row.get("video_filename") or Path(video_remote_path).name)
             metadata_filename = str(row.get("metadata_filename") or Path(metadata_remote_path).name)
 
@@ -420,6 +420,14 @@ def _read_canonical_manifest(path: Path) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError("canonical manifest is empty")
     return rows
+
+
+def _normalize_canonical_manifest_path(remote_path: str, prefix: str) -> str:
+    normalized_path = remote_path.strip().lstrip("/")
+    normalized_prefix = prefix.strip().strip("/")
+    if normalized_prefix and normalized_path.startswith(f"{normalized_prefix}/"):
+        return normalized_path[len(normalized_prefix) + 1 :]
+    return normalized_path
 
 
 def _discover_local_inputs(source_root: Path, pairing_policy: str) -> dict[str, Any]:

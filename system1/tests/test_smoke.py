@@ -1273,6 +1273,80 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     assert mapping.loc[0, "canonical_repo_id"] == "org/repo"
 
 
+def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_path):
+    from system1.ingest.pipeline import run_ingestion
+
+    source_root = tmp_path / "canonical_repo"
+    prefix = "canonical_dataset_v002"
+    prefixed_root = source_root / prefix
+    (prefixed_root / "raw_videos").mkdir(parents=True)
+    (prefixed_root / "metadata").mkdir(parents=True)
+    rows = [
+        {
+            "video_id": "L21_V001",
+            "video_filename": "L21_V001.mp4",
+            "metadata_filename": "L21_V001.json",
+            "video_path": f"{prefix}/raw_videos/L21_V001.mp4",
+            "metadata_path": f"{prefix}/metadata/L21_V001.json",
+            "status": "pass",
+        },
+        {
+            "video_id": "L21_V002",
+            "video_filename": "L21_V002.mp4",
+            "metadata_filename": "L21_V002.json",
+            "video_path": "raw_videos/L21_V002.mp4",
+            "metadata_path": "metadata/L21_V002.json",
+            "status": "pass",
+        },
+    ]
+    for row in rows:
+        (prefixed_root / "raw_videos" / row["video_filename"]).write_bytes(b"not-a-real-video")
+        (prefixed_root / "metadata" / row["metadata_filename"]).write_text(
+            json.dumps({"title": row["video_id"]}) + "\n",
+            encoding="utf-8",
+        )
+    (prefixed_root / "manifests").mkdir()
+    (prefixed_root / "manifests" / "canonical_file_manifest.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    download_calls: list[str] = []
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def download_file(self, relative_path, target: Path):
+            download_calls.append(str(relative_path))
+            source = source_root / self.kwargs["prefix"] / str(relative_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            return target
+
+    monkeypatch.setattr("system1.ingest.pipeline.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    report_path = run_ingestion(
+        tmp_path / "output",
+        mode="debug_small_sample",
+        canonical_hf_repo_id="org/repo",
+        canonical_hf_prefix=prefix,
+        canonical_staging_root=tmp_path / "staging",
+        max_workers=1,
+    )
+    release_dir = report_path.parent.parent
+    mapping = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet").sort_values("video_id")
+
+    assert download_calls == [
+        "manifests/canonical_file_manifest.jsonl",
+        "raw_videos/L21_V001.mp4",
+        "metadata/L21_V001.json",
+        "raw_videos/L21_V002.mp4",
+        "metadata/L21_V002.json",
+    ]
+    assert mapping["canonical_video_path"].tolist() == ["raw_videos/L21_V001.mp4", "raw_videos/L21_V002.mp4"]
+    assert mapping["canonical_metadata_path"].tolist() == ["metadata/L21_V001.json", "metadata/L21_V002.json"]
+
+
 def test_release_sync_uploads_and_restores_release(monkeypatch, tmp_path):
     from system1.release.sync import download_release_from_hf, upload_release_to_hf
 
