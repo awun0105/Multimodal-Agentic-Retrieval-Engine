@@ -19,6 +19,8 @@ from system1.ingest.discovery import discover_media_inputs_tolerant, discover_pa
 from system1.ingest.source_importer import (
     ArchiveStandardizeResult,
     DriveShadowResult,
+    _hf_retry_sleep_seconds,
+    _is_hf_rate_limit_error,
     import_organizer_source,
     shadow_google_drive_folder,
     standardize_archive_source,
@@ -638,19 +640,22 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     source_root = tmp_path / "standardized"
     (source_root / "raw_videos").mkdir(parents=True)
     (source_root / "metadata").mkdir(parents=True)
-    sample_video = Path("input/raw_videos/L21_V001.mp4").resolve()
-    sample_metadata = Path("input/metadata/L21_V001.json").resolve()
-    shutil.copy2(sample_video, source_root / "raw_videos" / "L21_V001.mp4")
-    shutil.copy2(sample_metadata, source_root / "metadata" / "L21_V001.json")
+    (source_root / "raw_videos" / "L21_V001.mp4").write_bytes(b"video-1")
+    (source_root / "metadata" / "L21_V001.json").write_text('{"title":"sample 1"}\n', encoding="utf-8")
+    (source_root / "raw_videos" / "L21_V002.mp4").write_bytes(b"video-2")
+    (source_root / "metadata" / "L21_V002.json").write_text('{"title":"sample 2"}\n', encoding="utf-8")
     uploaded: dict[str, bytes] = {}
+    commit_batches: list[list[str]] = []
 
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": [])
 
-    def fake_upload(self, source: Path, relative_path):
-        uploaded[str(relative_path)] = source.read_bytes()
-        return Path("hf:/org/repo") / str(relative_path)
+    def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
+        commit_batches.append([str(relative_path) for _source, relative_path in files])
+        for source, relative_path in files:
+            uploaded[str(relative_path)] = source.read_bytes()
+        return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
 
-    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_file", fake_upload)
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
 
     result = upload_standardized_raw_to_hf(
         source_root,
@@ -658,17 +663,86 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         raw_import_id="canonical_dataset_v001",
     )
 
-    assert result.video_count == 1
-    assert result.metadata_count == 1
+    assert result.video_count == 2
+    assert result.metadata_count == 2
     assert result.error_count == 0
     assert "canonical_dataset_v001/raw_videos/L21_V001.mp4" in uploaded
+    assert "canonical_dataset_v001/raw_videos/L21_V002.mp4" in uploaded
     assert "canonical_dataset_v001/metadata/L21_V001.json" in uploaded
+    assert "canonical_dataset_v001/metadata/L21_V002.json" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
+    assert commit_batches == [
+        [
+            "canonical_dataset_v001/raw_videos/L21_V001.mp4",
+            "canonical_dataset_v001/raw_videos/L21_V002.mp4",
+        ],
+        [
+            "canonical_dataset_v001/metadata/L21_V001.json",
+            "canonical_dataset_v001/metadata/L21_V002.json",
+        ],
+        [
+            "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl",
+            "canonical_dataset_v001/manifests/canonical_import_report.json",
+        ],
+    ]
     manifest_row = json.loads(uploaded["canonical_dataset_v001/manifests/canonical_file_manifest.jsonl"].decode().splitlines()[0])
     assert manifest_row["raw_repo_id"] == "org/repo"
     assert manifest_row["raw_import_id"] == "canonical_dataset_v001"
     assert manifest_row["video_path"] == "canonical_dataset_v001/raw_videos/L21_V001.mp4"
+    assert manifest_row["video_upload_status"] == "uploaded"
+
+
+def test_upload_standardized_raw_to_hf_skips_existing_raw_files(monkeypatch, tmp_path):
+    source_root = tmp_path / "standardized"
+    (source_root / "raw_videos").mkdir(parents=True)
+    (source_root / "metadata").mkdir(parents=True)
+    (source_root / "raw_videos" / "A.mp4").write_bytes(b"video-a")
+    (source_root / "metadata" / "A.json").write_text('{"title":"A"}\n', encoding="utf-8")
+    (source_root / "raw_videos" / "B.mp4").write_bytes(b"video-b")
+    (source_root / "metadata" / "B.json").write_text('{"title":"B"}\n', encoding="utf-8")
+    existing = {
+        Path("canonical_dataset_v001/raw_videos/A.mp4"),
+        Path("canonical_dataset_v001/metadata/A.json"),
+    }
+    uploaded: list[str] = []
+
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": list(existing))
+
+    def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
+        for _source, relative_path in files:
+            uploaded.append(str(relative_path))
+        return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
+
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
+
+    result = upload_standardized_raw_to_hf(
+        source_root,
+        repo_id="org/repo",
+        raw_import_id="canonical_dataset_v001",
+    )
+
+    assert result.error_count == 0
+    assert "canonical_dataset_v001/raw_videos/A.mp4" not in uploaded
+    assert "canonical_dataset_v001/metadata/A.json" not in uploaded
+    assert "canonical_dataset_v001/raw_videos/B.mp4" in uploaded
+    assert "canonical_dataset_v001/metadata/B.json" in uploaded
+    assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
+    assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
+
+
+def test_upload_standardized_raw_rate_limit_helpers_parse_retry_after():
+    class Response:
+        status_code = 429
+        headers = {"Retry-After": "7"}
+
+    class RateLimitError(Exception):
+        response = Response()
+
+    error = RateLimitError("429 Too Many Requests. Retry after 7 seconds.")
+
+    assert _is_hf_rate_limit_error(error) is True
+    assert _hf_retry_sleep_seconds(error) == 7
 
 
 def test_standardize_archive_source_flattens_zip_inputs(tmp_path):

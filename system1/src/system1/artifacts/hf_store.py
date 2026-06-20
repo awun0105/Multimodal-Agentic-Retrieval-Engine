@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Sequence
 import json
 import os
 import shutil
 import tempfile
 
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 
 try:
     from huggingface_hub.utils import (
@@ -73,15 +73,25 @@ class HuggingFaceDatasetArtifactStore:
         return Path(f"hf://{self.repo_id}") / remote_path
 
     def exists(self, relative_path: str | Path) -> bool:
-        # --- 🚀 TỐI ƯU CỐT LÕI: Sử dụng file_info để check metadata thay vì hf_hub_download làm tải file gây chậm ---
         remote_path = self._remote_path(relative_path)
         try:
-            HfApi(token=self.token).file_info(
-                repo_id=self.repo_id,
-                repo_type=self.repo_type,
-                revision=self.revision,
-                filename=remote_path,
-            )
+            api = HfApi(token=self.token)
+            file_info = getattr(api, "file_info", None)
+            if file_info is not None:
+                file_info(
+                    repo_id=self.repo_id,
+                    repo_type=self.repo_type,
+                    revision=self.revision,
+                    filename=remote_path,
+                )
+            else:
+                hf_hub_download(
+                    repo_id=self.repo_id,
+                    repo_type=self.repo_type,
+                    revision=self.revision,
+                    filename=remote_path,
+                    token=self.token,
+                )
             return True
         except (EntryNotFoundError, LocalEntryNotFoundError):
             return False
@@ -103,6 +113,35 @@ class HuggingFaceDatasetArtifactStore:
             commit_message=f"Upload artifact {remote_path}",
         )
         return self.path(relative_path)
+
+    def upload_files(
+        self,
+        files: Sequence[tuple[Path, str | Path]],
+        *,
+        commit_message: str,
+        num_threads: int = 2,
+    ) -> list[Path]:
+        operations: list[CommitOperationAdd] = []
+        relative_paths: list[str | Path] = []
+        for source, relative_path in files:
+            if not source.exists():
+                raise FileNotFoundError(source)
+            if not source.is_file():
+                raise ValueError(f"Source must be a file: {source}")
+            remote_path = self._remote_path(relative_path)
+            operations.append(CommitOperationAdd(path_in_repo=remote_path, path_or_fileobj=str(source)))
+            relative_paths.append(relative_path)
+        if not operations:
+            return []
+        HfApi(token=self.token).create_commit(
+            repo_id=self.repo_id,
+            operations=operations,
+            commit_message=commit_message,
+            repo_type=self.repo_type,
+            revision=self.revision,
+            num_threads=num_threads,
+        )
+        return [self.path(relative_path) for relative_path in relative_paths]
 
     def download_file(self, relative_path: str | Path, target: Path) -> Path:
         remote_path = self._remote_path(relative_path)

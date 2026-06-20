@@ -23,6 +23,9 @@ METADATA_DIR_NAMES = {"metadata", "metadatas", "json", "annotations"}
 GENERIC_CONTEXT_NAMES = VIDEO_DIR_NAMES | METADATA_DIR_NAMES | {"dataset", "train", "val", "test", "data"}
 STANDARDIZE_TEMP_PREFIXES = ("member_stage_", "member_extract_", "archive_stage_", "source_stage_")
 BYTES_PER_GB = 1024 ** 3
+RAW_UPLOAD_BATCH_SIZE = 50
+RAW_UPLOAD_MAX_RETRIES = 5
+RAW_UPLOAD_RATE_LIMIT_DEFAULT_SLEEP_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -87,6 +90,19 @@ class _StandardizeSourceItem:
     display_path: str
     candidates: tuple[_StandardizeCandidate, ...]
     skipped_rows: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass
+class _RawUploadItem:
+    kind: str
+    video_id: str
+    local_path: Path
+    remote_path: str
+    index: int
+    total: int
+    size_bytes: int
+    status: str = "pending"
+    error: str | None = None
 
 
 def import_organizer_source(source_uri: str, data_root: Path | str) -> SourceImportResult:
@@ -1447,9 +1463,19 @@ def upload_standardized_raw_to_hf(
     ]
     video_by_stem = _index_unique_by_stem(video_files, kind="video")
     metadata_by_stem = _index_unique_by_stem(metadata_files, kind="metadata")
-    manifest_rows: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     resolved_progress_path = Path(progress_path).expanduser() if progress_path is not None else None
+    pair_records: list[dict[str, Any]] = []
+    pending_by_phase: dict[str, list[_RawUploadItem]] = {"raw_videos": [], "metadata": []}
+    skipped_by_phase: dict[str, int] = {"raw_videos": 0, "metadata": 0, "manifests": 0}
+
+    print(
+        "[upload-standardized-raw] "
+        f"phase=start repo_id={repo_id} raw_import_id={normalized_import_id} "
+        f"video_count={len(video_by_stem)} metadata_source_count={len(metadata_by_stem)} "
+        f"existing_remote_count={len(existing_files)} batch_size={RAW_UPLOAD_BATCH_SIZE}",
+        flush=True,
+    )
 
     with tempfile.TemporaryDirectory(prefix="system1_raw_upload_metadata_") as tmp:
         temp_root = Path(tmp)
@@ -1469,110 +1495,162 @@ def upload_standardized_raw_to_hf(
             metadata_remote_path = _raw_upload_remote_path(normalized_import_id, "metadata", metadata_filename)
             video_status = "skipped_existing"
             metadata_status = "skipped_existing"
-            video_error: str | None = None
-            metadata_error: str | None = None
-            row = {
-                "video_id": video_id,
-                "video_filename": video_path.name,
-                "metadata_filename": metadata_filename,
-                "video_path": video_remote_path,
-                "metadata_path": metadata_remote_path,
-                "video_size_bytes": video_path.stat().st_size,
-                "metadata_size_bytes": metadata_path.stat().st_size,
-                "metadata_generated": generated_metadata_path is not None,
-                "raw_repo_id": repo_id,
-                "raw_import_id": normalized_import_id,
-                "status": "pass",
-            }
-            try:
-                video_status = _upload_if_missing(store, existing_files, video_path, video_remote_path)
-            except Exception as exc:
-                video_status = "failed"
-                video_error = str(exc)
-                errors.append({"video_id": video_id, "kind": "video", "message": str(exc)})
-            _log_standardized_raw_upload_progress(
+            video_item = _RawUploadItem(
                 kind="video",
-                index=index,
-                total=total_files,
-                status=video_status,
+                video_id=video_id,
                 local_path=video_path,
                 remote_path=video_remote_path,
-            )
-            _append_jsonl_record(
-                resolved_progress_path,
-                {
-                    "kind": "video",
-                    "local_path": str(video_path),
-                    "remote_path": video_remote_path,
-                    "status": video_status,
-                    "size_bytes": video_path.stat().st_size,
-                    "error": video_error,
-                },
-            )
-
-            try:
-                metadata_status = _upload_if_missing(store, existing_files, metadata_path, metadata_remote_path)
-            except Exception as exc:
-                metadata_status = "failed"
-                metadata_error = str(exc)
-                errors.append({"video_id": video_id, "kind": "metadata", "message": str(exc)})
-            _log_standardized_raw_upload_progress(
-                kind="metadata",
                 index=index,
                 total=total_files,
-                status=metadata_status,
+                size_bytes=video_path.stat().st_size,
+            )
+            metadata_item = _RawUploadItem(
+                kind="metadata",
+                video_id=video_id,
                 local_path=metadata_path,
                 remote_path=metadata_remote_path,
+                index=index,
+                total=total_files,
+                size_bytes=metadata_path.stat().st_size,
             )
-            _append_jsonl_record(
-                resolved_progress_path,
+            pair_records.append(
                 {
-                    "kind": "metadata",
-                    "local_path": str(metadata_path),
-                    "remote_path": metadata_remote_path,
-                    "status": metadata_status,
-                    "size_bytes": metadata_path.stat().st_size,
-                    "error": metadata_error,
-                },
+                    "video_id": video_id,
+                    "video_filename": video_path.name,
+                    "metadata_filename": metadata_filename,
+                    "video_path": video_remote_path,
+                    "metadata_path": metadata_remote_path,
+                    "video_size_bytes": video_item.size_bytes,
+                    "metadata_size_bytes": metadata_item.size_bytes,
+                    "metadata_generated": generated_metadata_path is not None,
+                    "raw_repo_id": repo_id,
+                    "raw_import_id": normalized_import_id,
+                    "video_item": video_item,
+                    "metadata_item": metadata_item,
+                }
             )
-            if video_status == "failed" or metadata_status == "failed":
+            if video_remote_path in existing_files:
+                video_item.status = video_status
+                skipped_by_phase["raw_videos"] += 1
+                _log_standardized_raw_upload_progress(video_item)
+                _append_raw_upload_progress(resolved_progress_path, video_item)
+            else:
+                pending_by_phase["raw_videos"].append(video_item)
+
+            if metadata_remote_path in existing_files:
+                metadata_item.status = metadata_status
+                skipped_by_phase["metadata"] += 1
+                _log_standardized_raw_upload_progress(metadata_item)
+                _append_raw_upload_progress(resolved_progress_path, metadata_item)
+            else:
+                pending_by_phase["metadata"].append(metadata_item)
+
+        for phase in ("raw_videos", "metadata"):
+            phase_errors = _upload_raw_phase_batches(
+                store,
+                phase=phase,
+                items=pending_by_phase[phase],
+                skipped_count=skipped_by_phase[phase],
+                existing_files=existing_files,
+                progress_path=resolved_progress_path,
+                repo_id=repo_id,
+                raw_import_id=normalized_import_id,
+            )
+            errors.extend(phase_errors)
+
+        manifest_rows: list[dict[str, Any]] = []
+        for record in pair_records:
+            video_item = record["video_item"]
+            metadata_item = record["metadata_item"]
+            row = {
+                "video_id": record["video_id"],
+                "video_filename": record["video_filename"],
+                "metadata_filename": record["metadata_filename"],
+                "video_path": record["video_path"],
+                "metadata_path": record["metadata_path"],
+                "video_size_bytes": record["video_size_bytes"],
+                "metadata_size_bytes": record["metadata_size_bytes"],
+                "metadata_generated": record["metadata_generated"],
+                "raw_repo_id": record["raw_repo_id"],
+                "raw_import_id": record["raw_import_id"],
+                "video_upload_status": video_item.status,
+                "metadata_upload_status": metadata_item.status,
+                "status": "pass",
+            }
+            if video_item.status == "failed" or metadata_item.status == "failed":
                 row["status"] = "failed"
-                if video_error is not None:
-                    row["video_error"] = video_error
-                if metadata_error is not None:
-                    row["metadata_error"] = metadata_error
-                row["error"] = video_error or metadata_error or "upload failed"
+                if video_item.error is not None:
+                    row["video_error"] = video_item.error
+                if metadata_item.error is not None:
+                    row["metadata_error"] = metadata_item.error
+                row["error"] = video_item.error or metadata_item.error or "upload failed"
             manifest_rows.append(row)
 
-    report = {
-        "status": "pass" if not errors else "partial",
-        "raw_repo_id": repo_id,
-        "raw_import_id": normalized_import_id,
-        "source_dir": str(source_root),
-        "repo_type": repo_type,
-        "revision": revision,
-        "video_count": len(video_by_stem),
-        "metadata_count": len(manifest_rows),
-        "uploaded_pair_count": len([row for row in manifest_rows if row["status"] == "pass"]),
-        "error_count": len(errors),
-        "errors": errors,
-    }
-    manifest_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_file_manifest.jsonl")
-    report_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_import_report.json")
-    manifest_text = "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in manifest_rows)
-    with tempfile.TemporaryDirectory(prefix="system1_raw_upload_manifest_") as tmp:
-        tmp_path = Path(tmp)
-        manifest_path = tmp_path / "canonical_file_manifest.jsonl"
-        report_path = tmp_path / "canonical_import_report.json"
-        manifest_path.write_text(manifest_text, encoding="utf-8")
-        report_path.write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
-        _upload_if_missing(store, existing_files, manifest_path, manifest_remote_path)
-        _upload_if_missing(store, existing_files, report_path, report_remote_path)
+        report = {
+            "status": "pass" if not errors else "partial",
+            "raw_repo_id": repo_id,
+            "raw_import_id": normalized_import_id,
+            "source_dir": str(source_root),
+            "repo_type": repo_type,
+            "revision": revision,
+            "video_count": len(video_by_stem),
+            "metadata_count": len(manifest_rows),
+            "uploaded_pair_count": len([row for row in manifest_rows if row["status"] == "pass"]),
+            "error_count": len(errors),
+            "errors": errors,
+            "upload_method": "create_commit_batch",
+            "batch_size": RAW_UPLOAD_BATCH_SIZE,
+        }
+        manifest_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_file_manifest.jsonl")
+        report_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_import_report.json")
+        manifest_text = "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in manifest_rows)
+        with tempfile.TemporaryDirectory(prefix="system1_raw_upload_manifest_") as manifest_tmp:
+            tmp_path = Path(manifest_tmp)
+            manifest_path = tmp_path / "canonical_file_manifest.jsonl"
+            report_path = tmp_path / "canonical_import_report.json"
+            manifest_path.write_text(manifest_text, encoding="utf-8")
+            report_path.write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+            manifest_items = [
+                _RawUploadItem(
+                    kind="manifest",
+                    video_id="",
+                    local_path=manifest_path,
+                    remote_path=manifest_remote_path,
+                    index=1,
+                    total=2,
+                    size_bytes=manifest_path.stat().st_size,
+                ),
+                _RawUploadItem(
+                    kind="manifest",
+                    video_id="",
+                    local_path=report_path,
+                    remote_path=report_remote_path,
+                    index=2,
+                    total=2,
+                    size_bytes=report_path.stat().st_size,
+                ),
+            ]
+            manifest_errors = _upload_raw_phase_batches(
+                store,
+                phase="manifests",
+                items=manifest_items,
+                skipped_count=0,
+                existing_files=existing_files,
+                progress_path=resolved_progress_path,
+                repo_id=repo_id,
+                raw_import_id=normalized_import_id,
+            )
+            errors.extend(manifest_errors)
+        if errors:
+            report["status"] = "partial"
+            report["error_count"] = len(errors)
+            report["errors"] = errors
 
+    print("[upload-standardized-raw] phase=done", flush=True)
     return CanonicalRawUploadResult(
         video_count=int(report["video_count"]),
         metadata_count=int(report["metadata_count"]),
-        error_count=int(report["error_count"]),
+        error_count=len(errors),
         manifest_path=manifest_remote_path,
         report_path=report_remote_path,
     )
@@ -1606,33 +1684,150 @@ def _exclude_raw_upload_file(path: Path) -> bool:
     return path.name in RAW_UPLOAD_EXCLUDED_NAMES or (path.name.startswith("batch_") and path.suffix == ".txt")
 
 
-def _upload_if_missing(
+def _upload_raw_phase_batches(
     store: HuggingFaceDatasetArtifactStore,
-    existing_files: set[str],
-    source: Path,
-    relative_path: str,
-) -> str:
-    if relative_path in existing_files:
-        return "skipped_existing"
-    store.upload_file(source, relative_path)
-    existing_files.add(relative_path)
-    return "uploaded"
-
-
-def _log_standardized_raw_upload_progress(
     *,
-    kind: str,
-    index: int,
-    total: int,
-    status: str,
-    local_path: Path,
-    remote_path: str,
+    phase: str,
+    items: list[_RawUploadItem],
+    skipped_count: int,
+    existing_files: set[str],
+    progress_path: Path | None,
+    repo_id: str,
+    raw_import_id: str,
+) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    batches = list(_chunked_raw_upload_items(items, RAW_UPLOAD_BATCH_SIZE))
+    if not batches:
+        print(
+            f"[upload-standardized-raw] phase={phase} uploaded_batch=0/0 "
+            f"file_count=0 skipped_existing={skipped_count}",
+            flush=True,
+        )
+        return errors
+
+    for batch_index, batch in enumerate(batches, start=1):
+        try:
+            _upload_raw_batch_with_retry(
+                store,
+                batch,
+                phase=phase,
+                batch_index=batch_index,
+                batch_total=len(batches),
+                repo_id=repo_id,
+                raw_import_id=raw_import_id,
+            )
+        except Exception as exc:
+            message = str(exc)
+            for item in batch:
+                item.status = "failed"
+                item.error = message
+                _log_standardized_raw_upload_progress(item)
+                _append_raw_upload_progress(progress_path, item)
+                errors.append({"video_id": item.video_id, "kind": item.kind, "remote_path": item.remote_path, "message": message})
+            print(
+                f"[upload-standardized-raw] phase={phase} uploaded_batch={batch_index}/{len(batches)} "
+                f"file_count={len(batch)} skipped_existing={skipped_count} status=failed",
+                flush=True,
+            )
+            continue
+
+        for item in batch:
+            item.status = "uploaded"
+            item.error = None
+            existing_files.add(item.remote_path)
+            _log_standardized_raw_upload_progress(item)
+            _append_raw_upload_progress(progress_path, item)
+        print(
+            f"[upload-standardized-raw] phase={phase} uploaded_batch={batch_index}/{len(batches)} "
+            f"file_count={len(batch)} skipped_existing={skipped_count}",
+            flush=True,
+        )
+    return errors
+
+
+def _upload_raw_batch_with_retry(
+    store: HuggingFaceDatasetArtifactStore,
+    batch: list[_RawUploadItem],
+    *,
+    phase: str,
+    batch_index: int,
+    batch_total: int,
+    repo_id: str,
+    raw_import_id: str,
 ) -> None:
-    size_mb = local_path.stat().st_size / (1024 ** 2)
+    files = [(item.local_path, item.remote_path) for item in batch]
+    commit_message = (
+        f"Upload standardized raw {raw_import_id} {phase} "
+        f"batch {batch_index}/{batch_total}"
+    )
+    for retry_index in range(0, RAW_UPLOAD_MAX_RETRIES + 1):
+        try:
+            store.upload_files(files, commit_message=commit_message, num_threads=2)
+            return
+        except Exception as exc:
+            if not _is_hf_rate_limit_error(exc) or retry_index >= RAW_UPLOAD_MAX_RETRIES:
+                raise
+            sleep_seconds = _hf_retry_sleep_seconds(exc)
+            print(
+                f"[upload-standardized-raw] rate limited, sleep_seconds={sleep_seconds}, "
+                f"retry={retry_index + 1}/{RAW_UPLOAD_MAX_RETRIES}",
+                flush=True,
+            )
+            time.sleep(sleep_seconds)
+    raise RuntimeError(f"failed to upload batch to {repo_id}/{raw_import_id}: phase={phase}")
+
+
+def _chunked_raw_upload_items(items: list[_RawUploadItem], size: int) -> list[list[_RawUploadItem]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+def _is_hf_rate_limit_error(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code == 429:
+        return True
+    message = str(exc).lower()
+    return "429" in message or "too many requests" in message or "rate limit" in message
+
+
+def _hf_retry_sleep_seconds(exc: Exception) -> int:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers:
+        retry_after = headers.get("Retry-After") or headers.get("retry-after")
+        if retry_after:
+            try:
+                return max(1, int(float(retry_after)))
+            except ValueError:
+                pass
+    message = str(exc)
+    match = re.search(r"retry after\s+(\d+(?:\.\d+)?)\s*seconds", message, flags=re.IGNORECASE)
+    if match:
+        return max(1, int(float(match.group(1))))
+    return RAW_UPLOAD_RATE_LIMIT_DEFAULT_SLEEP_SECONDS
+
+
+def _log_standardized_raw_upload_progress(item: _RawUploadItem) -> None:
+    size_mb = item.size_bytes / (1024 ** 2)
     print(
-        f"[upload-standardized-raw] {kind}: {index}/{total} {status} "
-        f"{local_path.name} size={size_mb:.2f}MB remote={remote_path}",
+        f"[upload-standardized-raw] kind={item.kind} index={item.index}/{item.total} "
+        f"status={item.status} file={item.local_path.name} size_mb={size_mb:.2f} "
+        f"remote={item.remote_path}",
         flush=True,
+    )
+
+
+def _append_raw_upload_progress(progress_path: Path | None, item: _RawUploadItem) -> None:
+    _append_jsonl_record(
+        progress_path,
+        {
+            "kind": item.kind,
+            "local_path": str(item.local_path),
+            "remote_path": item.remote_path,
+            "status": item.status,
+            "size_bytes": item.size_bytes,
+            "error": item.error,
+        },
     )
 
 

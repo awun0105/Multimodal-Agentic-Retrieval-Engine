@@ -37,6 +37,36 @@ def test_upload_file_calls_hf_api(monkeypatch, tmp_path: Path) -> None:
     assert calls["path_or_fileobj"] == str(source)
 
 
+def test_upload_files_uses_single_create_commit(monkeypatch, tmp_path: Path) -> None:
+    calls = {}
+
+    class FakeApi:
+        def __init__(self, token=None):
+            calls["token"] = token
+
+        def create_commit(self, **kwargs):
+            calls.update(kwargs)
+            return "ok"
+
+    monkeypatch.setattr("system1.artifacts.hf_store.HfApi", FakeApi)
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo", token="secret")
+    first = tmp_path / "first.bin"
+    second = tmp_path / "second.bin"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+
+    uploaded = store.upload_files(
+        [(first, "raw/first.bin"), (second, "raw/second.bin")],
+        commit_message="Upload raw batch",
+    )
+
+    assert [str(path) for path in uploaded] == ["hf:/org/repo/raw/first.bin", "hf:/org/repo/raw/second.bin"]
+    assert calls["repo_id"] == "org/repo"
+    assert calls["repo_type"] == "dataset"
+    assert calls["commit_message"] == "Upload raw batch"
+    assert [operation.path_in_repo for operation in calls["operations"]] == ["raw/first.bin", "raw/second.bin"]
+
+
 def test_download_file_uses_hf_hub_download_and_copies(monkeypatch, tmp_path: Path) -> None:
     cached = tmp_path / "cached.bin"
     cached.write_bytes(b"payload")
