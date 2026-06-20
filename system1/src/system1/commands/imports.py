@@ -98,6 +98,8 @@ def register(app: typer.Typer) -> None:
             help="Comma-separated media extensions to move into raw_videos/.",
         ),
         overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite"),
+        resume: bool = typer.Option(True, "--resume/--no-resume", help="Resume completed source items from the progress JSONL."),
+        progress_path: Path | None = typer.Option(None, "--progress-path", help="Optional progress JSONL path."),
         allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when some archives/files fail."),
     ) -> None:
         """Extract zip archives and flatten media/JSON into System 1 input layout."""
@@ -108,6 +110,8 @@ def register(app: typer.Typer) -> None:
             temp_dir=temp_dir,
             media_extensions=extensions,
             overwrite=overwrite,
+            resume=resume,
+            progress_path=progress_path,
         )
         typer.echo(
             "Standardized archives "

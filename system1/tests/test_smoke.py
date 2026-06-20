@@ -2,6 +2,7 @@ import shutil
 import json
 import sqlite3
 import csv
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -702,7 +703,7 @@ def test_standardize_archive_source_flattens_zip_inputs(tmp_path):
     assert rerun.skipped_count == 3
     rerun_report = json.loads(rerun.report_path.read_text(encoding="utf-8"))
     assert rerun_report["status"] == "pass"
-    assert {item["status"] for item in rerun_report["items"]} == {"skipped_existing"}
+    assert {item["status"] for item in rerun_report["items"]} == {"skipped_completed"}
 
 
 def test_standardize_archive_source_handles_layout_loose_duplicates_and_missing_metadata(tmp_path):
@@ -755,6 +756,56 @@ def test_standardize_archive_source_handles_mixed_zip_and_loose_inputs(tmp_path)
     for stem in ["loose", "Z"]:
         assert (tmp_path / "standardized" / "raw_videos" / f"{stem}.mp4").exists()
         assert (tmp_path / "standardized" / "metadata" / f"{stem}.json").exists()
+
+
+def test_standardize_archive_source_resumes_completed_zip_items(tmp_path):
+    source_dir = tmp_path / "raw_dataset"
+    source_dir.mkdir()
+    target_dir = tmp_path / "standardized"
+    temp_dir = tmp_path / "temp_extract"
+
+    def make_zip(stem: str, payload: bytes) -> Path:
+        archive_root = tmp_path / f"{stem}_archive"
+        if archive_root.exists():
+            shutil.rmtree(archive_root)
+        archive_root.mkdir()
+        (archive_root / f"{stem}.mp4").write_bytes(payload)
+        (archive_root / f"{stem}.json").write_text(f'{{"title":"{stem}"}}\n', encoding="utf-8")
+        archive_path = source_dir / f"{stem}.zip"
+        if archive_path.exists():
+            archive_path.unlink()
+        shutil.make_archive(str(archive_path.with_suffix("")), "zip", archive_root)
+        return archive_path
+
+    zip_a = make_zip("A", b"video-a")
+    make_zip("B", b"video-b")
+
+    first = standardize_archive_source(source_dir, target_dir, temp_dir=temp_dir, resume=True)
+    assert first.zip_count == 2
+    assert first.video_count == 2
+    progress_path = target_dir / "standardize_progress.jsonl"
+    records = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
+    assert [record["status"] for record in records] == ["pass", "pass"]
+
+    second = standardize_archive_source(source_dir, target_dir, temp_dir=temp_dir, resume=True)
+    second_report = json.loads(second.report_path.read_text(encoding="utf-8"))
+    assert second_report["processed_count"] == 0
+    assert second_report["skipped_completed_count"] == 2
+
+    (target_dir / "raw_videos" / "A.mp4").unlink()
+    third = standardize_archive_source(source_dir, target_dir, temp_dir=temp_dir, resume=True)
+    third_report = json.loads(third.report_path.read_text(encoding="utf-8"))
+    assert third_report["processed_count"] == 1
+    assert third_report["skipped_completed_count"] == 1
+    assert (target_dir / "raw_videos" / "A.mp4").exists()
+
+    make_zip("A", b"video-a-changed")
+    os.utime(zip_a, None)
+    fourth = standardize_archive_source(source_dir, target_dir, temp_dir=temp_dir, resume=True, overwrite=True)
+    fourth_report = json.loads(fourth.report_path.read_text(encoding="utf-8"))
+    assert fourth_report["processed_count"] == 1
+    assert fourth_report["skipped_completed_count"] == 1
+    assert (target_dir / "raw_videos" / "A.mp4").read_bytes() == b"video-a-changed"
 
 
 def test_standardize_archives_cli_fails_on_partial_unless_allowed(tmp_path):
