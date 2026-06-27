@@ -682,6 +682,8 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
+    assert "canonical_dataset_v001/manifests/missing_metadata.json" in uploaded
+    assert "canonical_dataset_v001/manifests/unmatched_metadata.json" in uploaded
     assert commit_batches == [
         [
             "canonical_dataset_v001/raw_videos/L21_V001.mp4",
@@ -695,10 +697,14 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
             "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl",
             "canonical_dataset_v001/manifests/canonical_import_report.json",
             "canonical_dataset_v001/manifests/canonical_video_inventory.parquet",
+            "canonical_dataset_v001/manifests/missing_metadata.json",
+            "canonical_dataset_v001/manifests/unmatched_metadata.json",
         ],
     ]
     manifest_row = json.loads(uploaded["canonical_dataset_v001/manifests/canonical_file_manifest.jsonl"].decode().splitlines()[0])
     inventory = pd.read_parquet(BytesIO(uploaded["canonical_dataset_v001/manifests/canonical_video_inventory.parquet"]))
+    missing_audit = json.loads(uploaded["canonical_dataset_v001/manifests/missing_metadata.json"].decode())
+    unmatched_audit = json.loads(uploaded["canonical_dataset_v001/manifests/unmatched_metadata.json"].decode())
     assert manifest_row["raw_repo_id"] == "org/repo"
     assert manifest_row["raw_import_id"] == "canonical_dataset_v001"
     assert manifest_row["video_path"] == "canonical_dataset_v001/raw_videos/L21_V001.mp4"
@@ -716,6 +722,8 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         "canonical_dataset_v001/raw_videos/L21_V001.mp4",
         "canonical_dataset_v001/raw_videos/L21_V002.mp4",
     ]
+    assert missing_audit["missing_metadata"] == []
+    assert unmatched_audit["unmatched_metadata"] == []
     assert "kind=video index=" not in output
     assert "kind=metadata index=" not in output
     assert "Processing Files" not in output
@@ -723,7 +731,7 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     assert "phase=scan repo_id=org/repo raw_import_id=canonical_dataset_v001" in output
     assert "phase=videos batch=1/1 uploaded=2 skipped=0 failed=0" in output
     assert "phase=metadata batch=1/1 uploaded=2 skipped=0 failed=0" in output
-    assert "phase=manifests batch=1/1 uploaded=3 skipped=0 failed=0" in output
+    assert "phase=manifests batch=1/1 uploaded=5 skipped=0 failed=0" in output
     assert "phase=done repo_id=org/repo raw_import_id=canonical_dataset_v001" in output
     assert "report_path=canonical_dataset_v001/manifests/canonical_import_report.json" in output
 
@@ -765,6 +773,8 @@ def test_upload_standardized_raw_to_hf_skips_existing_raw_files(monkeypatch, tmp
     assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
+    assert "canonical_dataset_v001/manifests/missing_metadata.json" in uploaded
+    assert "canonical_dataset_v001/manifests/unmatched_metadata.json" in uploaded
 
 
 def test_upload_standardized_raw_to_hf_stages_drivefs_video_for_probe_and_upload(monkeypatch, tmp_path):

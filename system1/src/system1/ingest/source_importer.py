@@ -1483,6 +1483,46 @@ def _read_existing_pairing_audit_ids(path: Path, key: str) -> list[str]:
     return sorted(values)
 
 
+def _write_raw_upload_pairing_audit_file(
+    path: Path,
+    *,
+    existing_path: Path,
+    kind: str,
+    key: str,
+    ids: list[str],
+    raw_root: Path,
+    metadata_root: Path,
+) -> None:
+    """Write raw-upload pairing audit, preserving standardize audit payloads when present."""
+    if existing_path.exists() and existing_path.is_file():
+        try:
+            payload = json.loads(existing_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            path.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+            return
+
+    payload = {
+        "kind": kind,
+        "source": "raw_upload_pairing_audit",
+        "description": (
+            "Pairing audit generated during standardized raw upload because the "
+            "standardize pairing audit file was not available in source_dir."
+        ),
+        "count": len(ids),
+        key: ids,
+        "raw_video_dir": str(raw_root),
+        "metadata_dir": str(metadata_root),
+    }
+    if kind == "missing_metadata":
+        payload["missing_video_ids"] = ids
+        payload["minimal_metadata_generated"] = True
+    elif kind == "unmatched_metadata":
+        payload["unmatched_metadata_ids"] = ids
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def _report_extra_metadata(
     raw_root: Path,
     metadata_root: Path,
@@ -1710,12 +1750,16 @@ def upload_standardized_raw_to_hf(
         manifest_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_file_manifest.jsonl")
         report_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_import_report.json")
         inventory_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_video_inventory.parquet")
+        missing_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "missing_metadata.json")
+        unmatched_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "unmatched_metadata.json")
         manifest_text = "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in manifest_rows)
         with tempfile.TemporaryDirectory(prefix="system1_raw_upload_manifest_") as manifest_tmp:
             tmp_path = Path(manifest_tmp)
             manifest_path = tmp_path / "canonical_file_manifest.jsonl"
             report_path = tmp_path / "canonical_import_report.json"
             inventory_path = tmp_path / "canonical_video_inventory.parquet"
+            missing_path = tmp_path / "missing_metadata.json"
+            unmatched_path = tmp_path / "unmatched_metadata.json"
             manifest_path.write_text(manifest_text, encoding="utf-8")
             inventory_df = pd.DataFrame(
                 [_raw_upload_inventory_row(record) for record in pair_records],
@@ -1730,7 +1774,27 @@ def upload_standardized_raw_to_hf(
                 ],
             )
             inventory_df.to_parquet(inventory_path, index=False)
+            _write_raw_upload_pairing_audit_file(
+                missing_path,
+                existing_path=source_root / "missing_metadata.json",
+                kind="missing_metadata",
+                key="missing_metadata",
+                ids=sorted(set(video_by_stem) - set(metadata_by_stem)),
+                raw_root=raw_root,
+                metadata_root=metadata_root,
+            )
+            _write_raw_upload_pairing_audit_file(
+                unmatched_path,
+                existing_path=source_root / "unmatched_metadata.json",
+                kind="unmatched_metadata",
+                key="unmatched_metadata",
+                ids=sorted(set(metadata_by_stem) - set(video_by_stem)),
+                raw_root=raw_root,
+                metadata_root=metadata_root,
+            )
             report["inventory_path"] = inventory_remote_path
+            report["missing_metadata_path"] = missing_remote_path
+            report["unmatched_metadata_path"] = unmatched_remote_path
             report_path.write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
             manifest_items = [
                 _RawUploadItem(
@@ -1739,7 +1803,7 @@ def upload_standardized_raw_to_hf(
                     local_path=manifest_path,
                     remote_path=manifest_remote_path,
                     index=1,
-                    total=3,
+                    total=5,
                     size_bytes=manifest_path.stat().st_size,
                 ),
                 _RawUploadItem(
@@ -1748,7 +1812,7 @@ def upload_standardized_raw_to_hf(
                     local_path=report_path,
                     remote_path=report_remote_path,
                     index=2,
-                    total=3,
+                    total=5,
                     size_bytes=report_path.stat().st_size,
                 ),
                 _RawUploadItem(
@@ -1757,8 +1821,26 @@ def upload_standardized_raw_to_hf(
                     local_path=inventory_path,
                     remote_path=inventory_remote_path,
                     index=3,
-                    total=3,
+                    total=5,
                     size_bytes=inventory_path.stat().st_size,
+                ),
+                _RawUploadItem(
+                    kind="manifest",
+                    video_id="",
+                    local_path=missing_path,
+                    remote_path=missing_remote_path,
+                    index=4,
+                    total=5,
+                    size_bytes=missing_path.stat().st_size,
+                ),
+                _RawUploadItem(
+                    kind="manifest",
+                    video_id="",
+                    local_path=unmatched_path,
+                    remote_path=unmatched_remote_path,
+                    index=5,
+                    total=5,
+                    size_bytes=unmatched_path.stat().st_size,
                 ),
             ]
             manifest_errors = _upload_raw_phase_batches(
