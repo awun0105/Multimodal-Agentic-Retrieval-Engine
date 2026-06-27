@@ -93,6 +93,61 @@ ${AIC_RUNTIME_ROOT}/
 
 Any earlier `data/` tree in docs should be read as a logical app-ready artifact layout, not as repository layout.
 
+## Hugging Face Storage Contract
+
+System 1 shared storage uses two Hugging Face Dataset repos:
+
+```text
+AIC26_raw
+AIC26_release
+```
+
+`AIC26_raw` is the canonical raw dataset repo. It stores standardized raw
+videos, metadata, and raw-level inventory/import manifests only:
+
+```text
+AIC26_raw/canonical_raw_vXXX/raw_videos/
+AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
+AIC26_raw/canonical_raw_vXXX/manifests/missing_metadata.json
+AIC26_raw/canonical_raw_vXXX/manifests/unmatched_metadata.json
+```
+
+`AIC26_release` is the processed workspace plus final release repo:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/
+AIC26_release/canonical_release_vXXX/phase01_structure/
+AIC26_release/canonical_release_vXXX/phase02_features/
+AIC26_release/canonical_release_vXXX/phase03_merged/
+AIC26_release/canonical_release_vXXX/releases/
+AIC26_release/canonical_release_vXXX/checkpoints/
+AIC26_release/canonical_release_vXXX/logs/
+```
+
+`phase00_ingestion` contains Notebook 00 ingestion and batch-planning outputs.
+It is not a final runtime release. The final app-ready release for System 2 is:
+
+```text
+AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/
+```
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may also snapshot them under
+`phase00_ingestion/reports/` for a particular release run. Their authoritative
+source of truth is:
+
+```text
+AIC26_raw/canonical_raw_vXXX/manifests/
+```
+
+Legacy flat layout under
+`canonical_release_vXXX/{manifests,tables,raw_mapping}` is deprecated. New
+outputs must use
+`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,reports}`.
+
 ## Canonical IDs
 
 | ID | Format | Example | Notes |

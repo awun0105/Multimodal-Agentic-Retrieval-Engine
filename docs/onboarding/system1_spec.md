@@ -553,19 +553,67 @@ L21_V001_f0000250.webp
 
 # 7. Storage strategy
 
-## Cloud / Team Drive
+## Shared Hugging Face storage
 
-Dùng để lưu:
+Primary shared storage uses exactly two Hugging Face Dataset repos:
 
 ```text
-raw dataset
-manifests
-per-video ZIP artifacts
-merged releases
-logs
+AIC26_raw
+AIC26_release
 ```
 
-Không upload ảnh rời rạc hàng loạt.
+Do not use Team Drive as the primary shared storage contract and do not create
+a third Hugging Face repo for System 1 outputs.
+
+`AIC26_raw` is the canonical raw dataset repo. It contains only standardized
+raw videos, metadata, and raw-level inventory/import manifests:
+
+```text
+AIC26_raw/
+└── canonical_raw_v003/
+    ├── raw_videos/
+    │   ├── L21_V001.mp4
+    │   ├── L21_V002.mp4
+    │   └── ...
+    ├── metadata/
+    │   ├── L21_V001.json
+    │   ├── L21_V002.json
+    │   └── ...
+    └── manifests/
+        ├── canonical_file_manifest.jsonl
+        ├── canonical_import_report.json
+        ├── canonical_video_inventory.parquet
+        ├── missing_metadata.json
+        └── unmatched_metadata.json
+```
+
+`AIC26_raw` must not contain structure artifacts, feature artifacts, merged
+tables, `app.sqlite`, FAISS indexes, or final release packages.
+
+`missing_metadata.json` and `unmatched_metadata.json` SHOULD live in
+`AIC26_raw` as raw-level audit manifests because they describe the integrity of
+`raw_videos/` and `metadata/` for a `raw_import_id`. Their authoritative source
+of truth is:
+
+```text
+AIC26_raw/canonical_raw_vXXX/manifests/
+```
+
+`AIC26_release` MAY also contain copies of these audits under
+`phase00_ingestion/reports/` as release-run snapshots. Those copies are for
+reproducibility and debugging of that release run, not the source of truth.
+
+`AIC26_release` is the processed workspace plus final release repo. It contains
+phase00 ingestion output, phase01 structure artifacts, phase02 feature
+artifacts, phase03 merged staging, final app-ready releases, logs, and
+checkpoints. `AIC26_release` is not only the final release folder.
+
+Rule of thumb:
+
+```text
+AIC26_raw     = standardized source data that changes rarely.
+AIC26_release = artifacts and reports for a specific pipeline run/release.
+```
 
 ## Local machine / server
 
@@ -710,7 +758,8 @@ Mục tiêu của mô hình này:
 
 ## Vì sao dùng ZIP?
 
-Vì nếu upload hàng trăm nghìn keyframe/thumbnail rời rạc lên Google Drive:
+Vì nếu upload hàng trăm nghìn keyframe/thumbnail rời rạc lên shared storage
+như Hugging Face Dataset repos:
 
 ```text
 - chậm;
@@ -2605,8 +2654,8 @@ L21_V001/
 ## Input
 
 ```text
-02_structure_artifacts/
-03_feature_artifacts/
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/**/*.zip
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/**/*.zip
 ```
 
 ## Steps
@@ -3199,43 +3248,248 @@ Nguyên tắc:
 
 ---
 
-# 34. Team Drive structure
+# 34. Hugging Face storage contract
+
+System 1 uses two Hugging Face Dataset repos for shared storage:
 
 ```text
-aic2026_team_drive/
-├── 00_raw/
-│   ├── raw_videos/
-│   └── metadata/
-│
-├── 01_manifests/
-│   ├── videos.parquet
-│   ├── media_store_manifest.parquet
-│   ├── master_manifest.parquet
-│   ├── batch_manifest.csv
-│   ├── batch_000.txt
-│   └── ...
-│
-├── 02_structure_artifacts/
-│   ├── batch_000/
-│   │   ├── L21_V001_structure.zip
-│   │   └── ...
-│   └── batch_001/
-│
-├── 03_feature_artifacts/
-│   ├── L21_V001_features.zip
-│   └── ...
-│
-├── 04_merged_staging/
-│   ├── staging.duckdb
-│   └── merged_tables/
-│
-├── 05_release/
-│   ├── competition_dataset_v001.zip
-│   └── release_notes.md
-│
-└── 06_logs/
-    ├── validation_errors.jsonl
-    └── worker_errors/
+AIC26_raw
+AIC26_release
+```
+
+No Team Drive tree is part of the primary shared storage contract. Google
+Drive may still be used as an organizer handoff source or operator scratch
+area, but durable shared state belongs in Hugging Face.
+
+## `AIC26_raw`
+
+`AIC26_raw` is the canonical raw dataset repo:
+
+```text
+AIC26_raw/
+└── canonical_raw_v003/
+    ├── raw_videos/
+    │   ├── L21_V001.mp4
+    │   ├── L21_V002.mp4
+    │   └── ...
+    │
+    ├── metadata/
+    │   ├── L21_V001.json
+    │   ├── L21_V002.json
+    │   └── ...
+    │
+    └── manifests/
+        ├── canonical_file_manifest.jsonl
+        ├── canonical_import_report.json
+        └── canonical_video_inventory.parquet
+```
+
+`AIC26_raw` must not contain structure artifacts, feature artifacts, merged
+tables, `app.sqlite`, FAISS indexes, or final release packages.
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may carry snapshots of them under
+phase00 ingestion reports for a particular release run.
+
+```text
+AIC26_raw/canonical_raw_vXXX/manifests/
+```
+
+## `AIC26_release`
+
+`AIC26_release` is the processed workspace plus final release repo:
+
+```text
+AIC26_release/
+└── canonical_release_v003/
+    ├── phase00_ingestion/
+    │   ├── tables/
+    │   │   └── videos.parquet
+    │   ├── raw_mapping/
+    │   │   └── media_store_manifest.parquet
+    │   ├── manifests/
+    │   │   ├── batch_manifest.csv
+    │   │   ├── batch_000.txt
+    │   │   ├── batch_001.txt
+    │   │   └── ...
+    │   └── reports/
+    │       ├── dataset_report.json
+    │       ├── ingestion_errors.jsonl
+    │       ├── missing_metadata.json
+    │       ├── unmatched_metadata.json
+    │       ├── drive_shadow_report.json
+    │       ├── standardize_archives_report.json
+    │       └── standardize_progress.jsonl
+    │
+    ├── phase01_structure/
+    │   ├── artifacts/
+    │   │   ├── batch_000/
+    │   │   │   ├── L21_V001_structure.zip
+    │   │   │   ├── L21_V002_structure.zip
+    │   │   │   └── ...
+    │   │   └── batch_001/
+    │   │       └── ...
+    │   └── worker_reports/
+    │       ├── batch_000_worker_kaggle_A_01.json
+    │       └── ...
+    │
+    ├── phase02_features/
+    │   ├── artifacts/
+    │   │   ├── batch_000/
+    │   │   │   ├── L21_V001_features.zip
+    │   │   │   ├── L21_V002_features.zip
+    │   │   │   └── ...
+    │   │   └── batch_001/
+    │   │       └── ...
+    │   └── worker_reports/
+    │       ├── batch_000_worker_kaggle_A_01.json
+    │       └── ...
+    │
+    ├── phase03_merged/
+    │   ├── tables/
+    │   │   ├── videos.parquet
+    │   │   ├── keyframes.parquet
+    │   │   ├── shots.parquet
+    │   │   ├── scenes.parquet
+    │   │   ├── text_sources.parquet
+    │   │   ├── text_documents.parquet
+    │   │   ├── feature_availability.parquet
+    │   │   └── ...
+    │   ├── raw_mapping/
+    │   │   └── media_store_manifest.parquet
+    │   ├── manifests/
+    │   │   ├── artifact_manifest.parquet
+    │   │   ├── video_processing_status.parquet
+    │   │   └── merge_report.json
+    │   └── db/
+    │       └── staging.duckdb
+    │
+    ├── releases/
+    │   ├── competition_dataset_v001/
+    │   │   ├── db/
+    │   │   │   ├── app.sqlite
+    │   │   │   └── staging.duckdb
+    │   │   ├── indexes/
+    │   │   │   ├── visual.faiss
+    │   │   │   ├── vector_map.parquet
+    │   │   │   └── index_version.json
+    │   │   ├── media/
+    │   │   │   ├── keyframes/
+    │   │   │   ├── thumbnails/
+    │   │   │   └── dense_frame_cache/
+    │   │   ├── tables/
+    │   │   ├── manifests/
+    │   │   └── raw_mapping/
+    │   │
+    │   └── competition_dataset_v001.zip
+    │
+    ├── checkpoints/
+    │   ├── phase00_ingestion/
+    │   ├── phase01_structure/
+    │   ├── phase02_features/
+    │   └── phase03_release/
+    │
+    └── logs/
+        ├── validation_errors.jsonl
+        ├── artifact_validation_errors.jsonl
+        └── worker_errors/
+```
+
+`phase00_ingestion` is Notebook 00 output and is not the final runtime release.
+Only `releases/competition_dataset_vXXX/` is the final app-ready release for
+System 2.
+
+Legacy flat layout under:
+
+```text
+canonical_release_vXXX/manifests
+canonical_release_vXXX/tables
+canonical_release_vXXX/raw_mapping
+```
+
+is deprecated. A future implementation may read it temporarily for migration,
+but all new outputs must use:
+
+```text
+canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,reports}
+```
+
+## Notebook upload/download contract
+
+Notebook 00 uploads canonical raw output to:
+
+```text
+AIC26_raw/canonical_raw_vXXX/raw_videos/
+AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
+```
+
+Notebook 00 uploads phase00 ingestion and batch-planning outputs to:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_manifest.csv
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_*.txt
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/dataset_report.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/ingestion_errors.jsonl
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/missing_metadata.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/unmatched_metadata.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/drive_shadow_report.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/standardize_archives_report.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/standardize_progress.jsonl
+```
+
+`batch_manifest.csv` and `batch_*.txt` do not belong in `AIC26_raw` because
+they depend on a pipeline run: `num_batches`, worker strategy, execution
+profile, and release version.
+
+Notebook 01 reads:
+
+```text
+AIC26_raw/canonical_raw_vXXX/raw_videos/
+AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_XXX.txt
+```
+
+Notebook 01 uploads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/{batch_id}_{worker_id}.json
+```
+
+Notebook 02 reads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/*_structure.zip
+```
+
+Notebook 02 uploads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/{batch_id}_{worker_id}.json
+```
+
+Notebook 03 reads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/**/*.zip
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/**/*.zip
+```
+
+Notebook 03 uploads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase03_merged/
+AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/
+AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX.zip
+AIC26_release/canonical_release_vXXX/logs/
 ```
 
 ---

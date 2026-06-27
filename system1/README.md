@@ -33,16 +33,50 @@ input/metadata/L21_V001.json
 
 A clean clone will not run E2E until this input directory is prepared.
 
-Primary Notebook 00 workflow for Colab/Drive:
+Primary shared storage uses exactly two Hugging Face Dataset repos:
+
+```text
+AIC26_raw
+  canonical raw dataset repo: raw_videos/, metadata/, raw-level manifests,
+  raw-level missing/unmatched audit manifests
+  canonical_raw_vXXX/manifests/missing_metadata.json
+  canonical_raw_vXXX/manifests/unmatched_metadata.json
+
+AIC26_release
+  processed workspace + final release repo:
+  phase00_ingestion/, phase01_structure/, phase02_features/,
+  phase03_merged/, releases/, checkpoints/, logs/
+```
+
+Google Drive may still be used as an organizer handoff source or operator
+scratch area, but it is not the primary shared storage contract.
+
+Notebook 00 has two upload targets:
+
+```text
+Canonical raw output
+  -> AIC26_raw/canonical_raw_vXXX/
+
+Phase00 ingestion, batch planning, and pipeline reports
+  -> AIC26_release/canonical_release_vXXX/phase00_ingestion/
+```
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may also snapshot them under
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
+particular run.
+
+Notebook 00 workflow for Colab/local source preparation:
 
 ```text
 organizer Google Drive folder
   -> drive-shadow into your Drive folder
   -> standardize-archives into input/raw_videos + input/metadata
   -> validate standardized input
+  -> upload canonical raw files to AIC26_raw
   -> ingest
   -> assign-batches
-  -> sync-release to Hugging Face Dataset
+  -> upload phase00 ingestion outputs to AIC26_release/phase00_ingestion
 ```
 
 Use these commands directly only when debugging outside the notebook:
@@ -70,8 +104,8 @@ system1 assign-batches \
 
 system1 sync-release \
   --output output \
-  --hf-repo-id your-org/aic2026-phase00 \
-  --hf-prefix competition_dataset_v001
+  --hf-repo-id your-org/AIC26_release \
+  --hf-prefix canonical_release_v003/phase00_ingestion
 ```
 
 `standardize-archives` writes:
@@ -96,13 +130,14 @@ Fallback, use an existing standardized input directory:
 cp -R /path/to/sample/input ./input
 ```
 
-Worker notebooks restore phase00 output from the same HF Dataset repo:
+Worker notebooks restore phase00 output from `AIC26_release` and read raw
+videos/metadata from `AIC26_raw`:
 
 ```bash
 system1 restore-release \
   --release-id competition_dataset_v001 \
-  --hf-repo-id your-org/aic2026-phase00 \
-  --hf-prefix competition_dataset_v001 \
+  --hf-repo-id your-org/AIC26_release \
+  --hf-prefix canonical_release_v003/phase00_ingestion \
   --output output
 ```
 
@@ -189,6 +224,37 @@ Run notebooks in this order:
 Notebooks are thin orchestration only. They should call CLI commands or thin `src/system1` helpers, not reimplement pipeline logic.
 
 ## Release output layout
+
+Hugging Face shared layout:
+
+```text
+AIC26_release/canonical_release_vXXX/
+  phase00_ingestion/
+    tables/
+    raw_mapping/
+    manifests/
+    reports/
+  phase01_structure/
+  phase02_features/
+  phase03_merged/
+  releases/
+  checkpoints/
+  logs/
+```
+
+`phase00_ingestion` is not the final runtime release. The final app-ready
+release for System 2 lives under:
+
+```text
+AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/
+```
+
+Legacy flat paths under
+`canonical_release_vXXX/{manifests,tables,raw_mapping}` are deprecated. New
+outputs should use
+`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,reports}`.
+
+Local final release layout:
 
 ```text
 output/competition_dataset_v001/

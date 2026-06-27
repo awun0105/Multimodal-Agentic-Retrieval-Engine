@@ -52,10 +52,12 @@ Reports remain JSON files:
 - `unmatched_metadata.json`
 
 `missing_metadata.json` and `unmatched_metadata.json` are produced by the
-standardized raw-video/metadata pairing audit. They are not recomputed by
-canonical Hugging Face ingest, because HF ingest should consume the canonical
-raw manifest rather than re-scan or download raw videos solely for pairing
-audit.
+standardized raw-video/metadata pairing audit. They are raw-level audit
+manifests in `AIC26_raw/canonical_raw_vXXX/manifests/`. The release repo may
+also snapshot them under
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
+particular run. Canonical Hugging Face ingest should consume the raw-level
+manifests rather than re-scan or download raw videos solely for pairing audit.
 
 `upload-standardized-raw` also writes
 `manifests/canonical_video_inventory.parquet` beside the canonical file

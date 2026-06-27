@@ -96,6 +96,78 @@ emits `manifests/canonical_video_inventory.parquet` with one row per video:
 inventory by default and does not download `raw_videos/*.mp4` solely for media
 probing unless `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
 
+## Hugging Face Shared Storage Contract
+
+System 1 uses exactly two Hugging Face Dataset repos for shared state:
+
+```text
+AIC26_raw
+AIC26_release
+```
+
+`AIC26_raw` is the canonical raw dataset repo. It contains only standardized
+raw videos, metadata, and raw-level import/inventory manifests:
+
+```text
+AIC26_raw/canonical_raw_vXXX/raw_videos/
+AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
+AIC26_raw/canonical_raw_vXXX/manifests/missing_metadata.json
+AIC26_raw/canonical_raw_vXXX/manifests/unmatched_metadata.json
+```
+
+`AIC26_raw` does not contain structure artifacts, feature artifacts, merged
+tables, `app.sqlite`, FAISS, final releases, or run-specific batch planning
+files.
+
+`AIC26_release` is the processed workspace plus final release repo. It is not
+only the final release folder:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/
+AIC26_release/canonical_release_vXXX/phase01_structure/
+AIC26_release/canonical_release_vXXX/phase02_features/
+AIC26_release/canonical_release_vXXX/phase03_merged/
+AIC26_release/canonical_release_vXXX/releases/
+AIC26_release/canonical_release_vXXX/checkpoints/
+AIC26_release/canonical_release_vXXX/logs/
+```
+
+Notebook 00 writes phase00 ingestion outputs to:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_manifest.csv
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_*.txt
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/
+```
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may also snapshot them under
+`phase00_ingestion/reports/` for a particular release run. Their authoritative
+source of truth is:
+
+```text
+AIC26_raw/canonical_raw_vXXX/manifests/
+```
+
+Legacy flat paths under:
+
+```text
+canonical_release_vXXX/manifests
+canonical_release_vXXX/tables
+canonical_release_vXXX/raw_mapping
+```
+
+are deprecated. New output must use
+`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,reports}`.
+
+Google Drive may be used as an organizer handoff source or local operator
+scratch area. It is not the primary shared storage contract.
+
 ## Validation Gate
 
 System 1 must prove:

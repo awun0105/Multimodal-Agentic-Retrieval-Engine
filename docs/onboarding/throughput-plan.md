@@ -40,6 +40,47 @@ Mục tiêu của throughput plan:
 
 ---
 
+## 1.1. Shared storage contract
+
+System 1 shared storage uses exactly two Hugging Face Dataset repos:
+
+```text
+AIC26_raw
+AIC26_release
+```
+
+`AIC26_raw` is the canonical raw dataset repo. It contains standardized
+`raw_videos/`, `metadata/`, and raw-level manifests such as
+`canonical_file_manifest.jsonl`, `canonical_import_report.json`, and
+`canonical_video_inventory.parquet`.
+
+`AIC26_release` is the processed workspace plus final release repo. It contains:
+
+```text
+canonical_release_vXXX/
+  phase00_ingestion/
+  phase01_structure/
+  phase02_features/
+  phase03_merged/
+  releases/
+  checkpoints/
+  logs/
+```
+
+Notebook 00 uploads batch planning and ingestion reports to
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/`. This phase is not
+the final runtime release. The app-ready System 2 package lives under
+`AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/`.
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may also snapshot them under
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
+particular run.
+
+Legacy flat paths under
+`canonical_release_vXXX/{manifests,tables,raw_mapping}` are deprecated for new
+outputs.
+
 ## 2. Khái niệm chính
 
 ### 2.1. Teammate
@@ -1348,8 +1389,8 @@ Notebook này làm:
 - extract keyframes nếu cần
 - tạo thumbnails nếu cần
 - tạo structure artifact ZIP
-- upload artifact
-- ghi runtime report
+- upload artifact to AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/
+- ghi runtime report to AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/
 ```
 
 ---
@@ -1372,8 +1413,8 @@ Notebook này làm:
 - chạy ASR nếu mode yêu cầu và artifact chưa có
 - chạy object/caption nếu mode yêu cầu và artifact chưa có
 - tạo feature artifact ZIP
-- upload artifact
-- ghi runtime report
+- upload artifact to AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/
+- ghi runtime report to AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/
 ```
 
 ---
@@ -1389,7 +1430,8 @@ Team lead hoặc một worker chính chạy:
 Notebook này làm:
 
 ```text
-- scan artifact ZIP
+- scan artifact ZIP from AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/
+- scan artifact ZIP from AIC26_release/canonical_release_vXXX/phase02_features/artifacts/
 - validate manifest/checksum/schema
 - merge parquet tables
 - build text_documents
@@ -1399,7 +1441,7 @@ Notebook này làm:
 - build FAISS + vector_map
 - write validation_report
 - chạy smoke test
-- tạo release package
+- upload phase03_merged, releases, and logs under AIC26_release/canonical_release_vXXX/
 ```
 
 ---
