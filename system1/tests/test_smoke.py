@@ -772,6 +772,15 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     assert manifest_row["video_upload_status"] == "uploaded"
     assert set(inventory.columns) == {
         "video_id",
+        "video_filename",
+        "metadata_filename",
+        "video_size_bytes",
+        "metadata_size_bytes",
+        "canonical_backend",
+        "canonical_repo_id",
+        "canonical_repo_type",
+        "canonical_revision",
+        "canonical_prefix",
         "canonical_video_path",
         "canonical_metadata_path",
         "duration_sec",
@@ -779,7 +788,13 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         "frame_count",
         "file_size_bytes",
     }
-    assert inventory.sort_values("video_id")["canonical_video_path"].tolist() == [
+    sorted_inventory = inventory.sort_values("video_id")
+    assert sorted_inventory["canonical_prefix"].tolist() == [
+        "canonical_dataset_v001",
+        "canonical_dataset_v001",
+    ]
+    assert sorted_inventory["canonical_repo_id"].tolist() == ["org/repo", "org/repo"]
+    assert sorted_inventory["canonical_video_path"].tolist() == [
         "canonical_dataset_v001/raw_videos/L21_V001.mp4",
         "canonical_dataset_v001/raw_videos/L21_V002.mp4",
     ]
@@ -1444,8 +1459,8 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     source_root = tmp_path / "canonical_repo"
     (source_root / "raw_videos").mkdir(parents=True)
     (source_root / "metadata").mkdir(parents=True)
-    shutil.copy2(Path("input/raw_videos/L21_V001.mp4").resolve(), source_root / "raw_videos" / "L21_V001.mp4")
-    shutil.copy2(Path("input/metadata/L21_V001.json").resolve(), source_root / "metadata" / "L21_V001.json")
+    (source_root / "raw_videos" / "L21_V001.mp4").write_bytes(b"not-a-real-video")
+    (source_root / "metadata" / "L21_V001.json").write_text('{"title":"sample"}\n', encoding="utf-8")
     manifest = {
         "video_id": "L21_V001",
         "video_filename": "L21_V001.mp4",
@@ -1458,6 +1473,14 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     }
     (source_root / "manifests").mkdir()
     (source_root / "manifests" / "canonical_file_manifest.jsonl").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    (source_root / "manifests" / "missing_metadata.json").write_text(
+        json.dumps({"kind": "missing_metadata", "count": 0, "missing_metadata": []}) + "\n",
+        encoding="utf-8",
+    )
+    (source_root / "manifests" / "unmatched_metadata.json").write_text(
+        json.dumps({"kind": "unmatched_metadata", "count": 0, "unmatched_metadata": []}) + "\n",
+        encoding="utf-8",
+    )
     pd.DataFrame(
         [
             {
@@ -1503,9 +1526,15 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     assert videos.loc[0, "frame_count"] == 313
     assert mapping.loc[0, "canonical_backend"] == "hf_dataset"
     assert mapping.loc[0, "canonical_repo_id"] == "org/repo"
+    missing_audit = json.loads((release_dir / "manifests" / "missing_metadata.json").read_text(encoding="utf-8"))
+    unmatched_audit = json.loads((release_dir / "manifests" / "unmatched_metadata.json").read_text(encoding="utf-8"))
+    assert missing_audit["missing_metadata"] == []
+    assert unmatched_audit["unmatched_metadata"] == []
     assert download_calls == [
         "manifests/canonical_file_manifest.jsonl",
         "manifests/canonical_video_inventory.parquet",
+        "manifests/missing_metadata.json",
+        "manifests/unmatched_metadata.json",
         "metadata/L21_V001.json",
     ]
 
@@ -1598,6 +1627,8 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
     assert download_calls == [
         "manifests/canonical_file_manifest.jsonl",
         "manifests/canonical_video_inventory.parquet",
+        "manifests/missing_metadata.json",
+        "manifests/unmatched_metadata.json",
         "metadata/L21_V001.json",
         "metadata/L21_V002.json",
     ]
@@ -1837,3 +1868,45 @@ def test_release_sync_uploads_and_restores_release(monkeypatch, tmp_path):
     assert "releases/competition_dataset_v001/manifests/release_sync_manifest.json" in uploaded
     assert (restored_root / "competition_dataset_v001" / "tables" / "videos.parquet").read_bytes() == b"videos"
     assert restore.file_count == 3
+
+
+def test_phase00_ingestion_sync_maps_legacy_release_layout(monkeypatch, tmp_path):
+    from system1.release.sync import upload_phase00_ingestion_to_hf
+
+    release_dir = tmp_path / "output" / "canonical_release_v003"
+    (release_dir / "tables").mkdir(parents=True)
+    (release_dir / "raw_mapping").mkdir(parents=True)
+    (release_dir / "manifests").mkdir(parents=True)
+    (release_dir / "tables" / "videos.parquet").write_bytes(b"videos")
+    (release_dir / "raw_mapping" / "media_store_manifest.parquet").write_bytes(b"mapping")
+    (release_dir / "manifests" / "batch_manifest.csv").write_text("batch_id\n", encoding="utf-8")
+    (release_dir / "manifests" / "batch_000.txt").write_text("L21_V001\n", encoding="utf-8")
+    (release_dir / "manifests" / "dataset_report.json").write_text('{"ok": true}\n', encoding="utf-8")
+    (release_dir / "manifests" / "ingestion_errors.jsonl").write_text("", encoding="utf-8")
+    (release_dir / "manifests" / "missing_metadata.json").write_text('{"count": 0}\n', encoding="utf-8")
+    (release_dir / "manifests" / "unmatched_metadata.json").write_text('{"count": 0}\n', encoding="utf-8")
+    uploaded: dict[str, bytes] = {}
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def upload_file(self, source: Path, relative_path):
+            uploaded[str(relative_path)] = source.read_bytes()
+            return Path("hf:/org/repo") / str(relative_path)
+
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    result = upload_phase00_ingestion_to_hf(release_dir, repo_id="org/repo")
+
+    assert result.file_count == 8
+    assert "canonical_release_v003/phase00_ingestion/tables/videos.parquet" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/manifests/batch_manifest.csv" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/dataset_report.json" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/ingestion_errors.jsonl" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/missing_metadata.json" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/unmatched_metadata.json" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/phase00_sync_manifest.json" in uploaded
+    assert not any(path.startswith("releases/") for path in uploaded)

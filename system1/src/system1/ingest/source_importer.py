@@ -58,6 +58,15 @@ class CanonicalRawUploadResult:
 
 
 @dataclass(frozen=True)
+class CanonicalRawImportResult:
+    standardize_result: ArchiveStandardizeResult
+    upload_result: CanonicalRawUploadResult
+    stage_root: Path
+    standardized_dir: Path
+    cleaned_stage: bool
+
+
+@dataclass(frozen=True)
 class DriveShadowResult:
     source_folder_id: str
     dest_folder_id: str
@@ -630,6 +639,94 @@ def wait_for_drive_sync(
         )
         os.system("sync")
         time.sleep(sleep_seconds)
+
+
+def import_canonical_raw_to_hf(
+    source_dir: Path | str,
+    *,
+    repo_id: str,
+    raw_import_id: str,
+    local_stage_root: Path | str,
+    repo_type: str = "dataset",
+    revision: str = "main",
+    token: str | None = None,
+    media_extensions: set[str] | None = None,
+    overwrite: bool = False,
+    resume: bool = True,
+    min_free_gb: float = 15.0,
+    drive_sync_sleep_seconds: int = 30,
+    cleanup_every_files: int = 1,
+    cleanup_every_gb: float = 50.0,
+    keep_stage: bool = False,
+    progress_path: Path | str | None = None,
+) -> CanonicalRawImportResult:
+    """Standardize a raw source in local temp, upload canonical raw to HF, and cleanup.
+
+    This is a package-level orchestrator for notebook-friendly environments such as
+    Colab/Kaggle: source files can live on Drive/local/zip folders, but the heavy
+    standardize/probe/upload path happens inside a local stage folder first.
+    """
+    source_root = Path(source_dir).expanduser().resolve()
+    stage_base = Path(local_stage_root).expanduser().resolve()
+    if not source_root.exists() or not source_root.is_dir():
+        raise FileNotFoundError(f"source_dir does not exist: {source_root}")
+    if not repo_id:
+        raise ValueError("repo_id is required")
+    normalized_import_id = _normalize_raw_import_id(raw_import_id)
+
+    stage_root = stage_base / f"import_canonical_raw_{_sanitize_stem(normalized_import_id)}"
+    standardized_dir = stage_root / "standardized"
+    temp_extract_dir = stage_root / "temp_extract"
+    progress_root = stage_root / "progress"
+    standardize_progress_path = progress_root / "standardize_progress.jsonl"
+    raw_upload_progress_path = progress_root / "raw_upload_progress.jsonl"
+    if progress_path is not None:
+        raw_upload_progress_path = Path(progress_path).expanduser().resolve()
+
+    if not resume and stage_root.exists():
+        shutil.rmtree(stage_root, ignore_errors=True)
+    stage_root.mkdir(parents=True, exist_ok=True)
+    progress_root.mkdir(parents=True, exist_ok=True)
+
+    cleaned_stage = False
+    try:
+        standardize_result = standardize_archive_source(
+            source_root,
+            standardized_dir,
+            temp_dir=temp_extract_dir,
+            media_extensions=media_extensions,
+            overwrite=overwrite,
+            resume=resume,
+            progress_path=standardize_progress_path,
+            min_free_gb=min_free_gb,
+            drive_sync_sleep_seconds=drive_sync_sleep_seconds,
+            cleanup_every_files=cleanup_every_files,
+            cleanup_every_gb=cleanup_every_gb,
+        )
+        upload_result = upload_standardized_raw_to_hf(
+            standardized_dir,
+            repo_id=repo_id,
+            raw_import_id=normalized_import_id,
+            repo_type=repo_type,
+            revision=revision,
+            token=token,
+            progress_path=raw_upload_progress_path,
+        )
+        if not keep_stage:
+            shutil.rmtree(stage_root, ignore_errors=True)
+            cleaned_stage = True
+        return CanonicalRawImportResult(
+            standardize_result=standardize_result,
+            upload_result=upload_result,
+            stage_root=stage_root,
+            standardized_dir=standardized_dir,
+            cleaned_stage=cleaned_stage,
+        )
+    except Exception:
+        if not keep_stage:
+            # Keep failed stages for debugging by default; callers can delete stage_root after inspecting.
+            pass
+        raise
 
 
 @dataclass
@@ -1762,9 +1859,18 @@ def upload_standardized_raw_to_hf(
             unmatched_path = tmp_path / "unmatched_metadata.json"
             manifest_path.write_text(manifest_text, encoding="utf-8")
             inventory_df = pd.DataFrame(
-                [_raw_upload_inventory_row(record) for record in pair_records],
+                [_raw_upload_inventory_row(record, repo_type=repo_type, revision=revision) for record in pair_records],
                 columns=[
                     "video_id",
+                    "video_filename",
+                    "metadata_filename",
+                    "video_size_bytes",
+                    "metadata_size_bytes",
+                    "canonical_backend",
+                    "canonical_repo_id",
+                    "canonical_repo_type",
+                    "canonical_revision",
+                    "canonical_prefix",
                     "canonical_video_path",
                     "canonical_metadata_path",
                     "duration_sec",
@@ -1875,16 +1981,31 @@ def upload_standardized_raw_to_hf(
     )
 
 
-def _raw_upload_inventory_row(record: dict[str, Any]) -> dict[str, Any]:
+def _raw_upload_inventory_row(
+    record: dict[str, Any],
+    *,
+    repo_type: str,
+    revision: str,
+) -> dict[str, Any]:
     video_item = record["video_item"]
     probe = _probe_video_drivefs_safe(video_item.local_path)
     return {
         "video_id": record["video_id"],
+        "video_filename": record["video_filename"],
+        "metadata_filename": record["metadata_filename"],
+        "video_size_bytes": record["video_size_bytes"],
+        "metadata_size_bytes": record["metadata_size_bytes"],
+        "canonical_backend": "hf_dataset",
+        "canonical_repo_id": record["raw_repo_id"],
+        "canonical_repo_type": repo_type,
+        "canonical_revision": revision,
+        "canonical_prefix": record["raw_import_id"],
         "canonical_video_path": record["video_path"],
         "canonical_metadata_path": record["metadata_path"],
         "duration_sec": probe.duration_seconds,
         "fps": probe.fps_detected,
         "frame_count": probe.frame_count,
+        # Backward-compatible alias used by existing HF ingest readers.
         "file_size_bytes": record["video_size_bytes"],
     }
 

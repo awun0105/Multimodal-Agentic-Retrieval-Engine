@@ -5,6 +5,7 @@ from pathlib import Path
 import typer
 
 from system1.ingest.source_importer import (
+    import_canonical_raw_to_hf,
     import_organizer_source,
     shadow_google_drive_folder,
     standardize_archive_source,
@@ -55,6 +56,64 @@ def register(app: typer.Typer) -> None:
         if result.error_count:
             typer.echo(f"Standardized raw upload completed with errors. Review report: {result.report_path}", err=True)
             raise typer.Exit(code=1)
+
+    @app.command("import-canonical-raw")
+    def import_canonical_raw(
+        source_dir: Path = typer.Option(
+            ..., "--source-dir", help="Source folder containing raw videos/metadata or organizer zip files."
+        ),
+        target_hf_repo_id: str = typer.Option(..., "--target-hf-repo-id", help="Existing Hugging Face Dataset repo for canonical raw data."),
+        raw_import_id: str = typer.Option(..., "--raw-import-id", help="Version prefix inside the raw HF Dataset repo."),
+        local_stage_root: Path = typer.Option(Path("/content/aic_stage"), "--local-stage-root", help="Local runtime staging root for standardize/probe/upload."),
+        target_hf_repo_type: str = typer.Option("dataset", "--target-hf-repo-type"),
+        target_hf_revision: str = typer.Option("main", "--target-hf-revision"),
+        media_extensions: str = typer.Option(
+            ".mp4,.mov,.mkv,.avi,.webm,.wav",
+            "--media-extensions",
+            help="Comma-separated media extensions to move into raw_videos/.",
+        ),
+        overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite"),
+        resume: bool = typer.Option(True, "--resume/--no-resume"),
+        keep_stage: bool = typer.Option(False, "--keep-stage/--cleanup-stage", help="Keep local stage after successful upload."),
+        min_free_gb: float = typer.Option(15.0, "--min-free-gb"),
+        drive_sync_sleep_seconds: int = typer.Option(30, "--drive-sync-sleep-seconds"),
+        cleanup_every_files: int = typer.Option(1, "--cleanup-every-files"),
+        cleanup_every_gb: float = typer.Option(50.0, "--cleanup-every-gb"),
+        allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when raw upload reports errors."),
+    ) -> None:
+        """Standardize a source in local temp and upload it as canonical HF raw."""
+        extensions = {item.strip().lower() for item in media_extensions.split(",") if item.strip()}
+        result = import_canonical_raw_to_hf(
+            source_dir,
+            repo_id=target_hf_repo_id,
+            raw_import_id=raw_import_id,
+            local_stage_root=local_stage_root,
+            repo_type=target_hf_repo_type,
+            revision=target_hf_revision,
+            media_extensions=extensions,
+            overwrite=overwrite,
+            resume=resume,
+            keep_stage=keep_stage,
+            min_free_gb=min_free_gb,
+            drive_sync_sleep_seconds=drive_sync_sleep_seconds,
+            cleanup_every_files=cleanup_every_files,
+            cleanup_every_gb=cleanup_every_gb,
+        )
+        typer.echo(
+            "Imported canonical raw "
+            f"zips={result.standardize_result.zip_count} "
+            f"media={result.standardize_result.video_count} "
+            f"metadata={result.standardize_result.metadata_count} "
+            f"upload_errors={result.upload_result.error_count} "
+            f"stage_root={result.stage_root} cleaned_stage={result.cleaned_stage}"
+        )
+        if result.upload_result.error_count and not allow_partial:
+            typer.echo(
+                f"Canonical raw import completed with upload errors. Review report: {result.upload_result.report_path}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
 
     @app.command("drive-shadow")
     def drive_shadow(
