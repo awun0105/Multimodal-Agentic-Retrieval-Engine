@@ -123,6 +123,30 @@ SQLite stores logical refs only. It must not store absolute or machine-specific 
 
 Backend resolves refs through `MediaStorePort`. MVP implementation is `LocalFileMediaStore` using `${AIC_DATA_ROOT}`. MinIO is optional future work behind the same port.
 
+## Canonical Raw Upload Inventory
+
+The versioned raw Hugging Face Dataset prefix includes a small probe inventory
+beside the canonical file manifest:
+
+```text
+<raw_import_id>/manifests/canonical_video_inventory.parquet
+```
+
+This inventory is produced while `upload-standardized-raw` still has local
+access to `raw_videos/`. It must contain one row per canonical video with:
+
+- `video_id`
+- `canonical_video_path`
+- `canonical_metadata_path`
+- `duration_sec`
+- `fps`
+- `frame_count`
+- `file_size_bytes`
+
+HF canonical ingest uses this inventory for duration, FPS, frame count, and
+file size. It must not download `raw_videos/*.mp4` only to probe media unless a
+debug/operator fallback explicitly enables that behavior.
+
 ## Data Categories
 
 The app-ready contract covers these categories:

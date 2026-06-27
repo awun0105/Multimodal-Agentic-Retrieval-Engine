@@ -70,18 +70,22 @@ def test_upload_files_uses_single_create_commit(monkeypatch, tmp_path: Path) -> 
 def test_download_file_uses_hf_hub_download_and_copies(monkeypatch, tmp_path: Path) -> None:
     cached = tmp_path / "cached.bin"
     cached.write_bytes(b"payload")
+    cache_dir = tmp_path / "hf-cache"
+    calls = {}
 
     def fake_download(**kwargs):
+        calls.update(kwargs)
         return str(cached)
 
     monkeypatch.setattr("system1.artifacts.hf_store.hf_hub_download", fake_download)
     store = HuggingFaceDatasetArtifactStore(repo_id="org/repo")
     target = tmp_path / "downloads" / "copy.bin"
 
-    downloaded = store.download_file("checkpoints/a.zip", target)
+    downloaded = store.download_file("checkpoints/a.zip", target, cache_dir=cache_dir)
 
     assert downloaded == target
     assert target.read_bytes() == b"payload"
+    assert calls["cache_dir"] == str(cache_dir)
 
 
 def test_exists_returns_true_when_download_succeeds(monkeypatch) -> None:

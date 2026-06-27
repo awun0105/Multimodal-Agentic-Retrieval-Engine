@@ -1,4 +1,7 @@
-fps_expected_default: 25
+fps_policy:
+  scope: per_video
+  source: ffprobe
+  planning_expected_fps: 25
 frame_id_policy: decoded_original_frame_index
 providers:
   debug_small_sample: mock

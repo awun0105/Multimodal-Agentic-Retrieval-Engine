@@ -147,7 +147,7 @@ class HuggingFaceDatasetArtifactStore:
         )
         return [self.path(relative_path) for relative_path in relative_paths]
 
-    def download_file(self, relative_path: str | Path, target: Path) -> Path:
+    def download_file(self, relative_path: str | Path, target: Path, *, cache_dir: Path | str | None = None) -> Path:
         remote_path = self._remote_path(relative_path)
         cached_path = hf_hub_download(
             repo_id=self.repo_id,
@@ -155,6 +155,7 @@ class HuggingFaceDatasetArtifactStore:
             revision=self.revision,
             filename=remote_path,
             token=self.token,
+            cache_dir=str(cache_dir) if cache_dir is not None else None,
         )
         target.parent.mkdir(parents=True, exist_ok=True)
         temp_path = target.with_name(f".{target.name}.tmp.{os.getpid()}")

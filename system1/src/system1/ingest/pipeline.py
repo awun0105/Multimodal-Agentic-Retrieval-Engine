@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor
@@ -269,11 +270,40 @@ def run_canonical_hf_ingestion(
     mapping_dfs: list[pd.DataFrame] = []
     error_records: list[dict[str, Any]] = []
 
-    with tempfile.TemporaryDirectory(prefix="system1_canonical_ingest_", dir=staging_parent) as tmp:
+    keep_staging = _keep_canonical_staging()
+    tmp_context = (
+        nullcontext(tempfile.mkdtemp(prefix="system1_canonical_ingest_", dir=staging_parent))
+        if keep_staging
+        else tempfile.TemporaryDirectory(prefix="system1_canonical_ingest_", dir=staging_parent)
+    )
+    with tmp_context as tmp:
         tmp_path = Path(tmp)
-        manifest_path = store.download_file("manifests/canonical_file_manifest.jsonl", tmp_path / "canonical_file_manifest.jsonl")
+        manifest_cache_dir = tmp_path / "manifest_hf_cache"
+        manifest_path = store.download_file(
+            "manifests/canonical_file_manifest.jsonl",
+            tmp_path / "canonical_file_manifest.jsonl",
+            cache_dir=manifest_cache_dir,
+        )
+        inventory_by_video_id: dict[str, dict[str, Any]] | None = None
+        try:
+            inventory_path = store.download_file(
+                "manifests/canonical_video_inventory.parquet",
+                tmp_path / "canonical_video_inventory.parquet",
+                cache_dir=manifest_cache_dir,
+            )
+            inventory_by_video_id = _read_canonical_video_inventory(inventory_path, prefix)
+        except Exception as exc:
+            if not _allow_hf_video_download_for_probe():
+                raise FileNotFoundError(
+                    "HF canonical ingest requires manifests/canonical_video_inventory.parquet "
+                    "so it can avoid downloading raw_videos/*.mp4 for probing. "
+                    "Regenerate the raw repo with upload-standardized-raw, or set "
+                    "AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1 to allow the legacy fallback."
+                ) from exc
         rows = _read_canonical_manifest(manifest_path)
         valid_rows = [row for row in rows if row.get("status") in {None, "pass", "skipped"}]
+        pair_parent = tmp_path / "pairs"
+        pair_parent.mkdir(parents=True, exist_ok=True)
 
         # --- HÀM TRỢ LÝ ĐA LUỒNG CHO HUGGING FACE ---
         def _process_hf_pair(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
@@ -282,74 +312,86 @@ def run_canonical_hf_ingestion(
             metadata_remote_path = _normalize_canonical_manifest_path(str(row["metadata_path"]), prefix)
             video_filename = str(row.get("video_filename") or Path(video_remote_path).name)
             metadata_filename = str(row.get("metadata_filename") or Path(metadata_remote_path).name)
+            inventory = (inventory_by_video_id or {}).get(video_id)
 
-            video_path = tmp_path / "raw_videos" / video_filename
-            metadata_path = tmp_path / "metadata" / metadata_filename
-            video_path.parent.mkdir(parents=True, exist_ok=True)
-            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            pair_root = Path(tempfile.mkdtemp(prefix="pair_", dir=pair_parent))
+            pair_stage_dir = pair_root / "stage"
+            pair_cache_dir = pair_root / "hf_cache"
+            video_path = pair_stage_dir / "raw_videos" / video_filename
+            metadata_path = pair_stage_dir / "metadata" / metadata_filename
+            try:
+                video_path.parent.mkdir(parents=True, exist_ok=True)
+                metadata_path.parent.mkdir(parents=True, exist_ok=True)
+                pair_cache_dir.mkdir(parents=True, exist_ok=True)
 
-            store.download_file(video_remote_path, video_path)
-            store.download_file(metadata_remote_path, metadata_path)
+                store.download_file(metadata_remote_path, metadata_path, cache_dir=pair_cache_dir)
 
-            metadata = read_metadata(metadata_path)
-            probe = probe_video(video_path)
-            video_ref = f"media://raw_videos/{video_filename}"
-            metadata_ref = f"media://metadata/{metadata_filename}"
-            estimated_compute_cost = probe.duration_seconds or probe.frame_count or 1
+                metadata = read_metadata(metadata_path)
+                probe = None
+                if inventory is None:
+                    if not _allow_hf_video_download_for_probe():
+                        raise FileNotFoundError(
+                            f"canonical video inventory has no row for video_id={video_id}; "
+                            "HF ingest will not download raw video for probing unless "
+                            "AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1"
+                        )
+                    store.download_file(video_remote_path, video_path, cache_dir=pair_cache_dir)
+                    probe = probe_video(video_path)
+                video_ref = f"media://raw_videos/{video_filename}"
+                metadata_ref = f"media://metadata/{metadata_filename}"
+                duration_seconds = _inventory_number(inventory, "duration_sec") if inventory is not None else probe.duration_seconds
+                fps_detected = _inventory_number(inventory, "fps") if inventory is not None else probe.fps_detected
+                frame_count = _inventory_int(inventory, "frame_count") if inventory is not None else probe.frame_count
+                file_size_bytes = _inventory_int(inventory, "file_size_bytes") if inventory is not None else row.get("video_size_bytes")
+                estimated_compute_cost = duration_seconds or frame_count or 1
 
-            v_row = {
-                "video_id": video_id,
-                "video_ref": video_ref,
-                "metadata_ref": metadata_ref,
-                "source_filename": video_filename,
-                "source_extension": Path(video_filename).suffix.lower(),
-                "fps_detected": probe.fps_detected,
-                "fps_source": probe.fps_source,
-                "duration_seconds": probe.duration_seconds,
-                "width": probe.width,
-                "height": probe.height,
-                "frame_count": probe.frame_count,
-                "frame_count_estimated": probe.frame_count_estimated,
-                "frame_count_method": probe.frame_count_method,
-                "estimated_compute_cost": estimated_compute_cost,
-                "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
-            }
-            m_row = {
-                "video_id": video_id,
-                "video_ref": video_ref,
-                "metadata_ref": metadata_ref,
-                "video_filename": video_filename,
-                "metadata_filename": metadata_filename,
-                "video_size_bytes": row.get("video_size_bytes"),
-                "metadata_size_bytes": row.get("metadata_size_bytes"),
-                "canonical_backend": "hf_dataset",
-                "canonical_repo_id": repo_id,
-                "canonical_repo_type": repo_type,
-                "canonical_revision": revision,
-                "canonical_prefix": prefix,
-                "canonical_video_path": video_remote_path,
-                "canonical_metadata_path": metadata_remote_path,
-            }
-
-            err_rec = None
-            if probe.fps_detected is None or probe.duration_seconds is None:
-                err_rec = {
+                v_row = {
                     "video_id": video_id,
-                    "level": "warning",
-                    "kind": "probe_partial",
-                    "message": "ffprobe metadata incomplete; some fields unavailable",
+                    "video_ref": video_ref,
+                    "metadata_ref": metadata_ref,
+                    "source_filename": video_filename,
+                    "source_extension": Path(video_filename).suffix.lower(),
+                    "fps_detected": fps_detected,
+                    "fps_source": "canonical_video_inventory" if inventory is not None else probe.fps_source,
+                    "duration_seconds": duration_seconds,
+                    "width": probe.width if probe is not None else None,
+                    "height": probe.height if probe is not None else None,
+                    "frame_count": frame_count,
+                    "frame_count_estimated": False if inventory is not None else probe.frame_count_estimated,
+                    "frame_count_method": "canonical_video_inventory" if inventory is not None else probe.frame_count_method,
+                    "estimated_compute_cost": estimated_compute_cost,
+                    "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
+                }
+                m_row = {
+                    "video_id": video_id,
+                    "video_ref": video_ref,
+                    "metadata_ref": metadata_ref,
+                    "video_filename": video_filename,
+                    "metadata_filename": metadata_filename,
+                    "video_size_bytes": file_size_bytes,
+                    "metadata_size_bytes": row.get("metadata_size_bytes"),
+                    "canonical_backend": "hf_dataset",
+                    "canonical_repo_id": repo_id,
+                    "canonical_repo_type": repo_type,
+                    "canonical_revision": revision,
+                    "canonical_prefix": prefix,
+                    "canonical_video_path": video_remote_path,
+                    "canonical_metadata_path": metadata_remote_path,
                 }
 
-            # TỐI ƯU LƯU TRỮ: Xóa tệp tạm cuốn chiếu ngăn tràn bộ nhớ ổ cứng
-            try:
-                if video_path.exists():
-                    video_path.unlink()
-                if metadata_path.exists():
-                    metadata_path.unlink()
-            except Exception:
-                pass
+                err_rec = None
+                if fps_detected is None or duration_seconds is None:
+                    err_rec = {
+                        "video_id": video_id,
+                        "level": "warning",
+                        "kind": "probe_partial",
+                        "message": "canonical video inventory metadata incomplete; some fields unavailable",
+                    }
 
-            return v_row, m_row, err_rec
+                return v_row, m_row, err_rec
+            finally:
+                if not keep_staging:
+                    shutil.rmtree(pair_root, ignore_errors=True)
 
         # --- TỐI ƯU BỘ NHỚ VÀ MẠNG: Đa luồng tải và Chunking bộ nhớ ---
         CHUNK_SIZE = 2000
@@ -422,12 +464,63 @@ def _read_canonical_manifest(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _read_canonical_video_inventory(path: Path, prefix: str) -> dict[str, dict[str, Any]]:
+    inventory = pd.read_parquet(path)
+    required = {
+        "video_id",
+        "canonical_video_path",
+        "canonical_metadata_path",
+        "duration_sec",
+        "fps",
+        "frame_count",
+        "file_size_bytes",
+    }
+    missing = sorted(required - set(inventory.columns))
+    if missing:
+        raise ValueError(f"canonical video inventory missing fields: {', '.join(missing)}")
+    rows: dict[str, dict[str, Any]] = {}
+    for record in inventory.to_dict("records"):
+        video_id = str(record["video_id"])
+        if video_id in rows:
+            raise ValueError(f"canonical video inventory has duplicate video_id={video_id}")
+        rows[video_id] = {
+            **record,
+            "canonical_video_path": _normalize_canonical_manifest_path(str(record["canonical_video_path"]), prefix),
+            "canonical_metadata_path": _normalize_canonical_manifest_path(str(record["canonical_metadata_path"]), prefix),
+        }
+    if not rows:
+        raise ValueError("canonical video inventory is empty")
+    return rows
+
+
 def _normalize_canonical_manifest_path(remote_path: str, prefix: str) -> str:
     normalized_path = remote_path.strip().lstrip("/")
     normalized_prefix = prefix.strip().strip("/")
     if normalized_prefix and normalized_path.startswith(f"{normalized_prefix}/"):
         return normalized_path[len(normalized_prefix) + 1 :]
     return normalized_path
+
+
+def _inventory_number(inventory: dict[str, Any] | None, key: str) -> float | None:
+    if inventory is None:
+        return None
+    value = inventory.get(key)
+    if value in (None, "") or pd.isna(value):
+        return None
+    return float(value)
+
+
+def _inventory_int(inventory: dict[str, Any] | None, key: str) -> int | None:
+    value = _inventory_number(inventory, key)
+    return int(value) if value is not None else None
+
+
+def _keep_canonical_staging() -> bool:
+    return os.environ.get("AIC_KEEP_CANONICAL_STAGING", "0") == "1"
+
+
+def _allow_hf_video_download_for_probe() -> bool:
+    return os.environ.get("AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE", "0") == "1"
 
 
 def _discover_local_inputs(source_root: Path, pairing_policy: str) -> dict[str, Any]:
