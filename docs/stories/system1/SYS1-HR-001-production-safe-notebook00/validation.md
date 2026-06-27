@@ -57,6 +57,21 @@ system1/.venv/bin/system1 --help
   archives -> input readiness -> local ingest -> assign batches -> required
   `sync-release` to `AIC_HF_REPO_ID`. The notebook no longer runs
   `import-canonical` or `ingest --canonical-hf-repo-id`.
+- `python -m pytest tests/test_smoke.py -k "standardize_archive_source or
+  local_ingest_video_primary_tolerates_missing_and_unmatched_metadata or
+  tolerant_input_discovery_reports_missing_and_unmatched_metadata"`: 6 passed
+  after standardize began writing `missing_metadata.json` and
+  `unmatched_metadata.json` pairing audit reports.
+- `python -m pytest tests/test_smoke.py -k "upload_standardized_raw_to_hf or
+  ingest_from_canonical_hf_manifest"`: 8 passed after raw upload began writing
+  `canonical_video_inventory.parquet` and HF canonical ingest stopped
+  downloading `raw_videos/*.mp4` by default.
+- `python -m pytest tests/test_smoke.py -k "drivefs or
+  upload_standardized_raw_to_hf or ingest_from_canonical_hf_manifest or
+  standardize_archive_source_flattens_zip_inputs"`: 11 passed after DriveFS
+  probe/upload staging and zip `member_stage_*` cleanup were verified.
+- `python -m pytest tests/test_hf_artifact_store.py`: 11 passed after
+  confirming HF artifact-store behavior stayed intact.
 - `uv run pytest tests/test_smoke.py -q`: 37 passed after making HF Dataset
   release sync required.
 - `uv run pytest`: 103 passed after making HF Dataset release sync required.

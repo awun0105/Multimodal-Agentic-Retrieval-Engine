@@ -8,13 +8,17 @@ import subprocess
 import tempfile
 import time
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Any
 
+import pandas as pd
+
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
+from system1.media.probe import VideoProbe, probe_video
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".wav"}
 METADATA_EXTENSIONS = {".json"}
@@ -26,10 +30,15 @@ BYTES_PER_GB = 1024 ** 3
 RAW_UPLOAD_BATCH_SIZE = 50
 RAW_UPLOAD_MAX_RETRIES = 5
 RAW_UPLOAD_RATE_LIMIT_DEFAULT_SLEEP_SECONDS = 120
+DRIVEFS_ROOT = Path("/content/drive")
 
 
 def _aic_verbose() -> bool:
     return os.environ.get("AIC_VERBOSE", "0") == "1"
+
+
+def _allow_drivefs_probe() -> bool:
+    return os.environ.get("AIC_ALLOW_DRIVEFS_PROBE", "0") == "1"
 
 
 @dataclass(frozen=True)
@@ -544,8 +553,17 @@ def standardize_archive_source(
     elif completed_zip_paths and counters["error_count"] == 0:
         print("No pending source items. All source items already standardized.", flush=True)
 
+    missing_metadata_ids = _collect_missing_metadata(raw_root, metadata_root, accepted_media_extensions)
     _generate_missing_metadata(raw_root, metadata_root, source_root, counters, rows, accepted_media_extensions)
+    unmatched_metadata_ids = _collect_unmatched_metadata(raw_root, metadata_root, accepted_media_extensions)
     _report_extra_metadata(raw_root, metadata_root, rows, accepted_media_extensions)
+    _write_standardize_pairing_audit_reports(
+        target_root,
+        raw_root,
+        metadata_root,
+        missing_metadata_ids,
+        unmatched_metadata_ids,
+    )
     validation_error: ValueError | None = None
     try:
         _validate_pairing(raw_root, metadata_root)
@@ -1266,7 +1284,12 @@ def _process_zip_candidates(
                                 continue
                             raise FileExistsError(f"target already exists with different size: {target}")
                         extracted_file = _extract_zip_candidate_member(archive, candidate, temp_root)
-                        status = _move_flattened_file(extracted_file, target, overwrite=overwrite)
+                        stage_dir = extracted_file.parent
+                        try:
+                            status = _move_flattened_file(extracted_file, target, overwrite=overwrite)
+                        finally:
+                            if stage_dir.name.startswith("member_stage_"):
+                                shutil.rmtree(stage_dir, ignore_errors=True)
                         _update_standardize_counters(candidate, status, counters)
                         rows.append(_candidate_report_item(candidate, target, canonical_by_group, rename_reason_by_group, status))
                     except (OSError, ValueError, KeyError) as exc:
@@ -1391,6 +1414,73 @@ def _generate_missing_metadata(
                 "source_mode": "generated",
             }
         )
+
+
+def _collect_missing_metadata(raw_root: Path, metadata_root: Path, accepted_media_extensions: set[str]) -> list[str]:
+    video_stems = {
+        path.stem
+        for path in raw_root.iterdir()
+        if path.is_file() and path.suffix.lower() in accepted_media_extensions
+    }
+    metadata_stems = {path.stem for path in metadata_root.glob("*.json") if path.is_file()}
+    return sorted(video_stems - metadata_stems)
+
+
+def _collect_unmatched_metadata(raw_root: Path, metadata_root: Path, accepted_media_extensions: set[str]) -> list[str]:
+    video_stems = {
+        path.stem
+        for path in raw_root.iterdir()
+        if path.is_file() and path.suffix.lower() in accepted_media_extensions
+    }
+    metadata_stems = {path.stem for path in metadata_root.glob("*.json") if path.is_file()}
+    return sorted(metadata_stems - video_stems)
+
+
+def _write_standardize_pairing_audit_reports(
+    target_root: Path,
+    raw_root: Path,
+    metadata_root: Path,
+    missing_metadata: list[str],
+    unmatched_metadata: list[str],
+) -> None:
+    missing_path = target_root / "missing_metadata.json"
+    unmatched_path = target_root / "unmatched_metadata.json"
+    if not missing_metadata and missing_path.exists():
+        missing_metadata = _read_existing_pairing_audit_ids(missing_path, "missing_metadata")
+    missing_payload = {
+        "kind": "missing_metadata",
+        "source": "standardize_pairing_audit",
+        "description": "Videos with raw media but no metadata JSON with the same stem before minimal metadata generation.",
+        "count": len(missing_metadata),
+        "missing_metadata": missing_metadata,
+        "missing_video_ids": missing_metadata,
+        "raw_video_dir": str(raw_root),
+        "metadata_dir": str(metadata_root),
+        "minimal_metadata_generated": True,
+    }
+    unmatched_payload = {
+        "kind": "unmatched_metadata",
+        "source": "standardize_pairing_audit",
+        "description": "Metadata JSON files with no raw media using the same stem.",
+        "count": len(unmatched_metadata),
+        "unmatched_metadata": unmatched_metadata,
+        "unmatched_metadata_ids": unmatched_metadata,
+        "raw_video_dir": str(raw_root),
+        "metadata_dir": str(metadata_root),
+    }
+    missing_path.write_text(json.dumps(missing_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    unmatched_path.write_text(json.dumps(unmatched_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _read_existing_pairing_audit_ids(path: Path, key: str) -> list[str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    values = payload.get(key)
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        return []
+    return sorted(values)
 
 
 def _report_extra_metadata(
@@ -1619,12 +1709,28 @@ def upload_standardized_raw_to_hf(
         }
         manifest_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_file_manifest.jsonl")
         report_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_import_report.json")
+        inventory_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_video_inventory.parquet")
         manifest_text = "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in manifest_rows)
         with tempfile.TemporaryDirectory(prefix="system1_raw_upload_manifest_") as manifest_tmp:
             tmp_path = Path(manifest_tmp)
             manifest_path = tmp_path / "canonical_file_manifest.jsonl"
             report_path = tmp_path / "canonical_import_report.json"
+            inventory_path = tmp_path / "canonical_video_inventory.parquet"
             manifest_path.write_text(manifest_text, encoding="utf-8")
+            inventory_df = pd.DataFrame(
+                [_raw_upload_inventory_row(record) for record in pair_records],
+                columns=[
+                    "video_id",
+                    "canonical_video_path",
+                    "canonical_metadata_path",
+                    "duration_sec",
+                    "fps",
+                    "frame_count",
+                    "file_size_bytes",
+                ],
+            )
+            inventory_df.to_parquet(inventory_path, index=False)
+            report["inventory_path"] = inventory_remote_path
             report_path.write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
             manifest_items = [
                 _RawUploadItem(
@@ -1633,7 +1739,7 @@ def upload_standardized_raw_to_hf(
                     local_path=manifest_path,
                     remote_path=manifest_remote_path,
                     index=1,
-                    total=2,
+                    total=3,
                     size_bytes=manifest_path.stat().st_size,
                 ),
                 _RawUploadItem(
@@ -1642,8 +1748,17 @@ def upload_standardized_raw_to_hf(
                     local_path=report_path,
                     remote_path=report_remote_path,
                     index=2,
-                    total=2,
+                    total=3,
                     size_bytes=report_path.stat().st_size,
+                ),
+                _RawUploadItem(
+                    kind="manifest",
+                    video_id="",
+                    local_path=inventory_path,
+                    remote_path=inventory_remote_path,
+                    index=3,
+                    total=3,
+                    size_bytes=inventory_path.stat().st_size,
                 ),
             ]
             manifest_errors = _upload_raw_phase_batches(
@@ -1676,6 +1791,48 @@ def upload_standardized_raw_to_hf(
         manifest_path=manifest_remote_path,
         report_path=report_remote_path,
     )
+
+
+def _raw_upload_inventory_row(record: dict[str, Any]) -> dict[str, Any]:
+    video_item = record["video_item"]
+    probe = _probe_video_drivefs_safe(video_item.local_path)
+    return {
+        "video_id": record["video_id"],
+        "canonical_video_path": record["video_path"],
+        "canonical_metadata_path": record["metadata_path"],
+        "duration_sec": probe.duration_seconds,
+        "fps": probe.fps_detected,
+        "frame_count": probe.frame_count,
+        "file_size_bytes": record["video_size_bytes"],
+    }
+
+
+def _probe_video_drivefs_safe(video_path: Path) -> VideoProbe:
+    if not _is_drivefs_path(video_path) or _allow_drivefs_probe():
+        return probe_video(video_path)
+
+    scratch_parent = _local_temp_parent()
+    scratch_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="system1_drivefs_probe_", dir=str(scratch_parent)) as temp_dir:
+        staged_path = Path(temp_dir) / video_path.name
+        shutil.copy2(video_path, staged_path)
+        return probe_video(staged_path)
+
+
+def _is_drivefs_path(path: Path) -> bool:
+    try:
+        resolved = path.expanduser().resolve(strict=False)
+    except OSError:
+        resolved = path.expanduser().absolute()
+    drive_root = DRIVEFS_ROOT
+    return resolved == drive_root or drive_root in resolved.parents
+
+
+def _local_temp_parent() -> Path:
+    preferred = Path("/content")
+    if preferred.exists() and preferred.is_dir():
+        return preferred
+    return Path(tempfile.gettempdir())
 
 
 RAW_UPLOAD_EXCLUDED_NAMES = {
@@ -1786,26 +1943,48 @@ def _upload_raw_batch_with_retry(
     repo_id: str,
     raw_import_id: str,
 ) -> None:
-    files = [(item.local_path, item.remote_path) for item in batch]
     commit_message = (
         f"Upload standardized raw {raw_import_id} {phase} "
         f"batch {batch_index}/{batch_total}"
     )
-    for retry_index in range(0, RAW_UPLOAD_MAX_RETRIES + 1):
-        try:
-            store.upload_files(files, commit_message=commit_message, num_threads=2)
-            return
-        except Exception as exc:
-            if not _is_hf_rate_limit_error(exc) or retry_index >= RAW_UPLOAD_MAX_RETRIES:
-                raise
-            sleep_seconds = _hf_retry_sleep_seconds(exc)
-            print(
-                f"[upload-standardized-raw] rate limited, sleep_seconds={sleep_seconds}, "
-                f"retry={retry_index + 1}/{RAW_UPLOAD_MAX_RETRIES}",
-                flush=True,
-            )
-            time.sleep(sleep_seconds)
+    with _drivefs_safe_raw_upload_files(batch) as files:
+        for retry_index in range(0, RAW_UPLOAD_MAX_RETRIES + 1):
+            try:
+                store.upload_files(files, commit_message=commit_message, num_threads=2)
+                return
+            except Exception as exc:
+                if not _is_hf_rate_limit_error(exc) or retry_index >= RAW_UPLOAD_MAX_RETRIES:
+                    raise
+                sleep_seconds = _hf_retry_sleep_seconds(exc)
+                print(
+                    f"[upload-standardized-raw] rate limited, sleep_seconds={sleep_seconds}, "
+                    f"retry={retry_index + 1}/{RAW_UPLOAD_MAX_RETRIES}",
+                    flush=True,
+                )
+                time.sleep(sleep_seconds)
     raise RuntimeError(f"failed to upload batch to {repo_id}/{raw_import_id}: phase={phase}")
+
+
+@contextmanager
+def _drivefs_safe_raw_upload_files(batch: list[_RawUploadItem]) -> Any:
+    stage_root: Path | None = None
+    files: list[tuple[Path, str]] = []
+    try:
+        for item in batch:
+            source_path = item.local_path
+            if item.kind == "video" and _is_drivefs_path(source_path):
+                if stage_root is None:
+                    scratch_parent = _local_temp_parent()
+                    scratch_parent.mkdir(parents=True, exist_ok=True)
+                    stage_root = Path(tempfile.mkdtemp(prefix="system1_drivefs_upload_", dir=str(scratch_parent)))
+                staged_path = stage_root / f"{item.index}_{source_path.name}"
+                shutil.copy2(source_path, staged_path)
+                source_path = staged_path
+            files.append((source_path, item.remote_path))
+        yield files
+    finally:
+        if stage_root is not None:
+            shutil.rmtree(stage_root, ignore_errors=True)
 
 
 def _chunked_raw_upload_items(items: list[_RawUploadItem], size: int) -> list[list[_RawUploadItem]]:
