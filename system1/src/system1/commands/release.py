@@ -7,7 +7,6 @@ import typer
 from system1.commands.common import default_output, release_dir, require_supported_mode
 from system1.db.sqlite_builder import build_app_sqlite
 from system1.indexes.builder import build_visual_index
-from system1.release.mini_seed import build_mini_seed
 from system1.release.smoke import write_smoke_report
 from system1.release.sync import download_release_from_hf, upload_release_to_hf
 from system1.release.writer import package_release
@@ -41,17 +40,6 @@ def register(app: typer.Typer) -> None:
             raise typer.BadParameter(str(exc)) from exc
         typer.echo(f"Built visual index: {index_path}")
 
-    @app.command("build-mini-seed")
-    def build_mini_seed_command(
-        mode: str = typer.Option("debug_small_sample", "--mode"),
-        providers: str = typer.Option("mock", "--providers"),
-        output: Path = typer.Option(default_output(), "--output", "-o"),
-        input_dir: Path | None = typer.Option(None, "--input", "-i"),
-    ) -> None:
-        """Build the full dev/test mini release in one command."""
-        require_supported_mode(mode)
-        release_path = build_mini_seed(output, input_dir=input_dir, validate=True, mode=mode, providers=providers)
-        typer.echo(f"Built mini seed release: {release_path}")
 
     @app.command("validate")
     def validate(

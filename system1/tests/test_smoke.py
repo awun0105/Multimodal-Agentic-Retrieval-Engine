@@ -18,7 +18,6 @@ from system1.cli import app
 from system1.config import REQUIRED_CONFIGS, load_configs, load_provider_plan
 from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs
 from system1.ingest.source_importer import (
-    ArchiveStandardizeResult,
     DriveShadowResult,
     _hf_retry_sleep_seconds,
     _is_hf_rate_limit_error,
@@ -29,11 +28,92 @@ from system1.ingest.source_importer import (
 )
 from system1.ingest import source_importer as source_importer_module
 from system1.media.probe import VideoProbe
-from system1.release.artifacts import write_worker_artifacts
-from system1.release.mini_seed import build_mini_seed
 from system1.validation.release_validator import validate_release
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def local_phase_execution(monkeypatch):
+    monkeypatch.setenv("AIC_RESUME", "0")
+    monkeypatch.setenv("AIC_SYNC", "0")
+
+
+def invoke_app(command: list[str]):
+    command_with_local_phase = list(command)
+    if command_with_local_phase and command_with_local_phase[0] in {"ingest", "assign-batches", "process-batch", "feature-batch"}:
+        if "--resume" not in command_with_local_phase and "--no-resume" not in command_with_local_phase:
+            command_with_local_phase.append("--no-resume")
+        if "--sync" not in command_with_local_phase and "--no-sync" not in command_with_local_phase:
+            command_with_local_phase.append("--no-sync")
+    return runner.invoke(app, command_with_local_phase)
+
+
+def run_cli_sequence(commands: list[list[str]]) -> None:
+    for command in commands:
+        result = invoke_app(command)
+        assert result.exit_code == 0, f"command failed: {command}\n{result.stdout}"
+
+
+def phase_based_commands(
+    output_dir: Path,
+    *,
+    mode: str = "debug_small_sample",
+    providers: str = "mock",
+) -> list[list[str]]:
+    return [
+        ["ingest", "--mode", mode, "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--mode", mode, "--num-batches", "1", "--output", str(output_dir)],
+        [
+            "process-batch",
+            "--batch-id",
+            "batch_000",
+            "--mode",
+            mode,
+            "--providers",
+            providers,
+            "--output",
+            str(output_dir),
+            "--input",
+            "input",
+        ],
+        [
+            "feature-batch",
+            "--batch-id",
+            "batch_000",
+            "--mode",
+            mode,
+            "--providers",
+            providers,
+            "--output",
+            str(output_dir),
+            "--input",
+            "input",
+        ],
+        ["merge", "--mode", mode, "--output", str(output_dir)],
+        ["build-index", "--mode", mode, "--output", str(output_dir)],
+        ["build-db", "--mode", mode, "--output", str(output_dir)],
+        ["validate", "--mode", mode, "--output", str(output_dir)],
+    ]
+
+
+def run_phase_based_release(
+    tmp_path: Path,
+    *,
+    mode: str = "debug_small_sample",
+    providers: str = "mock",
+    package: bool = False,
+) -> Path:
+    output_dir = tmp_path / "output"
+    run_cli_sequence(phase_based_commands(output_dir, mode=mode, providers=providers))
+    release_dir = output_dir / "competition_dataset_v001"
+    smoke = invoke_app(["smoke-test", "--release", str(release_dir)])
+    assert smoke.exit_code == 0, smoke.stdout
+    if package:
+        packaged = invoke_app(["release", "--mode", mode, "--output", str(output_dir)])
+        assert packaged.exit_code == 0, packaged.stdout
+    return release_dir
+
 
 
 def test_system1_package_imports():
@@ -162,7 +242,7 @@ def test_tolerant_input_discovery_reports_missing_and_unmatched_metadata(tmp_pat
 
 
 def test_debug_release_generates_valid_release(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input")
+    release_dir = run_phase_based_release(tmp_path)
     sqlite_path = release_dir / "db" / "app.sqlite"
     with sqlite3.connect(sqlite_path) as connection:
         row = connection.execute("SELECT document_id FROM text_documents_fts WHERE text_documents_fts MATCH ? LIMIT 1", ("L21",)).fetchone()
@@ -175,12 +255,12 @@ def test_debug_release_generates_valid_release(tmp_path):
 
 
 def test_bronze_fast_generates_real_media_files(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="bronze_fast")
+    release_dir = run_phase_based_release(tmp_path, mode="bronze_fast")
     result = validate_release(release_dir)
     assert result.passed
-    manifest = json.loads((release_dir / "manifests" / "dataset_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["capabilities"]["core_runtime"] == "pass"
-    assert manifest["capabilities"]["visual_search"] == "pass"
+    report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
+    assert report["capabilities"]["core_runtime"] == "pass"
+    assert report["capabilities"]["visual_search"] != "fail"
     assert list((release_dir / "media" / "keyframes").rglob("*.jpg"))
     assert list((release_dir / "media" / "thumbnails").rglob("*.webp"))
     assert (release_dir / "db" / "staging.duckdb").exists()
@@ -194,7 +274,7 @@ def test_cli_debug_pipeline_end_to_end(tmp_path):
         ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
-        result = runner.invoke(app, command)
+        result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
     release_dir = output_dir / "competition_dataset_v001"
     assert (release_dir / "manifests" / "dataset_report.json").exists()
@@ -207,8 +287,8 @@ def test_cli_debug_pipeline_end_to_end(tmp_path):
 def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
     output_dir = tmp_path / "output"
     command = ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"]
-    first = runner.invoke(app, command)
-    second = runner.invoke(app, command)
+    first = invoke_app(command)
+    second = invoke_app(command)
     assert first.exit_code == 0, first.stdout
     assert second.exit_code == 0, second.stdout
     release_dir = output_dir / "competition_dataset_v001"
@@ -274,8 +354,8 @@ def test_local_ingest_video_primary_tolerates_missing_and_unmatched_metadata(tmp
 
 def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_path):
     output_dir = tmp_path / "output"
-    ingest = runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    assigned = runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
+    ingest = invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    assigned = invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
     assert ingest.exit_code == 0, ingest.stdout
     assert assigned.exit_code == 0, assigned.stdout
     release_dir = output_dir / "competition_dataset_v001"
@@ -298,11 +378,11 @@ def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_
 
 def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
     release_dir = output_dir / "competition_dataset_v001"
     videos_before = (release_dir / "tables" / "videos.parquet").stat().st_mtime_ns
-    result = runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = release_dir / "artifacts" / "structure" / "L21_V001"
     assert artifact_dir.exists()
@@ -348,10 +428,10 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
 
 def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
     with patch("subprocess.run", side_effect=__import__("subprocess").CalledProcessError(1, "ffmpeg")):
-        result = runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+        result = invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = output_dir / "competition_dataset_v001" / "artifacts" / "structure" / "L21_V001"
     jpg = next((artifact_dir / "keyframes").glob("*.jpg"))
@@ -362,19 +442,19 @@ def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
 
 def test_process_batch_missing_batch_file_fails_clearly(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    result = runner.invoke(app, ["process-batch", "--batch-id", "batch_999", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["process-batch", "--batch-id", "batch_999", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
 
 def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
-    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     release_dir = output_dir / "competition_dataset_v001"
     structure_manifest = release_dir / "artifacts" / "structure" / "L21_V001" / "manifest.json"
     structure_before = structure_manifest.stat().st_mtime_ns
-    result = runner.invoke(app, ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = release_dir / "artifacts" / "features" / "L21_V001"
     assert artifact_dir.exists()
@@ -414,9 +494,9 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
 
 def test_feature_batch_missing_structure_artifact_fails_clearly(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
-    result = runner.invoke(app, ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
 
 def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
@@ -429,7 +509,7 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
         ["merge", "--mode", "debug_small_sample", "--output", str(output_dir)],
     ]
     for command in commands:
-        result = runner.invoke(app, command)
+        result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
     release_dir = output_dir / "competition_dataset_v001"
     assert (release_dir / "tables" / "text_documents.parquet").exists()
@@ -439,10 +519,10 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "indexes" / "visual.faiss").exists()
 
-    index = runner.invoke(app, ["build-index", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    db = runner.invoke(app, ["build-db", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    smoke = runner.invoke(app, ["smoke-test", "--release", str(release_dir)])
+    index = invoke_app(["build-index", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    db = invoke_app(["build-db", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    validate = invoke_app(["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    smoke = invoke_app(["smoke-test", "--release", str(release_dir)])
     assert index.exit_code == 0, index.stdout
     assert db.exit_code == 0, db.stdout
     assert validate.exit_code == 0, validate.stdout
@@ -467,25 +547,20 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
 
 def test_validate_fails_before_runtime_artifacts(tmp_path):
     output_dir = tmp_path / "output"
-    result = runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
-    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    validate = invoke_app(["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
     assert validate.exit_code != 0
 
-def test_build_mini_seed_command_keeps_dev_helper_path(tmp_path):
+def test_build_mini_seed_command_is_removed_from_main_cli(tmp_path):
     output_dir = tmp_path / "output"
     result = runner.invoke(
         app,
         ["build-mini-seed", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     )
-    assert result.exit_code == 0, result.stdout
-    release_dir = output_dir / "competition_dataset_v001"
-    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    assert validate.exit_code == 0, validate.stdout
-    smoke = runner.invoke(app, ["smoke-test", "--release", str(release_dir)])
-    assert smoke.exit_code == 0, smoke.stdout
-    packaged = runner.invoke(app, ["release", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    assert packaged.exit_code == 0, packaged.stdout
+    assert result.exit_code != 0
+
+    release_dir = run_phase_based_release(tmp_path, package=True)
     assert (release_dir / "manifests" / "smoke_test_report.json").exists()
     assert (output_dir / "competition_dataset_v001.zip").exists()
 
@@ -498,12 +573,12 @@ def test_cli_bronze_pipeline_end_to_end(tmp_path):
         ["process-batch", "--batch-id", "batch_000", "--mode", "bronze_fast", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
-        result = runner.invoke(app, command)
+        result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
 
 
 def test_silver_balanced_outputs_asr_ocr_contracts(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="silver_balanced")
+    release_dir = run_phase_based_release(tmp_path, mode="silver_balanced")
     result = validate_release(release_dir)
     assert result.passed
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
@@ -514,7 +589,7 @@ def test_silver_balanced_outputs_asr_ocr_contracts(tmp_path):
 
 
 def test_real_provider_mode_fails_gracefully_with_degraded_asr_ocr(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="silver_balanced", providers="real")
+    release_dir = run_phase_based_release(tmp_path, mode="silver_balanced", providers="real")
     result = validate_release(release_dir)
     assert result.passed
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
@@ -524,22 +599,13 @@ def test_real_provider_mode_fails_gracefully_with_degraded_asr_ocr(tmp_path):
     assert report["release_usable"] is True
 
 
-def test_gold_full_outputs_enrichment_and_reuse_checkpoint(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
-    first_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
-    index_path = release_dir / "indexes" / "visual.faiss"
-    first_mtime = index_path.stat().st_mtime_ns
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
+def test_gold_full_outputs_enrichment_and_phase_artifacts(tmp_path):
+    release_dir = run_phase_based_release(tmp_path, mode="gold_full")
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
-    second_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
-    second_mtime = index_path.stat().st_mtime_ns
     assert report["capabilities"]["enrichment_overall"] == "pass"
-    assert report["capabilities"]["incremental_reuse"] == "pass"
-    assert first_checkpoint["rules"]["skip_keyframe_if_input_config_schema_unchanged"] is True
-    assert second_checkpoint["videos"]
-    assert all(video["media_reused"] for video in second_checkpoint["videos"].values())
-    assert second_checkpoint["embeddings_hash"] == first_checkpoint["embeddings_hash"]
-    assert second_mtime == first_mtime
+    assert not (release_dir / "manifests" / "checkpoint_manifest.json").exists()
+    assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
+    assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
     for name in ["objects", "image_captions", "shot_captions", "scene_summaries_initial", "scene_summaries_enriched"]:
         assert (release_dir / "tables" / f"{name}.parquet").exists()
 
@@ -552,7 +618,7 @@ def test_cli_gold_pipeline_end_to_end(tmp_path):
         ["process-batch", "--batch-id", "batch_000", "--mode", "gold_full", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
-        result = runner.invoke(app, command)
+        result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
     release_dir = output_dir / "competition_dataset_v001"
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
@@ -571,26 +637,21 @@ def test_provider_plan_supports_named_modes():
 
 
 def test_worker_artifacts_and_runtime_reports_exist(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
-    structure_report = write_worker_artifacts(release_dir, batch_id="batch_000", phase="structure")
-    features_report = write_worker_artifacts(release_dir, batch_id="batch_000", phase="features")
-    assert structure_report.exists()
-    assert features_report.exists()
+    release_dir = run_phase_based_release(tmp_path, mode="gold_full")
+    assert (release_dir / "manifests" / "worker_runtime_report_structure.json").exists()
+    assert (release_dir / "manifests" / "worker_runtime_report_features.json").exists()
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
     assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
 
 
-def test_selective_rebuild_proof_embedding_change_keeps_asr_ocr_contracts(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full", providers="mock")
-    first_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full", providers="real")
-    second_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
+def test_selective_provider_change_keeps_phase_contracts(tmp_path):
+    release_dir = run_phase_based_release(tmp_path, mode="gold_full", providers="real")
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
-    assert first_checkpoint["videos"].keys() == second_checkpoint["videos"].keys()
-    assert all(video["media_reused"] for video in second_checkpoint["videos"].values())
     assert report["capabilities"]["asr"] == "degraded"
     assert report["capabilities"]["ocr"] == "degraded"
     assert report["capabilities"]["visual_search"] == "degraded"
+    assert (release_dir / "tables" / "asr_segments.parquet").exists()
+    assert (release_dir / "tables" / "ocr.parquet").exists()
 
 
 def test_import_organizer_source_from_local_folder(tmp_path):

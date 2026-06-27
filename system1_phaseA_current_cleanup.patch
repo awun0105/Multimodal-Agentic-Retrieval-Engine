@@ -1,0 +1,683 @@
+diff --git a/system1/README.md b/system1/README.md
+index 959c034..36973b4 100644
+--- a/system1/README.md
++++ b/system1/README.md
+@@ -211,5 +211,5 @@ Check these first:
+ 
+ ## Legacy dev helper
+ 
+-`build-mini-seed` is a legacy dev helper that builds a tiny end-to-end debug release in one command.
++The legacy `build-mini-seed` one-command helper has been removed from the main CLI. Use the phase-based workflow above for dev, tests, and releases.
+ The main path for the current MVP is the phase-based CLI pipeline above.
+diff --git a/system1/pyproject.toml b/system1/pyproject.toml
+index f7fb325..b72df19 100644
+--- a/system1/pyproject.toml
++++ b/system1/pyproject.toml
+@@ -9,8 +9,6 @@ dependencies = [
+     "numpy>=1.26.0",
+     "pandas>=2.0.0",
+     "pyarrow>=15.0.0",
+-    "pydantic>=2.0.0",
+-    "rich>=13.0.0",
+     "typer>=0.12.0",
+     "pyyaml>=6.0.0",
+     "huggingface_hub>=0.24.0",
+diff --git a/system1/src/system1/commands/release.py b/system1/src/system1/commands/release.py
+index 8734927..49f9dc8 100644
+--- a/system1/src/system1/commands/release.py
++++ b/system1/src/system1/commands/release.py
+@@ -7,7 +7,6 @@ import typer
+ from system1.commands.common import default_output, release_dir, require_supported_mode
+ from system1.db.sqlite_builder import build_app_sqlite
+ from system1.indexes.builder import build_visual_index
+-from system1.release.mini_seed import build_mini_seed
+ from system1.release.smoke import write_smoke_report
+ from system1.release.sync import download_release_from_hf, upload_release_to_hf
+ from system1.release.writer import package_release
+@@ -41,17 +40,6 @@ def register(app: typer.Typer) -> None:
+             raise typer.BadParameter(str(exc)) from exc
+         typer.echo(f"Built visual index: {index_path}")
+ 
+-    @app.command("build-mini-seed")
+-    def build_mini_seed_command(
+-        mode: str = typer.Option("debug_small_sample", "--mode"),
+-        providers: str = typer.Option("mock", "--providers"),
+-        output: Path = typer.Option(default_output(), "--output", "-o"),
+-        input_dir: Path | None = typer.Option(None, "--input", "-i"),
+-    ) -> None:
+-        """Build the full dev/test mini release in one command."""
+-        require_supported_mode(mode)
+-        release_path = build_mini_seed(output, input_dir=input_dir, validate=True, mode=mode, providers=providers)
+-        typer.echo(f"Built mini seed release: {release_path}")
+ 
+     @app.command("validate")
+     def validate(
+diff --git a/system1/src/system1/db/duckdb_builder.py b/system1/src/system1/db/duckdb_builder.py
+deleted file mode 100644
+index 1b68050..0000000
+--- a/system1/src/system1/db/duckdb_builder.py
++++ /dev/null
+@@ -1,19 +0,0 @@
+-from __future__ import annotations
+-
+-from pathlib import Path
+-
+-import duckdb
+-import pandas as pd
+-
+-
+-def write_duckdb(duckdb_path: Path, tables: dict[str, pd.DataFrame]) -> None:
+-    if duckdb_path.exists():
+-        duckdb_path.unlink()
+-    connection = duckdb.connect(str(duckdb_path))
+-    try:
+-        for name in ("videos", "shots", "scenes", "keyframes", "text_documents", "vector_map"):
+-            connection.register("frame", tables[name])
+-            connection.execute(f"CREATE TABLE {name} AS SELECT * FROM frame")
+-            connection.unregister("frame")
+-    finally:
+-        connection.close()
+diff --git a/system1/src/system1/indexes/builder.py b/system1/src/system1/indexes/builder.py
+index 3845435..52b6e20 100644
+--- a/system1/src/system1/indexes/builder.py
++++ b/system1/src/system1/indexes/builder.py
+@@ -1,7 +1,5 @@
+ from __future__ import annotations
+ 
+-import hashlib
+-import json
+ from pathlib import Path
+ 
+ import numpy as np
+@@ -58,26 +56,3 @@ def build_visual_index(release_dir: Path | str) -> Path:
+     )
+     return index_path
+ 
+-
+-def write_index_files(release_dir: Path, tables: dict[str, pd.DataFrame], previous_checkpoint: dict | None) -> str:
+-    """Legacy dev helper for `build-mini-seed` only.
+-
+-    Do not use this helper for the phase-based worker pipeline. The main path
+-    uses `build_visual_index()` after merge has produced release-level tables.
+-    """
+-    vectors = [row["vector"] for row in tables["_embeddings"].to_dict("records")]
+-    vector_rows = []
+-    for vector_id, row in enumerate(tables["vector_map"].to_dict("records")):
+-        vector_rows.append(row | {"vector_id": vector_id})
+-    indexes_dir = release_dir / "indexes"
+-    indexes_dir.mkdir(parents=True, exist_ok=True)
+-    pd.DataFrame(vector_rows).to_parquet(indexes_dir / "vector_map.parquet", index=False)
+-    index_path = indexes_dir / "visual.faiss"
+-    embeddings_hash = hashlib.sha256(json.dumps(vectors, sort_keys=True).encode("utf-8")).hexdigest()
+-    previous_hash = (previous_checkpoint or {}).get("embeddings_hash")
+-    if previous_hash == embeddings_hash and index_path.exists():
+-        kind = json.loads((indexes_dir / "index_version.json").read_text(encoding="utf-8")).get("index_backend", "stub") if (indexes_dir / "index_version.json").exists() else "stub"
+-    else:
+-        kind = write_visual_index(index_path, vectors)
+-    write_json(indexes_dir / "index_version.json", {"index_name": INDEX_NAME, "index_version": INDEX_VERSION, "index_backend": kind, "vector_count": len(vector_rows)})
+-    return kind
+diff --git a/system1/src/system1/ingest/pipeline.py b/system1/src/system1/ingest/pipeline.py
+index f3cddd2..db29957 100644
+--- a/system1/src/system1/ingest/pipeline.py
++++ b/system1/src/system1/ingest/pipeline.py
+@@ -13,15 +13,9 @@ from urllib.parse import urlparse
+ import pandas as pd
+ 
+ from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
+-from system1.config import load_provider_plan
+-from system1.features.builder import capability_states, feature_rows, providers_for_plan, release_capability_rows
+ from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs, read_metadata
+-from system1.keyframes.builder import keyframe_id, keyframe_refs, materialize_keyframe
+ from system1.media.probe import probe_video
+-from system1.release.types import DEFAULT_FRAME_ID, BuildOptions, config_dir, default_input_dir, release_root, write_json
+-from system1.scenes.builder import scene_id, scene_row
+-from system1.shots.builder import shot_id, shot_row
+-from system1.text.builder import doc_id, metadata_text, text_document_row, text_source_rows
++from system1.release.types import default_input_dir, release_root, write_json
+ 
+ 
+ def run_ingestion(
+@@ -630,105 +624,3 @@ def _is_content_drive_source(source_root: Path | None) -> bool:
+     parts = source_root.resolve().parts
+     return len(parts) >= 3 and parts[1:3] == ("content", "drive")
+ 
+-
+-def build_tables(
+-    pairs: list[dict[str, str]],
+-    release_dir: Path,
+-    options: BuildOptions,
+-    previous_checkpoint: dict[str, Any] | None,
+-) -> dict[str, pd.DataFrame]:
+-    """Legacy dev helper for build-mini-seed only.
+-
+-    Do not use this monolithic builder for the phase-based worker pipeline.
+-    The main MVP path runs dedicated phase commands and merges outputs later.
+-    """
+-    plan = options.provider_plan or load_provider_plan(config_dir(), options.providers)
+-    embedding_provider, text_provider = providers_for_plan(plan)
+-    rows: dict[str, list[dict[str, Any]]] = {name: [] for name in (
+-        "videos", "media_store_manifest", "asr_segments", "shots", "scenes", "frame_timeline", "keyframes",
+-        "shot_transcript_links", "scene_transcript_links", "embeddings_meta", "ocr", "objects", "image_captions",
+-        "shot_captions", "scene_summaries_initial", "scene_summaries_enriched", "text_sources", "feature_availability",
+-        "text_documents", "vector_map", "release_capabilities",
+-    )}
+-    embeddings: list[list[float]] = []
+-    reuse_rows: list[dict[str, Any]] = []
+-    visual_status, visual_reason, asr_status, ocr_status, enrichment_status = capability_states(options.mode, plan)
+-
+-    for vector_id, pair in enumerate(pairs):
+-        video_id = pair["video_id"]
+-        video_path = Path(pair["video_path"])
+-        metadata = read_metadata(Path(pair["metadata_path"]))
+-        text = metadata_text(video_id, metadata)
+-        probe = probe_video(video_path)
+-        frame_id = DEFAULT_FRAME_ID
+-        shot_identifier = shot_id(video_id)
+-        scene_identifier = scene_id(video_id)
+-        document_id = doc_id("video", video_id, text)
+-
+-        keyframe_row, reuse_row, keyframe_path = materialize_keyframe(
+-            release_dir=release_dir,
+-            video_id=video_id,
+-            video_path=video_path,
+-            frame_id=frame_id,
+-            options=options,
+-            previous_checkpoint=previous_checkpoint,
+-        )
+-        keyframe_identifier = keyframe_row["keyframe_id"]
+-        keyframe_ref, thumbnail_ref = keyframe_refs(video_id, frame_id)
+-
+-        embedding_meta, ocr_row, object_row, image_caption_row, shot_caption_partial, scene_initial_partial, scene_enriched_partial, embedding, ocr_text, caption_text = feature_rows(
+-            keyframe_id=keyframe_identifier,
+-            video_id=video_id,
+-            frame_id=frame_id,
+-            keyframe_path=keyframe_path,
+-            text=text,
+-            plan=plan,
+-            embedding_provider=embedding_provider,
+-            text_provider=text_provider,
+-            visual_status=visual_status,
+-        )
+-        asr_text = text_provider.transcribe(video_path)
+-        extension = video_path.suffix.lower()
+-        rows["videos"].append({
+-            "video_id": video_id,
+-            "video_ref": f"media://raw_videos/{video_id}{extension}",
+-            "source_stem": video_id,
+-            "metadata_ref": f"media://metadata/{video_id}.json",
+-            "fps_detected": probe.fps_detected,
+-            "fps_source": probe.fps_source,
+-            "frame_count": probe.frame_count,
+-            "frame_count_estimated": probe.frame_count_estimated,
+-            "frame_count_method": probe.frame_count_method,
+-            "frame_id_method": "decoded_original_frame_index",
+-            "is_vfr": probe.is_vfr,
+-            "duration_seconds": probe.duration_seconds,
+-            "width": probe.width,
+-            "height": probe.height,
+-        })
+-        rows["media_store_manifest"].append({"video_id": video_id, "media_kind": "raw_video", "media_ref": f"media://raw_videos/{video_id}{extension}", "source_path": video_path.name, "storage_backend": "local_sample"})
+-        rows["asr_segments"].append({"asr_segment_id": f"{video_id}_ASR00000", "video_id": video_id, "start_seconds": 0.0, "end_seconds": probe.duration_seconds or 0.0, "text": asr_text, "provider": plan.asr, "status": asr_status if not asr_text else "pass"})
+-        rows["shots"].append(shot_row(video_id, frame_id, probe.duration_seconds))
+-        rows["scenes"].append(scene_row(video_id, frame_id, probe.duration_seconds))
+-        rows["frame_timeline"].append({"video_id": video_id, "frame_id": frame_id, "time_seconds": 0.0, "mapping_method": probe.frame_count_method})
+-        rows["keyframes"].append({**keyframe_row, "shot_id": shot_identifier, "scene_id": scene_identifier, "keyframe_ref": keyframe_ref, "thumbnail_ref": thumbnail_ref})
+-        rows["shot_transcript_links"].append({"shot_id": shot_identifier, "asr_segment_id": f"{video_id}_ASR00000", "video_id": video_id})
+-        rows["scene_transcript_links"].append({"scene_id": scene_identifier, "asr_segment_id": f"{video_id}_ASR00000", "video_id": video_id})
+-        rows["embeddings_meta"].append(embedding_meta)
+-        rows["ocr"].append(ocr_row)
+-        rows["objects"].append(object_row)
+-        rows["image_captions"].append(image_caption_row)
+-        rows["shot_captions"].append({"shot_id": shot_identifier, **shot_caption_partial})
+-        rows["scene_summaries_initial"].append({"scene_id": scene_identifier, **scene_initial_partial})
+-        rows["scene_summaries_enriched"].append({"scene_id": scene_identifier, **scene_enriched_partial})
+-        rows["text_sources"].extend(text_source_rows(video_id, keyframe_identifier, text, ocr_text, asr_text))
+-        feature_status = "pass" if options.mode in {"bronze_fast", "silver_balanced", "gold_full"} else "degraded_mock"
+-        rows["feature_availability"].append({"entity_type": "keyframe", "entity_id": keyframe_identifier, "has_caption": True, "has_embedding": True, "has_ocr": bool(ocr_text), "has_asr": bool(asr_text), "status": feature_status})
+-        rows["text_documents"].append(text_document_row(document_id, video_id, text))
+-        rows["vector_map"].append({"index_name": "visual", "index_version": "v001", "embedding_model": embedding_provider.model_slug, "vector_id": vector_id, "embedding_id": embedding_meta["embedding_id"], "keyframe_id": keyframe_identifier, "video_id": video_id, "frame_id": frame_id, "shot_id": shot_identifier, "scene_id": scene_identifier})
+-        embeddings.append(embedding)
+-        reuse_rows.append(reuse_row)
+-
+-    rows["release_capabilities"].extend(release_capability_rows(options.mode, plan, visual_status, visual_reason, asr_status, ocr_status, enrichment_status))
+-    rows["_embeddings"] = [{"vector": embedding} for embedding in embeddings]
+-    rows["_reuse"] = reuse_rows
+-    return {name: pd.DataFrame(data) for name, data in rows.items()}
+diff --git a/system1/src/system1/release/artifacts.py b/system1/src/system1/release/artifacts.py
+deleted file mode 100644
+index c918c59..0000000
+--- a/system1/src/system1/release/artifacts.py
++++ /dev/null
+@@ -1,51 +0,0 @@
+-from __future__ import annotations
+-
+-import shutil
+-from pathlib import Path
+-
+-import pandas as pd
+-
+-from system1.release.types import write_json
+-from system1.release.writer import copy_if_exists
+-
+-
+-def write_worker_artifacts(release_dir: Path | str, *, batch_id: str, phase: str, worker_id: str = "worker_000") -> Path:
+-    """Legacy dev helper for `build-mini-seed` only.
+-
+-    Do not use this helper for the phase-based worker pipeline. Real structure
+-    and feature phases write artifacts directly under phase-specific folders.
+-    """
+-    release_path = Path(release_dir).resolve()
+-    manifests_dir = release_path / "manifests"
+-    manifests_dir.mkdir(parents=True, exist_ok=True)
+-    keyframes = pd.read_parquet(release_path / "tables" / "keyframes.parquet")
+-    videos = sorted(set(str(video_id) for video_id in keyframes["video_id"].tolist()))
+-    artifact_paths: list[str] = []
+-    for video_id in videos:
+-        stage_dir = release_path / "artifacts" / phase / video_id
+-        stage_dir.mkdir(parents=True, exist_ok=True)
+-        copy_if_exists(release_path / "tables" / "asr_segments.parquet", stage_dir / "asr_segments.parquet")
+-        copy_if_exists(release_path / "tables" / "shots.parquet", stage_dir / "shots.parquet")
+-        copy_if_exists(release_path / "tables" / "scenes.parquet", stage_dir / "scenes.parquet")
+-        copy_if_exists(release_path / "tables" / "keyframes.parquet", stage_dir / "keyframes.parquet")
+-        copy_if_exists(release_path / "tables" / "shot_transcript_links.parquet", stage_dir / "shot_transcript_links.parquet")
+-        copy_if_exists(release_path / "tables" / "scene_transcript_links.parquet", stage_dir / "scene_transcript_links.parquet")
+-        copy_if_exists(release_path / "tables" / "scene_summaries_initial.parquet", stage_dir / "scene_summaries_initial.parquet")
+-        copy_if_exists(release_path / "tables" / "embeddings_meta.parquet", stage_dir / "embeddings_meta.parquet")
+-        copy_if_exists(release_path / "tables" / "ocr.parquet", stage_dir / "ocr.parquet")
+-        copy_if_exists(release_path / "tables" / "objects.parquet", stage_dir / "objects.parquet")
+-        copy_if_exists(release_path / "tables" / "image_captions.parquet", stage_dir / "image_captions.parquet")
+-        copy_if_exists(release_path / "tables" / "shot_captions.parquet", stage_dir / "shot_captions.parquet")
+-        copy_if_exists(release_path / "tables" / "scene_summaries_enriched.parquet", stage_dir / "scene_summaries_enriched.parquet")
+-        copy_if_exists(release_path / "tables" / "text_sources.parquet", stage_dir / "text_sources.parquet")
+-        copy_if_exists(release_path / "media" / "keyframes" / video_id, stage_dir / "keyframes")
+-        copy_if_exists(release_path / "media" / "thumbnails" / video_id, stage_dir / "thumbnails")
+-        write_json(stage_dir / "manifest.json", {"video_id": video_id, "phase": phase, "batch_id": batch_id})
+-        (stage_dir / "errors.jsonl").write_text("", encoding="utf-8")
+-        suffix = "structure" if phase == "structure" else "features"
+-        archive_path = shutil.make_archive(str((release_path / "artifacts" / phase / f"{video_id}_{suffix}")), "zip", stage_dir)
+-        artifact_paths.append(str(Path(archive_path).relative_to(release_path)))
+-    report = {"worker_id": worker_id, "batch_id": batch_id, "phase": phase, "artifact_paths": artifact_paths, "status": "pass"}
+-    report_path = manifests_dir / f"worker_runtime_report_{phase}.json"
+-    write_json(report_path, report)
+-    return report_path
+diff --git a/system1/src/system1/release/checkpoint.py b/system1/src/system1/release/checkpoint.py
+deleted file mode 100644
+index 4190769..0000000
+--- a/system1/src/system1/release/checkpoint.py
++++ /dev/null
+@@ -1,41 +0,0 @@
+-from __future__ import annotations
+-
+-import hashlib
+-import json
+-import time
+-from pathlib import Path
+-from typing import Any
+-
+-import pandas as pd
+-
+-from system1.release.types import CHECKPOINT_VERSION, BuildOptions, config_hash, write_json
+-
+-
+-def read_checkpoint(release_dir: Path) -> dict[str, Any] | None:
+-    path = release_dir / "manifests" / "checkpoint_manifest.json"
+-    if not path.exists():
+-        return None
+-    return json.loads(path.read_text(encoding="utf-8"))
+-
+-
+-def write_checkpoint(release_dir: Path, options: BuildOptions, tables: dict[str, pd.DataFrame]) -> None:
+-    videos: dict[str, dict[str, Any]] = {}
+-    for row in tables["_reuse"].to_dict("records"):
+-        videos[str(row["video_id"])] = row
+-    embeddings = [row["vector"] for row in tables["_embeddings"].to_dict("records")]
+-    payload = {
+-        "checkpoint_version": CHECKPOINT_VERSION,
+-        "mode": options.mode,
+-        "providers": options.providers,
+-        "provider_plan": (options.provider_plan.__dict__ if options.provider_plan else {}),
+-        "config_hash": config_hash(options),
+-        "created_unix": int(time.time()),
+-        "videos": videos,
+-        "embeddings_hash": hashlib.sha256(json.dumps(embeddings, sort_keys=True).encode("utf-8")).hexdigest(),
+-        "rules": {
+-            "skip_keyframe_if_input_config_schema_unchanged": True,
+-            "skip_faiss_if_text_only_changes": True,
+-            "skip_asr_ocr_if_embedding_only_changes": True,
+-        },
+-    }
+-    write_json(release_dir / "manifests" / "checkpoint_manifest.json", payload)
+diff --git a/system1/src/system1/release/mini_seed.py b/system1/src/system1/release/mini_seed.py
+deleted file mode 100644
+index b5e9864..0000000
+--- a/system1/src/system1/release/mini_seed.py
++++ /dev/null
+@@ -1,61 +0,0 @@
+-from __future__ import annotations
+-
+-from pathlib import Path
+-
+-from system1.batch.writer import write_batches
+-from system1.config import load_provider_plan
+-from system1.db.duckdb_builder import write_duckdb
+-from system1.db.sqlite_builder import write_sqlite
+-from system1.indexes.builder import write_index_files
+-from system1.ingest.discovery import discover_paired_inputs
+-from system1.ingest.pipeline import build_tables
+-from system1.release.checkpoint import read_checkpoint, write_checkpoint
+-from system1.release.types import BuildOptions, RELEASE_NAME, config_dir, create_release_directories, default_input_dir, write_json
+-from system1.release.writer import write_manifest, write_parquet_tables
+-from system1.validation.release_validator import validate_release
+-
+-
+-def build_mini_seed(
+-    output_dir: Path | str,
+-    *,
+-    input_dir: Path | str | None = None,
+-    validate: bool = True,
+-    mode: str = "debug_small_sample",
+-    providers: str = "mock",
+-) -> Path:
+-    """Legacy dev helper for `build-mini-seed` only.
+-
+-    Do not use this helper for the phase-based worker pipeline.
+-    The main MVP path is the CLI sequence:
+-    ingest -> assign-batches -> process-batch -> feature-batch -> merge
+-    -> build-index -> build-db -> validate -> smoke-test.
+-    """
+-    release_dir = Path(output_dir) / RELEASE_NAME
+-    create_release_directories(release_dir)
+-
+-    provider_plan = load_provider_plan(config_dir(), providers)
+-    options = BuildOptions(mode=mode, providers=providers, provider_plan=provider_plan)
+-    pairs = discover_paired_inputs(input_dir or default_input_dir())
+-    previous_checkpoint = read_checkpoint(release_dir)
+-    tables = build_tables(pairs, release_dir, options, previous_checkpoint)
+-
+-    write_parquet_tables(release_dir, tables)
+-    write_batches(release_dir, pairs)
+-    index_kind = write_index_files(release_dir, tables, previous_checkpoint)
+-    write_sqlite(release_dir / "db" / "app.sqlite", tables)
+-    write_duckdb(release_dir / "db" / "staging.duckdb", tables)
+-    write_manifest(release_dir, tables, index_kind, options)
+-    write_checkpoint(release_dir, options, tables)
+-
+-    if validate:
+-        validate_release(release_dir)
+-    else:
+-        write_json(release_dir / "manifests" / "validation_report.json", {"status": "not_run", "errors": []})
+-        (release_dir / "manifests" / "validation_errors.jsonl").write_text("", encoding="utf-8")
+-
+-    return release_dir
+-
+-
+-__all__ = [
+-    "build_mini_seed",
+-]
+diff --git a/system1/src/system1/release/writer.py b/system1/src/system1/release/writer.py
+index e3b6497..7407ac6 100644
+--- a/system1/src/system1/release/writer.py
++++ b/system1/src/system1/release/writer.py
+@@ -3,54 +3,6 @@ from __future__ import annotations
+ import shutil
+ from pathlib import Path
+ 
+-import pandas as pd
+-
+-from system1.release.types import BuildOptions, RELEASE_NAME, write_json
+-
+-
+-def write_parquet_tables(release_dir: Path, tables: dict[str, pd.DataFrame]) -> None:
+-    """Legacy dev helper for `build-mini-seed` only.
+-
+-    Do not use this helper for the phase-based worker pipeline. Real phase
+-    commands write ingestion, structure, feature, and merged outputs
+-    incrementally instead of dumping all tables at once.
+-    """
+-    table_dir = release_dir / "tables"
+-    raw_mapping_dir = release_dir / "raw_mapping"
+-    for name, frame in tables.items():
+-        if name in {"release_capabilities", "_embeddings", "_reuse"}:
+-            continue
+-        target = raw_mapping_dir / f"{name}.parquet" if name == "media_store_manifest" else table_dir / f"{name}.parquet"
+-        frame.to_parquet(target, index=False)
+-
+-
+-def write_manifest(release_dir: Path, tables: dict[str, pd.DataFrame], index_kind: str, options: BuildOptions) -> None:
+-    """Legacy dev helper for `build-mini-seed` only.
+-
+-    Do not use this helper for the phase-based worker pipeline. The phase-based
+-    flow writes runtime manifests during merge, validation, and smoke-test.
+-    """
+-    capabilities = {row["capability"]: row["status"] for row in tables["release_capabilities"].to_dict("records")}
+-    manifest = {
+-        "release_id": RELEASE_NAME,
+-        "mode": options.mode,
+-        "providers": options.providers,
+-        "provider_plan": (options.provider_plan.__dict__ if options.provider_plan else {}),
+-        "counts": {name: int(len(frame)) for name, frame in tables.items() if name != "_embeddings"},
+-        "app_sqlite": "db/app.sqlite",
+-        "fts5": "app.sqlite:text_documents_fts",
+-        "visual_index": "indexes/visual.faiss",
+-        "vector_map": "indexes/vector_map.parquet",
+-        "capabilities": capabilities,
+-        "release_usable": capabilities.get("core_runtime") == "pass" and capabilities.get("text_search") == "pass",
+-        "index_backend": index_kind,
+-    }
+-    write_json(release_dir / "manifests" / "dataset_manifest.json", manifest)
+-    pd.DataFrame([{"artifact_path": str(path.relative_to(release_dir)), "artifact_type": path.suffix.lstrip(".") or "file"} for path in sorted(release_dir.rglob("*")) if path.is_file()]).to_parquet(release_dir / "manifests" / "artifact_manifest.parquet", index=False)
+-    pd.DataFrame([{"video_id": row["video_id"], "status": "complete" if options.mode == "bronze_fast" else "debug_mock_complete"} for row in tables["videos"].to_dict("records")]).to_parquet(release_dir / "manifests" / "video_processing_status.parquet", index=False)
+-    pd.DataFrame([{"check": options.mode, "status": "pass"}]).to_parquet(release_dir / "manifests" / "quality_report.parquet", index=False)
+-    tables["_reuse"].to_parquet(release_dir / "manifests" / "reuse_manifest.parquet", index=False)
+-
+ 
+ def copy_if_exists(source: Path, target: Path) -> None:
+     if not source.exists():
+diff --git a/system1/tests/test_smoke.py b/system1/tests/test_smoke.py
+index f8e6ad9..8892003 100644
+--- a/system1/tests/test_smoke.py
++++ b/system1/tests/test_smoke.py
+@@ -29,13 +29,78 @@ from system1.ingest.source_importer import (
+ )
+ from system1.ingest import source_importer as source_importer_module
+ from system1.media.probe import VideoProbe
+-from system1.release.artifacts import write_worker_artifacts
+-from system1.release.mini_seed import build_mini_seed
+ from system1.validation.release_validator import validate_release
+ 
+ runner = CliRunner()
+ 
+ 
++def run_cli_sequence(commands: list[list[str]]) -> None:
++    for command in commands:
++        result = runner.invoke(app, command)
++        assert result.exit_code == 0, f"command failed: {command}\n{result.stdout}"
++
++
++def phase_based_commands(
++    output_dir: Path,
++    *,
++    mode: str = "debug_small_sample",
++    providers: str = "mock",
++) -> list[list[str]]:
++    return [
++        ["ingest", "--mode", mode, "--output", str(output_dir), "--input", "input"],
++        ["assign-batches", "--mode", mode, "--num-batches", "1", "--output", str(output_dir)],
++        [
++            "process-batch",
++            "--batch-id",
++            "batch_000",
++            "--mode",
++            mode,
++            "--providers",
++            providers,
++            "--output",
++            str(output_dir),
++            "--input",
++            "input",
++        ],
++        [
++            "feature-batch",
++            "--batch-id",
++            "batch_000",
++            "--mode",
++            mode,
++            "--providers",
++            providers,
++            "--output",
++            str(output_dir),
++            "--input",
++            "input",
++        ],
++        ["merge", "--mode", mode, "--output", str(output_dir)],
++        ["build-index", "--mode", mode, "--output", str(output_dir)],
++        ["build-db", "--mode", mode, "--output", str(output_dir)],
++        ["validate", "--mode", mode, "--output", str(output_dir)],
++    ]
++
++
++def run_phase_based_release(
++    tmp_path: Path,
++    *,
++    mode: str = "debug_small_sample",
++    providers: str = "mock",
++    package: bool = False,
++) -> Path:
++    output_dir = tmp_path / "output"
++    run_cli_sequence(phase_based_commands(output_dir, mode=mode, providers=providers))
++    release_dir = output_dir / "competition_dataset_v001"
++    smoke = runner.invoke(app, ["smoke-test", "--release", str(release_dir)])
++    assert smoke.exit_code == 0, smoke.stdout
++    if package:
++        packaged = runner.invoke(app, ["release", "--mode", mode, "--output", str(output_dir)])
++        assert packaged.exit_code == 0, packaged.stdout
++    return release_dir
++
++
++
+ def test_system1_package_imports():
+     import system1
+ 
+@@ -162,7 +227,7 @@ def test_tolerant_input_discovery_reports_missing_and_unmatched_metadata(tmp_pat
+ 
+ 
+ def test_debug_release_generates_valid_release(tmp_path):
+-    release_dir = build_mini_seed(tmp_path, input_dir="input")
++    release_dir = run_phase_based_release(tmp_path)
+     sqlite_path = release_dir / "db" / "app.sqlite"
+     with sqlite3.connect(sqlite_path) as connection:
+         row = connection.execute("SELECT document_id FROM text_documents_fts WHERE text_documents_fts MATCH ? LIMIT 1", ("L21",)).fetchone()
+@@ -175,7 +240,7 @@ def test_debug_release_generates_valid_release(tmp_path):
+ 
+ 
+ def test_bronze_fast_generates_real_media_files(tmp_path):
+-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="bronze_fast")
++    release_dir = run_phase_based_release(tmp_path, mode="bronze_fast")
+     result = validate_release(release_dir)
+     assert result.passed
+     manifest = json.loads((release_dir / "manifests" / "dataset_manifest.json").read_text(encoding="utf-8"))
+@@ -472,20 +537,15 @@ def test_validate_fails_before_runtime_artifacts(tmp_path):
+     validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+     assert validate.exit_code != 0
+ 
+-def test_build_mini_seed_command_keeps_dev_helper_path(tmp_path):
++def test_build_mini_seed_command_is_removed_from_main_cli(tmp_path):
+     output_dir = tmp_path / "output"
+     result = runner.invoke(
+         app,
+         ["build-mini-seed", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+     )
+-    assert result.exit_code == 0, result.stdout
+-    release_dir = output_dir / "competition_dataset_v001"
+-    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+-    assert validate.exit_code == 0, validate.stdout
+-    smoke = runner.invoke(app, ["smoke-test", "--release", str(release_dir)])
+-    assert smoke.exit_code == 0, smoke.stdout
+-    packaged = runner.invoke(app, ["release", "--mode", "debug_small_sample", "--output", str(output_dir)])
+-    assert packaged.exit_code == 0, packaged.stdout
++    assert result.exit_code != 0
++
++    release_dir = run_phase_based_release(tmp_path, package=True)
+     assert (release_dir / "manifests" / "smoke_test_report.json").exists()
+     assert (output_dir / "competition_dataset_v001.zip").exists()
+ 
+@@ -503,7 +563,7 @@ def test_cli_bronze_pipeline_end_to_end(tmp_path):
+ 
+ 
+ def test_silver_balanced_outputs_asr_ocr_contracts(tmp_path):
+-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="silver_balanced")
++    release_dir = run_phase_based_release(tmp_path, mode="silver_balanced")
+     result = validate_release(release_dir)
+     assert result.passed
+     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
+@@ -514,7 +574,7 @@ def test_silver_balanced_outputs_asr_ocr_contracts(tmp_path):
+ 
+ 
+ def test_real_provider_mode_fails_gracefully_with_degraded_asr_ocr(tmp_path):
+-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="silver_balanced", providers="real")
++    release_dir = run_phase_based_release(tmp_path, mode="silver_balanced", providers="real")
+     result = validate_release(release_dir)
+     assert result.passed
+     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
+@@ -524,22 +584,13 @@ def test_real_provider_mode_fails_gracefully_with_degraded_asr_ocr(tmp_path):
+     assert report["release_usable"] is True
+ 
+ 
+-def test_gold_full_outputs_enrichment_and_reuse_checkpoint(tmp_path):
+-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
+-    first_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
+-    index_path = release_dir / "indexes" / "visual.faiss"
+-    first_mtime = index_path.stat().st_mtime_ns
+-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
++def test_gold_full_outputs_enrichment_and_phase_artifacts(tmp_path):
++    release_dir = run_phase_based_release(tmp_path, mode="gold_full")
+     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
+-    second_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
+-    second_mtime = index_path.stat().st_mtime_ns
+     assert report["capabilities"]["enrichment_overall"] == "pass"
+-    assert report["capabilities"]["incremental_reuse"] == "pass"
+-    assert first_checkpoint["rules"]["skip_keyframe_if_input_config_schema_unchanged"] is True
+-    assert second_checkpoint["videos"]
+-    assert all(video["media_reused"] for video in second_checkpoint["videos"].values())
+-    assert second_checkpoint["embeddings_hash"] == first_checkpoint["embeddings_hash"]
+-    assert second_mtime == first_mtime
++    assert (release_dir / "manifests" / "checkpoint_manifest.json").exists()
++    assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
++    assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
+     for name in ["objects", "image_captions", "shot_captions", "scene_summaries_initial", "scene_summaries_enriched"]:
+         assert (release_dir / "tables" / f"{name}.parquet").exists()
+ 
+@@ -571,26 +622,21 @@ def test_provider_plan_supports_named_modes():
+ 
+ 
+ def test_worker_artifacts_and_runtime_reports_exist(tmp_path):
+-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
+-    structure_report = write_worker_artifacts(release_dir, batch_id="batch_000", phase="structure")
+-    features_report = write_worker_artifacts(release_dir, batch_id="batch_000", phase="features")
+-    assert structure_report.exists()
+-    assert features_report.exists()
++    release_dir = run_phase_based_release(tmp_path, mode="gold_full")
++    assert (release_dir / "manifests" / "worker_runtime_report_structure.json").exists()
++    assert (release_dir / "manifests" / "worker_runtime_report_features.json").exists()
+     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
+     assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
+ 
+ 
+-def test_selective_rebuild_proof_embedding_change_keeps_asr_ocr_contracts(tmp_path):
+-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full", providers="mock")
+-    first_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
+-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full", providers="real")
+-    second_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
++def test_selective_provider_change_keeps_phase_contracts(tmp_path):
++    release_dir = run_phase_based_release(tmp_path, mode="gold_full", providers="real")
+     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
+-    assert first_checkpoint["videos"].keys() == second_checkpoint["videos"].keys()
+-    assert all(video["media_reused"] for video in second_checkpoint["videos"].values())
+     assert report["capabilities"]["asr"] == "degraded"
+     assert report["capabilities"]["ocr"] == "degraded"
+     assert report["capabilities"]["visual_search"] == "degraded"
++    assert (release_dir / "tables" / "asr_segments.parquet").exists()
++    assert (release_dir / "tables" / "ocr.parquet").exists()
+ 
+ 
+ def test_import_organizer_source_from_local_folder(tmp_path):

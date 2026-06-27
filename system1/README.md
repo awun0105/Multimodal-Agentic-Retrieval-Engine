@@ -211,5 +211,5 @@ Check these first:
 
 ## Legacy dev helper
 
-`build-mini-seed` is a legacy dev helper that builds a tiny end-to-end debug release in one command.
+The legacy `build-mini-seed` one-command helper has been removed from the main CLI. Use the phase-based workflow above for dev, tests, and releases.
 The main path for the current MVP is the phase-based CLI pipeline above.
