@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import os
+
 import typer
+
+if os.environ.get("AIC_HF_PROGRESS", "0") != "1":
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
 
 from system1.commands import (
     register_checkpoint_commands,
@@ -25,3 +31,7 @@ register_checkpoint_commands(app)
 
 def main() -> None:
     app()
+
+
+if __name__ == "__main__":
+    main()

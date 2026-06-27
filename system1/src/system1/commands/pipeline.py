@@ -36,6 +36,27 @@ def register(app: typer.Typer) -> None:
         mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
+        source_uri: str | None = typer.Option(
+            None,
+            "--source-uri",
+            help="Local standardized input root with raw_videos/ and metadata/.",
+        ),
+        max_workers: int | None = typer.Option(
+            None,
+            "--max-workers",
+            min=1,
+            help="Maximum parallel metadata/probe workers.",
+        ),
+        pairing_policy: str = typer.Option(
+            "video-primary",
+            "--pairing-policy",
+            help="Local input pairing policy: strict or video-primary.",
+        ),
+        quarantine_unmatched_metadata: bool = typer.Option(
+            False,
+            "--quarantine-unmatched-metadata/--no-quarantine-unmatched-metadata",
+            help="Move local metadata JSON files without matching videos into _unmatched_metadata/.",
+        ),
         canonical_hf_repo_id: str | None = typer.Option(None, "--canonical-hf-repo-id"),
         canonical_hf_prefix: str = typer.Option("", "--canonical-hf-prefix"),
         canonical_hf_repo_type: str = typer.Option("dataset", "--canonical-hf-repo-type"),
@@ -52,6 +73,16 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Normalize sample inputs into release tables."""
         require_supported_mode(mode)
+        if source_uri is not None and canonical_hf_repo_id:
+            raise typer.BadParameter(
+                "pass only one source: --source-uri for local standardized input "
+                "or --canonical-hf-repo-id for HF fallback"
+            )
+        if source_uri is not None and input_dir:
+            raise typer.BadParameter("pass only one local input option: --source-uri or --input")
+        normalized_pairing_policy = pairing_policy.strip().lower().replace("_", "-")
+        if normalized_pairing_policy not in {"strict", "video-primary"}:
+            raise typer.BadParameter("pairing policy must be strict or video-primary")
         if resume:
             try:
                 if try_restore_checkpoint(output=output, artifact_root=artifact_root, artifact_backend=artifact_backend, hf_repo_id=hf_repo_id, hf_repo_type=hf_repo_type, hf_revision=hf_revision, hf_prefix=hf_prefix, phase="phase00_ingest_assignment"):
@@ -62,7 +93,11 @@ def register(app: typer.Typer) -> None:
         report_path = run_ingestion(
             output,
             input_dir=input_dir,
+            source_uri=source_uri,
             mode=mode,
+            max_workers=max_workers,
+            pairing_policy=normalized_pairing_policy,
+            quarantine_unmatched_metadata=quarantine_unmatched_metadata,
             canonical_hf_repo_id=canonical_hf_repo_id,
             canonical_hf_prefix=canonical_hf_prefix,
             canonical_hf_repo_type=canonical_hf_repo_type,

@@ -35,7 +35,7 @@ def probe_video(path: Path) -> VideoProbe:
     try:
         completed = subprocess.run(command, check=True, capture_output=True, text=True)
         stream = (json.loads(completed.stdout).get("streams") or [{}])[0]
-    except (subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
+    except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
         return VideoProbe(None, "ffprobe_failed", None, True, "unavailable", None, None, None, None)
 
     fps = _parse_rate(stream.get("avg_frame_rate")) or _parse_rate(stream.get("r_frame_rate"))

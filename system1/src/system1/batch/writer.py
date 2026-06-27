@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import heapq
 from pathlib import Path
 
 import pandas as pd
@@ -55,14 +56,25 @@ def assign_batches(
 
 
 def _assign_cost_aware(videos: list[dict[str, object]], num_batches: int) -> list[dict[str, object]]:
-    buckets = [0.0 for _ in range(num_batches)]
+    # --- TỐI ƯU GIẢI THUẬT: Sử dụng cấu trúc dữ liệu Min-Heap thay thế vòng lặp min() tuyến tính ---
+    # Cấu trúc phần tử trong heap: (tổng_chi_phí_hiện_tại_của_bucket, chỉ_mục_bucket)
+    heap = [(0.0, idx) for idx in range(num_batches)]
+    heapq.heapify(heap)
+
     rows: list[dict[str, object]] = []
+
+    # Kỹ thuật Heuristic: Luôn ưu tiên xử lý video nặng trước (giảm dần theo cost) để tối ưu phân bổ tải song song
     for video in sorted(videos, key=lambda item: (-_cost(item), str(item["video_id"]))):
-        batch_index = min(range(num_batches), key=lambda idx: buckets[idx])
+        # Lấy nhanh Worker có tổng chi phí thấp nhất (nhàn rỗi nhất) tại thời điểm hiện tại chỉ mất O(1)
+        current_cost, batch_index = heapq.heappop(heap)
+
         batch_id = f"batch_{batch_index:03d}"
         worker_id = f"worker_{batch_index:03d}"
         cost = _cost(video)
-        buckets[batch_index] += cost
+
+        # Tích lũy chi phí cho Worker và đẩy ngược lại vào cây Heap trong O(log M)
+        heapq.heappush(heap, (current_cost + cost, batch_index))
+
         rows.append(
             {
                 "batch_id": batch_id,

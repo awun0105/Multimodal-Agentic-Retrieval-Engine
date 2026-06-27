@@ -1,7 +1,7 @@
-# Informational config for the current MVP implementation.
-# The CLI phase pipeline does not consume this file as a runtime dependency yet.
-
-dataset_fps: 25
+fps_policy:
+  scope: per_video
+  source: ffprobe
+  planning_expected_fps: 25
 frame_id_policy:
   primary: decoded_original_frame_index
   fallback: timestamp_based_only_when_needed

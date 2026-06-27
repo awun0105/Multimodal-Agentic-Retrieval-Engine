@@ -45,17 +45,11 @@ def default_hf_prefix() -> str:
     return os.environ.get("AIC_HF_PREFIX", "")
 
 def default_cli_resume() -> bool:
-    """CLI checkpoint resume is opt-in unless AIC_RESUME is explicitly set."""
-    value = os.environ.get("AIC_RESUME")
-    if value is None:
-        return False
+    # --- SỬA LỖI LOGIC: Luôn ưu tiên cơ chế phân giải tập trung của environment.py ---
     return resolve_runtime_paths().resume
 
 def default_cli_sync() -> bool:
-    """CLI checkpoint sync is opt-in unless AIC_SYNC is explicitly set."""
-    value = os.environ.get("AIC_SYNC")
-    if value is None:
-        return False
+    # --- SỬA LỖI LOGIC: Luôn ưu tiên cơ chế phân giải tập trung của environment.py ---
     return resolve_runtime_paths().sync
 
 
