@@ -191,6 +191,10 @@ This inventory is produced while `upload-standardized-raw` still has local
 access to `raw_videos/`. It must contain one row per canonical video with:
 
 - `video_id`
+- `canonical_repo_id`
+- `canonical_repo_type`
+- `canonical_revision`
+- `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path`
 - `duration_sec`

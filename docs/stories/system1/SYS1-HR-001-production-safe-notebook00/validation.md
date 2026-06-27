@@ -42,7 +42,7 @@ system1/.venv/bin/system1 --help
   `--allow-partial` and keeps `--overwrite/--no-overwrite`.
 - `scripts/bin/harness-cli story verify SYS1-HR-001`: pass.
 - Notebook 00 now presents Drive shadow -> standardize archives -> input
-  readiness -> ingest -> assign batches -> sync-release to HF Dataset as the
+  readiness -> ingest -> assign batches -> phase00 sync to HF Dataset as the
   primary operator workflow, requires `AIC_HF_REPO_ID`, and requires an archive
   source path when Drive shadow is enabled.
 - `uv run pytest tests/test_smoke.py -q`: 37 passed after simplifying the
@@ -55,7 +55,7 @@ system1/.venv/bin/system1 --help
   presentation.
 - Notebook 00 now uses the exact primary workflow Drive shadow -> standardize
   archives -> input readiness -> local ingest -> assign batches -> required
-  `sync-release` to `AIC_HF_REPO_ID`. The notebook no longer runs
+  `sync-phase00-ingestion` to `AIC_HF_REPO_ID`. The notebook no longer runs
   `import-canonical` or `ingest --canonical-hf-repo-id`.
 - `python -m pytest tests/test_smoke.py -k "standardize_archive_source or
   local_ingest_video_primary_tolerates_missing_and_unmatched_metadata or

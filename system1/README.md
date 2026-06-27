@@ -82,6 +82,11 @@ organizer Google Drive folder
 Use these commands directly only when debugging outside the notebook:
 
 ```bash
+system1 import-canonical-raw \
+  --source-dir /content/drive/MyDrive/AIC2026/raw_dataset \
+  --output input \
+  --raw-import-id canonical_raw_v003
+
 system1 drive-shadow \
   --source-folder-id organizer-folder-id \
   --dest-folder-id your-drive-folder-id \
@@ -102,10 +107,16 @@ system1 assign-batches \
   --num-batches 1 \
   --output output
 
-system1 sync-release \
+system1 sync-phase00-ingestion \
   --output output \
   --hf-repo-id your-org/AIC26_release \
   --hf-prefix canonical_release_v003/phase00_ingestion
+
+system1 restore-phase00-ingestion \
+  --release-id competition_dataset_v001 \
+  --hf-repo-id your-org/AIC26_release \
+  --hf-prefix canonical_release_v003/phase00_ingestion \
+  --output output
 ```
 
 `standardize-archives` writes:
@@ -130,16 +141,10 @@ Fallback, use an existing standardized input directory:
 cp -R /path/to/sample/input ./input
 ```
 
-Worker notebooks restore phase00 output from `AIC26_release` and read raw
-videos/metadata from `AIC26_raw`:
-
-```bash
-system1 restore-release \
-  --release-id competition_dataset_v001 \
-  --hf-repo-id your-org/AIC26_release \
-  --hf-prefix canonical_release_v003/phase00_ingestion \
-  --output output
-```
+`import-canonical-raw` is the CLI wrapper around source-folder staging,
+standardization, probing, and raw upload. `sync-phase00-ingestion` and
+`restore-phase00-ingestion` use the phase00 Hugging Face layout for
+Notebook 00 outputs.
 
 ## Local setup
 

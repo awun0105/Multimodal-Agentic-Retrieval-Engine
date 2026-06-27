@@ -18,7 +18,20 @@ staging copies.
 `upload-standardized-raw` writes
 `<raw_import_id>/manifests/canonical_video_inventory.parquet` while local videos
 are still available. HF canonical ingest reads that small inventory and uses it
-for per-video duration, FPS, frame count, and source file size.
+for per-video duration, FPS, frame count, source file size, and canonical path
+metadata. The inventory includes:
+
+- `video_id`
+- `canonical_repo_id`
+- `canonical_repo_type`
+- `canonical_revision`
+- `canonical_prefix`
+- `canonical_video_path`
+- `canonical_metadata_path`
+- `duration_sec`
+- `fps`
+- `frame_count`
+- `file_size_bytes`
 
 By default, HF canonical ingest must not download `raw_videos/*.mp4` for
 probing. The legacy download/probe fallback is allowed only when

@@ -90,11 +90,24 @@ ${AIC_RUNTIME_ROOT}/indexes/index_version.json
 The earlier `data/` tree in source material is a logical artifact layout, not a physical repository layout. Raw videos are referenced by `video_ref = raw_videos/{video_id}.mp4` and are resolved through `MediaStorePort`; compact releases may omit raw-video copies. `frame_timeline` is staging/debug and may be per-video, merged, sampled, or omitted from compact release when key tables retain enough frame/timestamp mapping fields.
 
 For the versioned raw Hugging Face Dataset path, `upload-standardized-raw`
-emits `manifests/canonical_video_inventory.parquet` with one row per video:
-`video_id`, canonical video/metadata paths, `duration_sec`, `fps`,
-`frame_count`, and `file_size_bytes`. Canonical HF ingest consumes that
-inventory by default and does not download `raw_videos/*.mp4` solely for media
-probing unless `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
+emits `manifests/canonical_video_inventory.parquet` with one row per video.
+The inventory carries:
+
+- `video_id`
+- `canonical_repo_id`
+- `canonical_repo_type`
+- `canonical_revision`
+- `canonical_prefix`
+- `canonical_video_path`
+- `canonical_metadata_path`
+- `duration_sec`
+- `fps`
+- `frame_count`
+- `file_size_bytes`
+
+Canonical HF ingest consumes that inventory by default and does not download
+`raw_videos/*.mp4` solely for media probing unless
+`AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
 
 ## Hugging Face Shared Storage Contract
 

@@ -17,7 +17,7 @@ Notebook 00 presents the Colab/Drive path as the primary flow:
 3. Local standardized input readiness check.
 4. Phase00 ingest.
 5. Batch assignment.
-6. Required `system1 sync-release` to the configured Hugging Face Dataset repo.
+6. Required `system1 sync-phase00-ingestion` to the configured Hugging Face Dataset repo.
 
 Already-standardized local input remains a fallback when Drive/archive config is
 empty. Canonical Hugging Face import is intentionally excluded from Notebook
