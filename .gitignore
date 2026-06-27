@@ -257,3 +257,9 @@ GOAL.md
 #scripts/bin/harness-cli.exe
 
 #docs/planning/team-collaboration-plan.md
+# Local audit / patch / exported archives
+*.zip
+*_code_for_*.zip
+*_cleanup.zip
+*_audit*.zip
+*_phase*.zip
