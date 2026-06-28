@@ -27,6 +27,8 @@ Do not require live Google Drive or Hugging Face credentials for CI-grade proof.
 ```text
 uv run pytest
 jq empty system1/notebooks/00_master_ingestion_and_assignment.ipynb
+jq empty system1/notebooks/00A_master_ingestion_and_assignment.ipynb
+jq empty system1/notebooks/00B_master_ingestion_and_assignment.ipynb
 git diff --check
 system1/.venv/bin/system1 --help
 ```
@@ -72,6 +74,9 @@ system1/.venv/bin/system1 --help
   probe/upload staging and zip `member_stage_*` cleanup were verified.
 - `python -m pytest tests/test_hf_artifact_store.py`: 11 passed after
   confirming HF artifact-store behavior stayed intact.
+- `python -m pytest tests/test_smoke.py -k "stream_standardize_upload_raw or notebooks_are_operator_ready" -q`:
+  validates the 00B streaming command, split video/metadata zip pairing,
+  scratch cleanup, canonical raw manifests, and notebook command references.
 - `uv run pytest tests/test_smoke.py -q`: 37 passed after making HF Dataset
   release sync required.
 - `uv run pytest`: 103 passed after making HF Dataset release sync required.

@@ -24,6 +24,7 @@ from system1.ingest.source_importer import (
     import_organizer_source,
     shadow_google_drive_folder,
     standardize_archive_source,
+    stream_standardize_upload_raw_to_hf,
     upload_standardized_raw_to_hf,
 )
 from system1.ingest import source_importer as source_importer_module
@@ -179,12 +180,21 @@ def test_schema_files_are_complete_and_loadable():
 
 def test_notebooks_are_operator_ready_thin_orchestration_shells():
     expected_commands = {
-        "00_master_ingestion_and_assignment.ipynb": [
+        "00A_master_ingestion_and_assignment.ipynb": [
             "drive-shadow",
             "standardize-archives",
+            "upload-standardized-raw",
             "ingest",
             "assign-batches",
-            "sync-release",
+            "sync-phase00-ingestion",
+            "AIC_HF_REPO_ID",
+        ],
+        "00B_master_ingestion_and_assignment.ipynb": [
+            "drive-shadow",
+            "stream-standardize-upload-raw",
+            "ingest",
+            "assign-batches",
+            "sync-phase00-ingestion",
             "AIC_HF_REPO_ID",
         ],
         "01_worker_structure_pipeline.ipynb": ["process-batch"],
@@ -210,11 +220,12 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         assert "AIC_RUNTIME_ROOT" in joined
         assert "AIC_ARTIFACT_ROOT" in joined
         assert "execution_mode" in joined
-        if path.name != "00_master_ingestion_and_assignment.ipynb":
+        if not path.name.startswith("00"):
             assert "worker_id" in joined
             assert "batch_id" in joined
             assert "provider_mode" in joined
         assert "run_cli" in joined
+        assert path.name in expected_commands
         for command in expected_commands[path.name]:
             assert command in joined
 
@@ -950,6 +961,80 @@ def test_upload_standardized_raw_to_hf_verbose_prints_file_detail(monkeypatch, t
     assert result.error_count == 0
     assert "kind=video index=1/1 status=uploaded file=A.mp4" in output
     assert "kind=metadata index=1/1 status=uploaded file=A.json" in output
+
+
+def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monkeypatch, tmp_path):
+    source_root = tmp_path / "raw_dataset"
+    source_root.mkdir()
+    video_zip_root = tmp_path / "video_zip_root"
+    metadata_zip_root = tmp_path / "metadata_zip_root"
+    (video_zip_root / "nested").mkdir(parents=True)
+    (metadata_zip_root / "metadata").mkdir(parents=True)
+    (video_zip_root / "nested" / "L21_V001.mp4").write_bytes(b"video-1")
+    (video_zip_root / "nested" / "L21_V002.mp4").write_bytes(b"video-2")
+    (metadata_zip_root / "metadata" / "L21_V001.json").write_text('{"title":"one"}\n', encoding="utf-8")
+    (metadata_zip_root / "metadata" / "orphan.json").write_text('{"title":"orphan"}\n', encoding="utf-8")
+    shutil.make_archive(str(source_root / "Videos_L21_a"), "zip", video_zip_root)
+    shutil.make_archive(str(source_root / "metadata-info-aic-b1"), "zip", metadata_zip_root)
+    scratch_root = tmp_path / "scratch"
+    progress_path = tmp_path / "progress" / "stream_progress.jsonl"
+    uploaded: dict[str, bytes] = {}
+    commit_batches: list[list[str]] = []
+    probed_paths: list[Path] = []
+
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": [])
+
+    def fake_probe(path: Path):
+        probed_paths.append(path)
+        assert scratch_root in path.parents
+        return VideoProbe(30.0, "test", 300, False, "test", 10.0, 640, 360, False)
+
+    def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
+        commit_batches.append([str(relative_path) for _source, relative_path in files])
+        for source, relative_path in files:
+            uploaded[str(relative_path)] = source.read_bytes()
+            if str(relative_path).endswith(".mp4"):
+                assert scratch_root in source.parents
+        return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
+
+    monkeypatch.setattr(source_importer_module, "probe_video", fake_probe)
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
+
+    result = stream_standardize_upload_raw_to_hf(
+        source_root,
+        repo_id="org/repo",
+        raw_import_id="canonical_dataset_v001",
+        scratch_dir=scratch_root,
+        progress_path=progress_path,
+    )
+
+    assert result.error_count == 0
+    assert result.video_count == 2
+    assert "canonical_dataset_v001/raw_videos/L21_V001.mp4" in uploaded
+    assert "canonical_dataset_v001/raw_videos/L21_V002.mp4" in uploaded
+    assert "canonical_dataset_v001/metadata/L21_V001.json" in uploaded
+    assert "canonical_dataset_v001/metadata/L21_V002.json" in uploaded
+    assert json.loads(uploaded["canonical_dataset_v001/metadata/L21_V002.json"])["metadata_missing"] is True
+    assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
+    assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
+    assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
+    missing_audit = json.loads(uploaded["canonical_dataset_v001/manifests/missing_metadata.json"].decode())
+    unmatched_audit = json.loads(uploaded["canonical_dataset_v001/manifests/unmatched_metadata.json"].decode())
+    assert missing_audit["missing_metadata"] == ["L21_V002"]
+    assert unmatched_audit["unmatched_metadata"] == ["orphan"]
+    inventory = pd.read_parquet(BytesIO(uploaded["canonical_dataset_v001/manifests/canonical_video_inventory.parquet"]))
+    assert inventory.sort_values("video_id")["video_id"].tolist() == ["L21_V001", "L21_V002"]
+    assert all(not path.exists() for path in probed_paths)
+    assert not any(scratch_root.glob("stream_pair_*"))
+    progress_records = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
+    assert [record["status"] for record in progress_records] == ["pass", "pass"]
+    assert any(
+        batch == [
+            "canonical_dataset_v001/raw_videos/L21_V001.mp4",
+            "canonical_dataset_v001/metadata/L21_V001.json",
+        ]
+        for batch in commit_batches
+    )
 
 
 def test_upload_standardized_raw_rate_limit_helpers_parse_retry_after():

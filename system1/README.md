@@ -71,10 +71,9 @@ Notebook 00 workflow for Colab/local source preparation:
 ```text
 organizer Google Drive folder
   -> drive-shadow into your Drive folder
-  -> standardize-archives into input/raw_videos + input/metadata
-  -> validate standardized input
-  -> upload canonical raw files to AIC26_raw
-  -> ingest
+  -> 00A: standardize-archives into input/raw_videos + input/metadata, then upload canonical raw files to AIC26_raw
+  -> 00B: stream-standardize-upload-raw extracts one zip pair at a time into local scratch and uploads canonical raw files to AIC26_raw
+  -> ingest from AIC26_raw
   -> assign-batches
   -> upload phase00 ingestion outputs to AIC26_release/phase00_ingestion
 ```
@@ -96,6 +95,13 @@ system1 standardize-archives \
   --source-dir /content/drive/MyDrive/AIC2026/raw_dataset \
   --target-dir input \
   --temp-dir /content/temp_extraction
+
+system1 stream-standardize-upload-raw \
+  --source-dir /content/drive/MyDrive/AIC2026/raw_dataset \
+  --target-hf-repo-id your-org/AIC26_raw \
+  --raw-import-id canonical_raw_v003 \
+  --scratch-dir /content/aic_scratch \
+  --progress-path /content/drive/MyDrive/AIC2026/stream_standardize_upload_progress.jsonl
 
 system1 ingest \
   --mode debug_small_sample \

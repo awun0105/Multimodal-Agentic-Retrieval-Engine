@@ -9,6 +9,7 @@ from system1.ingest.source_importer import (
     import_organizer_source,
     shadow_google_drive_folder,
     standardize_archive_source,
+    stream_standardize_upload_raw_to_hf,
     upload_standardized_raw_to_hf,
 )
 
@@ -55,6 +56,47 @@ def register(app: typer.Typer) -> None:
         )
         if result.error_count:
             typer.echo(f"Standardized raw upload completed with errors. Review report: {result.report_path}", err=True)
+            raise typer.Exit(code=1)
+
+    @app.command("stream-standardize-upload-raw")
+    def stream_standardize_upload_raw(
+        source_dir: Path = typer.Option(..., "--source-dir", help="Folder containing organizer zip files."),
+        target_hf_repo_id: str = typer.Option(..., "--target-hf-repo-id", help="Existing Hugging Face Dataset repo for canonical data."),
+        raw_import_id: str = typer.Option(..., "--raw-import-id", help="Version prefix inside the raw HF Dataset repo."),
+        scratch_dir: Path = typer.Option(Path("/content/aic_scratch"), "--scratch-dir", help="Local runtime scratch directory for one-pair-at-a-time extraction."),
+        progress_path: Path | None = typer.Option(None, "--progress-path", help="Progress JSONL path, preferably on Drive for Colab resume."),
+        target_hf_repo_type: str = typer.Option("dataset", "--target-hf-repo-type"),
+        target_hf_revision: str = typer.Option("main", "--target-hf-revision"),
+        media_extensions: str = typer.Option(
+            ".mp4,.mov,.mkv,.avi,.webm,.wav",
+            "--media-extensions",
+            help="Comma-separated media extensions to upload into raw_videos/.",
+        ),
+        resume: bool = typer.Option(True, "--resume/--no-resume"),
+        overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite"),
+        allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when some stream pairs fail."),
+    ) -> None:
+        """Stream zip media/metadata pairs through local scratch into canonical HF raw."""
+        extensions = {item.strip().lower() for item in media_extensions.split(",") if item.strip()}
+        result = stream_standardize_upload_raw_to_hf(
+            source_dir,
+            repo_id=target_hf_repo_id,
+            raw_import_id=raw_import_id,
+            scratch_dir=scratch_dir,
+            repo_type=target_hf_repo_type,
+            revision=target_hf_revision,
+            media_extensions=extensions,
+            progress_path=progress_path,
+            resume=resume,
+            overwrite=overwrite,
+        )
+        typer.echo(
+            "Stream uploaded standardized raw "
+            f"videos={result.video_count} metadata={result.metadata_count} "
+            f"errors={result.error_count}: {result.report_path}"
+        )
+        if result.error_count and not allow_partial:
+            typer.echo(f"Stream standardized raw upload completed with errors. Review report: {result.report_path}", err=True)
             raise typer.Exit(code=1)
 
     @app.command("import-canonical-raw")

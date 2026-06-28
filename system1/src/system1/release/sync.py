@@ -28,6 +28,8 @@ PHASE00_REPORT_FILENAMES = {
     "drive_shadow_report.json",
     "standardize_archives_report.json",
     "standardize_progress.jsonl",
+    "canonical_import_report.json",
+    "stream_standardize_upload_progress.jsonl",
 }
 
 

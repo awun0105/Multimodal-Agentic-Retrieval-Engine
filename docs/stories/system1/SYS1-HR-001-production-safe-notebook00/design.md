@@ -10,7 +10,7 @@
 
 ## Application Flow
 
-Notebook 00 presents the Colab/Drive path as the primary flow:
+Notebook 00A presents the stable Colab/Drive path as the primary flow:
 
 1. `system1 drive-shadow` when Drive folder IDs are configured.
 2. `system1 standardize-archives` when an archive source folder is configured.
@@ -22,6 +22,20 @@ Notebook 00 presents the Colab/Drive path as the primary flow:
 Already-standardized local input remains a fallback when Drive/archive config is
 empty. Canonical Hugging Face import is intentionally excluded from Notebook
 00's standard workflow to keep the operator path singular.
+
+Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
+
+1. `system1 drive-shadow` copies the organizer folder into the operator/team
+   Drive folder.
+2. `system1 stream-standardize-upload-raw` scans zip members globally, builds
+   video/metadata pairs by `video_id`, extracts one pair into local scratch,
+   probes and uploads that pair to `AIC26_raw`, records progress, and deletes
+   the pair scratch directory before moving on.
+3. Canonical HF ingest reads the raw repo manifests and inventory.
+4. Batch assignment and required `system1 sync-phase00-ingestion` stay the same.
+
+The streaming variant does not materialize full `raw_videos/` and `metadata/`
+folders on Google Drive.
 
 The safety gate belongs in the CLI commands so Notebook 00, shell users, and
 tests share the same behavior.
@@ -39,6 +53,14 @@ tests share the same behavior.
 - Supports `--allow-partial`.
 - Skips existing targets with identical size by default.
 - Uses `--overwrite` for explicit replacement.
+
+`system1 stream-standardize-upload-raw`:
+
+- Fails non-zero when pair scan, extraction, probe, or upload records errors.
+- Supports `--allow-partial` for manual recovery.
+- Uses `--resume` by default and appends pair progress to JSONL.
+- Uses `--overwrite` only for explicit remote replacement.
+- Rejects Google Drive paths as `--scratch-dir`.
 
 ## Data Model
 
@@ -66,6 +88,9 @@ duration, detected fps, frame count, and video size. Canonical Hugging Face
 ingest must use this small inventory by default and must not download
 `raw_videos/*.mp4` for probing unless the operator explicitly enables the
 legacy fallback with `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1`.
+
+`stream-standardize-upload-raw` writes the same canonical raw manifests and
+inventory while each video is present in local scratch.
 
 When standardized raw videos are mounted from Colab DriveFS under
 `/content/drive`, `upload-standardized-raw` stages each video read used for

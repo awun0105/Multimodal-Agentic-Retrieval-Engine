@@ -89,8 +89,9 @@ ${AIC_RUNTIME_ROOT}/indexes/index_version.json
 
 The earlier `data/` tree in source material is a logical artifact layout, not a physical repository layout. Raw videos are referenced by `video_ref = raw_videos/{video_id}.mp4` and are resolved through `MediaStorePort`; compact releases may omit raw-video copies. `frame_timeline` is staging/debug and may be per-video, merged, sampled, or omitted from compact release when key tables retain enough frame/timestamp mapping fields.
 
-For the versioned raw Hugging Face Dataset path, `upload-standardized-raw`
-emits `manifests/canonical_video_inventory.parquet` with one row per video.
+For the versioned raw Hugging Face Dataset path, `upload-standardized-raw` and
+the Colab-oriented `stream-standardize-upload-raw` emit
+`manifests/canonical_video_inventory.parquet` with one row per video.
 The inventory carries:
 
 - `video_id`
@@ -180,6 +181,12 @@ are deprecated. New output must use
 
 Google Drive may be used as an organizer handoff source or local operator
 scratch area. It is not the primary shared storage contract.
+
+Notebook 00B uses the streaming path for Colab free CPU runs: it scans zip
+members to build a pairing plan, extracts one video/metadata pair into local
+scratch, probes and uploads that pair to `AIC26_raw`, records progress, and
+cleans the scratch pair before moving to the next pair. It does not materialize
+a full standardized `raw_videos/` and `metadata/` tree on Drive.
 
 ## Validation Gate
 

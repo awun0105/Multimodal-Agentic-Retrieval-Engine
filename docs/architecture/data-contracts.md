@@ -187,8 +187,9 @@ beside the canonical file manifest:
 <raw_import_id>/manifests/canonical_video_inventory.parquet
 ```
 
-This inventory is produced while `upload-standardized-raw` still has local
-access to `raw_videos/`. It must contain one row per canonical video with:
+This inventory is produced while `upload-standardized-raw` has local access to
+`raw_videos/`, or while `stream-standardize-upload-raw` has one extracted pair
+in local scratch. It must contain one row per canonical video with:
 
 - `video_id`
 - `canonical_repo_id`
