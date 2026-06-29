@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
+from system1.commands import imports as imports_commands_module
 from system1.cli import app
 from system1.config import REQUIRED_CONFIGS, load_configs, load_provider_plan
 from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs
@@ -192,6 +193,10 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         "00B_master_ingestion_and_assignment.ipynb": [
             "drive-shadow",
             "stream-standardize-upload-raw",
+            "--min-free-gb",
+            "--drive-sync-sleep-seconds",
+            "--cleanup-every-files",
+            "--cleanup-every-gb",
             "ingest",
             "assign-batches",
             "sync-phase00-ingestion",
@@ -228,6 +233,54 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         assert path.name in expected_commands
         for command in expected_commands[path.name]:
             assert command in joined
+
+
+def test_stream_standardize_upload_raw_cli_passes_disk_safe_options(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def fake_stream_standardize_upload_raw_to_hf(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return source_importer_module.CanonicalRawUploadResult(0, 0, 0, "manifest", "report")
+
+    monkeypatch.setattr(
+        imports_commands_module,
+        "stream_standardize_upload_raw_to_hf",
+        fake_stream_standardize_upload_raw_to_hf,
+    )
+    source_dir = tmp_path / "source"
+    scratch_dir = tmp_path / "scratch"
+    source_dir.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "stream-standardize-upload-raw",
+            "--source-dir",
+            str(source_dir),
+            "--target-hf-repo-id",
+            "org/repo",
+            "--raw-import-id",
+            "canonical_raw_v001",
+            "--scratch-dir",
+            str(scratch_dir),
+            "--min-free-gb",
+            "11",
+            "--drive-sync-sleep-seconds",
+            "12",
+            "--cleanup-every-files",
+            "13",
+            "--cleanup-every-gb",
+            "14",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["kwargs"]["min_free_gb"] == 11
+    assert captured["kwargs"]["drive_sync_sleep_seconds"] == 12
+    assert captured["kwargs"]["cleanup_every_files"] == 13
+    assert captured["kwargs"]["cleanup_every_gb"] == 14
+
 
 def test_input_discovery_pairs_real_subset():
     pairs = discover_paired_inputs("input")

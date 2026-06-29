@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -26,11 +26,12 @@ VIDEO_DIR_NAMES = {"raw_videos", "videos", "video", "raw", "clips"}
 METADATA_DIR_NAMES = {"metadata", "metadatas", "json", "annotations"}
 GENERIC_CONTEXT_NAMES = VIDEO_DIR_NAMES | METADATA_DIR_NAMES | {"dataset", "train", "val", "test", "data"}
 STANDARDIZE_TEMP_PREFIXES = ("member_stage_", "member_extract_", "archive_stage_", "source_stage_")
+STREAM_TEMP_PREFIXES = ("stream_pair_",)
 BYTES_PER_GB = 1024 ** 3
 RAW_UPLOAD_BATCH_SIZE = 100
 RAW_UPLOAD_MAX_RETRIES = 5
 RAW_UPLOAD_RATE_LIMIT_DEFAULT_SLEEP_SECONDS = 120
-STREAM_UPLOAD_BATCH_MAX_BYTES = 50 * BYTES_PER_GB
+STREAM_UPLOAD_BATCH_MAX_GB = 50.0
 DRIVEFS_ROOT = Path("/content/drive")
 
 
@@ -431,12 +432,14 @@ def standardize_archive_source(
     metadata_root.mkdir(parents=True, exist_ok=True)
     temp_root.mkdir(parents=True, exist_ok=True)
     resolved_progress_path.parent.mkdir(parents=True, exist_ok=True)
-    disk_manager = _StandardizeDiskManager(
+    disk_manager = _ScratchDiskManager(
         temp_root=temp_root,
         min_free_gb=min_free_gb,
         sleep_seconds=drive_sync_sleep_seconds,
         cleanup_every_files=cleanup_every_files,
         cleanup_every_gb=cleanup_every_gb,
+        cleanup_callback=_cleanup_standardize_temp,
+        log_prefix="standardize",
     )
 
     accepted_media_extensions = {ext.lower() for ext in (media_extensions or VIDEO_EXTENSIONS)}
@@ -755,12 +758,14 @@ def import_canonical_raw_to_hf(
 
 
 @dataclass
-class _StandardizeDiskManager:
+class _ScratchDiskManager:
     temp_root: Path
     min_free_gb: float = 15.0
     sleep_seconds: int = 30
     cleanup_every_files: int = 1
     cleanup_every_gb: float = 50.0
+    cleanup_callback: Callable[[Path], int] | None = None
+    log_prefix: str = "scratch"
     processed_files: int = 0
     processed_bytes: int = 0
     _since_cleanup_files: int = 0
@@ -771,29 +776,37 @@ class _StandardizeDiskManager:
         _ensure_temp_disk_available(self.temp_root, size_bytes, self.min_free_gb, label)
 
     def after_file(self, size_bytes: int, *, reason: str) -> None:
+        cleanup_due = self.record_file(size_bytes)
+        if cleanup_due:
+            self.cleanup(reason=reason)
+        wait_for_drive_sync(min_free_gb=self.min_free_gb, sleep_seconds=self.sleep_seconds, path="/")
+
+    def record_file(self, size_bytes: int) -> bool:
         self.processed_files += 1
         self.processed_bytes += max(size_bytes, 0)
         self._since_cleanup_files += 1
         self._since_cleanup_bytes += max(size_bytes, 0)
-        if self._cleanup_due():
-            self.cleanup(reason=reason)
-        wait_for_drive_sync(min_free_gb=self.min_free_gb, sleep_seconds=self.sleep_seconds, path="/")
+        return self._cleanup_due()
 
     def cleanup(self, *, reason: str) -> None:
-        removed = _cleanup_standardize_temp(self.temp_root)
-        self._since_cleanup_files = 0
-        self._since_cleanup_bytes = 0
+        callback = self.cleanup_callback or _cleanup_standardize_temp
+        removed = callback(self.temp_root)
+        self.reset_cleanup_counters()
         if _aic_verbose():
             free_gb = shutil.disk_usage("/").free / BYTES_PER_GB
             temp_size_gb = _path_size_bytes(self.temp_root) / BYTES_PER_GB
             print(
-                "[standardize] cleanup done "
+                f"[{self.log_prefix}] cleanup done "
                 f"reason={reason} removed={removed} "
                 f"processed_files={self.processed_files} "
                 f"processed_gb={self.processed_bytes / BYTES_PER_GB:.3f} "
                 f"free_disk_gb={free_gb:.2f} temp_dir_size_gb={temp_size_gb:.3f}",
                 flush=True,
             )
+
+    def reset_cleanup_counters(self) -> None:
+        self._since_cleanup_files = 0
+        self._since_cleanup_bytes = 0
 
     def _cleanup_due(self) -> bool:
         files_due = self.cleanup_every_files > 0 and self._since_cleanup_files >= self.cleanup_every_files
@@ -816,11 +829,19 @@ def _ensure_temp_disk_available(temp_root: Path, size_bytes: int, min_free_gb: f
 
 
 def _cleanup_standardize_temp(temp_root: Path) -> int:
-    if not temp_root.exists() or not temp_root.is_dir():
+    return _cleanup_prefixed_children(temp_root, STANDARDIZE_TEMP_PREFIXES)
+
+
+def _cleanup_stream_temp(scratch_root: Path) -> int:
+    return _cleanup_prefixed_children(scratch_root, STREAM_TEMP_PREFIXES)
+
+
+def _cleanup_prefixed_children(root: Path, prefixes: tuple[str, ...]) -> int:
+    if not root.exists() or not root.is_dir():
         return 0
     removed = 0
-    for child in temp_root.iterdir():
-        if not child.name.startswith(STANDARDIZE_TEMP_PREFIXES):
+    for child in root.iterdir():
+        if not child.name.startswith(prefixes):
             continue
         if child.is_dir():
             shutil.rmtree(child, ignore_errors=True)
@@ -1022,7 +1043,7 @@ def _process_standardize_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     progress_path: Path,
-    disk_manager: _StandardizeDiskManager,
+    disk_manager: _ScratchDiskManager,
 ) -> None:
     started_at = _utc_now_iso()
     before = dict(counters)
@@ -1069,7 +1090,7 @@ def _process_non_zip_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     item_errors: list[str],
-    disk_manager: _StandardizeDiskManager,
+    disk_manager: _ScratchDiskManager,
 ) -> None:
     for candidate in item.candidates:
         if candidate.actual_path is None:
@@ -1101,7 +1122,7 @@ def _process_zip_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     item_errors: list[str],
-    disk_manager: _StandardizeDiskManager,
+    disk_manager: _ScratchDiskManager,
 ) -> None:
     rows.extend(item.skipped_rows)
     counters["skipped_count"] += len(item.skipped_rows)
@@ -2019,6 +2040,10 @@ def stream_standardize_upload_raw_to_hf(
     progress_path: Path | str | None = None,
     resume: bool = True,
     overwrite: bool = False,
+    min_free_gb: float = 15.0,
+    drive_sync_sleep_seconds: int = 30,
+    cleanup_every_files: int = RAW_UPLOAD_BATCH_SIZE,
+    cleanup_every_gb: float = STREAM_UPLOAD_BATCH_MAX_GB,
 ) -> CanonicalRawUploadResult:
     """Stream zip-contained media/metadata pairs through local scratch into HF raw.
 
@@ -2045,6 +2070,18 @@ def stream_standardize_upload_raw_to_hf(
     normalized_import_id = _normalize_raw_import_id(raw_import_id)
     resolved_progress_path = Path(progress_path).expanduser().resolve() if progress_path else None
     scratch_root.mkdir(parents=True, exist_ok=True)
+    _cleanup_stream_temp(scratch_root)
+    stream_batch_file_limit = cleanup_every_files if cleanup_every_files > 0 else RAW_UPLOAD_BATCH_SIZE
+    stream_batch_max_bytes = int(cleanup_every_gb * BYTES_PER_GB) if cleanup_every_gb > 0 else 0
+    disk_manager = _ScratchDiskManager(
+        temp_root=scratch_root,
+        min_free_gb=min_free_gb,
+        sleep_seconds=drive_sync_sleep_seconds,
+        cleanup_every_files=cleanup_every_files,
+        cleanup_every_gb=cleanup_every_gb,
+        cleanup_callback=_cleanup_stream_temp,
+        log_prefix="stream-standardize-upload-raw",
+    )
 
     plan = _build_stream_pairing_plan(source_root, accepted_media_extensions)
     store = HuggingFaceDatasetArtifactStore(
@@ -2065,7 +2102,9 @@ def stream_standardize_upload_raw_to_hf(
         f"zip_count={plan.zip_count} pair_count={len(plan.pairs)} "
         f"missing_metadata_count={len(plan.missing_metadata)} "
         f"unmatched_metadata_count={len(plan.unmatched_metadata)} "
-        f"existing_remote_count={len(existing_files)} scratch_dir={scratch_root}",
+        f"existing_remote_count={len(existing_files)} scratch_dir={scratch_root} "
+        f"min_free_gb={min_free_gb} drive_sync_sleep_seconds={drive_sync_sleep_seconds} "
+        f"cleanup_every_files={cleanup_every_files} cleanup_every_gb={cleanup_every_gb}",
         flush=True,
     )
 
@@ -2108,6 +2147,7 @@ def stream_standardize_upload_raw_to_hf(
                 uploaded_bytes += sum(item.size_bytes for item in items if item.status == "uploaded")
                 _append_stream_pair_progress(resolved_progress_path, record, status="pass")
             _cleanup_stream_record(record)
+        disk_manager.reset_cleanup_counters()
         print(
             "[stream-standardize-upload-raw] "
             f"batch={stream_batch_index} pairs={len(batch_records)} "
@@ -2125,6 +2165,7 @@ def stream_standardize_upload_raw_to_hf(
                 index=index,
                 total=len(plan.pairs),
                 scratch_root=scratch_root,
+                disk_manager=disk_manager,
                 existing_files=existing_files,
                 progress_records=progress_records,
                 repo_id=repo_id,
@@ -2134,11 +2175,12 @@ def stream_standardize_upload_raw_to_hf(
                 resume=resume,
                 overwrite=overwrite,
             )
+            disk_cleanup_due = _record_stream_scratch_usage(disk_manager, record)
             pending_items = _stream_pending_items(record)
             pending_bytes = sum(item.size_bytes for item in pending_items)
             if batch_records and (
-                len(batch_items) + len(pending_items) > RAW_UPLOAD_BATCH_SIZE
-                or (pending_items and batch_bytes + pending_bytes > STREAM_UPLOAD_BATCH_MAX_BYTES)
+                len(batch_items) + len(pending_items) > stream_batch_file_limit
+                or (pending_items and stream_batch_max_bytes > 0 and batch_bytes + pending_bytes > stream_batch_max_bytes)
             ):
                 flush_batch()
             if pending_items:
@@ -2154,9 +2196,14 @@ def stream_standardize_upload_raw_to_hf(
                 )
                 _append_stream_pair_progress(resolved_progress_path, record, status="pass")
                 _cleanup_stream_record(record)
+                if disk_cleanup_due:
+                    if batch_records:
+                        flush_batch()
+                    disk_manager.cleanup(reason=f"stream_pair_complete video_id={record['video_id']}")
             if batch_records and (
-                len(batch_items) >= RAW_UPLOAD_BATCH_SIZE
-                or batch_bytes >= STREAM_UPLOAD_BATCH_MAX_BYTES
+                len(batch_items) >= stream_batch_file_limit
+                or (stream_batch_max_bytes > 0 and batch_bytes >= stream_batch_max_bytes)
+                or disk_cleanup_due
             ):
                 flush_batch()
         except Exception as exc:
@@ -2201,11 +2248,15 @@ def stream_standardize_upload_raw_to_hf(
         "error_count": len(errors),
         "errors": errors,
         "upload_method": "stream_zip_batch",
-        "stream_batch_file_limit": RAW_UPLOAD_BATCH_SIZE,
-        "stream_batch_max_bytes": STREAM_UPLOAD_BATCH_MAX_BYTES,
+        "stream_batch_file_limit": stream_batch_file_limit,
+        "stream_batch_max_bytes": stream_batch_max_bytes,
         "scratch_dir": str(scratch_root),
         "resume": resume,
         "overwrite": overwrite,
+        "min_free_gb": min_free_gb,
+        "drive_sync_sleep_seconds": drive_sync_sleep_seconds,
+        "cleanup_every_files": cleanup_every_files,
+        "cleanup_every_gb": cleanup_every_gb,
         "progress_path": str(resolved_progress_path) if resolved_progress_path else None,
         "inventory_path": inventory_remote_path,
         "missing_metadata_path": missing_remote_path,
@@ -2378,6 +2429,7 @@ def _prepare_stream_pair(
     index: int,
     total: int,
     scratch_root: Path,
+    disk_manager: _ScratchDiskManager,
     existing_files: set[str],
     progress_records: dict[str, dict[str, Any]],
     repo_id: str,
@@ -2417,6 +2469,8 @@ def _prepare_stream_pair(
 
     pair_root = scratch_root / f"stream_pair_{index:06d}_{pair.video_id}"
     try:
+        extract_size_bytes = pair.video.size_bytes + (pair.metadata.size_bytes if pair.metadata is not None else 0)
+        disk_manager.before_file(extract_size_bytes, f"stream_pair video_id={pair.video_id}")
         if pair_root.exists():
             shutil.rmtree(pair_root, ignore_errors=True)
         video_path = pair_root / "raw_videos" / pair.video.filename
@@ -2449,13 +2503,13 @@ def _prepare_stream_pair(
             "canonical_repo_type": repo_type,
             "canonical_revision": revision,
             "canonical_prefix": raw_import_id,
-                "canonical_video_path": video_remote_path,
-                "canonical_metadata_path": metadata_remote_path,
-                "duration_sec": probe.duration_seconds,
-                "fps": probe.fps_detected,
-                "frame_count": probe.frame_count,
-                "file_size_bytes": video_item.size_bytes,
-            }
+            "canonical_video_path": video_remote_path,
+            "canonical_metadata_path": metadata_remote_path,
+            "duration_sec": probe.duration_seconds,
+            "fps": probe.fps_detected,
+            "frame_count": probe.frame_count,
+            "file_size_bytes": video_item.size_bytes,
+        }
         print(
             "[stream-standardize-upload-raw] "
             f"pair={index}/{total} video_id={pair.video_id} prepared "
@@ -2485,6 +2539,15 @@ def _stream_pending_items(record: dict[str, Any]) -> list[_RawUploadItem]:
         for item in (record["video_item"], record["metadata_item"])
         if item.status == "pending"
     ]
+
+
+def _record_stream_scratch_usage(disk_manager: _ScratchDiskManager, record: dict[str, Any]) -> bool:
+    if record.get("pair_root") is None:
+        return False
+    cleanup_due = False
+    for item in (record["video_item"], record["metadata_item"]):
+        cleanup_due = disk_manager.record_file(item.size_bytes) or cleanup_due
+    return cleanup_due
 
 
 def _append_stream_pair_progress(progress_path: Path | None, record: dict[str, Any], *, status: str) -> None:

@@ -65,6 +65,9 @@ tests share the same behavior.
 - Rejects Google Drive paths as `--scratch-dir`.
 - Reuses `RAW_UPLOAD_BATCH_SIZE` and batched HF commits instead of committing
   one pair at a time.
+- Reuses the same disk-safe option family as `standardize-archives`:
+  `--min-free-gb`, `--drive-sync-sleep-seconds`, `--cleanup-every-files`, and
+  `--cleanup-every-gb`.
 
 ## Data Model
 

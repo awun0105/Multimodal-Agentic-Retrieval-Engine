@@ -5,6 +5,8 @@ from pathlib import Path
 import typer
 
 from system1.ingest.source_importer import (
+    RAW_UPLOAD_BATCH_SIZE,
+    STREAM_UPLOAD_BATCH_MAX_GB,
     import_canonical_raw_to_hf,
     import_organizer_source,
     shadow_google_drive_folder,
@@ -63,7 +65,7 @@ def register(app: typer.Typer) -> None:
         source_dir: Path = typer.Option(..., "--source-dir", help="Folder containing organizer zip files."),
         target_hf_repo_id: str = typer.Option(..., "--target-hf-repo-id", help="Existing Hugging Face Dataset repo for canonical data."),
         raw_import_id: str = typer.Option(..., "--raw-import-id", help="Version prefix inside the raw HF Dataset repo."),
-        scratch_dir: Path = typer.Option(Path("/content/aic_scratch"), "--scratch-dir", help="Local runtime scratch directory for one-pair-at-a-time extraction."),
+        scratch_dir: Path = typer.Option(Path("/content/aic_scratch"), "--scratch-dir", help="Local runtime scratch directory for streaming pair batches."),
         progress_path: Path | None = typer.Option(None, "--progress-path", help="Progress JSONL path, preferably on Drive for Colab resume."),
         target_hf_repo_type: str = typer.Option("dataset", "--target-hf-repo-type"),
         target_hf_revision: str = typer.Option("main", "--target-hf-revision"),
@@ -74,6 +76,10 @@ def register(app: typer.Typer) -> None:
         ),
         resume: bool = typer.Option(True, "--resume/--no-resume"),
         overwrite: bool = typer.Option(False, "--overwrite/--no-overwrite"),
+        min_free_gb: float = typer.Option(15.0, "--min-free-gb", help="Minimum free local disk GB to keep before extracting stream pairs."),
+        drive_sync_sleep_seconds: int = typer.Option(30, "--drive-sync-sleep-seconds", help="Seconds to sleep after sync when DriveFS cache leaves low free disk."),
+        cleanup_every_files: int = typer.Option(RAW_UPLOAD_BATCH_SIZE, "--cleanup-every-files", help="Flush and cleanup stream scratch after this many extracted/upload files."),
+        cleanup_every_gb: float = typer.Option(STREAM_UPLOAD_BATCH_MAX_GB, "--cleanup-every-gb", help="Flush and cleanup stream scratch after this many extracted/upload GB."),
         allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when some stream pairs fail."),
     ) -> None:
         """Stream zip media/metadata pairs through local scratch into canonical HF raw."""
@@ -89,6 +95,10 @@ def register(app: typer.Typer) -> None:
             progress_path=progress_path,
             resume=resume,
             overwrite=overwrite,
+            min_free_gb=min_free_gb,
+            drive_sync_sleep_seconds=drive_sync_sleep_seconds,
+            cleanup_every_files=cleanup_every_files,
+            cleanup_every_gb=cleanup_every_gb,
         )
         typer.echo(
             "Stream uploaded standardized raw "

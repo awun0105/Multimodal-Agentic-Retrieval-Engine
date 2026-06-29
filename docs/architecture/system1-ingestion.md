@@ -190,6 +190,12 @@ commit helper as canonical raw upload, records per-pair progress, and cleans the
 scratch batch before moving on. It does not materialize a full standardized
 `raw_videos/` and `metadata/` tree on Drive.
 
+The streaming path exposes the same disk-safe option family as archive
+standardization: `--min-free-gb`, `--drive-sync-sleep-seconds`,
+`--cleanup-every-files`, and `--cleanup-every-gb`. Notebook 00B uses these
+options to keep local scratch bounded while preserving batched Hugging Face
+commits.
+
 ## Validation Gate
 
 System 1 must prove:

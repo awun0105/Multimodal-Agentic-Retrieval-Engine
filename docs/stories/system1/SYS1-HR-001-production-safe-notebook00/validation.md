@@ -76,8 +76,8 @@ system1/.venv/bin/system1 --help
   confirming HF artifact-store behavior stayed intact.
 - `python -m pytest tests/test_smoke.py -k "stream_standardize_upload_raw or notebooks_are_operator_ready" -q`:
   validates the 00B streaming command, split video/metadata zip pairing,
-  batched HF upload, scratch cleanup, canonical raw manifests, and notebook
-  command references.
+  batched HF upload, disk-safe stream options, scratch cleanup, canonical raw
+  manifests, and notebook command references.
 - `uv run pytest tests/test_smoke.py -q`: 37 passed after making HF Dataset
   release sync required.
 - `uv run pytest`: 103 passed after making HF Dataset release sync required.
