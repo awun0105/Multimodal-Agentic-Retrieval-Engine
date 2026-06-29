@@ -183,10 +183,12 @@ Google Drive may be used as an organizer handoff source or local operator
 scratch area. It is not the primary shared storage contract.
 
 Notebook 00B uses the streaming path for Colab free CPU runs: it scans zip
-members to build a pairing plan, extracts one video/metadata pair into local
-scratch, probes and uploads that pair to `AIC26_raw`, records progress, and
-cleans the scratch pair before moving to the next pair. It does not materialize
-a full standardized `raw_videos/` and `metadata/` tree on Drive.
+members to build a pairing plan, extracts video/metadata pair batches bounded
+by `RAW_UPLOAD_BATCH_SIZE` files and scratch bytes into local scratch, probes
+those local files, uploads each batch to `AIC26_raw` with the same batched HF
+commit helper as canonical raw upload, records per-pair progress, and cleans the
+scratch batch before moving on. It does not materialize a full standardized
+`raw_videos/` and `metadata/` tree on Drive.
 
 ## Validation Gate
 

@@ -970,9 +970,14 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
     metadata_zip_root = tmp_path / "metadata_zip_root"
     (video_zip_root / "nested").mkdir(parents=True)
     (metadata_zip_root / "metadata").mkdir(parents=True)
-    (video_zip_root / "nested" / "L21_V001.mp4").write_bytes(b"video-1")
-    (video_zip_root / "nested" / "L21_V002.mp4").write_bytes(b"video-2")
-    (metadata_zip_root / "metadata" / "L21_V001.json").write_text('{"title":"one"}\n', encoding="utf-8")
+    video_ids = [f"L21_V{index:03d}" for index in range(1, 12)]
+    for video_id in video_ids:
+        (video_zip_root / "nested" / f"{video_id}.mp4").write_bytes(f"video-{video_id}".encode())
+    for video_id in video_ids[:-1]:
+        (metadata_zip_root / "metadata" / f"{video_id}.json").write_text(
+            json.dumps({"title": video_id}) + "\n",
+            encoding="utf-8",
+        )
     (metadata_zip_root / "metadata" / "orphan.json").write_text('{"title":"orphan"}\n', encoding="utf-8")
     shutil.make_archive(str(source_root / "Videos_L21_a"), "zip", video_zip_root)
     shutil.make_archive(str(source_root / "metadata-info-aic-b1"), "zip", metadata_zip_root)
@@ -1009,32 +1014,37 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
     )
 
     assert result.error_count == 0
-    assert result.video_count == 2
-    assert "canonical_dataset_v001/raw_videos/L21_V001.mp4" in uploaded
-    assert "canonical_dataset_v001/raw_videos/L21_V002.mp4" in uploaded
-    assert "canonical_dataset_v001/metadata/L21_V001.json" in uploaded
-    assert "canonical_dataset_v001/metadata/L21_V002.json" in uploaded
-    assert json.loads(uploaded["canonical_dataset_v001/metadata/L21_V002.json"])["metadata_missing"] is True
+    assert result.video_count == len(video_ids)
+    for video_id in video_ids:
+        assert f"canonical_dataset_v001/raw_videos/{video_id}.mp4" in uploaded
+        assert f"canonical_dataset_v001/metadata/{video_id}.json" in uploaded
+    assert json.loads(uploaded[f"canonical_dataset_v001/metadata/{video_ids[-1]}.json"])["metadata_missing"] is True
     assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
     missing_audit = json.loads(uploaded["canonical_dataset_v001/manifests/missing_metadata.json"].decode())
     unmatched_audit = json.loads(uploaded["canonical_dataset_v001/manifests/unmatched_metadata.json"].decode())
-    assert missing_audit["missing_metadata"] == ["L21_V002"]
+    assert missing_audit["missing_metadata"] == [video_ids[-1]]
     assert unmatched_audit["unmatched_metadata"] == ["orphan"]
     inventory = pd.read_parquet(BytesIO(uploaded["canonical_dataset_v001/manifests/canonical_video_inventory.parquet"]))
-    assert inventory.sort_values("video_id")["video_id"].tolist() == ["L21_V001", "L21_V002"]
+    assert inventory.sort_values("video_id")["video_id"].tolist() == video_ids
     assert all(not path.exists() for path in probed_paths)
     assert not any(scratch_root.glob("stream_pair_*"))
     progress_records = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
-    assert [record["status"] for record in progress_records] == ["pass", "pass"]
-    assert any(
-        batch == [
-            "canonical_dataset_v001/raw_videos/L21_V001.mp4",
-            "canonical_dataset_v001/metadata/L21_V001.json",
-        ]
+    assert [record["status"] for record in progress_records] == ["pass"] * len(video_ids)
+    raw_pair_batches = [
+        batch
         for batch in commit_batches
-    )
+        if any(path.startswith("canonical_dataset_v001/raw_videos/") for path in batch)
+    ]
+    assert raw_pair_batches == [[
+        path
+        for video_id in video_ids
+        for path in (
+            f"canonical_dataset_v001/raw_videos/{video_id}.mp4",
+            f"canonical_dataset_v001/metadata/{video_id}.json",
+        )
+    ]]
 
 
 def test_upload_standardized_raw_rate_limit_helpers_parse_retry_after():

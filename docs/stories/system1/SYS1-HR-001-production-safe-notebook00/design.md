@@ -28,9 +28,11 @@ Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
 1. `system1 drive-shadow` copies the organizer folder into the operator/team
    Drive folder.
 2. `system1 stream-standardize-upload-raw` scans zip members globally, builds
-   video/metadata pairs by `video_id`, extracts one pair into local scratch,
-   probes and uploads that pair to `AIC26_raw`, records progress, and deletes
-   the pair scratch directory before moving on.
+   video/metadata pairs by `video_id`, extracts pair batches bounded by
+   `RAW_UPLOAD_BATCH_SIZE` files and scratch bytes into local scratch, probes
+   those local files, uploads the batch to `AIC26_raw` with the existing batched
+   HF commit helper, records per-pair progress, and deletes the batch scratch
+   directories before moving on.
 3. Canonical HF ingest reads the raw repo manifests and inventory.
 4. Batch assignment and required `system1 sync-phase00-ingestion` stay the same.
 
@@ -61,6 +63,8 @@ tests share the same behavior.
 - Uses `--resume` by default and appends pair progress to JSONL.
 - Uses `--overwrite` only for explicit remote replacement.
 - Rejects Google Drive paths as `--scratch-dir`.
+- Reuses `RAW_UPLOAD_BATCH_SIZE` and batched HF commits instead of committing
+  one pair at a time.
 
 ## Data Model
 

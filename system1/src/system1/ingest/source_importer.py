@@ -30,6 +30,7 @@ BYTES_PER_GB = 1024 ** 3
 RAW_UPLOAD_BATCH_SIZE = 50
 RAW_UPLOAD_MAX_RETRIES = 5
 RAW_UPLOAD_RATE_LIMIT_DEFAULT_SLEEP_SECONDS = 120
+STREAM_UPLOAD_BATCH_MAX_BYTES = 2 * BYTES_PER_GB
 DRIVEFS_ROOT = Path("/content/drive")
 
 
@@ -2023,9 +2024,10 @@ def stream_standardize_upload_raw_to_hf(
 
     This Colab-oriented path avoids materializing a full standardized
     raw_videos/metadata folder on DriveFS. It scans zip member names first to
-    build a global pairing plan, then extracts one pair at a time into scratch,
-    probes the local video, uploads the pair, records progress, and removes the
-    scratch pair directory.
+    build a global pairing plan, then extracts pair batches bounded by
+    RAW_UPLOAD_BATCH_SIZE files and scratch bytes, probes local videos, uploads
+    the batch with the existing HF batch helper, records per-pair progress, and
+    removes scratch pair directories.
     """
     source_root = Path(source_dir).expanduser().resolve()
     scratch_root = Path(scratch_dir).expanduser().resolve()
@@ -2071,17 +2073,60 @@ def stream_standardize_upload_raw_to_hf(
     skipped_count = 0
     failed_count = 0
     uploaded_bytes = 0
+    batch_records: list[dict[str, Any]] = []
+    batch_items: list[_RawUploadItem] = []
+    batch_bytes = 0
+    stream_batch_index = 0
+
+    def flush_batch() -> None:
+        nonlocal uploaded_count, skipped_count, failed_count, uploaded_bytes, batch_records, batch_items, batch_bytes, stream_batch_index
+        if not batch_records:
+            return
+        stream_batch_index += 1
+        batch_errors = _upload_raw_phase_batches(
+            store,
+            phase="stream_pairs",
+            items=batch_items,
+            skipped_count=0,
+            existing_files=existing_files,
+            progress_path=None,
+            repo_id=repo_id,
+            raw_import_id=normalized_import_id,
+        )
+        errors.extend(batch_errors)
+        for record in batch_records:
+            video_item = record["video_item"]
+            metadata_item = record["metadata_item"]
+            items = (video_item, metadata_item)
+            if any(item.status == "failed" for item in items):
+                failed_count += 1
+                _append_stream_pair_progress(resolved_progress_path, record, status="failed")
+            else:
+                pair_records.append(record)
+                uploaded_count += sum(1 for item in items if item.status == "uploaded")
+                skipped_count += sum(1 for item in items if item.status == "skipped_existing")
+                uploaded_bytes += sum(item.size_bytes for item in items if item.status == "uploaded")
+                _append_stream_pair_progress(resolved_progress_path, record, status="pass")
+            _cleanup_stream_record(record)
+        print(
+            "[stream-standardize-upload-raw] "
+            f"batch={stream_batch_index} pairs={len(batch_records)} "
+            f"pending_files={len(batch_items)} errors={len(batch_errors)}",
+            flush=True,
+        )
+        batch_records = []
+        batch_items = []
+        batch_bytes = 0
+
     for index, pair in enumerate(plan.pairs, start=1):
         try:
-            record = _process_stream_pair(
+            record = _prepare_stream_pair(
                 pair,
                 index=index,
                 total=len(plan.pairs),
                 scratch_root=scratch_root,
-                store=store,
                 existing_files=existing_files,
                 progress_records=progress_records,
-                progress_path=resolved_progress_path,
                 repo_id=repo_id,
                 repo_type=repo_type,
                 revision=revision,
@@ -2089,18 +2134,31 @@ def stream_standardize_upload_raw_to_hf(
                 resume=resume,
                 overwrite=overwrite,
             )
-            pair_records.append(record)
-            video_item = record["video_item"]
-            metadata_item = record["metadata_item"]
-            uploaded_now = int(video_item.status == "uploaded") + int(metadata_item.status == "uploaded")
-            skipped_now = int(video_item.status == "skipped_existing") + int(metadata_item.status == "skipped_existing")
-            uploaded_count += uploaded_now
-            skipped_count += skipped_now
-            uploaded_bytes += sum(
-                item.size_bytes
-                for item in (video_item, metadata_item)
-                if item.status == "uploaded"
-            )
+            pending_items = _stream_pending_items(record)
+            pending_bytes = sum(item.size_bytes for item in pending_items)
+            if batch_records and (
+                len(batch_items) + len(pending_items) > RAW_UPLOAD_BATCH_SIZE
+                or (pending_items and batch_bytes + pending_bytes > STREAM_UPLOAD_BATCH_MAX_BYTES)
+            ):
+                flush_batch()
+            if pending_items:
+                batch_records.append(record)
+                batch_items.extend(pending_items)
+                batch_bytes += pending_bytes
+            else:
+                pair_records.append(record)
+                skipped_count += sum(
+                    1
+                    for item in (record["video_item"], record["metadata_item"])
+                    if item.status == "skipped_existing"
+                )
+                _append_stream_pair_progress(resolved_progress_path, record, status="pass")
+                _cleanup_stream_record(record)
+            if batch_records and (
+                len(batch_items) >= RAW_UPLOAD_BATCH_SIZE
+                or batch_bytes >= STREAM_UPLOAD_BATCH_MAX_BYTES
+            ):
+                flush_batch()
         except Exception as exc:
             failed_count += 1
             message = f"{type(exc).__name__}: {exc}"
@@ -2119,6 +2177,8 @@ def stream_standardize_upload_raw_to_hf(
                 f"pair={index}/{len(plan.pairs)} video_id={pair.video_id} status=failed error={message}",
                 flush=True,
             )
+
+    flush_batch()
 
     manifest_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_file_manifest.jsonl")
     report_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_import_report.json")
@@ -2140,7 +2200,9 @@ def stream_standardize_upload_raw_to_hf(
         "uploaded_pair_count": len([row for row in manifest_rows if row["status"] == "pass"]),
         "error_count": len(errors),
         "errors": errors,
-        "upload_method": "stream_zip_pair",
+        "upload_method": "stream_zip_batch",
+        "stream_batch_file_limit": RAW_UPLOAD_BATCH_SIZE,
+        "stream_batch_max_bytes": STREAM_UPLOAD_BATCH_MAX_BYTES,
         "scratch_dir": str(scratch_root),
         "resume": resume,
         "overwrite": overwrite,
@@ -2310,16 +2372,14 @@ def _read_stream_upload_progress(progress_path: Path | None) -> dict[str, dict[s
     return records
 
 
-def _process_stream_pair(
+def _prepare_stream_pair(
     pair: _StreamPairPlan,
     *,
     index: int,
     total: int,
     scratch_root: Path,
-    store: HuggingFaceDatasetArtifactStore,
     existing_files: set[str],
     progress_records: dict[str, dict[str, Any]],
-    progress_path: Path | None,
     repo_id: str,
     repo_type: str,
     revision: str,
@@ -2349,6 +2409,7 @@ def _process_stream_pair(
             "video_item": video_item,
             "metadata_item": metadata_item,
             "metadata_generated": bool(progress_record.get("metadata_generated")),
+            "pair_root": None,
             "raw_repo_id": repo_id,
             "raw_import_id": raw_import_id,
             "inventory": progress_record["inventory"],
@@ -2377,21 +2438,6 @@ def _process_stream_pair(
                 _log_standardized_raw_upload_progress(item)
                 continue
             pending.append(item)
-        if pending:
-            _upload_raw_batch_with_retry(
-                store,
-                pending,
-                phase="stream_pair",
-                batch_index=index,
-                batch_total=total,
-                repo_id=repo_id,
-                raw_import_id=raw_import_id,
-            )
-            for item in pending:
-                item.status = "uploaded"
-                item.error = None
-                existing_files.add(item.remote_path)
-                _log_standardized_raw_upload_progress(item)
         inventory = {
             "video_id": pair.video_id,
             "video_filename": pair.video.filename,
@@ -2403,33 +2449,17 @@ def _process_stream_pair(
             "canonical_repo_type": repo_type,
             "canonical_revision": revision,
             "canonical_prefix": raw_import_id,
-            "canonical_video_path": video_remote_path,
-            "canonical_metadata_path": metadata_remote_path,
-            "duration_sec": probe.duration_seconds,
-            "fps": probe.fps_detected,
-            "frame_count": probe.frame_count,
-            "file_size_bytes": video_item.size_bytes,
-        }
-        _append_jsonl_record(
-            progress_path,
-            {
-                "video_id": pair.video_id,
-                "status": "pass",
-                "video_remote_path": video_remote_path,
-                "metadata_remote_path": metadata_remote_path,
-                "video_upload_status": video_item.status,
-                "metadata_upload_status": metadata_item.status,
-                "video_size_bytes": video_item.size_bytes,
-                "metadata_size_bytes": metadata_item.size_bytes,
-                "metadata_generated": metadata_generated,
-                "inventory": inventory,
-                "finished_at": _utc_now_iso(),
-            },
-        )
+                "canonical_video_path": video_remote_path,
+                "canonical_metadata_path": metadata_remote_path,
+                "duration_sec": probe.duration_seconds,
+                "fps": probe.fps_detected,
+                "frame_count": probe.frame_count,
+                "file_size_bytes": video_item.size_bytes,
+            }
         print(
             "[stream-standardize-upload-raw] "
-            f"pair={index}/{total} video_id={pair.video_id} "
-            f"video_status={video_item.status} metadata_status={metadata_item.status}",
+            f"pair={index}/{total} video_id={pair.video_id} prepared "
+            f"pending_files={len(pending)}",
             flush=True,
         )
         return {
@@ -2439,12 +2469,49 @@ def _process_stream_pair(
             "video_item": video_item,
             "metadata_item": metadata_item,
             "metadata_generated": metadata_generated,
+            "pair_root": pair_root,
             "raw_repo_id": repo_id,
             "raw_import_id": raw_import_id,
             "inventory": inventory,
         }
-    finally:
+    except Exception:
         shutil.rmtree(pair_root, ignore_errors=True)
+        raise
+
+
+def _stream_pending_items(record: dict[str, Any]) -> list[_RawUploadItem]:
+    return [
+        item
+        for item in (record["video_item"], record["metadata_item"])
+        if item.status == "pending"
+    ]
+
+
+def _append_stream_pair_progress(progress_path: Path | None, record: dict[str, Any], *, status: str) -> None:
+    video_item = record["video_item"]
+    metadata_item = record["metadata_item"]
+    payload = {
+        "video_id": record["video_id"],
+        "status": status,
+        "video_remote_path": video_item.remote_path,
+        "metadata_remote_path": metadata_item.remote_path,
+        "video_upload_status": video_item.status,
+        "metadata_upload_status": metadata_item.status,
+        "video_size_bytes": video_item.size_bytes,
+        "metadata_size_bytes": metadata_item.size_bytes,
+        "metadata_generated": record["metadata_generated"],
+        "inventory": record["inventory"],
+        "finished_at": _utc_now_iso(),
+    }
+    if status == "failed":
+        payload["error"] = video_item.error or metadata_item.error or "upload failed"
+    _append_jsonl_record(progress_path, payload)
+
+
+def _cleanup_stream_record(record: dict[str, Any]) -> None:
+    pair_root = record.get("pair_root")
+    if pair_root is not None:
+        shutil.rmtree(Path(pair_root), ignore_errors=True)
 
 
 def _extract_stream_member(member: _StreamZipMember, target: Path) -> None:
