@@ -27,10 +27,10 @@ METADATA_DIR_NAMES = {"metadata", "metadatas", "json", "annotations"}
 GENERIC_CONTEXT_NAMES = VIDEO_DIR_NAMES | METADATA_DIR_NAMES | {"dataset", "train", "val", "test", "data"}
 STANDARDIZE_TEMP_PREFIXES = ("member_stage_", "member_extract_", "archive_stage_", "source_stage_")
 BYTES_PER_GB = 1024 ** 3
-RAW_UPLOAD_BATCH_SIZE = 50
+RAW_UPLOAD_BATCH_SIZE = 100
 RAW_UPLOAD_MAX_RETRIES = 5
 RAW_UPLOAD_RATE_LIMIT_DEFAULT_SLEEP_SECONDS = 120
-STREAM_UPLOAD_BATCH_MAX_BYTES = 2 * BYTES_PER_GB
+STREAM_UPLOAD_BATCH_MAX_BYTES = 50 * BYTES_PER_GB
 DRIVEFS_ROOT = Path("/content/drive")
 
 
