@@ -196,6 +196,11 @@ standardization: `--min-free-gb`, `--drive-sync-sleep-seconds`,
 options to keep local scratch bounded while preserving batched Hugging Face
 commits.
 
+Notebook 00C uses the same streaming path for local laptop/workstation runs.
+The source is a local downloaded zip folder, so the notebook skips Google Drive
+mount/remount and `drive-shadow`, then continues with HF raw upload, canonical
+HF ingest, batch assignment, and `phase00_ingestion` sync.
+
 ## Validation Gate
 
 System 1 must prove:

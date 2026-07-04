@@ -39,6 +39,16 @@ Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
 The streaming variant does not materialize full `raw_videos/` and `metadata/`
 folders on Google Drive.
 
+Notebook 00C is the local-machine variant of the same streaming flow:
+
+1. The operator downloads organizer zip files to a local folder and points
+   `AIC_LOCAL_DATASET_DIR` or `archive_source_dir` at that folder.
+2. The notebook skips Google Drive mount/remount and `drive-shadow`.
+3. `system1 stream-standardize-upload-raw` uses local scratch, the same
+   disk-safe options, batched HF raw uploads, and per-pair progress JSONL.
+4. Canonical HF ingest, batch assignment, and `sync-phase00-ingestion` match
+   Notebook 00B.
+
 The safety gate belongs in the CLI commands so Notebook 00, shell users, and
 tests share the same behavior.
 
