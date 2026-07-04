@@ -115,13 +115,11 @@ system1 assign-batches \
 
 system1 sync-phase00-ingestion \
   --output output \
-  --hf-repo-id your-org/AIC26_release \
-  --hf-prefix canonical_release_v003/phase00_ingestion
+  --hf-repo-id your-org/AIC26_release
 
 system1 restore-phase00-ingestion \
-  --release-id competition_dataset_v001 \
+  --release-id canonical_release_v003 \
   --hf-repo-id your-org/AIC26_release \
-  --hf-prefix canonical_release_v003/phase00_ingestion \
   --output output
 ```
 

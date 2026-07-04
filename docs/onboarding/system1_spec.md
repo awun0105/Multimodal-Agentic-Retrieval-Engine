@@ -3281,7 +3281,9 @@ AIC26_raw/
     └── manifests/
         ├── canonical_file_manifest.jsonl
         ├── canonical_import_report.json
-        └── canonical_video_inventory.parquet
+        ├── canonical_video_inventory.parquet
+        ├── missing_metadata.json
+        └── unmatched_metadata.json
 ```
 
 `AIC26_raw` must not contain structure artifacts, feature artifacts, merged
@@ -3424,6 +3426,8 @@ AIC26_raw/canonical_raw_vXXX/metadata/
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
+AIC26_raw/canonical_raw_vXXX/manifests/missing_metadata.json
+AIC26_raw/canonical_raw_vXXX/manifests/unmatched_metadata.json
 ```
 
 Notebook 00 uploads phase00 ingestion and batch-planning outputs to:
