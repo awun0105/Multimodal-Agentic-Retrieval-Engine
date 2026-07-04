@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from system1.artifacts.package import write_artifact_zip
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.features.providers import MockTextProvider, RealProviderUnavailable
 from system1.ingest.discovery import read_metadata
@@ -83,8 +84,16 @@ def process_structure_batch(
         )
         errors.extend(video_errors)
         _write_batch_debug_copy(batch_debug_dir / f"{video_id}.json", video_id=video_id, tables=video_tables)
-        archive_path = shutil.make_archive(str(release_dir / "artifacts" / "structure" / f"{video_id}_structure"), "zip", artifact_dir)
-        artifact_paths.append(str(Path(archive_path).relative_to(release_dir)))
+        archive_path = write_artifact_zip(
+            artifact_dir=artifact_dir,
+            zip_path=release_dir / "artifacts" / "structure" / f"{video_id}_structure.zip",
+            video_id=video_id,
+            artifact_type="structure",
+            batch_id=batch_id,
+            worker_id=worker_id,
+            status="complete" if not video_errors else "partial",
+        )
+        artifact_paths.append(str(archive_path.relative_to(release_dir)))
 
     report = {
         "worker_id": worker_id,

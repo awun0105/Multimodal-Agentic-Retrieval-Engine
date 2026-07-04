@@ -2616,6 +2616,8 @@ L21_V001/
 ├── keyframes/
 ├── thumbnails/
 ├── manifest.json
+├── artifact_manifest.json
+├── checksums.json
 └── errors.jsonl
 ```
 
@@ -2638,6 +2640,8 @@ L21_V001/
 ├── scene_summaries_enriched.parquet
 ├── text_sources.parquet
 ├── feature_manifest.json
+├── artifact_manifest.json
+├── checksums.json
 └── errors.jsonl
 ```
 

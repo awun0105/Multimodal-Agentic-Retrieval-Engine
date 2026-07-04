@@ -2,9 +2,11 @@ import shutil
 import json
 import sqlite3
 import csv
+import hashlib
 import os
 import subprocess
 import sys
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +18,7 @@ from typer.testing import CliRunner
 
 from system1.commands import imports as imports_commands_module
 from system1.cli import app
+from system1.artifacts.package import validate_artifact_zip
 from system1.config import REQUIRED_CONFIGS, load_configs, load_provider_plan
 from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs
 from system1.ingest.source_importer import (
@@ -115,6 +118,36 @@ def run_phase_based_release(
         packaged = invoke_app(["release", "--mode", mode, "--output", str(output_dir)])
         assert packaged.exit_code == 0, packaged.stdout
     return release_dir
+
+
+def assert_artifact_zip_contract(
+    zip_path: Path,
+    *,
+    video_id: str,
+    artifact_type: str,
+    expected_payload_files: set[str],
+) -> None:
+    manifest = validate_artifact_zip(zip_path)
+    assert manifest["artifact_id"] == f"{video_id}_{artifact_type}"
+    assert manifest["video_id"] == video_id
+    assert manifest["artifact_type"] == artifact_type
+    assert manifest["files"]
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = {name for name in archive.namelist() if not name.endswith("/")}
+        assert all(name.startswith(f"{video_id}/") for name in names)
+        assert f"{video_id}/artifact_manifest.json" in names
+        assert f"{video_id}/checksums.json" in names
+        assert expected_payload_files.issubset(names)
+
+        checksums = json.loads(archive.read(f"{video_id}/checksums.json").decode("utf-8"))
+        assert f"{video_id}/artifact_manifest.json" not in checksums
+        assert f"{video_id}/checksums.json" not in checksums
+        assert {item["path"] for item in manifest["files"]} == set(checksums)
+        for path, expected in checksums.items():
+            data = archive.read(path)
+            assert expected["size_bytes"] == len(data)
+            assert expected["sha256"] == hashlib.sha256(data).hexdigest()
 
 
 
@@ -478,7 +511,25 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     assert (artifact_dir / "keyframes").exists()
     assert (artifact_dir / "thumbnails").exists()
     assert not (artifact_dir / "L21_V001").exists()
-    assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
+    structure_zip = release_dir / "artifacts" / "structure" / "L21_V001_structure.zip"
+    assert structure_zip.exists()
+    assert_artifact_zip_contract(
+        structure_zip,
+        video_id="L21_V001",
+        artifact_type="structure",
+        expected_payload_files={
+            "L21_V001/metadata_normalized.json",
+            "L21_V001/asr_segments.parquet",
+            "L21_V001/shots.parquet",
+            "L21_V001/scenes.parquet",
+            "L21_V001/keyframes.parquet",
+            "L21_V001/shot_transcript_links.parquet",
+            "L21_V001/scene_transcript_links.parquet",
+            "L21_V001/scene_summaries_initial.parquet",
+            "L21_V001/manifest.json",
+            "L21_V001/errors.jsonl",
+        },
+    )
     assert (release_dir / "artifacts" / "structure_batches" / "batch_000" / "L21_V001.json").exists()
     assert not (release_dir / "artifacts" / "features").exists()
     assert not (release_dir / "db" / "app.sqlite").exists()
@@ -548,7 +599,25 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
     ]:
         assert (artifact_dir / name).exists()
     assert not (artifact_dir / "L21_V001").exists()
-    assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
+    features_zip = release_dir / "artifacts" / "features" / "L21_V001_features.zip"
+    assert features_zip.exists()
+    assert_artifact_zip_contract(
+        features_zip,
+        video_id="L21_V001",
+        artifact_type="features",
+        expected_payload_files={
+            "L21_V001/visual_embeddings.npy",
+            "L21_V001/embeddings_meta.parquet",
+            "L21_V001/ocr.parquet",
+            "L21_V001/objects.parquet",
+            "L21_V001/image_captions.parquet",
+            "L21_V001/shot_captions.parquet",
+            "L21_V001/scene_summaries_enriched.parquet",
+            "L21_V001/text_sources.parquet",
+            "L21_V001/feature_manifest.json",
+            "L21_V001/errors.jsonl",
+        },
+    )
     assert (release_dir / "manifests" / "worker_runtime_report_features.json").exists()
     embeddings = np.load(artifact_dir / "visual_embeddings.npy")
     embeddings_meta = pd.read_parquet(artifact_dir / "embeddings_meta.parquet")

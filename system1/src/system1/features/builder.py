@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import hashlib
 import unicodedata
-import zipfile
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from system1.artifacts.package import write_artifact_zip
 from system1.config import ProviderPlan, load_provider_plan
 from system1.features.providers import MockEmbeddingProvider, MockTextProvider, RealEmbeddingUnavailable, RealProviderUnavailable
 from system1.release.types import config_dir, release_root, write_json
@@ -92,11 +92,15 @@ def process_feature_batch(
             worker_id=worker_id,
         )
         feature_errors.extend(video_errors)
-        zip_path = release_dir / "artifacts" / "features" / f"{video_id}_features.zip"
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as handle:
-            for path in sorted(artifact_dir.rglob("*")):
-                if path.is_file():
-                    handle.write(path, arcname=path.relative_to(artifact_dir))
+        zip_path = write_artifact_zip(
+            artifact_dir=artifact_dir,
+            zip_path=release_dir / "artifacts" / "features" / f"{video_id}_features.zip",
+            video_id=video_id,
+            artifact_type="features",
+            batch_id=batch_id,
+            worker_id=worker_id,
+            status="complete" if not video_errors else "partial",
+        )
         artifact_paths.append(str(zip_path.relative_to(release_dir)))
 
     report = {
