@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from system1.artifacts.package import discover_artifact_zip, extract_artifact_zip
 from system1.release.types import write_json
 
 STRUCTURE_TABLES = [
@@ -31,6 +32,11 @@ FEATURE_TABLES = [
 
 
 def merge_worker_outputs(release_dir: Path | str) -> Path:
+    """Merge worker artifacts.
+
+    Artifact ZIPs are the primary source. Extracted per-video folders are kept
+    as a local cache/debug fallback for developer workflows.
+    """
     release_path = Path(release_dir)
     structure_root = release_path / "artifacts" / "structure"
     feature_root = release_path / "artifacts" / "features"
@@ -47,10 +53,18 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
     feature_manifests: list[dict[str, Any]] = []
 
     for video_id in videos_df["video_id"].astype(str).tolist():
-        structure_dir = structure_root / video_id
-        feature_dir = feature_root / video_id
-        if not structure_dir.exists() or not feature_dir.exists():
-            raise FileNotFoundError(f"missing artifact pair for video_id={video_id}")
+        structure_dir = _resolve_artifact_dir_for_merge(
+            release_path,
+            artifact_root=structure_root,
+            video_id=video_id,
+            artifact_type="structure",
+        )
+        feature_dir = _resolve_artifact_dir_for_merge(
+            release_path,
+            artifact_root=feature_root,
+            video_id=video_id,
+            artifact_type="features",
+        )
         for table in STRUCTURE_TABLES:
             path = structure_dir / f"{table}.parquet"
             if not path.exists():
@@ -133,6 +147,28 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
     report_path = manifests_dir / "merge_report.json"
     write_json(report_path, {"status": "pass", "video_count": len(video_status_rows), "counts": counts})
     return report_path
+
+
+def _resolve_artifact_dir_for_merge(
+    release_path: Path,
+    *,
+    artifact_root: Path,
+    video_id: str,
+    artifact_type: str,
+) -> Path:
+    zip_path = discover_artifact_zip(artifact_root, video_id=video_id, artifact_type=artifact_type)
+    if zip_path is not None:
+        return extract_artifact_zip(
+            zip_path,
+            release_path / "staging" / "extracted_artifacts" / "merge" / artifact_type,
+            expected_video_id=video_id,
+            expected_artifact_type=artifact_type,
+        )
+
+    local_dir = artifact_root / video_id
+    if local_dir.exists():
+        return local_dir
+    raise FileNotFoundError(f"missing {artifact_type} artifact zip or folder for video_id={video_id}: {artifact_root}")
 
 
 def _build_text_documents(text_sources: pd.DataFrame) -> pd.DataFrame:

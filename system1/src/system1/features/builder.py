@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from system1.artifacts.package import write_artifact_zip
+from system1.artifacts.package import discover_artifact_zip, extract_artifact_zip, write_artifact_zip
 from system1.config import ProviderPlan, load_provider_plan
 from system1.features.providers import MockEmbeddingProvider, MockTextProvider, RealEmbeddingUnavailable, RealProviderUnavailable
 from system1.release.types import config_dir, release_root, write_json
@@ -66,9 +66,7 @@ def process_feature_batch(
     feature_errors: list[dict[str, Any]] = []
 
     for video_id in video_ids:
-        structure_dir = release_dir / "artifacts" / "structure" / video_id
-        if not structure_dir.exists():
-            raise FileNotFoundError(f"missing structure artifact for video_id={video_id}: {structure_dir}")
+        structure_dir = _resolve_structure_artifact_dir(release_dir, video_id)
         artifact_dir = release_dir / "artifacts" / "features" / video_id
         if artifact_dir.exists():
             for path in artifact_dir.rglob("*"):
@@ -115,6 +113,21 @@ def process_feature_batch(
     report_path = release_dir / "manifests" / "worker_runtime_report_features.json"
     write_json(report_path, report)
     return report_path
+
+
+def _resolve_structure_artifact_dir(release_dir: Path, video_id: str) -> Path:
+    local_dir = release_dir / "artifacts" / "structure" / video_id
+    if local_dir.exists():
+        return local_dir
+    zip_path = discover_artifact_zip(release_dir / "artifacts" / "structure", video_id=video_id, artifact_type="structure")
+    if zip_path is None:
+        raise FileNotFoundError(f"missing structure artifact folder or zip for video_id={video_id}: {local_dir}")
+    return extract_artifact_zip(
+        zip_path,
+        release_dir / "staging" / "extracted_artifacts" / "structure",
+        expected_video_id=video_id,
+        expected_artifact_type="structure",
+    )
 
 
 def providers_for_plan(plan: ProviderPlan):

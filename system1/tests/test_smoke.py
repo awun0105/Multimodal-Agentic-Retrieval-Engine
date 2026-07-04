@@ -150,6 +150,40 @@ def assert_artifact_zip_contract(
             assert expected["sha256"] == hashlib.sha256(data).hexdigest()
 
 
+def rewrite_zip_json_member(zip_path: Path, member_name: str, transform) -> None:
+    temp_path = zip_path.with_name(f"{zip_path.name}.tmp")
+    with zipfile.ZipFile(zip_path) as source, zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        for member in source.infolist():
+            data = source.read(member.filename)
+            if member.filename == member_name:
+                payload = json.loads(data.decode("utf-8"))
+                data = json.dumps(transform(payload), indent=2, sort_keys=True).encode("utf-8") + b"\n"
+            target.writestr(member, data)
+    temp_path.replace(zip_path)
+
+
+def remove_zip_member(zip_path: Path, member_name: str) -> None:
+    temp_path = zip_path.with_name(f"{zip_path.name}.tmp")
+    with zipfile.ZipFile(zip_path) as source, zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        for member in source.infolist():
+            if member.filename != member_name:
+                target.writestr(member, source.read(member.filename))
+    temp_path.replace(zip_path)
+
+
+def prepare_structure_and_feature_artifacts(output_dir: Path) -> Path:
+    commands = [
+        ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)],
+        ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+    ]
+    for command in commands:
+        result = invoke_app(command)
+        assert result.exit_code == 0, result.stdout
+    return output_dir / "competition_dataset_v001"
+
+
 
 def test_system1_package_imports():
     import system1
@@ -644,6 +678,23 @@ def test_feature_batch_missing_structure_artifact_fails_clearly(tmp_path):
     result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
 
+
+def test_feature_batch_restores_structure_from_zip_when_folder_missing(tmp_path):
+    output_dir = tmp_path / "output"
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    release_dir = output_dir / "competition_dataset_v001"
+    shutil.rmtree(release_dir / "artifacts" / "structure" / "L21_V001")
+
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+
+    assert result.exit_code == 0, result.stdout
+    extracted = release_dir / "staging" / "extracted_artifacts" / "structure" / "L21_V001"
+    assert (extracted / "keyframes.parquet").exists()
+    assert (release_dir / "artifacts" / "features" / "L21_V001_features.zip").exists()
+
+
 def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     output_dir = tmp_path / "output"
     commands = [
@@ -689,6 +740,54 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     smoke_report = json.loads((release_dir / "manifests" / "smoke_test_report.json").read_text(encoding="utf-8"))
     assert smoke_report["media_resolved"] is True
     assert media_refs is not None
+
+
+def test_merge_reads_zip_artifacts_when_extracted_folders_missing(tmp_path):
+    output_dir = tmp_path / "output"
+    release_dir = prepare_structure_and_feature_artifacts(output_dir)
+    shutil.rmtree(release_dir / "artifacts" / "structure" / "L21_V001")
+    shutil.rmtree(release_dir / "artifacts" / "features" / "L21_V001")
+
+    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+
+    assert result.exit_code == 0, result.stdout
+    assert (release_dir / "staging" / "extracted_artifacts" / "merge" / "structure" / "L21_V001" / "shots.parquet").exists()
+    assert (release_dir / "staging" / "extracted_artifacts" / "merge" / "features" / "L21_V001" / "embeddings_meta.parquet").exists()
+    assert (release_dir / "tables" / "text_documents.parquet").exists()
+
+
+def test_merge_fails_on_artifact_zip_checksum_mismatch(tmp_path):
+    output_dir = tmp_path / "output"
+    release_dir = prepare_structure_and_feature_artifacts(output_dir)
+    structure_zip = release_dir / "artifacts" / "structure" / "L21_V001_structure.zip"
+
+    def corrupt_first_checksum(payload: dict[str, object]) -> dict[str, object]:
+        first_key = sorted(payload)[0]
+        assert isinstance(payload[first_key], dict)
+        payload[first_key]["sha256"] = "0" * 64
+        return payload
+
+    rewrite_zip_json_member(structure_zip, "L21_V001/checksums.json", corrupt_first_checksum)
+    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+
+    assert result.exit_code != 0
+    assert result.exception is not None
+    assert "checksum mismatch" in str(result.exception)
+
+
+@pytest.mark.parametrize("member_name", ["L21_V001/artifact_manifest.json", "L21_V001/checksums.json"])
+def test_merge_fails_on_artifact_zip_missing_package_metadata(tmp_path, member_name):
+    output_dir = tmp_path / "output"
+    release_dir = prepare_structure_and_feature_artifacts(output_dir)
+    structure_zip = release_dir / "artifacts" / "structure" / "L21_V001_structure.zip"
+    remove_zip_member(structure_zip, member_name)
+
+    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+
+    assert result.exit_code != 0
+    assert result.exception is not None
+    assert Path(member_name).name in str(result.exception)
+
 
 def test_validate_fails_before_runtime_artifacts(tmp_path):
     output_dir = tmp_path / "output"
