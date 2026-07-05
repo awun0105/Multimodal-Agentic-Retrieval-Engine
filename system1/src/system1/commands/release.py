@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+import zipfile
 
 import typer
 
 from system1.commands.common import default_output, release_dir, require_supported_mode
 from system1.db.sqlite_builder import build_app_sqlite
 from system1.indexes.builder import build_visual_index
+from system1.release.phase_artifacts import (
+    download_structure_artifacts_from_hf,
+    upload_structure_artifacts_to_hf,
+)
 from system1.release.smoke import write_smoke_report
 from system1.release.sync import (
     download_phase00_ingestion_from_hf,
@@ -110,6 +115,33 @@ def register(app: typer.Typer) -> None:
         )
         typer.echo(f"Synced phase00 ingestion files={result.file_count}: {result.manifest_path}")
 
+    @app.command("sync-structure-artifacts")
+    def sync_structure_artifacts(
+        output: Path = typer.Option(default_output(), "--output", "-o"),
+        hf_repo_id: str = typer.Option(..., "--hf-repo-id"),
+        release_id: str = typer.Option(..., "--release-id"),
+        batch_id: str = typer.Option(..., "--batch-id"),
+        worker_id: str = typer.Option(..., "--worker-id"),
+        hf_prefix: str = typer.Option("", "--hf-prefix"),
+        hf_repo_type: str = typer.Option("dataset", "--hf-repo-type"),
+        hf_revision: str = typer.Option("main", "--hf-revision"),
+    ) -> None:
+        """Upload structure artifact ZIPs for one batch using the phase01_structure HF layout."""
+        try:
+            result = upload_structure_artifacts_to_hf(
+                Path(output) / release_id,
+                repo_id=hf_repo_id,
+                release_id=release_id,
+                batch_id=batch_id,
+                worker_id=worker_id,
+                prefix=hf_prefix,
+                repo_type=hf_repo_type,
+                revision=hf_revision,
+            )
+        except (FileNotFoundError, ValueError, zipfile.BadZipFile) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(f"Synced structure artifacts files={result.file_count}: {result.release_id}/{result.batch_id}")
+
 
     @app.command("restore-release")
     def restore_release(
@@ -154,3 +186,30 @@ def register(app: typer.Typer) -> None:
             overwrite=overwrite,
         )
         typer.echo(f"Restored phase00 ingestion files={result.file_count}: {result.release_dir}")
+
+    @app.command("restore-structure-artifacts")
+    def restore_structure_artifacts(
+        output: Path = typer.Option(default_output(), "--output", "-o"),
+        hf_repo_id: str = typer.Option(..., "--hf-repo-id"),
+        release_id: str = typer.Option(..., "--release-id"),
+        batch_id: str = typer.Option(..., "--batch-id"),
+        hf_prefix: str = typer.Option("", "--hf-prefix"),
+        hf_repo_type: str = typer.Option("dataset", "--hf-repo-type"),
+        hf_revision: str = typer.Option("main", "--hf-revision"),
+        overwrite: bool = typer.Option(True, "--overwrite/--no-overwrite"),
+    ) -> None:
+        """Restore structure artifact ZIPs for one batch from the phase01_structure HF layout."""
+        try:
+            result = download_structure_artifacts_from_hf(
+                output,
+                repo_id=hf_repo_id,
+                release_id=release_id,
+                batch_id=batch_id,
+                prefix=hf_prefix,
+                repo_type=hf_repo_type,
+                revision=hf_revision,
+                overwrite=overwrite,
+            )
+        except (FileNotFoundError, FileExistsError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(f"Restored structure artifacts files={result.file_count}: {result.release_dir}")

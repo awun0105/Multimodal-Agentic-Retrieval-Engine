@@ -121,6 +121,19 @@ system1 restore-phase00-ingestion \
   --release-id canonical_release_v003 \
   --hf-repo-id your-org/AIC26_release \
   --output output
+
+system1 sync-structure-artifacts \
+  --output output \
+  --hf-repo-id your-org/AIC26_release \
+  --release-id canonical_release_v003 \
+  --batch-id batch_000 \
+  --worker-id worker_local_01
+
+system1 restore-structure-artifacts \
+  --output output \
+  --hf-repo-id your-org/AIC26_release \
+  --release-id canonical_release_v003 \
+  --batch-id batch_000
 ```
 
 `standardize-archives` writes:
@@ -148,7 +161,10 @@ cp -R /path/to/sample/input ./input
 `import-canonical-raw` is the CLI wrapper around source-folder staging,
 standardization, probing, and raw upload. `sync-phase00-ingestion` and
 `restore-phase00-ingestion` use the phase00 Hugging Face layout for
-Notebook 00 outputs.
+Notebook 00 outputs. `sync-structure-artifacts` and
+`restore-structure-artifacts` map local phase01 structure ZIPs and worker
+reports to and from the Hugging Face `phase01_structure` layout; Notebook 01 is
+not implemented yet.
 
 ## Local setup
 
@@ -252,8 +268,26 @@ output/competition_dataset_v001/
 ```
 
 The local CLI packages artifact ZIPs and worker reports in the release output
-tree. Phase01/phase02 Hugging Face sync/restore is a separate workflow target
-and is not implemented by the local package commands yet.
+tree. Phase01 structure Hugging Face sync/restore is handled by
+`sync-structure-artifacts` and `restore-structure-artifacts`; phase02 features
+sync/restore remains a separate future workflow target.
+
+Phase01 structure mapping:
+
+```text
+Local:
+  artifacts/structure/{video_id}_structure.zip
+  manifests/worker_reports/structure_{batch_id}_{worker_id}.json
+
+HF:
+  canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+  canonical_release_vXXX/phase01_structure/worker_reports/structure_{batch_id}_{worker_id}.json
+```
+
+`sync-structure-artifacts` reads `manifests/{batch_id}.txt`, validates each
+structure ZIP manifest/checksum before upload, and uploads only artifacts in
+that batch. `restore-structure-artifacts` downloads structure ZIPs and worker
+reports for one batch back into the local layout; it does not extract ZIPs.
 
 Hugging Face shared target layout:
 
