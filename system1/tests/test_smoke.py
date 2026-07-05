@@ -2265,3 +2265,137 @@ def test_phase00_ingestion_sync_maps_legacy_release_layout(monkeypatch, tmp_path
     assert "canonical_release_v003/phase00_ingestion/reports/unmatched_metadata.json" in uploaded
     assert "canonical_release_v003/phase00_ingestion/reports/phase00_sync_manifest.json" in uploaded
     assert not any(path.startswith("releases/") for path in uploaded)
+
+
+def test_phase00_ingestion_restore_materializes_active_layout(monkeypatch, tmp_path):
+    from system1.release.sync import download_phase00_ingestion_from_hf
+
+    uploaded = {
+        "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
+        "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet": b"mapping",
+        "canonical_release_v003/phase00_ingestion/manifests/batch_manifest.csv": b"batch_id\n",
+        "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
+        "canonical_release_v003/phase00_ingestion/reports/dataset_report.json": b'{"ok": true}\n',
+    }
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def list_files(self, prefix=""):
+            return [Path(path) for path in uploaded if path.startswith(str(prefix))]
+
+        def download_file(self, relative_path, target: Path, *, cache_dir=None):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(uploaded[str(relative_path)])
+            return target
+
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    result = download_phase00_ingestion_from_hf(
+        tmp_path / "output",
+        release_id="canonical_release_v003",
+        repo_id="org/repo",
+    )
+    release_dir = result.release_dir
+
+    assert (release_dir / "phase00_ingestion" / "tables" / "videos.parquet").read_bytes() == b"videos"
+    assert (release_dir / "phase00_ingestion" / "raw_mapping" / "media_store_manifest.parquet").read_bytes() == b"mapping"
+    assert (release_dir / "phase00_ingestion" / "manifests" / "batch_000.txt").read_text(encoding="utf-8") == "L21_V001\n"
+    assert (release_dir / "phase00_ingestion" / "reports" / "dataset_report.json").exists()
+    assert (release_dir / "tables" / "videos.parquet").read_bytes() == b"videos"
+    assert (release_dir / "raw_mapping" / "media_store_manifest.parquet").read_bytes() == b"mapping"
+    assert (release_dir / "manifests" / "batch_manifest.csv").read_text(encoding="utf-8") == "batch_id\n"
+    assert (release_dir / "manifests" / "batch_000.txt").read_text(encoding="utf-8") == "L21_V001\n"
+    assert not (release_dir / "reports" / "dataset_report.json").exists()
+
+
+def test_phase00_ingestion_restore_no_overwrite_protects_active_layout(monkeypatch, tmp_path):
+    from system1.release.sync import download_phase00_ingestion_from_hf
+
+    uploaded = {
+        "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
+        "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
+    }
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def list_files(self, prefix=""):
+            return [Path(path) for path in uploaded if path.startswith(str(prefix))]
+
+        def download_file(self, relative_path, target: Path, *, cache_dir=None):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(uploaded[str(relative_path)])
+            return target
+
+    output_dir = tmp_path / "output"
+    active_batch = output_dir / "canonical_release_v003" / "manifests" / "batch_000.txt"
+    active_batch.parent.mkdir(parents=True)
+    active_batch.write_text("stale\n", encoding="utf-8")
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    with pytest.raises(FileExistsError, match="batch_000.txt"):
+        download_phase00_ingestion_from_hf(
+            output_dir,
+            release_id="canonical_release_v003",
+            repo_id="org/repo",
+            overwrite=False,
+        )
+
+    assert active_batch.read_text(encoding="utf-8") == "stale\n"
+
+
+def test_restore_phase00_ingestion_cli_unblocks_process_batch_manifest_check(monkeypatch, tmp_path):
+    uploaded = {
+        "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
+        "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet": b"mapping",
+        "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
+    }
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def list_files(self, prefix=""):
+            return [Path(path) for path in uploaded if path.startswith(str(prefix))]
+
+        def download_file(self, relative_path, target: Path, *, cache_dir=None):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(uploaded[str(relative_path)])
+            return target
+
+    def fake_process_structure_batch(output, **kwargs):
+        report_path = Path(output) / "canonical_release_v003" / "manifests" / "worker_reports" / "structure_batch_000_worker_000.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text('{"status": "completed"}\n', encoding="utf-8")
+        return report_path
+
+    monkeypatch.setenv("AIC_RELEASE_ID", "canonical_release_v003")
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+    monkeypatch.setattr("system1.commands.pipeline.process_structure_batch", fake_process_structure_batch)
+
+    restore = runner.invoke(
+        app,
+        [
+            "restore-phase00-ingestion",
+            "--output",
+            str(tmp_path / "output"),
+            "--release-id",
+            "canonical_release_v003",
+            "--hf-repo-id",
+            "org/repo",
+        ],
+    )
+    assert restore.exit_code == 0, restore.output
+
+    process = invoke_app([
+        "process-batch",
+        "--batch-id",
+        "batch_000",
+        "--output",
+        str(tmp_path / "output"),
+    ])
+    assert process.exit_code == 0, process.output
+    assert "missing batch manifest" not in process.output

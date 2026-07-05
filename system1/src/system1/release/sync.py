@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -151,6 +152,8 @@ def download_phase00_ingestion_from_hf(
     with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 4) * 2)) as executor:
         executor.map(_download_worker, filtered_remote_files)
 
+    _materialize_phase00_ingestion(phase_path, release_path, overwrite=overwrite)
+
     manifest_path = phase_path / "reports" / "phase00_sync_manifest.json"
     return ReleaseSyncResult(
         release_dir=release_path,
@@ -193,6 +196,21 @@ def _phase00_ingestion_upload_plan(release_path: Path) -> list[tuple[Path, str]]
     if not paths:
         raise FileNotFoundError(f"no phase00 ingestion artifacts found under {release_path}")
     return paths
+
+
+def _materialize_phase00_ingestion(phase_path: Path, release_path: Path, *, overwrite: bool) -> None:
+    for directory_name in ("tables", "raw_mapping", "manifests"):
+        source_dir = phase_path / directory_name
+        if not source_dir.exists():
+            continue
+        for source in source_dir.rglob("*"):
+            if not source.is_file():
+                continue
+            target = release_path / directory_name / source.relative_to(source_dir)
+            if target.exists() and not overwrite:
+                raise FileExistsError(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
 
 
 def _is_phase00_report_path(path: Path) -> bool:

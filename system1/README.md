@@ -161,7 +161,10 @@ cp -R /path/to/sample/input ./input
 `import-canonical-raw` is the CLI wrapper around source-folder staging,
 standardization, probing, and raw upload. `sync-phase00-ingestion` and
 `restore-phase00-ingestion` use the phase00 Hugging Face layout for
-Notebook 00 outputs. `sync-structure-artifacts` and
+Notebook 00 outputs. Restore keeps the canonical
+`phase00_ingestion/` snapshot and materializes `tables/`, `raw_mapping/`, and
+`manifests/` into the active local release layout used by `process-batch`.
+`sync-structure-artifacts` and
 `restore-structure-artifacts` map local phase01 structure ZIPs and worker
 reports to and from the Hugging Face `phase01_structure` layout; Notebook 01 is
 not implemented yet.

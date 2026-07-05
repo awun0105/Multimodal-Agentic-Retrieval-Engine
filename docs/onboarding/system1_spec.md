@@ -3480,6 +3480,10 @@ AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_m
 AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_XXX.txt
 ```
 
+`restore-phase00-ingestion` keeps that `phase00_ingestion/` snapshot and also
+materializes `tables/`, `raw_mapping/`, and `manifests/` into the active local
+release root so `process-batch` can run without notebook-level copy logic.
+
 Notebook 01 uploads:
 
 ```text
