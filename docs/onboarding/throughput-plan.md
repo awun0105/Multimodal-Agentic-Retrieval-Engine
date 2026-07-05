@@ -759,7 +759,7 @@ outputs/
 │   ├── L21_V001_features.zip
 │   └── L21_V004_features.zip
 └── worker_reports/
-    └── worker_kaggle_an_01_runtime_report.json
+    └── structure_batch_003_worker_kaggle_an_01.json
 ```
 
 ---
@@ -1228,16 +1228,10 @@ Nếu artifact lỗi:
 
 ## 17. Worker runtime report
 
-Mỗi worker nên xuất:
+Mỗi worker nên xuất report không overwrite theo phase, batch, và worker:
 
 ```text
-worker_runtime_report.json
-```
-
-hoặc:
-
-```text
-worker_runtime_report.jsonl
+manifests/worker_reports/{phase}_{batch_id}_{worker_id}.json
 ```
 
 Report này giúp team biết worker chạy gì, mất bao lâu, lỗi ở đâu.

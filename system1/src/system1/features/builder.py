@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from system1.artifacts.package import discover_artifact_zip, extract_artifact_zip, write_artifact_zip
+from system1.artifacts.reports import utc_now, write_worker_report
 from system1.config import ProviderPlan, load_provider_plan
 from system1.features.providers import MockEmbeddingProvider, MockTextProvider, RealEmbeddingUnavailable, RealProviderUnavailable
 from system1.release.types import config_dir, release_root, write_json
@@ -37,6 +38,7 @@ def process_feature_batch(
     providers: str = "mock",
     worker_id: str = "worker_000",
 ) -> Path:
+    started_at = utc_now()
     release_dir = release_root(output_dir)
     videos_path = release_dir / "tables" / "videos.parquet"
     media_manifest_path = release_dir / "raw_mapping" / "media_store_manifest.parquet"
@@ -101,17 +103,23 @@ def process_feature_batch(
         )
         artifact_paths.append(str(zip_path.relative_to(release_dir)))
 
-    report = {
-        "worker_id": worker_id,
-        "batch_id": batch_id,
-        "phase": "features",
-        "status": "pass" if not feature_errors else "partial",
-        "artifact_paths": artifact_paths,
-        "video_count": len(video_ids),
-        "error_count": len(feature_errors),
-    }
-    report_path = release_dir / "manifests" / "worker_runtime_report_features.json"
-    write_json(report_path, report)
+    finished_at = utc_now()
+    report_path = write_worker_report(
+        release_dir,
+        phase="features",
+        batch_id=batch_id,
+        worker_id=worker_id,
+        started_at=started_at,
+        finished_at=finished_at,
+        videos_processed=len(video_ids),
+        videos_failed=len({str(error.get("video_id")) for error in feature_errors if error.get("video_id")}),
+        payload={
+            "legacy_status": "pass" if not feature_errors else "partial",
+            "artifact_paths": artifact_paths,
+            "video_count": len(video_ids),
+            "error_count": len(feature_errors),
+        },
+    )
     return report_path
 
 

@@ -9,11 +9,12 @@ from typing import Any
 import pandas as pd
 
 from system1.artifacts.package import write_artifact_zip
+from system1.artifacts.reports import utc_now, write_worker_report
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.features.providers import MockTextProvider, RealProviderUnavailable
 from system1.ingest.discovery import read_metadata
 from system1.keyframes.extractor import extract_keyframe_and_thumbnail
-from system1.release.types import release_root, write_json
+from system1.release.types import release_root
 from system1.text.builder import metadata_text
 
 STRUCTURE_PARQUET_FILES = (
@@ -36,6 +37,7 @@ def process_structure_batch(
     providers: str = "mock",
     worker_id: str = "worker_000",
 ) -> Path:
+    started_at = utc_now()
     release_dir = release_root(output_dir)
     videos_path = release_dir / "tables" / "videos.parquet"
     media_manifest_path = release_dir / "raw_mapping" / "media_store_manifest.parquet"
@@ -95,18 +97,24 @@ def process_structure_batch(
         )
         artifact_paths.append(str(archive_path.relative_to(release_dir)))
 
-    report = {
-        "worker_id": worker_id,
-        "batch_id": batch_id,
-        "phase": "structure",
-        "status": "pass" if not errors else "partial",
-        "artifact_paths": artifact_paths,
-        "video_count": int(len(video_rows)),
-        "error_count": len(errors),
-        "batch_debug_dir": str(batch_debug_dir.relative_to(release_dir)),
-    }
-    report_path = release_dir / "manifests" / "worker_runtime_report_structure.json"
-    write_json(report_path, report)
+    finished_at = utc_now()
+    report_path = write_worker_report(
+        release_dir,
+        phase="structure",
+        batch_id=batch_id,
+        worker_id=worker_id,
+        started_at=started_at,
+        finished_at=finished_at,
+        videos_processed=int(len(video_rows)),
+        videos_failed=len({str(error.get("video_id")) for error in errors if error.get("video_id")}),
+        payload={
+            "legacy_status": "pass" if not errors else "partial",
+            "artifact_paths": artifact_paths,
+            "video_count": int(len(video_rows)),
+            "error_count": len(errors),
+            "batch_debug_dir": str(batch_debug_dir.relative_to(release_dir)),
+        },
+    )
     return report_path
 
 

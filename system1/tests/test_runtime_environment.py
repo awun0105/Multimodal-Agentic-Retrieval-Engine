@@ -112,10 +112,12 @@ def test_release_id_affects_release_dir_and_phase_outputs(tmp_path, monkeypatch)
     assert batch_manifest_path.parent.parent.name == release_id
 
     structure_report = process_structure_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", mode="debug_small_sample", providers="mock")
-    assert structure_report.parent.parent.name == release_id
+    assert structure_report.parent.name == "worker_reports"
+    assert structure_report.parents[2].name == release_id
 
     feature_report = process_feature_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", mode="debug_small_sample", providers="mock")
-    assert feature_report.parent.parent.name == release_id
+    assert feature_report.parent.name == "worker_reports"
+    assert feature_report.parents[2].name == release_id
 
 
 def test_merge_dataset_manifest_release_id_matches_folder(tmp_path, monkeypatch):

@@ -10,6 +10,7 @@ import tempfile
 import zipfile
 
 from system1.artifacts.factory import make_artifact_store_from_env
+from system1.artifacts.reports import worker_report_relative_path
 from system1.release.types import DEFAULT_RELEASE_ID
 
 
@@ -57,20 +58,10 @@ def _phase_required_paths(phase: str, batch_id: str | None = None) -> list[Path]
         return phase00
     if phase == "phase01_structure":
         checkpoint_name(phase, batch_id)
-        return phase00 + [
-            Path("artifacts/structure"),
-            Path("artifacts/structure_batches"),
-            Path("manifests/worker_runtime_report_structure.json"),
-        ]
+        return []
     if phase == "phase02_features":
         checkpoint_name(phase, batch_id)
-        return phase00 + [
-            Path("artifacts/structure"),
-            Path("artifacts/structure_batches"),
-            Path("manifests/worker_runtime_report_structure.json"),
-            Path("artifacts/features"),
-            Path("manifests/worker_runtime_report_features.json"),
-        ]
+        return []
     if phase == "phase03_final_release":
         return [
             Path("tables"),
@@ -84,7 +75,23 @@ def _phase_required_paths(phase: str, batch_id: str | None = None) -> list[Path]
     raise ValueError(f"Unknown checkpoint phase: {phase}")
 
 
-def _iter_phase_members(release_dir: Path, phase: str, batch_id: str | None = None) -> list[Path]:
+def _iter_phase_members(
+    release_dir: Path,
+    phase: str,
+    batch_id: str | None = None,
+    *,
+    worker_id: str | None = None,
+    allow_missing_batch_manifest: bool = False,
+) -> list[Path]:
+    if phase in {"phase01_structure", "phase02_features"}:
+        return _iter_batch_artifact_members(
+            release_dir,
+            phase,
+            batch_id,
+            worker_id=worker_id,
+            allow_missing_batch_manifest=allow_missing_batch_manifest,
+        )
+
     members: set[Path] = set()
     for relative_path in _phase_required_paths(phase, batch_id):
         if "*" in str(relative_path):
@@ -110,6 +117,68 @@ def _iter_phase_members(release_dir: Path, phase: str, batch_id: str | None = No
 
         raise FileNotFoundError(absolute_path)
     return sorted(members)
+
+
+def _iter_batch_artifact_members(
+    release_dir: Path,
+    phase: str,
+    batch_id: str | None,
+    *,
+    worker_id: str | None,
+    allow_missing_batch_manifest: bool,
+) -> list[Path]:
+    checkpoint_name(phase, batch_id)
+    assert batch_id is not None
+    report_phase, artifact_dir_name, artifact_suffix = _batch_phase_contract(phase)
+    artifact_dir = release_dir / "artifacts" / artifact_dir_name
+    members: set[Path] = set()
+
+    video_ids = _read_batch_video_ids(release_dir, batch_id)
+    if video_ids:
+        for video_id in video_ids:
+            relative_path = Path("artifacts") / artifact_dir_name / f"{video_id}_{artifact_suffix}.zip"
+            if not (release_dir / relative_path).is_file():
+                raise FileNotFoundError(release_dir / relative_path)
+            members.add(relative_path)
+    elif allow_missing_batch_manifest:
+        matches = sorted(path.relative_to(release_dir) for path in artifact_dir.glob(f"*_{artifact_suffix}.zip") if path.is_file())
+        if not matches:
+            raise FileNotFoundError(artifact_dir / f"*_{artifact_suffix}.zip")
+        members.update(matches)
+    else:
+        raise FileNotFoundError(release_dir / "manifests" / f"{batch_id}.txt")
+
+    members.update(_worker_report_members(release_dir, phase=report_phase, batch_id=batch_id, worker_id=worker_id))
+    return sorted(members)
+
+
+def _batch_phase_contract(phase: str) -> tuple[str, str, str]:
+    if phase == "phase01_structure":
+        return ("structure", "structure", "structure")
+    if phase == "phase02_features":
+        return ("features", "features", "features")
+    raise ValueError(f"Unknown batch artifact phase: {phase}")
+
+
+def _read_batch_video_ids(release_dir: Path, batch_id: str) -> list[str]:
+    batch_path = release_dir / "manifests" / f"{batch_id}.txt"
+    if not batch_path.exists():
+        return []
+    return [line.strip() for line in batch_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _worker_report_members(
+    release_dir: Path,
+    *,
+    phase: str,
+    batch_id: str,
+    worker_id: str | None,
+) -> list[Path]:
+    if worker_id:
+        report = worker_report_relative_path(phase, batch_id, worker_id)
+        return [report] if (release_dir / report).is_file() else []
+    report_root = release_dir / "manifests" / "worker_reports"
+    return sorted(path.relative_to(release_dir) for path in report_root.glob(f"{phase}_{batch_id}_*.json") if path.is_file())
 
 
 def _registry_key(phase: str, batch_id: str | None = None) -> str:
@@ -193,7 +262,7 @@ def save_checkpoint(
         hf_token=hf_token,
         hf_prefix=hf_prefix,
     )
-    members = _iter_phase_members(release_dir, phase, batch_id)
+    members = _iter_phase_members(release_dir, phase, batch_id, worker_id=worker_id)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_zip = Path(temp_dir) / f"{checkpoint_name(phase, batch_id)}.zip"
@@ -291,7 +360,7 @@ def restore_checkpoint(
         try:
             temporary_release_dir.mkdir(parents=True, exist_ok=False)
             _safe_extract_zip(temp_zip, temporary_release_dir)
-            _iter_phase_members(temporary_release_dir, phase, batch_id)
+            _iter_phase_members(temporary_release_dir, phase, batch_id, allow_missing_batch_manifest=True)
             if release_dir.exists() and overwrite:
                 shutil.rmtree(release_dir)
             os.replace(temporary_release_dir, release_dir)

@@ -422,7 +422,7 @@ def test_cli_debug_pipeline_end_to_end(tmp_path):
     release_dir = output_dir / "competition_dataset_v001"
     assert (release_dir / "manifests" / "dataset_report.json").exists()
     assert (release_dir / "manifests" / "batch_000.txt").exists()
-    assert (release_dir / "manifests" / "worker_runtime_report_structure.json").exists()
+    assert (release_dir / "manifests" / "worker_reports" / "structure_batch_000_worker_000.json").exists()
     assert not (release_dir / "manifests" / "merge_report.json").exists()
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "indexes" / "visual.faiss").exists()
@@ -652,7 +652,7 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
             "L21_V001/errors.jsonl",
         },
     )
-    assert (release_dir / "manifests" / "worker_runtime_report_features.json").exists()
+    assert (release_dir / "manifests" / "worker_reports" / "features_batch_000_worker_000.json").exists()
     embeddings = np.load(artifact_dir / "visual_embeddings.npy")
     embeddings_meta = pd.read_parquet(artifact_dir / "embeddings_meta.parquet")
     text_sources = pd.read_parquet(artifact_dir / "text_sources.parquet")
@@ -677,6 +677,31 @@ def test_feature_batch_missing_structure_artifact_fails_clearly(tmp_path):
     invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
     result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
+
+
+def test_worker_reports_include_phase_batch_worker_and_do_not_overwrite(tmp_path):
+    output_dir = tmp_path / "output"
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
+    first = invoke_app(["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_a", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    second = invoke_app(["process-batch", "--batch-id", "batch_001", "--worker-id", "worker_b", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    assert first.exit_code == 0, first.stdout
+    assert second.exit_code == 0, second.stdout
+    release_dir = output_dir / "competition_dataset_v001"
+    report_a = release_dir / "manifests" / "worker_reports" / "structure_batch_000_worker_a.json"
+    report_b = release_dir / "manifests" / "worker_reports" / "structure_batch_001_worker_b.json"
+    assert report_a.exists()
+    assert report_b.exists()
+    payload_a = json.loads(report_a.read_text(encoding="utf-8"))
+    payload_b = json.loads(report_b.read_text(encoding="utf-8"))
+    assert payload_a["phase"] == "structure"
+    assert payload_a["batch_id"] == "batch_000"
+    assert payload_a["worker_id"] == "worker_a"
+    assert payload_a["status"] == "completed"
+    assert payload_a["videos_processed"] > 0
+    assert payload_b["phase"] == "structure"
+    assert payload_b["batch_id"] == "batch_001"
+    assert payload_b["worker_id"] == "worker_b"
 
 
 def test_feature_batch_restores_structure_from_zip_when_folder_missing(tmp_path):
@@ -882,8 +907,8 @@ def test_provider_plan_supports_named_modes():
 
 def test_worker_artifacts_and_runtime_reports_exist(tmp_path):
     release_dir = run_phase_based_release(tmp_path, mode="gold_full")
-    assert (release_dir / "manifests" / "worker_runtime_report_structure.json").exists()
-    assert (release_dir / "manifests" / "worker_runtime_report_features.json").exists()
+    assert (release_dir / "manifests" / "worker_reports" / "structure_batch_000_worker_000.json").exists()
+    assert (release_dir / "manifests" / "worker_reports" / "features_batch_000_worker_000.json").exists()
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
     assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
 

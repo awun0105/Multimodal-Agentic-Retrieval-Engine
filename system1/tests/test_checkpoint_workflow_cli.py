@@ -119,7 +119,7 @@ def test_process_batch_resume_restores_phase01_and_skips(tmp_path: Path) -> None
     )
 
     assert result.exit_code == 0, result.output
-    assert (output_dir / DEFAULT_RELEASE_ID / "manifests" / "worker_runtime_report_structure.json").exists()
+    assert (output_dir / DEFAULT_RELEASE_ID / "manifests" / "worker_reports" / "structure_batch_000_worker_123.json").exists()
     assert "Restored phase01 checkpoint; skipping process-batch." in result.output
 
 

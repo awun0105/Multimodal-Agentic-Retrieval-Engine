@@ -3336,7 +3336,7 @@ AIC26_release/
     │   │   └── batch_001/
     │   │       └── ...
     │   └── worker_reports/
-    │       ├── batch_000_worker_kaggle_A_01.json
+    │       ├── structure_batch_000_worker_kaggle_A_01.json
     │       └── ...
     │
     ├── phase02_features/
@@ -3348,7 +3348,7 @@ AIC26_release/
     │   │   └── batch_001/
     │   │       └── ...
     │   └── worker_reports/
-    │       ├── batch_000_worker_kaggle_A_01.json
+    │       ├── features_batch_000_worker_kaggle_A_01.json
     │       └── ...
     │
     ├── phase03_merged/
@@ -3468,7 +3468,7 @@ Notebook 01 uploads:
 
 ```text
 AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
-AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/{batch_id}_{worker_id}.json
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/structure_{batch_id}_{worker_id}.json
 ```
 
 Notebook 02 reads:
@@ -3481,7 +3481,7 @@ Notebook 02 uploads:
 
 ```text
 AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
-AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/{batch_id}_{worker_id}.json
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/features_{batch_id}_{worker_id}.json
 ```
 
 Notebook 03 reads:
