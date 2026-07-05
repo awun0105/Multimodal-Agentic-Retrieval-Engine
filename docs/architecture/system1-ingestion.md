@@ -141,13 +141,26 @@ only the final release folder:
 
 ```text
 AIC26_release/canonical_release_vXXX/phase00_ingestion/
-AIC26_release/canonical_release_vXXX/phase01_structure/
-AIC26_release/canonical_release_vXXX/phase02_features/
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/
 AIC26_release/canonical_release_vXXX/phase03_merged/
 AIC26_release/canonical_release_vXXX/releases/
 AIC26_release/canonical_release_vXXX/checkpoints/
 AIC26_release/canonical_release_vXXX/logs/
 ```
+
+Local package commands currently write:
+
+```text
+artifacts/structure/{video_id}_structure.zip
+artifacts/features/{video_id}_features.zip
+manifests/worker_reports/
+```
+
+The phase01/phase02 Hugging Face paths are target storage for a separate
+sync/restore workflow, not direct upload behavior of the local package commands.
 
 Notebook 00 writes phase00 ingestion outputs to:
 

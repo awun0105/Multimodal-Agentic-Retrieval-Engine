@@ -735,9 +735,9 @@ Mỗi teammate làm theo flow đơn giản:
 7. Bấm Run All.
 8. Notebook kiểm tra artifact nào đã có thể reuse.
 9. Notebook chỉ chạy phần còn thiếu hoặc phần cần rebuild.
-10. Notebook xuất artifact ZIP.
-11. Notebook upload artifact vào shared output folder.
-12. Notebook ghi worker_runtime_report.json.
+10. Notebook xuất artifact ZIP vào local package layout.
+11. Notebook ghi worker report không overwrite.
+12. HF phase01/phase02 sync là workflow riêng, không phải hành vi mặc định của local package CLI hiện tại.
 ```
 
 Ví dụ:
@@ -751,15 +751,17 @@ execution_mode = silver_balanced
 Output:
 
 ```text
-outputs/
-├── structure_artifacts/
-│   ├── L21_V001_structure.zip
-│   └── L21_V004_structure.zip
-├── feature_artifacts/
-│   ├── L21_V001_features.zip
-│   └── L21_V004_features.zip
-└── worker_reports/
-    └── structure_batch_003_worker_kaggle_an_01.json
+output/competition_dataset_v001/
+├── artifacts/
+│   ├── structure/
+│   │   ├── L21_V001_structure.zip
+│   │   └── L21_V004_structure.zip
+│   └── features/
+│       ├── L21_V001_features.zip
+│       └── L21_V004_features.zip
+└── manifests/
+    └── worker_reports/
+        └── structure_batch_003_worker_kaggle_an_01.json
 ```
 
 ---
@@ -1383,8 +1385,15 @@ Notebook này làm:
 - extract keyframes nếu cần
 - tạo thumbnails nếu cần
 - tạo structure artifact ZIP
-- upload artifact to AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/
-- ghi runtime report to AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/
+- ghi local artifact to artifacts/structure/{video_id}_structure.zip
+- ghi local runtime report to manifests/worker_reports/structure_{batch_id}_{worker_id}.json
+```
+
+HF sync target cho phase này, khi workflow sync riêng được implement:
+
+```text
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/structure_{batch_id}_{worker_id}.json
 ```
 
 ---
@@ -1407,8 +1416,15 @@ Notebook này làm:
 - chạy ASR nếu mode yêu cầu và artifact chưa có
 - chạy object/caption nếu mode yêu cầu và artifact chưa có
 - tạo feature artifact ZIP
-- upload artifact to AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/
-- ghi runtime report to AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/
+- ghi local artifact to artifacts/features/{video_id}_features.zip
+- ghi local runtime report to manifests/worker_reports/features_{batch_id}_{worker_id}.json
+```
+
+HF sync target cho phase này, khi workflow sync riêng được implement:
+
+```text
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/features_{batch_id}_{worker_id}.json
 ```
 
 ---
@@ -1424,8 +1440,7 @@ Team lead hoặc một worker chính chạy:
 Notebook này làm:
 
 ```text
-- scan artifact ZIP from AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/
-- scan artifact ZIP from AIC26_release/canonical_release_vXXX/phase02_features/artifacts/
+- scan artifact ZIP từ local package layout hoặc từ HF target layout đã được restore riêng
 - validate manifest/checksum/schema
 - merge parquet tables
 - build text_documents
@@ -1471,7 +1486,7 @@ MVP nên làm theo thứ tự:
 1. Implement cost-aware static batch assignment.
 2. Implement artifact manifest/checksum.
 3. Implement artifact reuse check bằng checksum/model version/config hash.
-4. Implement worker_runtime_report.json.
+4. Implement manifests/worker_reports/{phase}_{batch_id}_{worker_id}.json.
 5. Implement basic upload/validate flow.
 6. Implement merge/release skeleton.
 7. Chạy debug_small_sample.

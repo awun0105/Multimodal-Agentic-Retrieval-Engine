@@ -234,7 +234,28 @@ Notebooks are thin orchestration only. They should call CLI commands or thin `sr
 
 ## Release output layout
 
-Hugging Face shared layout:
+Current local package layout produced by the System 1 CLI:
+
+```text
+output/competition_dataset_v001/
+  artifacts/
+    structure/
+      L21_V001_structure.zip
+      L21_V002_structure.zip
+    features/
+      L21_V001_features.zip
+      L21_V002_features.zip
+  manifests/
+    worker_reports/
+      structure_batch_000_worker_000.json
+      features_batch_000_worker_000.json
+```
+
+The local CLI packages artifact ZIPs and worker reports in the release output
+tree. Phase01/phase02 Hugging Face sync/restore is a separate workflow target
+and is not implemented by the local package commands yet.
+
+Hugging Face shared target layout:
 
 ```text
 AIC26_release/canonical_release_vXXX/
@@ -244,7 +265,17 @@ AIC26_release/canonical_release_vXXX/
     manifests/
     reports/
   phase01_structure/
+    artifacts/
+      batch_000/
+        L21_V001_structure.zip
+    worker_reports/
+      structure_batch_000_worker_000.json
   phase02_features/
+    artifacts/
+      batch_000/
+        L21_V001_features.zip
+    worker_reports/
+      features_batch_000_worker_000.json
   phase03_merged/
   releases/
   checkpoints/
@@ -263,7 +294,7 @@ Legacy flat paths under
 outputs should use
 `canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,reports}`.
 
-Local final release layout:
+Local final release layout after merge/index/release:
 
 ```text
 output/competition_dataset_v001/

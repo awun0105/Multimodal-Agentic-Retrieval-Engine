@@ -119,13 +119,27 @@ AIC26_raw/canonical_raw_vXXX/manifests/unmatched_metadata.json
 
 ```text
 AIC26_release/canonical_release_vXXX/phase00_ingestion/
-AIC26_release/canonical_release_vXXX/phase01_structure/
-AIC26_release/canonical_release_vXXX/phase02_features/
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/
 AIC26_release/canonical_release_vXXX/phase03_merged/
 AIC26_release/canonical_release_vXXX/releases/
 AIC26_release/canonical_release_vXXX/checkpoints/
 AIC26_release/canonical_release_vXXX/logs/
 ```
+
+Local package commands currently write artifact ZIPs and worker reports under:
+
+```text
+artifacts/structure/{video_id}_structure.zip
+artifacts/features/{video_id}_features.zip
+manifests/worker_reports/
+```
+
+The phase01/phase02 Hugging Face paths above are the shared target layout for a
+separate sync/restore workflow. They are not a statement that the local package
+commands upload phase01/phase02 artifacts directly to Hugging Face.
 
 `phase00_ingestion` contains Notebook 00 ingestion and batch-planning outputs.
 It is not a final runtime release. The final app-ready release for System 2 is:

@@ -2662,6 +2662,22 @@ AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/**/*.zip
 AIC26_release/canonical_release_vXXX/phase02_features/artifacts/**/*.zip
 ```
 
+Current local package commands read the equivalent local layout first:
+
+```text
+artifacts/structure/{video_id}_structure.zip
+artifacts/features/{video_id}_features.zip
+manifests/worker_reports/
+```
+
+The Hugging Face paths above are the shared target layout for a separate
+phase01/phase02 sync/restore workflow. Do not read them as implying that the
+local package CLI directly uploads phase01/phase02 artifacts to Hugging Face.
+
+`artifact_manifest.json` inside each ZIP is the per-artifact package manifest.
+`manifests/artifact_manifest.parquet` produced after merge is the global
+release/staging manifest.
+
 ## Steps
 
 Phase này không nên là một script nguyên khối. Triển khai nên tách thành các sub-steps có thể chạy và test độc lập:
