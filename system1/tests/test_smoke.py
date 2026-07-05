@@ -395,6 +395,8 @@ def test_debug_release_generates_valid_release(tmp_path):
     result = validate_release(release_dir)
     assert result.passed
     assert any("visual_search" in degraded for degraded in result.degraded)
+    report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
+    assert report["schema_validation"]["status"] == "pass"
 
 
 def test_bronze_fast_generates_real_media_files(tmp_path):

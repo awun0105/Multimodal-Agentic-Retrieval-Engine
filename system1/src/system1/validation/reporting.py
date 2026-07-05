@@ -36,6 +36,13 @@ def write_validation_outputs(release_path: Path, result: ValidationResult) -> No
         "warnings": list(result.degraded),
         "degraded": list(result.degraded),
         "capabilities": capabilities,
+        "schema_validation": result.schema_validation
+        or {
+            "status": "not_run",
+            "errors": [],
+            "warnings": [],
+            "tables": {},
+        },
     }
     (manifests_dir / "validation_report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     dataset_manifest_path = manifests_dir / "dataset_manifest.json"
