@@ -44,3 +44,23 @@ Resolved. MVP uses local filesystem media storage through `LocalFileMediaStore`.
 - User decision on 2026-06-12: SQLite FTS5 is the MVP text search layer; Tantivy/OpenSearch/BM25 JSON are future or historical alternatives.
 
 Resolved. Use SQLite FTS5 as MVP text search. Treat Tantivy/OpenSearch/BM25 JSON as future or historical alternatives only.
+
+## Conflict 7: Phase01 semantic structure target vs current fallback implementation
+
+- Target docs/spec now define Notebook 01 / `process-batch` as phase01
+  semantic-light structure: restore phase00, reuse phase00 video facts, process
+  only the assigned batch, stage per-video raw media from `AIC26_raw` or local
+  input, generate shots, selected keyframes, thumbnails, minimum keyframe/image
+  captions required for scene construction, ASR/transcript rows when configured,
+  scenes, scene summaries, structure ZIPs, worker report, and sync to
+  `phase01_structure`.
+- Current package implementation can produce valid structure ZIPs and reports,
+  but still uses fallback structure behavior: one full-video shot, one
+  full-video scene, first-frame keyframe extraction, metadata fallback scene
+  summary, and no production semantic scene/caption provider implementation.
+- Current code still writes `scene_summaries_initial.parquet`; target docs use
+  `scene_summaries.parquet` for the phase01 summary table and reserve
+  `scene_summaries_enriched.parquet` for phase02 enrichment.
+
+Open. Next package work should migrate `process-batch` toward the target
+phase01 provider contract without moving algorithm logic into Notebook 01.

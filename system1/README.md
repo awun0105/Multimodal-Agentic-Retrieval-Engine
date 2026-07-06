@@ -166,8 +166,10 @@ Notebook 00 outputs. Restore keeps the canonical
 `manifests/` into the active local release layout used by `process-batch`.
 `sync-structure-artifacts` and
 `restore-structure-artifacts` map local phase01 structure ZIPs and worker
-reports to and from the Hugging Face `phase01_structure` layout; Notebook 01 is
-not implemented yet.
+reports to and from the Hugging Face `phase01_structure` layout. Notebook 01 is
+the thin worker orchestration for those commands; the current package can
+produce valid structure artifact packages, but the production semantic
+algorithms behind `process-batch` are still provider work.
 
 ## Local setup
 
@@ -291,6 +293,62 @@ HF:
 structure ZIP manifest/checksum before upload, and uploads only artifacts in
 that batch. `restore-structure-artifacts` downloads structure ZIPs and worker
 reports for one batch back into the local layout; it does not extract ZIPs.
+
+Notebook 01 target responsibility:
+
+```text
+setup runtime + package
+  -> restore phase00_ingestion from AIC26_release
+  -> materialize tables/raw_mapping/manifests for process-batch
+  -> read manifests/{batch_id}.txt
+  -> process only that batch
+  -> write artifacts/structure/{video_id}_structure.zip
+  -> write manifests/worker_reports/structure_{batch_id}_{worker_id}.json
+  -> sync those batch artifacts to phase01_structure
+```
+
+`process-batch` should reuse phase00 video facts from `tables/videos.parquet`
+and `raw_mapping/media_store_manifest.parquet` instead of re-probing every
+video. It may stage only the current video/metadata pair from `AIC26_raw` or a
+local input directory into scratch, but it must not copy the full raw dataset
+into runtime storage.
+
+The target phase01 structure package is semantic-light structure, not final
+feature enrichment. It should contain shot rows, selected keyframes, thumbnails,
+ASR/transcript rows when configured, minimum keyframe/image caption rows needed
+for scene construction, scene rows, scene summaries, package manifests,
+checksums, and errors. Algorithm choices are provider/config driven; docs
+should not hardcode a specific shot detector, captioning model, or ASR model
+before those providers are chosen. Current mock/fallback code may emit one
+full-video shot/scene and first-frame keyframe while those providers are
+unfinished.
+
+Target per-video structure ZIP layout:
+
+```text
+{video_id}_structure.zip
+└── {video_id}/
+    ├── metadata_normalized.json
+    ├── asr_segments.parquet
+    ├── shots.parquet
+    ├── scenes.parquet
+    ├── keyframes.parquet
+    ├── image_captions.parquet
+    ├── shot_transcript_links.parquet
+    ├── scene_transcript_links.parquet
+    ├── scene_summaries.parquet
+    ├── keyframes/
+    ├── thumbnails/
+    ├── manifest.json
+    ├── artifact_manifest.json
+    ├── checksums.json
+    └── errors.jsonl
+```
+
+Compatibility note: current fallback package code still writes
+`scene_summaries_initial.parquet`. The target contract above uses
+`scene_summaries.parquet`; migration should happen in package code, not in
+Notebook 01 cells.
 
 Hugging Face shared target layout:
 

@@ -1379,14 +1379,25 @@ Mỗi worker chạy:
 Notebook này làm:
 
 ```text
+- setup runtime, HF token, GitHub package checkout, and editable package install
+- restore AIC26_release/canonical_release_vXXX/phase00_ingestion/
+- materialize tables/, raw_mapping/, manifests/ into local active release root
 - đọc batch được giao
+- đọc videos.parquet + media_store_manifest.parquet để reuse phase00 video facts
 - kiểm tra structure artifact nào đã có thể reuse
-- chạy shot detection nếu cần
-- extract keyframes nếu cần
+- stage đúng video/metadata hiện tại từ AIC26_raw hoặc local input vào scratch nếu cần
+- chạy configured shot detection provider nếu cần
+- extract/select keyframes bằng configured keyframe provider nếu cần
 - tạo thumbnails nếu cần
+- tạo minimum keyframe/image captions nếu scene construction phụ thuộc caption
+- import/chạy ASR hoặc transcript provider nếu cấu hình yêu cầu
+- construct semantic-light scenes từ shots, selected keyframes, captions, transcript, metadata
+- tạo scene_summaries.parquet
 - tạo structure artifact ZIP
 - ghi local artifact to artifacts/structure/{video_id}_structure.zip
 - ghi local runtime report to manifests/worker_reports/structure_{batch_id}_{worker_id}.json
+- cleanup scratch
+- sync local batch artifact/report lên HF phase01_structure
 ```
 
 HF sync target cho phase này, khi workflow sync riêng được implement:
@@ -1413,8 +1424,9 @@ Notebook này làm:
 - kiểm tra feature artifact nào đã có thể reuse
 - chạy embedding nếu cần
 - chạy OCR nếu mode yêu cầu và artifact chưa có
-- chạy ASR nếu mode yêu cầu và artifact chưa có
-- chạy object/caption nếu mode yêu cầu và artifact chưa có
+- chạy object detection nếu mode yêu cầu và artifact chưa có
+- chạy additional/heavier caption enrichment nếu mode yêu cầu và artifact chưa có
+- tạo shot_captions và scene_summaries_enriched nếu mode yêu cầu
 - tạo feature artifact ZIP
 - ghi local artifact to artifacts/features/{video_id}_features.zip
 - ghi local runtime report to manifests/worker_reports/features_{batch_id}_{worker_id}.json

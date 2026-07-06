@@ -267,10 +267,11 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | `datasets` | Dataset identity and build metadata. |
 | `videos` | One row per video; stores `video_id`, `source_video_stem`, `video_ref`, duration, fps, VFR/frame-count metadata, dimensions, normalized metadata, and selected raw metadata fields. |
 | `shots` | One row per shot or fallback full-video shot; stores `shot_id`, `video_id`, frame/time ranges, detection method, and degraded/full-fidelity status. |
-| `scenes` | Scene-level inspection context derived from shots and metadata/ASR; enriches runtime inspection but should not control MVP keyframe extraction. |
+| `scenes` | Scene-level inspection context derived from shots, selected keyframes, minimum keyframe/image captions when configured, ASR/transcript rows, and metadata. |
 | `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `pts_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
-| `image_captions` | Caption evidence mapped to image/keyframe. |
+| `image_captions` | Caption evidence mapped to image/keyframe. Minimum phase01 caption rows may be required before scene construction; phase02 may add enrichment rows. |
 | `shot_captions` | Caption evidence mapped to shot-level intervals. |
+| `scene_summaries` | Phase01 scene summaries built from metadata, transcript links, and minimum keyframe/image captions when configured. |
 | `ocr` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
 | `asr_segments` | Transcript segments mapped to `video_id` and time range. |
 | `shot_transcript_links` | Canonical link rows between ASR segments and shots. |
