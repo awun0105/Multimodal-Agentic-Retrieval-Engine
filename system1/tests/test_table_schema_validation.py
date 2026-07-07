@@ -15,7 +15,15 @@ def write_table(path: Path, rows: list[dict[str, object]]) -> None:
 def write_valid_schema_release(release_dir: Path) -> None:
     write_table(
         release_dir / "tables" / "videos.parquet",
-        [{"video_id": "L21_V001", "video_ref": "media://raw_videos/L21_V001.mp4"}],
+        [
+            {
+                "video_id": "L21_V001",
+                "video_ref": "media://raw_videos/L21_V001.mp4",
+                "frame_count": 1,
+                "frame_count_method": "decoded_frame_timeline",
+                "has_frame_timeline": True,
+            }
+        ],
     )
     write_table(
         release_dir / "tables" / "keyframes.parquet",

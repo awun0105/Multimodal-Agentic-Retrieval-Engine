@@ -170,7 +170,11 @@ def _phase00_ingestion_upload_plan(release_path: Path) -> list[tuple[Path, str]]
         return [(path, path.relative_to(phase_root).as_posix()) for path in phase_root.rglob("*") if path.is_file()]
 
     paths: list[tuple[Path, str]] = []
-    for local_dir_name, remote_dir_name in (("tables", "tables"), ("raw_mapping", "raw_mapping")):
+    for local_dir_name, remote_dir_name in (
+        ("tables", "tables"),
+        ("raw_mapping", "raw_mapping"),
+        ("frame_timeline", "frame_timeline"),
+    ):
         local_dir = release_path / local_dir_name
         if not local_dir.exists():
             continue
@@ -199,7 +203,7 @@ def _phase00_ingestion_upload_plan(release_path: Path) -> list[tuple[Path, str]]
 
 
 def _materialize_phase00_ingestion(phase_path: Path, release_path: Path, *, overwrite: bool) -> None:
-    for directory_name in ("tables", "raw_mapping", "manifests"):
+    for directory_name in ("tables", "raw_mapping", "manifests", "frame_timeline"):
         source_dir = phase_path / directory_name
         if not source_dir.exists():
             continue

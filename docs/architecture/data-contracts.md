@@ -160,7 +160,7 @@ AIC26_raw/canonical_raw_vXXX/manifests/
 Legacy flat layout under
 `canonical_release_vXXX/{manifests,tables,raw_mapping}` is deprecated. New
 outputs must use
-`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,reports}`.
+`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}`.
 
 ## Canonical IDs
 

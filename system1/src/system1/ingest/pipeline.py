@@ -14,7 +14,7 @@ import pandas as pd
 
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs, read_metadata
-from system1.media.probe import probe_video
+from system1.media.probe import probe_video_with_timeline
 from system1.release.types import default_input_dir, release_root, write_json
 
 
@@ -54,9 +54,11 @@ def run_ingestion(
     tables_dir = release_dir / "tables"
     manifests_dir = release_dir / "manifests"
     raw_mapping_dir = release_dir / "raw_mapping"
+    frame_timeline_dir = release_dir / "frame_timeline"
     tables_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir.mkdir(parents=True, exist_ok=True)
     raw_mapping_dir.mkdir(parents=True, exist_ok=True)
+    frame_timeline_dir.mkdir(parents=True, exist_ok=True)
 
     source_root = _resolve_local_source_root(input_dir=input_dir, source_uri=source_uri)
     resolved_max_workers = _resolve_ingest_max_workers(source_root, max_workers)
@@ -79,10 +81,13 @@ def run_ingestion(
 
     video_dfs: list[pd.DataFrame] = []
     mapping_dfs: list[pd.DataFrame] = []
+    frame_timeline_manifest_records: list[dict[str, Any]] = []
     error_records: list[dict[str, Any]] = []
 
     # --- HÀM TRỢ LÝ ĐA LUỒNG XỬ LÝ CHO TỪNG CẶP DỮ LIỆU ĐẦU VÀO ---
-    def _process_single_pair(pair: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    def _process_single_pair(
+        pair: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
         video_path = Path(pair["video_path"])
         video_id = pair["video_id"]
         metadata_path = Path(pair["metadata_path"]) if pair.get("metadata_path") else None
@@ -92,7 +97,14 @@ def run_ingestion(
             if metadata_path is None
             else read_metadata(metadata_path)
         )
-        probe = probe_video(video_path)
+        probe_result = probe_video_with_timeline(video_path, video_id=video_id)
+        probe = probe_result.probe
+        timeline_record = _write_frame_timeline(
+            frame_timeline_dir,
+            video_id=video_id,
+            rows=probe_result.frame_timeline,
+            error=None if probe_result.frame_timeline else "decoded frame timeline unavailable",
+        )
         video_ref = f"media://raw_videos/{video_path.name}"
         metadata_filename = metadata_path.name if metadata_path else f"{video_id}.json"
         metadata_ref = f"media://metadata/{metadata_filename}"
@@ -112,6 +124,9 @@ def run_ingestion(
             "frame_count": probe.frame_count,
             "frame_count_estimated": probe.frame_count_estimated,
             "frame_count_method": probe.frame_count_method,
+            "is_vfr": probe.is_vfr,
+            "has_frame_timeline": timeline_record["status"] == "pass",
+            "frame_timeline_ref": timeline_record.get("frame_timeline_ref"),
             "estimated_compute_cost": estimated_compute_cost,
             "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
         }
@@ -138,7 +153,7 @@ def run_ingestion(
                 "kind": "probe_partial",
                 "message": "ffprobe metadata incomplete; some fields unavailable",
             }
-        return v_row, m_row, err_rec
+        return v_row, m_row, err_rec, timeline_record
 
     # --- TỐI ƯU BỘ NHỚ: Ghi dữ liệu cuốn chiếu ra DataFrame thay vì List Dictionaries ---
     CHUNK_SIZE = 2000
@@ -146,9 +161,10 @@ def run_ingestion(
     m_buffer: list[dict[str, Any]] = []
 
     with ThreadPoolExecutor(max_workers=resolved_max_workers) as executor:
-        for v_row, m_row, err_rec in executor.map(_process_single_pair, pairs):
+        for v_row, m_row, err_rec, timeline_record in executor.map(_process_single_pair, pairs):
             v_buffer.append(v_row)
             m_buffer.append(m_row)
+            frame_timeline_manifest_records.append(timeline_record)
             if err_rec:
                 error_records.append(err_rec)
 
@@ -171,6 +187,7 @@ def run_ingestion(
 
     videos_df.to_parquet(tables_dir / "videos.parquet", index=False)
     mapping_df.to_parquet(raw_mapping_dir / "media_store_manifest.parquet", index=False)
+    _write_frame_timeline_manifest(manifests_dir, frame_timeline_manifest_records)
 
     errors_path = manifests_dir / "ingestion_errors.jsonl"
     errors_path.write_text(
@@ -218,6 +235,7 @@ def run_ingestion(
             "ingestion_error_count": len(error_records),
             "videos_table": "tables/videos.parquet",
             "media_store_manifest": "raw_mapping/media_store_manifest.parquet",
+            "frame_timeline_manifest": "manifests/frame_timeline_manifest.parquet",
         },
     )
     return report_path
@@ -238,9 +256,11 @@ def run_canonical_hf_ingestion(
     tables_dir = release_dir / "tables"
     manifests_dir = release_dir / "manifests"
     raw_mapping_dir = release_dir / "raw_mapping"
+    frame_timeline_dir = release_dir / "frame_timeline"
     tables_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir.mkdir(parents=True, exist_ok=True)
     raw_mapping_dir.mkdir(parents=True, exist_ok=True)
+    frame_timeline_dir.mkdir(parents=True, exist_ok=True)
 
     store = HuggingFaceDatasetArtifactStore(
         repo_id=repo_id,
@@ -262,6 +282,7 @@ def run_canonical_hf_ingestion(
 
     video_dfs: list[pd.DataFrame] = []
     mapping_dfs: list[pd.DataFrame] = []
+    frame_timeline_manifest_records: list[dict[str, Any]] = []
     error_records: list[dict[str, Any]] = []
 
     keep_staging = _keep_canonical_staging()
@@ -314,7 +335,9 @@ def run_canonical_hf_ingestion(
         pair_parent.mkdir(parents=True, exist_ok=True)
 
         # --- HÀM TRỢ LÝ ĐA LUỒNG CHO HUGGING FACE ---
-        def _process_hf_pair(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+        def _process_hf_pair(
+            row: dict[str, Any],
+        ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
             video_id = str(row["video_id"])
             video_remote_path = _normalize_canonical_manifest_path(str(row["video_path"]), prefix)
             metadata_remote_path = _normalize_canonical_manifest_path(str(row["metadata_path"]), prefix)
@@ -336,6 +359,7 @@ def run_canonical_hf_ingestion(
 
                 metadata = read_metadata(metadata_path)
                 probe = None
+                timeline_record = _frame_timeline_unavailable_record(video_id, "canonical inventory reused without local raw video")
                 if inventory is None:
                     if not _allow_hf_video_download_for_probe():
                         raise FileNotFoundError(
@@ -344,7 +368,14 @@ def run_canonical_hf_ingestion(
                             "AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1"
                         )
                     store.download_file(video_remote_path, video_path, cache_dir=pair_cache_dir)
-                    probe = probe_video(video_path)
+                    probe_result = probe_video_with_timeline(video_path, video_id=video_id)
+                    probe = probe_result.probe
+                    timeline_record = _write_frame_timeline(
+                        frame_timeline_dir,
+                        video_id=video_id,
+                        rows=probe_result.frame_timeline,
+                        error=None if probe_result.frame_timeline else "decoded frame timeline unavailable",
+                    )
                 video_ref = f"media://raw_videos/{video_filename}"
                 metadata_ref = f"media://metadata/{metadata_filename}"
                 duration_seconds = _inventory_number(inventory, "duration_sec") if inventory is not None else probe.duration_seconds
@@ -367,6 +398,9 @@ def run_canonical_hf_ingestion(
                     "frame_count": frame_count,
                     "frame_count_estimated": False if inventory is not None else probe.frame_count_estimated,
                     "frame_count_method": "canonical_video_inventory" if inventory is not None else probe.frame_count_method,
+                    "is_vfr": _inventory_bool(inventory, "is_vfr") if inventory is not None else probe.is_vfr,
+                    "has_frame_timeline": timeline_record["status"] == "pass",
+                    "frame_timeline_ref": timeline_record.get("frame_timeline_ref"),
                     "estimated_compute_cost": estimated_compute_cost,
                     "metadata_title": metadata.get("title") if isinstance(metadata, dict) else None,
                 }
@@ -396,7 +430,7 @@ def run_canonical_hf_ingestion(
                         "message": "canonical video inventory metadata incomplete; some fields unavailable",
                     }
 
-                return v_row, m_row, err_rec
+                return v_row, m_row, err_rec, timeline_record
             finally:
                 if not keep_staging:
                     shutil.rmtree(pair_root, ignore_errors=True)
@@ -407,9 +441,10 @@ def run_canonical_hf_ingestion(
         m_buffer: list[dict[str, Any]] = []
 
         with ThreadPoolExecutor(max_workers=resolved_max_workers) as executor:
-            for v_row, m_row, err_rec in executor.map(_process_hf_pair, valid_rows):
+            for v_row, m_row, err_rec, timeline_record in executor.map(_process_hf_pair, valid_rows):
                 v_buffer.append(v_row)
                 m_buffer.append(m_row)
+                frame_timeline_manifest_records.append(timeline_record)
                 if err_rec:
                     error_records.append(err_rec)
 
@@ -432,6 +467,7 @@ def run_canonical_hf_ingestion(
 
     videos_df.to_parquet(tables_dir / "videos.parquet", index=False)
     mapping_df.to_parquet(raw_mapping_dir / "media_store_manifest.parquet", index=False)
+    _write_frame_timeline_manifest(manifests_dir, frame_timeline_manifest_records)
 
     (manifests_dir / "ingestion_errors.jsonl").write_text(
         "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in error_records),
@@ -455,6 +491,7 @@ def run_canonical_hf_ingestion(
             "ingestion_error_count": len(error_records),
             "videos_table": "tables/videos.parquet",
             "media_store_manifest": "raw_mapping/media_store_manifest.parquet",
+            "frame_timeline_manifest": "manifests/frame_timeline_manifest.parquet",
         },
     )
     return report_path
@@ -560,6 +597,69 @@ def _inventory_number(inventory: dict[str, Any] | None, key: str) -> float | Non
 def _inventory_int(inventory: dict[str, Any] | None, key: str) -> int | None:
     value = _inventory_number(inventory, key)
     return int(value) if value is not None else None
+
+
+def _inventory_bool(inventory: dict[str, Any] | None, key: str) -> bool | None:
+    if inventory is None:
+        return None
+    value = inventory.get(key)
+    if value is None:
+        return None
+    if isinstance(value, str) and value == "":
+        return None
+    if not isinstance(value, (list, tuple, dict)) and pd.isna(value):
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    return bool(value)
+
+
+def _write_frame_timeline(
+    frame_timeline_dir: Path,
+    *,
+    video_id: str,
+    rows: list[dict[str, float | int | str | None]],
+    error: str | None,
+) -> dict[str, Any]:
+    relative_path = Path("frame_timeline") / f"{video_id}.parquet"
+    target = frame_timeline_dir / f"{video_id}.parquet"
+    if rows:
+        frame_timeline_dir.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(rows, columns=["video_id", "frame_id", "pts_time", "duration_time"]).to_parquet(target, index=False)
+        return {
+            "video_id": video_id,
+            "frame_timeline_ref": relative_path.as_posix(),
+            "row_count": len(rows),
+            "status": "pass",
+            "error": None,
+        }
+    if target.exists():
+        target.unlink()
+    return _frame_timeline_unavailable_record(video_id, error or "decoded frame timeline unavailable")
+
+
+def _frame_timeline_unavailable_record(video_id: str, error: str) -> dict[str, Any]:
+    return {
+        "video_id": video_id,
+        "frame_timeline_ref": None,
+        "row_count": 0,
+        "status": "unavailable",
+        "error": error,
+    }
+
+
+def _write_frame_timeline_manifest(manifests_dir: Path, records: list[dict[str, Any]]) -> None:
+    columns = ["video_id", "frame_timeline_ref", "row_count", "status", "error"]
+    frame_timeline_manifest = pd.DataFrame(records, columns=columns)
+    if not frame_timeline_manifest.empty:
+        frame_timeline_manifest = frame_timeline_manifest.sort_values("video_id")
+    frame_timeline_manifest.to_parquet(manifests_dir / "frame_timeline_manifest.parquet", index=False)
 
 
 def _keep_canonical_staging() -> bool:
@@ -676,4 +776,3 @@ def _is_content_drive_source(source_root: Path | None) -> bool:
         return False
     parts = source_root.resolve().parts
     return len(parts) >= 3 and parts[1:3] == ("content", "drive")
-

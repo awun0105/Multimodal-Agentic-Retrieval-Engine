@@ -1,12 +1,30 @@
 from pathlib import Path
 import json
 
+import pytest
+
 from system1.commands.common import release_dir
 from system1.runtime import RuntimeEnvironment, RuntimePaths, detect_environment, parse_bool, resolve_runtime_environment, resolve_runtime_paths
 from system1.ingest.pipeline import run_ingestion
 from system1.batch.writer import assign_batches
 from system1.structure.builder import process_structure_batch
 from system1.features.builder import process_feature_batch
+from system1.media.probe import VideoProbe, VideoProbeWithTimeline
+
+
+@pytest.fixture(autouse=True)
+def fast_frame_timeline_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_probe_with_timeline(path: Path, *, video_id: str) -> VideoProbeWithTimeline:  # noqa: ARG001
+        return VideoProbeWithTimeline(
+            probe=VideoProbe(25.0, "test_frame_timeline", 3, False, "decoded_frame_timeline", 0.12, 640, 360, False),
+            frame_timeline=[
+                {"video_id": video_id, "frame_id": 0, "pts_time": 0.0, "duration_time": 0.04},
+                {"video_id": video_id, "frame_id": 1, "pts_time": 0.04, "duration_time": 0.04},
+                {"video_id": video_id, "frame_id": 2, "pts_time": 0.08, "duration_time": 0.04},
+            ],
+        )
+
+    monkeypatch.setattr("system1.ingest.pipeline.probe_video_with_timeline", fake_probe_with_timeline)
 
 
 def test_runtime_module_exports_and_defaults(tmp_path, monkeypatch):

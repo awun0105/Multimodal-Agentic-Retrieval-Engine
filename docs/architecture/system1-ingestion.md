@@ -177,6 +177,8 @@ Notebook 00 writes phase00 ingestion outputs to:
 ```text
 AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
 AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/frame_timeline/{video_id}.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/frame_timeline_manifest.parquet
 AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_manifest.csv
 AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_*.txt
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/
@@ -200,7 +202,7 @@ canonical_release_vXXX/raw_mapping
 ```
 
 are deprecated. New output must use
-`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,reports}`.
+`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}`.
 
 Google Drive may be used as an organizer handoff source or local operator
 scratch area. It is not the primary shared storage contract.

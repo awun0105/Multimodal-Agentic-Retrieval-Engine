@@ -5,13 +5,30 @@ import importlib
 from pathlib import Path
 
 from typer.testing import CliRunner
+import pytest
 
 from system1.artifacts import checkpoint_relative_path
 from system1.cli import app
+from system1.media.probe import VideoProbe, VideoProbeWithTimeline
 from system1.release.types import DEFAULT_RELEASE_ID
 
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def fast_frame_timeline_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_probe_with_timeline(path: Path, *, video_id: str) -> VideoProbeWithTimeline:  # noqa: ARG001
+        return VideoProbeWithTimeline(
+            probe=VideoProbe(25.0, "test_frame_timeline", 3, False, "decoded_frame_timeline", 0.12, 640, 360, False),
+            frame_timeline=[
+                {"video_id": video_id, "frame_id": 0, "pts_time": 0.0, "duration_time": 0.04},
+                {"video_id": video_id, "frame_id": 1, "pts_time": 0.04, "duration_time": 0.04},
+                {"video_id": video_id, "frame_id": 2, "pts_time": 0.08, "duration_time": 0.04},
+            ],
+        )
+
+    monkeypatch.setattr("system1.ingest.pipeline.probe_video_with_timeline", fake_probe_with_timeline)
 
 
 def test_assign_batches_sync_saves_phase00_checkpoint(tmp_path: Path) -> None:

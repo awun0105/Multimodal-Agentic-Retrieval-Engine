@@ -4,7 +4,9 @@
   "type": "object",
   "required": [
     "video_id",
-    "frame_id"
+    "frame_id",
+    "pts_time",
+    "duration_time"
   ],
   "properties": {
     "video_id": {
@@ -18,10 +20,19 @@
     },
     "frame_id": {
       "type": [
-        "string",
-        "number",
         "integer",
-        "boolean",
+        "null"
+      ]
+    },
+    "pts_time": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "duration_time": {
+      "type": [
+        "number",
         "null"
       ]
     }

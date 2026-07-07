@@ -227,7 +227,6 @@ competition_dataset_v001/
 │   ├── asr_segments.parquet
 │   ├── scenes.parquet
 │   ├── shots.parquet
-│   ├── frame_timeline.parquet          # staging/debug; may be sampled or omitted from compact release if too large
 │   ├── keyframes.parquet
 │   ├── shot_transcript_links.parquet
 │   ├── scene_transcript_links.parquet
@@ -1326,22 +1325,18 @@ config_hash
 created_at
 ```
 
-## `frame_timeline.parquet` schema
+## `frame_timeline/{video_id}.parquet` schema
 
-This staging/debug table is used when frame-accurate timestamp mapping matters, especially for VFR files or videos with unreliable metadata FPS.
+This per-video Phase00 table is the decoded frame-time authority when
+frame-accurate timestamp mapping matters, especially for VFR files or videos
+with unreliable metadata FPS. It is stored per video to avoid a single large
+global parquet bottleneck.
 
 ```text
 video_id
 frame_id
 pts_time
-dts_time
 duration_time
-is_key_packet
-width
-height
-decode_order
-timebase
-frame_id_method
 ```
 
 Timestamp interval mapping rule:
@@ -1357,8 +1352,8 @@ Keyframe extraction should prefer decoded `frame_id`. Timestamp seeking is allow
 Artifact policy:
 
 ```text
-frame_timeline.parquet is a staging/debug artifact for accurate timestamp-to-frame mapping.
-It may be generated per video, merged globally, sampled, or omitted from compact release if too large.
+frame_timeline/{video_id}.parquet is the Phase00 source of truth for decoded frame/time mapping.
+manifests/frame_timeline_manifest.parquet records availability and row counts.
 If omitted from compact release, key tables must still persist enough mapping fields such as frame_id, timestamp_sec, pts_time, frame_id_method, fps_detected, and is_vfr.
 ```
 
@@ -1682,13 +1677,15 @@ metadata/
 3. Extract video_id from filenames.
 4. Match video_id between video and metadata.
 5. Read metadata JSON.
-6. Run ffprobe for duration, FPS, resolution, codec.
+6. Run ffprobe packet/frame probe for duration, FPS, resolution, decoded frame timeline, and VFR detection.
 7. Normalize metadata fields.
 8. Create videos.parquet.
-9. Create media_store_manifest.parquet.
-10. Create master_manifest.parquet.
-11. Create dataset_report.json.
-12. Create ingestion_errors.jsonl.
+9. Create frame_timeline/{video_id}.parquet.
+10. Create manifests/frame_timeline_manifest.parquet.
+11. Create media_store_manifest.parquet.
+12. Create master_manifest.parquet.
+13. Create dataset_report.json.
+14. Create ingestion_errors.jsonl.
 ```
 
 ## Output
@@ -1696,6 +1693,8 @@ metadata/
 ```text
 01_manifests/
 ├── videos.parquet
+├── frame_timeline/{video_id}.parquet
+├── frame_timeline_manifest.parquet
 ├── media_store_manifest.parquet
 ├── master_manifest.parquet
 ├── dataset_report.json
@@ -1743,6 +1742,8 @@ frame_count_method
 fps_detected
 fps_source
 is_vfr
+has_frame_timeline
+frame_timeline_ref
 frame_id_method
 duration_source
 fps_expected_default
@@ -1758,19 +1759,21 @@ raw_metadata_json
 ## Count convention
 
 ```text
-frame_count = ffprobe nb_read_packets if available
-frame_count_estimated = false when frame_count comes from packet count or header frame count
-frame_count_method = ffprobe_nb_read_packets | ffprobe_nb_frames | estimated_from_duration_and_fps
+frame_count = decoded frame_timeline row count when available
+frame_count_estimated = false when frame_count comes from decoded timeline, packet count, or header frame count
+frame_count_method = decoded_frame_timeline | ffprobe_nb_read_packets | ffprobe_nb_frames | estimated_from_duration_and_fps
 scene_count = final number of scenes after scene construction
 shot_count = final number of shots after shot detection
 keyframe_count = final number of keyframes after keyframe selection
 ```
 
-For AIC 2026 frame ID safety, System 1 treats actual video packet counting as
-the primary frame-count source. Header `nb_frames` is only a fallback because it
-can drift when container metadata is stale or damaged. `duration_sec *
-fps_detected` is the last fallback and must be marked estimated/degraded because
-it can drift on VFR media.
+For AIC 2026 frame ID safety, System 1 treats decoded
+`frame_timeline/{video_id}.parquet` rows as the primary frame-count and
+timestamp mapping source. Packet count is a fallback for videos without a
+decoded timeline. Header `nb_frames` is only a later fallback because it can
+drift when container metadata is stale or damaged. `duration_sec * fps_detected`
+is the last fallback and must be marked estimated/degraded because it can drift
+on VFR media.
 
 Ở Phase 1:
 
@@ -2871,8 +2874,9 @@ videos.keyframe_count == count(keyframes where video_id)
 scenes.shot_count == count(shots where scene_id)
 scenes.keyframe_count == count(keyframes where scene_id)
 shots.keyframe_count == count(keyframes where shot_id)
-videos.frame_count == ffprobe nb_read_packets when frame_count_method = ffprobe_nb_read_packets.
-videos.frame_count == ffprobe nb_frames only when packet counting is unavailable.
+videos.frame_count == row count(frame_timeline/{video_id}.parquet) when frame_count_method = decoded_frame_timeline.
+videos.frame_count == ffprobe nb_read_packets only when decoded timeline is unavailable.
+videos.frame_count == ffprobe nb_frames only when decoded timeline and packet counting are unavailable.
 videos.frame_count_estimated == true only for duration/fps math fallback or unavailable counts.
 If only estimated count exists, validation marks frame_count confidence as estimated/degraded because frame IDs may drift.
 If scenes exist, scenes.frame_count == end_frame - start_frame.
@@ -3214,7 +3218,6 @@ competition_dataset_v001/
 │   ├── asr_segments.parquet
 │   ├── scenes.parquet
 │   ├── shots.parquet
-│   ├── frame_timeline.parquet
 │   ├── keyframes.parquet
 │   ├── shot_transcript_links.parquet
 │   ├── scene_transcript_links.parquet
@@ -3496,7 +3499,7 @@ is deprecated. A future implementation may read it temporarily for migration,
 but all new outputs must use:
 
 ```text
-canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,reports}
+canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}
 ```
 
 ## Notebook upload/download contract
@@ -3518,6 +3521,8 @@ Notebook 00 uploads phase00 ingestion and batch-planning outputs to:
 ```text
 AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
 AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/frame_timeline/{video_id}.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/frame_timeline_manifest.parquet
 AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_manifest.csv
 AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_*.txt
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/dataset_report.json
@@ -3538,12 +3543,15 @@ Notebook 01 reads:
 ```text
 AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
 AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/frame_timeline/{video_id}.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/frame_timeline_manifest.parquet
 AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_XXX.txt
 ```
 
 `restore-phase00-ingestion` keeps that `phase00_ingestion/` snapshot and also
-materializes `tables/`, `raw_mapping/`, and `manifests/` into the active local
-release root so `process-batch` can run without notebook-level copy logic.
+materializes `tables/`, `raw_mapping/`, `frame_timeline/`, and `manifests/` into
+the active local release root so `process-batch` can run without notebook-level
+copy logic.
 
 For each `video_id` in the batch file, `process-batch` resolves the raw video
 and metadata through `media_store_manifest.parquet`. With the canonical HF

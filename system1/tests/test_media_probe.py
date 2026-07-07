@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import subprocess
 
-from system1.media.probe import probe_video
+from system1.media.probe import probe_video, probe_video_with_timeline
 
 
 class _Completed:
-    def __init__(self, payload: dict[str, object]) -> None:
-        self.stdout = json.dumps(payload)
+    def __init__(self, payload: dict[str, object] | str) -> None:
+        self.stdout = payload if isinstance(payload, str) else json.dumps(payload)
 
 
 def test_probe_video_prefers_packet_count_over_header_frames(monkeypatch, tmp_path):
@@ -106,3 +106,77 @@ def test_probe_video_estimates_frame_count_with_warning(monkeypatch, tmp_path, c
     assert probe.frame_count_estimated is True
     assert probe.frame_count_method == "estimated_from_duration_and_fps"
     assert "potential Frame ID drift" in caplog.text
+
+
+def test_probe_video_with_timeline_uses_decoded_frame_rows(monkeypatch, tmp_path):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"placeholder")
+    commands: list[list[str]] = []
+
+    def fake_run(command, *, check, capture_output, text):  # noqa: ANN001, ARG001
+        commands.append(command)
+        if "csv=p=0" in command:
+            return _Completed("0.000000,0.040000\n0.040000,0.040000\n0.080000,0.040000\n")
+        return _Completed(
+            {
+                "streams": [
+                    {
+                        "avg_frame_rate": "25/1",
+                        "r_frame_rate": "25/1",
+                        "nb_frames": "999",
+                        "nb_read_packets": "1001",
+                        "width": "1920",
+                        "height": "1080",
+                        "duration": "0.12",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = probe_video_with_timeline(video_path, video_id="L21_V001")
+
+    assert commands
+    assert len(commands) == 2
+    assert any("nb_read_packets" in part for part in commands[0])
+    assert "csv=p=0" in commands[1]
+    assert any("best_effort_timestamp_time" in part for part in commands[1])
+    assert result.probe.frame_count == 3
+    assert result.probe.frame_count_estimated is False
+    assert result.probe.frame_count_method == "decoded_frame_timeline"
+    assert result.probe.is_vfr is False
+    assert result.frame_timeline == [
+        {"video_id": "L21_V001", "frame_id": 0, "pts_time": 0.0, "duration_time": 0.04},
+        {"video_id": "L21_V001", "frame_id": 1, "pts_time": 0.04, "duration_time": 0.04},
+        {"video_id": "L21_V001", "frame_id": 2, "pts_time": 0.08, "duration_time": 0.04},
+    ]
+
+
+def test_probe_video_with_timeline_detects_vfr(monkeypatch, tmp_path):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"placeholder")
+
+    def fake_run(command, *, check, capture_output, text):  # noqa: ANN001, ARG001
+        if "csv=p=0" in command:
+            return _Completed("0.000000,0.040000\n0.040000,0.040000\n0.100000,0.060000\n0.140000,0.040000\n")
+        return _Completed(
+            {
+                "streams": [
+                    {
+                        "avg_frame_rate": "25/1",
+                        "r_frame_rate": "25/1",
+                        "nb_read_packets": "4",
+                        "width": "1920",
+                        "height": "1080",
+                        "duration": "0.2",
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = probe_video_with_timeline(video_path, video_id="L21_V001")
+
+    assert result.probe.is_vfr is True

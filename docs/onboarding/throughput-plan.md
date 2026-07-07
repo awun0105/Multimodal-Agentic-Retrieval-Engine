@@ -293,7 +293,7 @@ Bronze tạo các artifact nền tảng để các mode sau reuse:
 
 ```text
 - videos.parquet
-- frame_timeline nếu có
+- frame_timeline/{video_id}.parquet
 - shots.parquet
 - scenes.parquet hoặc fallback scene
 - keyframes
@@ -315,7 +315,7 @@ Silver nên reuse từ bronze:
 
 ```text
 - video metadata
-- frame_timeline
+- frame_timeline/{video_id}.parquet
 - shots/scenes
 - keyframes
 - thumbnails
@@ -605,6 +605,9 @@ fps_detected
 frame_count
 frame_count_estimated
 frame_count_method
+is_vfr
+has_frame_timeline
+frame_timeline_ref
 file_size_bytes
 has_audio
 ```
@@ -1104,7 +1107,7 @@ image_sha256 + embedding_model + embedding_model_version
 Nên cache:
 
 ```text
-- frame_timeline
+- frame_timeline/{video_id}.parquet
 - extracted keyframes
 - thumbnails
 - decoded audio

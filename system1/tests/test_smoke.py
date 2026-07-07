@@ -32,7 +32,7 @@ from system1.ingest.source_importer import (
     upload_standardized_raw_to_hf,
 )
 from system1.ingest import source_importer as source_importer_module
-from system1.media.probe import VideoProbe
+from system1.media.probe import VideoProbe, VideoProbeWithTimeline
 from system1.validation.release_validator import validate_release
 
 runner = CliRunner()
@@ -42,6 +42,18 @@ runner = CliRunner()
 def local_phase_execution(monkeypatch):
     monkeypatch.setenv("AIC_RESUME", "0")
     monkeypatch.setenv("AIC_SYNC", "0")
+
+    def fake_probe_with_timeline(path: Path, *, video_id: str) -> VideoProbeWithTimeline:  # noqa: ARG001
+        return VideoProbeWithTimeline(
+            probe=VideoProbe(25.0, "test_frame_timeline", 3, False, "decoded_frame_timeline", 0.12, 640, 360, False),
+            frame_timeline=[
+                {"video_id": video_id, "frame_id": 0, "pts_time": 0.0, "duration_time": 0.04},
+                {"video_id": video_id, "frame_id": 1, "pts_time": 0.04, "duration_time": 0.04},
+                {"video_id": video_id, "frame_id": 2, "pts_time": 0.08, "duration_time": 0.04},
+            ],
+        )
+
+    monkeypatch.setattr("system1.ingest.pipeline.probe_video_with_timeline", fake_probe_with_timeline)
 
 
 def invoke_app(command: list[str]):
@@ -445,6 +457,18 @@ def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
     assert videos["source_extension"].eq(".mp4").all()
     assert "fps_detected" in videos.columns
     assert "duration_seconds" in videos.columns
+    assert "is_vfr" in videos.columns
+    assert "has_frame_timeline" in videos.columns
+    assert "frame_timeline_ref" in videos.columns
+    assert videos["has_frame_timeline"].all()
+    frame_timeline_manifest = pd.read_parquet(release_dir / "manifests" / "frame_timeline_manifest.parquet")
+    assert frame_timeline_manifest["video_id"].tolist() == ["L21_V001", "L21_V002", "L21_V003"]
+    assert frame_timeline_manifest["status"].eq("pass").all()
+    for row in frame_timeline_manifest.to_dict("records"):
+        timeline = pd.read_parquet(release_dir / str(row["frame_timeline_ref"]))
+        assert list(timeline.columns) == ["video_id", "frame_id", "pts_time", "duration_time"]
+        assert timeline["video_id"].eq(row["video_id"]).all()
+        assert timeline["frame_id"].tolist() == list(range(len(timeline)))
     assert manifest["video_local_path"].str.startswith("/").all()
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "indexes" / "visual.faiss").exists()
@@ -2248,6 +2272,8 @@ def test_phase00_ingestion_sync_maps_legacy_release_layout(monkeypatch, tmp_path
     (release_dir / "manifests").mkdir(parents=True)
     (release_dir / "tables" / "videos.parquet").write_bytes(b"videos")
     (release_dir / "raw_mapping" / "media_store_manifest.parquet").write_bytes(b"mapping")
+    (release_dir / "frame_timeline").mkdir()
+    (release_dir / "frame_timeline" / "L21_V001.parquet").write_bytes(b"timeline")
     (release_dir / "manifests" / "batch_manifest.csv").write_text("batch_id\n", encoding="utf-8")
     (release_dir / "manifests" / "batch_000.txt").write_text("L21_V001\n", encoding="utf-8")
     (release_dir / "manifests" / "dataset_report.json").write_text('{"ok": true}\n', encoding="utf-8")
@@ -2268,9 +2294,10 @@ def test_phase00_ingestion_sync_maps_legacy_release_layout(monkeypatch, tmp_path
 
     result = upload_phase00_ingestion_to_hf(release_dir, repo_id="org/repo")
 
-    assert result.file_count == 8
+    assert result.file_count == 9
     assert "canonical_release_v003/phase00_ingestion/tables/videos.parquet" in uploaded
     assert "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/frame_timeline/L21_V001.parquet" in uploaded
     assert "canonical_release_v003/phase00_ingestion/manifests/batch_manifest.csv" in uploaded
     assert "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt" in uploaded
     assert "canonical_release_v003/phase00_ingestion/reports/dataset_report.json" in uploaded
@@ -2287,6 +2314,7 @@ def test_phase00_ingestion_restore_materializes_active_layout(monkeypatch, tmp_p
     uploaded = {
         "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
         "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet": b"mapping",
+        "canonical_release_v003/phase00_ingestion/frame_timeline/L21_V001.parquet": b"timeline",
         "canonical_release_v003/phase00_ingestion/manifests/batch_manifest.csv": b"batch_id\n",
         "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
         "canonical_release_v003/phase00_ingestion/reports/dataset_report.json": b'{"ok": true}\n',
@@ -2315,10 +2343,12 @@ def test_phase00_ingestion_restore_materializes_active_layout(monkeypatch, tmp_p
 
     assert (release_dir / "phase00_ingestion" / "tables" / "videos.parquet").read_bytes() == b"videos"
     assert (release_dir / "phase00_ingestion" / "raw_mapping" / "media_store_manifest.parquet").read_bytes() == b"mapping"
+    assert (release_dir / "phase00_ingestion" / "frame_timeline" / "L21_V001.parquet").read_bytes() == b"timeline"
     assert (release_dir / "phase00_ingestion" / "manifests" / "batch_000.txt").read_text(encoding="utf-8") == "L21_V001\n"
     assert (release_dir / "phase00_ingestion" / "reports" / "dataset_report.json").exists()
     assert (release_dir / "tables" / "videos.parquet").read_bytes() == b"videos"
     assert (release_dir / "raw_mapping" / "media_store_manifest.parquet").read_bytes() == b"mapping"
+    assert (release_dir / "frame_timeline" / "L21_V001.parquet").read_bytes() == b"timeline"
     assert (release_dir / "manifests" / "batch_manifest.csv").read_text(encoding="utf-8") == "batch_id\n"
     assert (release_dir / "manifests" / "batch_000.txt").read_text(encoding="utf-8") == "L21_V001\n"
     assert not (release_dir / "reports" / "dataset_report.json").exists()

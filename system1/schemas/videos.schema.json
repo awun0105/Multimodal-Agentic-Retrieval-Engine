@@ -5,7 +5,10 @@
   "required": [
     "video_id",
     "video_ref",
-    "fps_detected"
+    "fps_detected",
+    "frame_count",
+    "frame_count_method",
+    "has_frame_timeline"
   ],
   "properties": {
     "video_id": {
@@ -28,10 +31,36 @@
     },
     "fps_detected": {
       "type": [
-        "string",
         "number",
+        "null"
+      ]
+    },
+    "frame_count": {
+      "type": [
         "integer",
+        "null"
+      ]
+    },
+    "frame_count_method": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "is_vfr": {
+      "type": [
         "boolean",
+        "null"
+      ]
+    },
+    "has_frame_timeline": {
+      "type": [
+        "boolean"
+      ]
+    },
+    "frame_timeline_ref": {
+      "type": [
+        "string",
         "null"
       ]
     }
