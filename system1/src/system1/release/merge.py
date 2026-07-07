@@ -16,9 +16,10 @@ STRUCTURE_TABLES = [
     "shots",
     "scenes",
     "keyframes",
+    "image_captions",
     "shot_transcript_links",
     "scene_transcript_links",
-    "scene_summaries_initial",
+    "scene_summaries",
 ]
 FEATURE_TABLES = [
     "embeddings_meta",

@@ -159,8 +159,8 @@ TABLE_SCHEMA_SPECS: tuple[TableSchemaSpec, ...] = (
         text_columns=(column("shot_id"), column("video_id")),
     ),
     TableSchemaSpec(
-        "scene_summaries_initial",
-        Path("tables/scene_summaries_initial.parquet"),
+        "scene_summaries",
+        Path("tables/scene_summaries.parquet"),
         False,
         (column("scene_id"), column("video_id")),
         non_null_columns=(column("scene_id"), column("video_id")),

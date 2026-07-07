@@ -19,7 +19,7 @@ TABLE_FILES = (
     "objects",
     "image_captions",
     "shot_captions",
-    "scene_summaries_initial",
+    "scene_summaries",
     "scene_summaries_enriched",
     "embeddings_meta",
     "text_documents",
@@ -41,7 +41,7 @@ def write_sqlite(sqlite_path: Path, tables: dict[str, pd.DataFrame]) -> None:
     with sqlite3.connect(sqlite_path) as connection:
         runtime_table_names = {
             "videos","scenes","shots","keyframes","asr_segments","shot_transcript_links","scene_transcript_links",
-            "ocr","objects","image_captions","shot_captions","scene_summaries_initial","scene_summaries_enriched",
+            "ocr","objects","image_captions","shot_captions","scene_summaries","scene_summaries_enriched",
             "embeddings_meta","text_documents","vector_map","feature_availability","release_capabilities",
         }
         for name, frame in tables.items():

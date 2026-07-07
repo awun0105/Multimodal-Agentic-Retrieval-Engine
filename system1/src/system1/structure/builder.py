@@ -11,10 +11,11 @@ import pandas as pd
 from system1.artifacts.package import write_artifact_zip
 from system1.artifacts.reports import utc_now, write_worker_report
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
+from system1.config import ProviderPlan, load_provider_plan
 from system1.features.providers import MockTextProvider, RealProviderUnavailable
 from system1.ingest.discovery import read_metadata
 from system1.keyframes.extractor import extract_keyframe_and_thumbnail
-from system1.release.types import release_root
+from system1.release.types import config_dir, release_root
 from system1.text.builder import metadata_text
 
 STRUCTURE_PARQUET_FILES = (
@@ -22,9 +23,10 @@ STRUCTURE_PARQUET_FILES = (
     "shots.parquet",
     "scenes.parquet",
     "keyframes.parquet",
+    "image_captions.parquet",
     "shot_transcript_links.parquet",
     "scene_transcript_links.parquet",
-    "scene_summaries_initial.parquet",
+    "scene_summaries.parquet",
 )
 
 
@@ -58,6 +60,7 @@ def process_structure_batch(
         raise ValueError(f"batch references missing videos: {missing}")
 
     mapping_by_video = {str(row["video_id"]): row for row in media_manifest.to_dict("records")}
+    provider_plan = load_provider_plan(config_dir(), providers)
     artifact_paths: list[str] = []
     errors: list[dict[str, Any]] = []
     batch_debug_dir = release_dir / "artifacts" / "structure_batches" / batch_id
@@ -74,27 +77,36 @@ def process_structure_batch(
         if artifact_dir.exists():
             shutil.rmtree(artifact_dir)
         artifact_dir.mkdir(parents=True, exist_ok=True)
-        video_errors, video_tables = _write_video_structure_artifact(
-            artifact_dir=artifact_dir,
-            video=video,
-            mapping=mapping,
-            input_dir=input_dir,
-            mode=mode,
-            providers=providers,
-            batch_id=batch_id,
-            worker_id=worker_id,
-        )
-        errors.extend(video_errors)
-        _write_batch_debug_copy(batch_debug_dir / f"{video_id}.json", video_id=video_id, tables=video_tables)
-        archive_path = write_artifact_zip(
-            artifact_dir=artifact_dir,
-            zip_path=release_dir / "artifacts" / "structure" / f"{video_id}_structure.zip",
-            video_id=video_id,
-            artifact_type="structure",
-            batch_id=batch_id,
-            worker_id=worker_id,
-            status="complete" if not video_errors else "partial",
-        )
+        scratch_dir = release_dir / "staging" / "phase01_scratch" / batch_id / video_id
+        if scratch_dir.exists():
+            shutil.rmtree(scratch_dir)
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            video_errors, video_tables = _write_video_structure_artifact(
+                artifact_dir=artifact_dir,
+                scratch_dir=scratch_dir,
+                video=video,
+                mapping=mapping,
+                input_dir=input_dir,
+                mode=mode,
+                providers=providers,
+                provider_plan=provider_plan,
+                batch_id=batch_id,
+                worker_id=worker_id,
+            )
+            errors.extend(video_errors)
+            _write_batch_debug_copy(batch_debug_dir / f"{video_id}.json", video_id=video_id, tables=video_tables)
+            archive_path = write_artifact_zip(
+                artifact_dir=artifact_dir,
+                zip_path=release_dir / "artifacts" / "structure" / f"{video_id}_structure.zip",
+                video_id=video_id,
+                artifact_type="structure",
+                batch_id=batch_id,
+                worker_id=worker_id,
+                status="complete" if not video_errors else "partial",
+            )
+        finally:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
         artifact_paths.append(str(archive_path.relative_to(release_dir)))
 
     finished_at = utc_now()
@@ -121,28 +133,31 @@ def process_structure_batch(
 def _write_video_structure_artifact(
     *,
     artifact_dir: Path,
+    scratch_dir: Path,
     video: dict[str, Any],
     mapping: dict[str, Any],
     input_dir: Path | str | None,
     mode: str,
     providers: str,
+    provider_plan: ProviderPlan,
     batch_id: str,
     worker_id: str,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     video_id = str(video["video_id"])
     errors: list[dict[str, Any]] = []
-    canonical_cache_dir = artifact_dir / "_canonical_cache"
+    canonical_cache_dir = scratch_dir / "canonical_cache"
     video_path = _resolve_video_path(mapping, input_dir, canonical_cache_dir)
     metadata_path = _resolve_metadata_path(mapping, input_dir, canonical_cache_dir)
     metadata = _read_metadata_or_empty(metadata_path, errors, video_id)
     normalized_text = metadata_text(video_id, metadata)
+    text_provider = _text_provider_for_plan(provider_plan)
     frame_id = 0
     frame_id_method = "first_frame_extraction_assumed_frame_0"
     frame_count = _int_or_none(video.get("frame_count"))
     end_frame = frame_count if frame_count and frame_count > 0 else 1
     duration_seconds = _float_or_zero(video.get("duration_seconds"))
 
-    asr_text = _transcribe(video_path, providers, errors, video_id)
+    asr_text = _transcribe(video_path, text_provider, provider_plan, errors, video_id)
     asr_status = "empty" if not asr_text else "pass"
     asr_segment_id = f"{video_id}_ASR00000"
     shot_id = f"{video_id}_SH00000"
@@ -155,6 +170,17 @@ def _write_video_structure_artifact(
     selection_method = _extract_media(video_path, keyframe_path, thumbnail_path, errors, video_id)
     keyframe_ref = f"media://keyframes/{video_id}/{keyframe_filename}"
     thumbnail_ref = f"media://thumbnails/{video_id}/{thumbnail_filename}"
+    caption_text = _caption_keyframe(keyframe_path, normalized_text, text_provider, provider_plan, errors, video_id)
+    caption_status = "empty" if not caption_text else "pass"
+    scene_summary_text = _summarize_scene(
+        scene_id,
+        _join_text([normalized_text, asr_text, caption_text]),
+        text_provider,
+        provider_plan,
+        errors,
+        video_id,
+    )
+    scene_summary_status = "empty" if not scene_summary_text else "pass"
 
     _write_json_artifact(
         artifact_dir / "metadata_normalized.json",
@@ -174,6 +200,7 @@ def _write_video_structure_artifact(
             "end_seconds": duration_seconds,
             "text": asr_text,
             "provider": providers,
+            "asr_provider": provider_plan.asr,
             "status": asr_status,
         }],
         "shots": [{
@@ -185,6 +212,8 @@ def _write_video_structure_artifact(
             "end_seconds": duration_seconds,
             "boundary_convention": "[start_frame, end_frame)",
             "detection_method": "fallback_full_video",
+            "provider": "ShotDetectionProvider",
+            "status": "degraded",
         }],
         "scenes": [{
             "scene_id": scene_id,
@@ -196,6 +225,8 @@ def _write_video_structure_artifact(
             "shot_ids": [shot_id],
             "boundary_convention": "[start_frame, end_frame)",
             "construction_method": "fallback_scene_from_full_video_shot",
+            "provider": "SceneConstructionProvider",
+            "status": "degraded",
         }],
         "keyframes": [{
             "keyframe_id": keyframe_id,
@@ -208,6 +239,24 @@ def _write_video_structure_artifact(
             "keyframe_ref": keyframe_ref,
             "thumbnail_ref": thumbnail_ref,
             "selection_method": selection_method,
+            "provider": "KeyframeSelectionProvider",
+            "status": "pass" if keyframe_path.exists() and thumbnail_path.exists() else "degraded",
+        }],
+        "image_captions": [{
+            "caption_id": f"{keyframe_id}:caption:phase01",
+            "keyframe_id": keyframe_id,
+            "video_id": video_id,
+            "scene_id": scene_id,
+            "shot_id": shot_id,
+            "frame_id": frame_id,
+            "caption": caption_text,
+            "raw_text": caption_text,
+            "normalized_text": caption_text,
+            "language": "vi",
+            "provider": provider_plan.image_caption,
+            "model_name": provider_plan.image_caption,
+            "confidence": 0.0,
+            "status": caption_status,
         }],
         "shot_transcript_links": [{
             "shot_id": shot_id,
@@ -221,12 +270,15 @@ def _write_video_structure_artifact(
             "video_id": video_id,
             "coverage": 1.0,
         }],
-        "scene_summaries_initial": [{
+        "scene_summaries": [{
             "scene_id": scene_id,
             "video_id": video_id,
-            "summary": normalized_text,
-            "provider": "metadata_fallback",
-            "status": "pass" if normalized_text else "empty",
+            "summary": scene_summary_text,
+            "raw_text": scene_summary_text,
+            "normalized_text": scene_summary_text,
+            "provider": provider_plan.scene_summary,
+            "model_name": provider_plan.scene_summary,
+            "status": scene_summary_status,
         }],
     }
     for table_name, rows in tables.items():
@@ -239,6 +291,7 @@ def _write_video_structure_artifact(
             "status": "pass" if not errors else "partial",
             "counts": {name.replace(".parquet", ""): 1 for name in STRUCTURE_PARQUET_FILES},
             "provider": providers,
+            "provider_plan": provider_plan.__dict__,
             "mode": mode,
             "batch_id": batch_id,
             "worker_id": worker_id,
@@ -247,6 +300,12 @@ def _write_video_structure_artifact(
             "artifact_media": {
                 "keyframe_path": str((artifact_dir / "keyframes" / keyframe_filename).relative_to(artifact_dir)),
                 "thumbnail_path": str((artifact_dir / "thumbnails" / thumbnail_filename).relative_to(artifact_dir)),
+            },
+            "phase01_contract": {
+                "semantic_level": "semantic_light",
+                "uses_phase00_video_facts": True,
+                "minimum_keyframe_captions": True,
+                "scene_summary_table": "scene_summaries.parquet",
             },
         },
     )
@@ -319,13 +378,76 @@ def _read_metadata_or_empty(path: Path | None, errors: list[dict[str, Any]], vid
         return {}
 
 
-def _transcribe(video_path: Path, providers: str, errors: list[dict[str, Any]], video_id: str) -> str:
-    provider = MockTextProvider() if providers == "mock" else RealProviderUnavailable(providers)
+def _text_provider_for_plan(provider_plan: ProviderPlan) -> MockTextProvider | RealProviderUnavailable:
+    if provider_plan.mode == "mock":
+        return MockTextProvider()
+    return RealProviderUnavailable("mixed_real_unavailable")
+
+
+def _transcribe(
+    video_path: Path,
+    provider: MockTextProvider | RealProviderUnavailable,
+    provider_plan: ProviderPlan,
+    errors: list[dict[str, Any]],
+    video_id: str,
+) -> str:
     try:
         return provider.transcribe(video_path)
     except Exception as exc:  # pragma: no cover
-        errors.append({"video_id": video_id, "level": "warning", "kind": "asr_failed", "message": str(exc)})
+        errors.append({
+            "video_id": video_id,
+            "level": "warning",
+            "kind": "asr_failed",
+            "provider": provider_plan.asr,
+            "message": str(exc),
+        })
         return ""
+
+
+def _caption_keyframe(
+    keyframe_path: Path,
+    fallback_text: str,
+    provider: MockTextProvider | RealProviderUnavailable,
+    provider_plan: ProviderPlan,
+    errors: list[dict[str, Any]],
+    video_id: str,
+) -> str:
+    try:
+        return provider.caption_image(keyframe_path, fallback_text)
+    except Exception as exc:  # pragma: no cover
+        errors.append({
+            "video_id": video_id,
+            "level": "warning",
+            "kind": "keyframe_caption_failed",
+            "provider": provider_plan.image_caption,
+            "message": str(exc),
+        })
+        return fallback_text
+
+
+def _summarize_scene(
+    scene_id: str,
+    fallback_text: str,
+    provider: MockTextProvider | RealProviderUnavailable,
+    provider_plan: ProviderPlan,
+    errors: list[dict[str, Any]],
+    video_id: str,
+) -> str:
+    try:
+        return provider.summarize_scene(scene_id, fallback_text)
+    except Exception as exc:  # pragma: no cover
+        errors.append({
+            "video_id": video_id,
+            "level": "warning",
+            "kind": "scene_summary_failed",
+            "provider": provider_plan.scene_summary,
+            "message": str(exc),
+        })
+        return fallback_text
+
+
+def _join_text(values: list[str]) -> str:
+    return "\n".join(value for value in values if value)
 
 
 def _extract_media(video_path: Path, keyframe_path: Path, thumbnail_path: Path, errors: list[dict[str, Any]], video_id: str) -> str:

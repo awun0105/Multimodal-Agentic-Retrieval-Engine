@@ -345,11 +345,6 @@ Target per-video structure ZIP layout:
     └── errors.jsonl
 ```
 
-Compatibility note: current fallback package code still writes
-`scene_summaries_initial.parquet`. The target contract above uses
-`scene_summaries.parquet`; migration should happen in package code, not in
-Notebook 01 cells.
-
 Hugging Face shared target layout:
 
 ```text

@@ -537,9 +537,10 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
+        "image_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
-        "scene_summaries_initial.parquet",
+        "scene_summaries.parquet",
         "manifest.json",
         "errors.jsonl",
     ]:
@@ -559,13 +560,17 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
             "L21_V001/shots.parquet",
             "L21_V001/scenes.parquet",
             "L21_V001/keyframes.parquet",
+            "L21_V001/image_captions.parquet",
             "L21_V001/shot_transcript_links.parquet",
             "L21_V001/scene_transcript_links.parquet",
-            "L21_V001/scene_summaries_initial.parquet",
+            "L21_V001/scene_summaries.parquet",
             "L21_V001/manifest.json",
             "L21_V001/errors.jsonl",
         },
     )
+    with zipfile.ZipFile(structure_zip) as archive:
+        names = {name for name in archive.namelist() if not name.endswith("/")}
+        assert not any("_canonical_cache" in name or "phase01_scratch" in name for name in names)
     assert (release_dir / "artifacts" / "structure_batches" / "batch_000" / "L21_V001.json").exists()
     assert not (release_dir / "artifacts" / "features").exists()
     assert not (release_dir / "db" / "app.sqlite").exists()
@@ -576,9 +581,10 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
+        "image_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
-        "scene_summaries_initial.parquet",
+        "scene_summaries.parquet",
     ]:
         assert not (release_dir / "tables" / name).exists()
     keyframes = pd.read_parquet(artifact_dir / "keyframes.parquet")
@@ -588,6 +594,14 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     assert str(keyframes.iloc[0]["thumbnail_ref"]).endswith(".webp")
     shots = pd.read_parquet(artifact_dir / "shots.parquet")
     assert shots.iloc[0]["boundary_convention"] == "[start_frame, end_frame)"
+    image_captions = pd.read_parquet(artifact_dir / "image_captions.parquet")
+    assert {"caption_id", "keyframe_id", "video_id", "scene_id", "shot_id", "caption", "provider", "status"}.issubset(image_captions.columns)
+    assert image_captions.iloc[0]["keyframe_id"] == "L21_V001:0"
+    scene_summaries = pd.read_parquet(artifact_dir / "scene_summaries.parquet")
+    assert {"scene_id", "video_id", "summary", "provider", "status"}.issubset(scene_summaries.columns)
+    manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["phase01_contract"]["semantic_level"] == "semantic_light"
+    assert manifest["phase01_contract"]["scene_summary_table"] == "scene_summaries.parquet"
 
 def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
     output_dir = tmp_path / "output"
@@ -877,7 +891,7 @@ def test_gold_full_outputs_enrichment_and_phase_artifacts(tmp_path):
     assert not (release_dir / "manifests" / "checkpoint_manifest.json").exists()
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
     assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
-    for name in ["objects", "image_captions", "shot_captions", "scene_summaries_initial", "scene_summaries_enriched"]:
+    for name in ["objects", "image_captions", "shot_captions", "scene_summaries", "scene_summaries_enriched"]:
         assert (release_dir / "tables" / f"{name}.parquet").exists()
 
 
