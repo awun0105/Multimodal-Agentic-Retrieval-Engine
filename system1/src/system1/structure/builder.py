@@ -16,6 +16,7 @@ from system1.features.providers import MockTextProvider, RealProviderUnavailable
 from system1.ingest.discovery import read_metadata
 from system1.keyframes.extractor import extract_keyframe_and_thumbnail
 from system1.release.types import config_dir, release_root
+from system1.structure.providers import TimelineAwareFallbackProvider, TimelineContext, TimelineFrame
 from system1.text.builder import metadata_text
 
 STRUCTURE_PARQUET_FILES = (
@@ -84,6 +85,7 @@ def process_structure_batch(
         try:
             video_errors, video_tables = _write_video_structure_artifact(
                 artifact_dir=artifact_dir,
+                release_dir=release_dir,
                 scratch_dir=scratch_dir,
                 video=video,
                 mapping=mapping,
@@ -133,6 +135,7 @@ def process_structure_batch(
 def _write_video_structure_artifact(
     *,
     artifact_dir: Path,
+    release_dir: Path,
     scratch_dir: Path,
     video: dict[str, Any],
     mapping: dict[str, Any],
@@ -151,18 +154,35 @@ def _write_video_structure_artifact(
     metadata = _read_metadata_or_empty(metadata_path, errors, video_id)
     normalized_text = metadata_text(video_id, metadata)
     text_provider = _text_provider_for_plan(provider_plan)
-    frame_id = 0
-    frame_id_method = "first_frame_extraction_assumed_frame_0"
+    timeline, timeline_errors = _load_timeline_context(release_dir, video)
+    errors.extend(timeline_errors)
+    structure_provider = TimelineAwareFallbackProvider()
     frame_count = _int_or_none(video.get("frame_count"))
-    end_frame = frame_count if frame_count and frame_count > 0 else 1
     duration_seconds = _float_or_zero(video.get("duration_seconds"))
+    shots = structure_provider.detect_shots(
+        video_id=video_id,
+        timeline=timeline,
+        frame_count=frame_count,
+        duration_seconds=duration_seconds,
+    )
+    scenes = structure_provider.construct_scenes(video_id=video_id, timeline=timeline, shots=shots)
+    keyframe_selections = structure_provider.select_keyframes(
+        video_id=video_id,
+        timeline=timeline,
+        shots=shots,
+        scene_id=scenes[0].scene_id,
+    )
+    shot = shots[0]
+    scene = scenes[0]
+    keyframe_selection = keyframe_selections[0]
 
     asr_text = _transcribe(video_path, text_provider, provider_plan, errors, video_id)
     asr_status = "empty" if not asr_text else "pass"
     asr_segment_id = f"{video_id}_ASR00000"
-    shot_id = f"{video_id}_SH00000"
-    scene_id = f"{video_id}_SC00000"
-    keyframe_id = f"{video_id}:{frame_id}"
+    shot_id = shot.shot_id
+    scene_id = scene.scene_id
+    frame_id = keyframe_selection.frame_id
+    keyframe_id = keyframe_selection.keyframe_id
     keyframe_filename = f"{video_id}_f{frame_id:07d}.jpg"
     thumbnail_filename = f"{video_id}_f{frame_id:07d}.webp"
     keyframe_path = artifact_dir / "keyframes" / keyframe_filename
@@ -197,7 +217,7 @@ def _write_video_structure_artifact(
             "asr_segment_id": asr_segment_id,
             "video_id": video_id,
             "start_seconds": 0.0,
-            "end_seconds": duration_seconds,
+            "end_seconds": shot.end_seconds,
             "text": asr_text,
             "provider": providers,
             "asr_provider": provider_plan.asr,
@@ -206,41 +226,43 @@ def _write_video_structure_artifact(
         "shots": [{
             "shot_id": shot_id,
             "video_id": video_id,
-            "start_frame": 0,
-            "end_frame": end_frame,
-            "start_seconds": 0.0,
-            "end_seconds": duration_seconds,
+            "start_frame": shot.start_frame,
+            "end_frame": shot.end_frame,
+            "start_seconds": shot.start_seconds,
+            "end_seconds": shot.end_seconds,
             "boundary_convention": "[start_frame, end_frame)",
-            "detection_method": "fallback_full_video",
+            "detection_method": shot.detection_method,
             "provider": "ShotDetectionProvider",
-            "status": "degraded",
+            "status": shot.status,
         }],
         "scenes": [{
             "scene_id": scene_id,
             "video_id": video_id,
-            "start_frame": 0,
-            "end_frame": end_frame,
-            "start_seconds": 0.0,
-            "end_seconds": duration_seconds,
-            "shot_ids": [shot_id],
+            "start_frame": scene.start_frame,
+            "end_frame": scene.end_frame,
+            "start_seconds": scene.start_seconds,
+            "end_seconds": scene.end_seconds,
+            "shot_ids": list(scene.shot_ids),
             "boundary_convention": "[start_frame, end_frame)",
-            "construction_method": "fallback_scene_from_full_video_shot",
+            "construction_method": scene.construction_method,
             "provider": "SceneConstructionProvider",
-            "status": "degraded",
+            "status": scene.status,
         }],
         "keyframes": [{
             "keyframe_id": keyframe_id,
             "video_id": video_id,
             "frame_id": frame_id,
-            "frame_id_method": frame_id_method,
-            "time_seconds": 0.0,
+            "frame_id_method": keyframe_selection.frame_id_method,
+            "time_seconds": keyframe_selection.time_seconds,
+            "pts_time": keyframe_selection.time_seconds,
+            "duration_time": timeline.duration_for_frame(frame_id),
             "shot_id": shot_id,
             "scene_id": scene_id,
             "keyframe_ref": keyframe_ref,
             "thumbnail_ref": thumbnail_ref,
-            "selection_method": selection_method,
+            "selection_method": f"{keyframe_selection.selection_method}:{selection_method}",
             "provider": "KeyframeSelectionProvider",
-            "status": "pass" if keyframe_path.exists() and thumbnail_path.exists() else "degraded",
+            "status": keyframe_selection.status if keyframe_path.exists() and thumbnail_path.exists() else "degraded",
         }],
         "image_captions": [{
             "caption_id": f"{keyframe_id}:caption:phase01",
@@ -304,12 +326,53 @@ def _write_video_structure_artifact(
             "phase01_contract": {
                 "semantic_level": "semantic_light",
                 "uses_phase00_video_facts": True,
+                "uses_phase00_frame_timeline": timeline.available,
+                "frame_timeline_ref": timeline.source_ref,
                 "minimum_keyframe_captions": True,
                 "scene_summary_table": "scene_summaries.parquet",
             },
         },
     )
     return errors, tables
+
+
+def _load_timeline_context(release_dir: Path, video: dict[str, Any]) -> tuple[TimelineContext, list[dict[str, Any]]]:
+    video_id = str(video["video_id"])
+    errors: list[dict[str, Any]] = []
+    timeline_ref = video.get("frame_timeline_ref")
+    timeline_path = release_dir / str(timeline_ref) if timeline_ref else release_dir / "frame_timeline" / f"{video_id}.parquet"
+    if not timeline_path.exists():
+        errors.append({
+            "video_id": video_id,
+            "level": "warning",
+            "kind": "frame_timeline_unavailable",
+            "message": f"phase00 frame timeline unavailable at {timeline_path}; exact timestamp/frame mapping is degraded",
+        })
+        return TimelineContext(video_id=video_id, frames=(), source_ref=str(timeline_ref) if timeline_ref else None), errors
+    try:
+        frame_df = pd.read_parquet(timeline_path, columns=["frame_id", "pts_time", "duration_time"])
+    except Exception as exc:
+        errors.append({
+            "video_id": video_id,
+            "level": "warning",
+            "kind": "frame_timeline_read_failed",
+            "message": str(exc),
+        })
+        return TimelineContext(video_id=video_id, frames=(), source_ref=str(timeline_ref) if timeline_ref else timeline_path.relative_to(release_dir).as_posix()), errors
+    frames = tuple(
+        TimelineFrame(
+            frame_id=int(row["frame_id"]),
+            pts_time=float(row["pts_time"]),
+            duration_time=None if pd.isna(row.get("duration_time")) else float(row["duration_time"]),
+        )
+        for row in frame_df.sort_values("frame_id").to_dict("records")
+        if row.get("frame_id") is not None and row.get("pts_time") is not None and not pd.isna(row.get("pts_time"))
+    )
+    return TimelineContext(
+        video_id=video_id,
+        frames=frames,
+        source_ref=str(timeline_ref) if timeline_ref else timeline_path.relative_to(release_dir).as_posix(),
+    ), errors
 
 
 def _write_batch_debug_copy(path: Path, *, video_id: str, tables: dict[str, list[dict[str, Any]]]) -> None:

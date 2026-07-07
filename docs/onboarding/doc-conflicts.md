@@ -55,11 +55,14 @@ Resolved. Use SQLite FTS5 as MVP text search. Treat Tantivy/OpenSearch/BM25 JSON
   scenes, scene summaries, structure ZIPs, worker report, and sync to
   `phase01_structure`.
 - Current package implementation can produce valid structure ZIPs and reports,
-  but still uses fallback/provider-scaffold behavior for the production
-  algorithms: one full-video shot, one full-video scene, first-frame keyframe
-  extraction, and mock/unavailable providers for ASR/caption/scene summaries
-  until real providers are selected and implemented.
+  and the fallback scaffold now consumes Phase00 decoded frame timelines when
+  available through provider interfaces. It still uses fallback/provider-
+  scaffold behavior for the production algorithms: one full-video shot, one
+  full-video scene, first-frame keyframe extraction, and mock/unavailable
+  providers for ASR/caption/scene summaries until real providers are selected
+  and implemented.
 
-Partially resolved. File naming and package layout have been migrated toward
-the target phase01 contract. Real provider implementations and algorithm
-selection remain open package work and must not move into Notebook 01 cells.
+Partially resolved. File naming, package layout, and timeline-aware fallback
+interfaces have been migrated toward the target phase01 contract. Real provider
+implementations and algorithm selection remain open package work and must not
+move into Notebook 01 cells.

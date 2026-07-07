@@ -178,7 +178,7 @@ outputs must use
 
 `video_id` is derived from the raw video filename stem and must not be derived from `watch_url`. `video_id + frame_id` remains the user-facing submit/copy unit. `keyframe_id` is the DB/API glue key.
 
-Last-year dataset evidence shows videos at 25 fps. Treat `25` as the planning/default expected FPS, but System 1 must probe each raw video, persist actual `fps`, and compute `timestamp_sec = frame_id / actual_fps`. Do not hard-code `/25` as a universal runtime rule before current-year media is verified.
+Last-year dataset evidence shows videos at 25 fps. Treat `25` as the planning/default expected FPS only. For AIC 2026 frame-id safety, System 1 should use decoded `frame_timeline` rows as the primary mapping between `frame_id`, `pts_time`, and duration. Packet counts and probed FPS are fallback evidence, not a reason to hard-code `/25` or silently derive exact frame ids from `frame_id / fps`.
 
 ## Logical Media References
 
@@ -271,7 +271,7 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | `videos` | One row per video; stores `video_id`, `source_video_stem`, `video_ref`, duration, fps, VFR/frame-count metadata, dimensions, normalized metadata, and selected raw metadata fields. |
 | `shots` | One row per shot or fallback full-video shot; stores `shot_id`, `video_id`, frame/time ranges, detection method, and degraded/full-fidelity status. |
 | `scenes` | Scene-level inspection context derived from shots, selected keyframes, minimum keyframe/image captions when configured, ASR/transcript rows, and metadata. |
-| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `pts_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
+| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `time_seconds` or `timestamp_sec`, `pts_time`, `duration_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
 | `image_captions` | Caption evidence mapped to image/keyframe. Minimum phase01 caption rows may be required before scene construction; phase02 may add enrichment rows. |
 | `shot_captions` | Caption evidence mapped to shot-level intervals. |
 | `scene_summaries` | Phase01 scene summaries built from metadata, transcript links, and minimum keyframe/image captions when configured. |

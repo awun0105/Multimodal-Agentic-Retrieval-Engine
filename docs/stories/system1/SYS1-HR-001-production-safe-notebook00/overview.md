@@ -18,10 +18,10 @@ continuation. Archive standardization should be safe to rerun by default and
 should report skipped existing outputs deterministically.
 
 Notebook 00 should also present one primary operator workflow for Colab/Drive:
-Drive shadow, archive standardization, local input readiness, phase00 ingest,
-batch assignment, then required phase00 release sync to a Hugging Face Dataset
-repo. Already-standardized local input remains the only fallback input shape;
-canonical Hugging Face import is not part of Notebook 00's standard workflow.
+Drive shadow, streaming raw upload to `AIC26_raw`, canonical HF raw ingest into
+phase00 tables/manifests, batch assignment, then required phase00 release sync
+to `AIC26_release`. Notebook 00C uses the same HF raw ingest/release sync shape
+from a local downloaded zip folder without Google Drive.
 
 ## Affected Users
 

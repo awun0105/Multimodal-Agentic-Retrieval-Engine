@@ -89,7 +89,7 @@ Bộ dữ liệu này phải cho phép System 2:
    * scene;
    * shot;
    * keyframe;
-   * frame_id theo actual probed fps/timeline;
+   * frame_id theo decoded frame timeline khi có, với probed FPS chỉ là fallback/degraded;
    * transcript;
    * OCR;
    * caption;
@@ -385,7 +385,8 @@ quality/status metadata
 
 ## Frame
 
-Frame là frame gốc trong video theo actual probed fps/timeline của video.
+Frame là frame gốc trong video theo decoded frame timeline của Phase00 khi có;
+probed FPS chỉ là fallback/degraded cho trường hợp không có decoded timeline.
 
 ```text
 frame_id = decoded original frame index
@@ -416,18 +417,19 @@ Frame ID policy:
 
 ```text
 Primary:
-  frame_id = decoded original frame index when frame is extracted.
+  frame_id = decoded original frame index from frame_timeline/{video_id}.parquet when available.
 
 Fallback:
-  frame_id = floor(timestamp_sec * fps_detected) only for CFR videos or when decoded frame index is unavailable.
+  frame_id = floor(timestamp_sec * fps_detected) only for CFR videos or when decoded frame timeline is unavailable.
 
 Persist:
   fps_detected
   fps_source
   is_vfr
   frame_id_method
-  timestamp_sec
+  timestamp_sec or time_seconds
   pts_time
+  duration_time
 ```
 
 Boundary convention:
@@ -465,7 +467,7 @@ Canonical identity rules:
 
 ```text
 video_id    = filename stem của raw video sau khi pair và validate uniqueness
-frame_id    = frame index theo actual probed fps/timeline
+frame_id    = frame index theo decoded frame timeline khi có; probed FPS chỉ là fallback/degraded
 keyframe_id = {video_id}:{frame_id}
 ```
 
@@ -1607,10 +1609,13 @@ hcm-ai-system1/
 
 ```yaml
 fps_expected_default: 25
-frame_id_policy: "decoded_frame_index_primary"
+frame_id_policy: "decoded_frame_timeline_primary"
 fallback_frame_id_formula: "floor(timestamp_sec * fps_detected)"
 frame_id_method_allowed:
-  - decoded_frame_index
+  - decoded_frame_timeline
+  - ffprobe_nb_read_packets
+  - ffprobe_nb_frames
+  - first_frame_extraction_assumed_frame_0
   - timestamp_fps_fallback
 interval_convention: "[start_frame, end_frame)"
 ```
@@ -2193,7 +2198,9 @@ The keyframe selection algorithm is provider/config driven.
 The contract requires deterministic keyframe_id assignment, shot_id linkage,
 logical keyframe/thumbnail refs, and enough selected keyframes for downstream
 captioning and scene construction. Do not hardcode a specific sampling rule,
-detector, or model in the notebook contract.
+detector, or model in the notebook contract. Phase01 providers should consume
+the Phase00 decoded frame timeline when available and must mark degraded
+fallbacks when exact timeline data is unavailable.
 ```
 
 Output:
@@ -2214,6 +2221,10 @@ shot_id
 keyframe_index
 frame_id
 timestamp_sec
+time_seconds
+pts_time
+duration_time
+frame_id_method
 keyframe_ref
 thumbnail_ref
 is_primary
@@ -2307,10 +2318,13 @@ Example:
 {
   "video_id": "L21_V001",
   "fps_expected_default": 25,
-  "frame_id_policy": "decoded_frame_index_primary",
+  "frame_id_policy": "decoded_frame_timeline_primary",
   "fallback_frame_id_formula": "floor(timestamp_sec * fps_detected)",
   "frame_id_method_allowed": [
-    "decoded_frame_index",
+    "decoded_frame_timeline",
+    "ffprobe_nb_read_packets",
+    "ffprobe_nb_frames",
+    "first_frame_extraction_assumed_frame_0",
     "timestamp_fps_fallback"
   ],
   "duration_sec": 1262,
@@ -3251,10 +3265,13 @@ competition_dataset_v001/
   "dataset_id": "aic2026_v001",
   "pipeline_run_id": "run_2026_07_01_001",
   "fps_expected_default": 25,
-  "frame_id_policy": "decoded_frame_index_primary",
+  "frame_id_policy": "decoded_frame_timeline_primary",
   "fallback_frame_id_formula": "floor(timestamp_sec * fps_detected)",
   "frame_id_method_allowed": [
-    "decoded_frame_index",
+    "decoded_frame_timeline",
+    "ffprobe_nb_read_packets",
+    "ffprobe_nb_frames",
+    "first_frame_extraction_assumed_frame_0",
     "timestamp_fps_fallback"
   ],
   "schema_version": "1.0.0",
@@ -3564,9 +3581,12 @@ AIC26_raw/canonical_raw_vXXX/metadata/{metadata_file}
 
 Notebook 01 should stage only the current video/metadata pair into scratch when
 needed. It should reuse phase00 facts such as fps, duration, frame count,
-dimensions, logical refs, and canonical HF paths. It should not copy the full
-raw dataset into local runtime storage and should not re-probe every video when
-phase00 facts are already present.
+dimensions, logical refs, canonical HF paths, and decoded frame timeline rows
+when they are available. It should not copy the full raw dataset into local
+runtime storage and should not re-probe every video when phase00 facts are
+already present. If `frame_timeline/{video_id}.parquet` is unavailable,
+`process-batch` should emit degraded/warning metadata; Notebook 01 must not
+hide that by deriving exact frame ids with FPS math inside notebook cells.
 
 Notebook 01 uploads:
 

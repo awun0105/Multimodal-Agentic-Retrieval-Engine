@@ -78,6 +78,9 @@ system1/.venv/bin/system1 --help
   validates the 00B/00C streaming command references, split video/metadata zip
   pairing, batched HF upload, disk-safe stream options, scratch cleanup, and
   canonical raw manifests.
+- Current 00B/00C notebook contract checks also require
+  `manifests/frame_timeline_manifest.parquet` in phase00 output and preview
+  decoded `frame_timeline/{video_id}.parquet` availability when present.
 - `uv run pytest tests/test_smoke.py -q`: 37 passed after making HF Dataset
   release sync required.
 - `uv run pytest`: 103 passed after making HF Dataset release sync required.

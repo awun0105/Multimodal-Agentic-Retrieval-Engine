@@ -10,7 +10,7 @@
 
 ## Application Flow
 
-Notebook 00A presents the stable Colab/Drive path as the primary flow:
+Notebook 00A preserves the older Colab/Drive path:
 
 1. `system1 drive-shadow` when Drive folder IDs are configured.
 2. `system1 standardize-archives` when an archive source folder is configured.
@@ -19,9 +19,10 @@ Notebook 00A presents the stable Colab/Drive path as the primary flow:
 5. Batch assignment.
 6. Required `system1 sync-phase00-ingestion` to the configured Hugging Face Dataset repo.
 
-Already-standardized local input remains a fallback when Drive/archive config is
-empty. Canonical Hugging Face import is intentionally excluded from Notebook
-00's standard workflow to keep the operator path singular.
+Notebook 00B/00C are the current large-dataset streaming paths. They stream raw
+video/metadata pairs to `AIC26_raw`, then run canonical HF raw ingest to produce
+the phase00 release tables, raw mapping, frame timeline manifest, batch files,
+and reports.
 
 Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
 
@@ -46,8 +47,8 @@ Notebook 00C is the local-machine variant of the same streaming flow:
 2. The notebook skips Google Drive mount/remount and `drive-shadow`.
 3. `system1 stream-standardize-upload-raw` uses local scratch, the same
    disk-safe options, batched HF raw uploads, and per-pair progress JSONL.
-4. Canonical HF ingest, batch assignment, and `sync-phase00-ingestion` match
-   Notebook 00B.
+4. Canonical HF ingest, batch assignment, frame timeline manifest checks, and
+   `sync-phase00-ingestion` match Notebook 00B.
 
 The safety gate belongs in the CLI commands so Notebook 00, shell users, and
 tests share the same behavior.
@@ -117,8 +118,11 @@ downloads, when explicitly enabled, use per-run staging/cache directories and
 clean them in `finally`; the package must not blindly delete the user's global
 Hugging Face cache.
 
-Phase00 release output is synced under `releases/<AIC_RELEASE_ID>/...` in the
-configured Hugging Face Dataset repo.
+Phase00 release output is synced under
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/` in the configured
+Hugging Face Dataset repo. The synced snapshot includes `tables/`,
+`raw_mapping/`, `frame_timeline/` when decoded timelines are available,
+`manifests/`, and `reports/`.
 
 ## UI / Platform Impact
 

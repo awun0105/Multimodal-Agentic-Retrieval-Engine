@@ -35,7 +35,7 @@ raw video folder + metadata JSON folder
 | Video probing | probed media facts | Probe fps, duration, dimensions, codec/container facts; last-year evidence suggests 25 fps, but actual fps must be persisted per video. |
 | Timeline mapping | `frame_timeline` staging rows or equivalent mapping proof | Persist enough timing metadata to map timestamps to frame ids safely, especially for VFR or unreliable FPS metadata. |
 | Shot detection | `shots` rows | If shot detection fails but the video is otherwise readable, emit a fallback full-video shot and mark degraded status instead of dropping the whole video immediately. |
-| Keyframe extraction | `keyframes` rows and media refs | Generate keyframes from raw videos; use `keyframe_id = "{video_id}:{frame_id}"`; compute timestamps from actual probed fps; store logical refs only. |
+| Keyframe extraction | `keyframes` rows and media refs | Generate keyframes from raw videos; use `keyframe_id = "{video_id}:{frame_id}"`; prefer decoded `frame_timeline` rows for `frame_id`/timestamp mapping, with FPS math only as a marked fallback; store logical refs only. |
 | Thumbnail generation | `thumbnail_ref` per keyframe | Generate missing thumbnails under `${AIC_DATA_ROOT}/processed/media/thumbnails/`. |
 | Minimum keyframe/image captioning | `image_captions` rows | If semantic scene construction uses visual captions, these minimum caption rows are phase01 structure inputs and must exist before scene construction. Provider/model choice is config-driven. |
 | Scene construction | `scenes` rows | Scenes enrich inspection/runtime context and may use shots, selected keyframes, minimum keyframe/image captions, ASR/transcript rows, and metadata. Scene boundary must snap to shot boundary. |
@@ -47,9 +47,12 @@ raw video folder + metadata JSON folder
 | Validation | validation report and failure status | App-ready build is usable only when required checks pass. |
 
 Notebook 01 / phase01 workers should reuse phase00 probe facts from
-`tables/videos.parquet` and `raw_mapping/media_store_manifest.parquet`.
-Phase01 may verify or stage the current video when needed, but it should not
-re-probe every video or copy the full raw dataset into worker runtime storage.
+`tables/videos.parquet`, `raw_mapping/media_store_manifest.parquet`, and
+`frame_timeline/{video_id}.parquet` when available. Phase01 may verify or stage
+the current video when needed, but it should not re-probe every video or copy
+the full raw dataset into worker runtime storage. When a decoded timeline is
+missing, the structure artifact should carry a degraded/warning status rather
+than silently deriving exact frame ids in notebook code.
 
 ## CLI Contract
 

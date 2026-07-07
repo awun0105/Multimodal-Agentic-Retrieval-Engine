@@ -73,7 +73,11 @@ Scope:
 - Prefer packet-counted frame count (`ffprobe -count_packets` /
   `nb_read_packets`) when available.
 - Emit `frame_count`, `frame_count_estimated`, `frame_count_method`, `fps_detected`, `fps_source`, `is_vfr`, and `frame_id_method`.
-- Emit `frame_timeline` staging rows or documented equivalent proof when frame-accurate timestamp mapping is needed.
+- Emit `manifests/frame_timeline_manifest.parquet` for every Phase00 ingest
+  and `frame_timeline/{video_id}.parquet` decoded frame rows when the decoded
+  timeline is available.
+- Treat `decoded_frame_timeline` as the primary frame-id/timestamp mapping
+  method; FPS math remains a marked fallback/degraded path.
 
 Acceptance criteria:
 

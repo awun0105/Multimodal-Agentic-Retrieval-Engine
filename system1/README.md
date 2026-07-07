@@ -300,19 +300,22 @@ Notebook 01 target responsibility:
 ```text
 setup runtime + package
   -> restore phase00_ingestion from AIC26_release
-  -> materialize tables/raw_mapping/manifests for process-batch
+  -> materialize tables/raw_mapping/frame_timeline/manifests for process-batch
   -> read manifests/{batch_id}.txt
-  -> process only that batch
+  -> process only that batch with timeline-aware provider interfaces
   -> write artifacts/structure/{video_id}_structure.zip
   -> write manifests/worker_reports/structure_{batch_id}_{worker_id}.json
   -> sync those batch artifacts to phase01_structure
 ```
 
 `process-batch` should reuse phase00 video facts from `tables/videos.parquet`
-and `raw_mapping/media_store_manifest.parquet` instead of re-probing every
+and `raw_mapping/media_store_manifest.parquet`, plus
+`frame_timeline/{video_id}.parquet` when available, instead of re-probing every
 video. It may stage only the current video/metadata pair from `AIC26_raw` or a
 local input directory into scratch, but it must not copy the full raw dataset
-into runtime storage.
+into runtime storage. If a decoded frame timeline is unavailable, the package
+must mark the per-video structure artifact degraded/warning rather than hiding
+the fallback in notebook code.
 
 The target phase01 structure package is semantic-light structure, not final
 feature enrichment. It should contain shot rows, selected keyframes, thumbnails,
@@ -320,9 +323,9 @@ ASR/transcript rows when configured, minimum keyframe/image caption rows needed
 for scene construction, scene rows, scene summaries, package manifests,
 checksums, and errors. Algorithm choices are provider/config driven; docs
 should not hardcode a specific shot detector, captioning model, or ASR model
-before those providers are chosen. Current mock/fallback code may emit one
-full-video shot/scene and first-frame keyframe while those providers are
-unfinished.
+before those providers are chosen. Current mock/fallback code goes through
+timeline-aware provider interfaces and may emit one full-video shot/scene and a
+first-frame keyframe while production providers are unfinished.
 
 Target per-video structure ZIP layout:
 

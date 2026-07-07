@@ -614,10 +614,15 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     keyframes = pd.read_parquet(artifact_dir / "keyframes.parquet")
     assert keyframes.iloc[0]["keyframe_ref"] == "media://keyframes/L21_V001/L21_V001_f0000000.jpg"
     assert keyframes.iloc[0]["thumbnail_ref"] == "media://thumbnails/L21_V001/L21_V001_f0000000.webp"
-    assert keyframes.iloc[0]["frame_id_method"] == "first_frame_extraction_assumed_frame_0"
+    assert keyframes.iloc[0]["frame_id_method"] == "decoded_frame_timeline"
+    assert keyframes.iloc[0]["pts_time"] == 0.0
+    assert keyframes.iloc[0]["duration_time"] == 0.04
     assert str(keyframes.iloc[0]["thumbnail_ref"]).endswith(".webp")
     shots = pd.read_parquet(artifact_dir / "shots.parquet")
     assert shots.iloc[0]["boundary_convention"] == "[start_frame, end_frame)"
+    assert shots.iloc[0]["detection_method"] == "fallback_full_video_from_frame_timeline"
+    scenes = pd.read_parquet(artifact_dir / "scenes.parquet")
+    assert scenes.iloc[0]["construction_method"] == "fallback_scene_from_timeline_shots"
     image_captions = pd.read_parquet(artifact_dir / "image_captions.parquet")
     assert {"caption_id", "keyframe_id", "video_id", "scene_id", "shot_id", "caption", "provider", "status"}.issubset(image_captions.columns)
     assert image_captions.iloc[0]["keyframe_id"] == "L21_V001:0"
@@ -625,6 +630,8 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     assert {"scene_id", "video_id", "summary", "provider", "status"}.issubset(scene_summaries.columns)
     manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["phase01_contract"]["semantic_level"] == "semantic_light"
+    assert manifest["phase01_contract"]["uses_phase00_frame_timeline"] is True
+    assert manifest["phase01_contract"]["frame_timeline_ref"] == "frame_timeline/L21_V001.parquet"
     assert manifest["phase01_contract"]["scene_summary_table"] == "scene_summaries.parquet"
 
 def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
