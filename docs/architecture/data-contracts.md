@@ -93,6 +93,75 @@ ${AIC_RUNTIME_ROOT}/
 
 Any earlier `data/` tree in docs should be read as a logical app-ready artifact layout, not as repository layout.
 
+## Hugging Face Storage Contract
+
+System 1 shared storage uses two Hugging Face Dataset repos:
+
+```text
+AIC26_raw
+AIC26_release
+```
+
+`AIC26_raw` is the canonical raw dataset repo. It stores standardized raw
+videos, metadata, and raw-level inventory/import manifests only:
+
+```text
+AIC26_raw/canonical_raw_vXXX/raw_videos/
+AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
+AIC26_raw/canonical_raw_vXXX/manifests/missing_metadata.json
+AIC26_raw/canonical_raw_vXXX/manifests/unmatched_metadata.json
+```
+
+`AIC26_release` is the processed workspace plus final release repo:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/
+AIC26_release/canonical_release_vXXX/phase03_merged/
+AIC26_release/canonical_release_vXXX/releases/
+AIC26_release/canonical_release_vXXX/checkpoints/
+AIC26_release/canonical_release_vXXX/logs/
+```
+
+Local package commands currently write artifact ZIPs and worker reports under:
+
+```text
+artifacts/structure/{video_id}_structure.zip
+artifacts/features/{video_id}_features.zip
+manifests/worker_reports/
+```
+
+The phase01/phase02 Hugging Face paths above are the shared target layout for a
+separate sync/restore workflow. They are not a statement that the local package
+commands upload phase01/phase02 artifacts directly to Hugging Face.
+
+`phase00_ingestion` contains Notebook 00 ingestion and batch-planning outputs.
+It is not a final runtime release. The final app-ready release for System 2 is:
+
+```text
+AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/
+```
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may also snapshot them under
+`phase00_ingestion/reports/` for a particular release run. Their authoritative
+source of truth is:
+
+```text
+AIC26_raw/canonical_raw_vXXX/manifests/
+```
+
+Legacy flat layout under
+`canonical_release_vXXX/{manifests,tables,raw_mapping}` is deprecated. New
+outputs must use
+`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}`.
+
 ## Canonical IDs
 
 | ID | Format | Example | Notes |
@@ -109,7 +178,7 @@ Any earlier `data/` tree in docs should be read as a logical app-ready artifact 
 
 `video_id` is derived from the raw video filename stem and must not be derived from `watch_url`. `video_id + frame_id` remains the user-facing submit/copy unit. `keyframe_id` is the DB/API glue key.
 
-Last-year dataset evidence shows videos at 25 fps. Treat `25` as the planning/default expected FPS, but System 1 must probe each raw video, persist actual `fps`, and compute `timestamp_sec = frame_id / actual_fps`. Do not hard-code `/25` as a universal runtime rule before current-year media is verified.
+Last-year dataset evidence shows videos at 25 fps. Treat `25` as the planning/default expected FPS only. For AIC 2026 frame-id safety, System 1 should use decoded `frame_timeline` rows as the primary mapping between `frame_id`, `pts_time`, and duration. Packet counts and probed FPS are fallback evidence, not a reason to hard-code `/25` or silently derive exact frame ids from `frame_id / fps`.
 
 ## Logical Media References
 
@@ -132,10 +201,15 @@ beside the canonical file manifest:
 <raw_import_id>/manifests/canonical_video_inventory.parquet
 ```
 
-This inventory is produced while `upload-standardized-raw` still has local
-access to `raw_videos/`. It must contain one row per canonical video with:
+This inventory is produced while `upload-standardized-raw` has local access to
+`raw_videos/`, or while `stream-standardize-upload-raw` has one extracted pair
+in local scratch. It must contain one row per canonical video with:
 
 - `video_id`
+- `canonical_repo_id`
+- `canonical_repo_type`
+- `canonical_revision`
+- `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path`
 - `duration_sec`
@@ -144,8 +218,11 @@ access to `raw_videos/`. It must contain one row per canonical video with:
 - `file_size_bytes`
 
 HF canonical ingest uses this inventory for duration, FPS, frame count, and
-file size. It must not download `raw_videos/*.mp4` only to probe media unless a
-debug/operator fallback explicitly enables that behavior.
+file size. Frame count should be produced from actual packet counting
+(`ffprobe -count_packets` / `nb_read_packets`) when possible; header
+`nb_frames` and duration/FPS math are fallbacks. It must not download
+`raw_videos/*.mp4` only to probe media unless a debug/operator fallback
+explicitly enables that behavior.
 
 ## Data Categories
 
@@ -193,10 +270,11 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | `datasets` | Dataset identity and build metadata. |
 | `videos` | One row per video; stores `video_id`, `source_video_stem`, `video_ref`, duration, fps, VFR/frame-count metadata, dimensions, normalized metadata, and selected raw metadata fields. |
 | `shots` | One row per shot or fallback full-video shot; stores `shot_id`, `video_id`, frame/time ranges, detection method, and degraded/full-fidelity status. |
-| `scenes` | Scene-level inspection context derived from shots and metadata/ASR; enriches runtime inspection but should not control MVP keyframe extraction. |
-| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `pts_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
-| `image_captions` | Caption evidence mapped to image/keyframe. |
+| `scenes` | Scene-level inspection context derived from shots, selected keyframes, minimum keyframe/image captions when configured, ASR/transcript rows, and metadata. |
+| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `time_seconds` or `timestamp_sec`, `pts_time`, `duration_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
+| `image_captions` | Caption evidence mapped to image/keyframe. Minimum phase01 caption rows may be required before scene construction; phase02 may add enrichment rows. |
 | `shot_captions` | Caption evidence mapped to shot-level intervals. |
+| `scene_summaries` | Phase01 scene summaries built from metadata, transcript links, and minimum keyframe/image captions when configured. |
 | `ocr` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
 | `asr_segments` | Transcript segments mapped to `video_id` and time range. |
 | `shot_transcript_links` | Canonical link rows between ASR segments and shots. |

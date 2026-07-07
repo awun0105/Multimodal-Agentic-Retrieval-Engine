@@ -70,9 +70,14 @@ Goal: persist enough frame/FPS metadata to make frame mapping auditable.
 Scope:
 
 - Probe duration, dimensions, codec/container facts, detected FPS, and VFR indicator when available.
-- Prefer decoded frame count when available.
+- Prefer packet-counted frame count (`ffprobe -count_packets` /
+  `nb_read_packets`) when available.
 - Emit `frame_count`, `frame_count_estimated`, `frame_count_method`, `fps_detected`, `fps_source`, `is_vfr`, and `frame_id_method`.
-- Emit `frame_timeline` staging rows or documented equivalent proof when frame-accurate timestamp mapping is needed.
+- Emit `manifests/frame_timeline_manifest.parquet` for every Phase00 ingest
+  and `frame_timeline/{video_id}.parquet` decoded frame rows when the decoded
+  timeline is available.
+- Treat `decoded_frame_timeline` as the primary frame-id/timestamp mapping
+  method; FPS math remains a marked fallback/degraded path.
 
 Acceptance criteria:
 
@@ -144,10 +149,10 @@ Acceptance criteria:
 
 - Commands: Notebook 00's phase-based path is Drive shadow, archive
   standardization into local `raw_videos/` + `metadata/`, local ingest,
-  batch assignment, then `system1 sync-release` to store phase output under
-  `releases/<release_id>/` in the configured Hugging Face Dataset repo.
-  `system1 restore-release` lets worker notebooks reload that output from the
-  same repo.
+  batch assignment, then `system1 sync-phase00-ingestion` to store Notebook 00
+  output under `phase00_ingestion/` in the configured Hugging Face Dataset
+  repo. `system1 restore-phase00-ingestion` lets worker notebooks reload that
+  output from the same repo.
 - Queries: System 2 should be able to resolve `video_id/frame_id`, `keyframe_id`, and `vector_id -> keyframe_id` from `app.sqlite`.
 - API: no runtime API is required in this story.
 - Tables: seed path should cover `videos`, `shots`, `keyframes`, `vector_map`, `feature_availability`, and minimal FTS/text evidence tables.
@@ -188,10 +193,11 @@ local phase00 ingest, and Hugging Face Dataset release sync:
   by default; `--allow-partial` is an explicit operator override.
 - Notebook 00 runs Drive shadow, archive standardization, standardized input
   readiness checks, local phase00 ingest, batch assignment, then required
-  sync-release to the configured Hugging Face Dataset repo under
-  `releases/<release_id>/`.
-- `system1 sync-release` and `system1 restore-release` support worker notebooks
-  loading phase output from the same Hugging Face Dataset repo.
+  `sync-phase00-ingestion` to the configured Hugging Face Dataset repo under
+  `phase00_ingestion/`.
+- `system1 sync-phase00-ingestion` and `system1 restore-phase00-ingestion`
+  support worker notebooks loading phase output from the same Hugging Face
+  Dataset repo.
 - `uv run pytest` passed with 103 tests after this phase00 workflow update.
 
 Full MVP-0.6 remains planned until the complete seed path through structure,

@@ -16,10 +16,13 @@ Raw videos + metadata JSON
 → batch assignment
 → ASR
 → shot detection
-→ scene construction
 → keyframe selection
 → thumbnail generation
-→ OCR / object detection / image captioning / visual embedding
+→ minimum keyframe/image captioning for scene construction
+→ transcript-shot/keyframe alignment
+→ semantic-light scene construction
+→ scene summaries
+→ OCR / object detection / additional captioning / visual embedding
 → artifact packaging
 → merge structural + feature artifacts
 → global text document construction
@@ -86,7 +89,7 @@ Bộ dữ liệu này phải cho phép System 2:
    * scene;
    * shot;
    * keyframe;
-   * frame_id theo actual probed fps/timeline;
+   * frame_id theo decoded frame timeline khi có, với probed FPS chỉ là fallback/degraded;
    * transcript;
    * OCR;
    * caption;
@@ -224,7 +227,6 @@ competition_dataset_v001/
 │   ├── asr_segments.parquet
 │   ├── scenes.parquet
 │   ├── shots.parquet
-│   ├── frame_timeline.parquet          # staging/debug; may be sampled or omitted from compact release if too large
 │   ├── keyframes.parquet
 │   ├── shot_transcript_links.parquet
 │   ├── scene_transcript_links.parquet
@@ -233,7 +235,7 @@ competition_dataset_v001/
 │   ├── objects.parquet
 │   ├── image_captions.parquet
 │   ├── shot_captions.parquet
-│   ├── scene_summaries_initial.parquet
+│   ├── scene_summaries.parquet
 │   ├── scene_summaries_enriched.parquet
 │   ├── text_sources.parquet
 │   ├── feature_availability.parquet
@@ -339,7 +341,7 @@ Scenes có thể rebuild độc lập mà không cần rerun ASR, shot detection
 Scene rebuild dependency:
 
 ```text
-change scene heuristic
+change scene builder config/provider
 → rebuild scenes
 → remap shots.scene_id
 → remap keyframes.scene_id
@@ -383,7 +385,8 @@ quality/status metadata
 
 ## Frame
 
-Frame là frame gốc trong video theo actual probed fps/timeline của video.
+Frame là frame gốc trong video theo decoded frame timeline của Phase00 khi có;
+probed FPS chỉ là fallback/degraded cho trường hợp không có decoded timeline.
 
 ```text
 frame_id = decoded original frame index
@@ -414,18 +417,19 @@ Frame ID policy:
 
 ```text
 Primary:
-  frame_id = decoded original frame index when frame is extracted.
+  frame_id = decoded original frame index from frame_timeline/{video_id}.parquet when available.
 
 Fallback:
-  frame_id = floor(timestamp_sec * fps_detected) only for CFR videos or when decoded frame index is unavailable.
+  frame_id = floor(timestamp_sec * fps_detected) only for CFR videos or when decoded frame timeline is unavailable.
 
 Persist:
   fps_detected
   fps_source
   is_vfr
   frame_id_method
-  timestamp_sec
+  timestamp_sec or time_seconds
   pts_time
+  duration_time
 ```
 
 Boundary convention:
@@ -463,7 +467,7 @@ Canonical identity rules:
 
 ```text
 video_id    = filename stem của raw video sau khi pair và validate uniqueness
-frame_id    = frame index theo actual probed fps/timeline
+frame_id    = frame index theo decoded frame timeline khi có; probed FPS chỉ là fallback/degraded
 keyframe_id = {video_id}:{frame_id}
 ```
 
@@ -553,19 +557,67 @@ L21_V001_f0000250.webp
 
 # 7. Storage strategy
 
-## Cloud / Team Drive
+## Shared Hugging Face storage
 
-Dùng để lưu:
+Primary shared storage uses exactly two Hugging Face Dataset repos:
 
 ```text
-raw dataset
-manifests
-per-video ZIP artifacts
-merged releases
-logs
+AIC26_raw
+AIC26_release
 ```
 
-Không upload ảnh rời rạc hàng loạt.
+Do not use Team Drive as the primary shared storage contract and do not create
+a third Hugging Face repo for System 1 outputs.
+
+`AIC26_raw` is the canonical raw dataset repo. It contains only standardized
+raw videos, metadata, and raw-level inventory/import manifests:
+
+```text
+AIC26_raw/
+└── canonical_raw_v003/
+    ├── raw_videos/
+    │   ├── L21_V001.mp4
+    │   ├── L21_V002.mp4
+    │   └── ...
+    ├── metadata/
+    │   ├── L21_V001.json
+    │   ├── L21_V002.json
+    │   └── ...
+    └── manifests/
+        ├── canonical_file_manifest.jsonl
+        ├── canonical_import_report.json
+        ├── canonical_video_inventory.parquet
+        ├── missing_metadata.json
+        └── unmatched_metadata.json
+```
+
+`AIC26_raw` must not contain structure artifacts, feature artifacts, merged
+tables, `app.sqlite`, FAISS indexes, or final release packages.
+
+`missing_metadata.json` and `unmatched_metadata.json` SHOULD live in
+`AIC26_raw` as raw-level audit manifests because they describe the integrity of
+`raw_videos/` and `metadata/` for a `raw_import_id`. Their authoritative source
+of truth is:
+
+```text
+AIC26_raw/canonical_raw_vXXX/manifests/
+```
+
+`AIC26_release` MAY also contain copies of these audits under
+`phase00_ingestion/reports/` as release-run snapshots. Those copies are for
+reproducibility and debugging of that release run, not the source of truth.
+
+`AIC26_release` is the processed workspace plus final release repo. It contains
+phase00 ingestion output, phase01 structure artifacts, phase02 feature
+artifacts, phase03 merged staging, final app-ready releases, logs, and
+checkpoints. `AIC26_release` is not only the final release folder.
+
+Rule of thumb:
+
+```text
+AIC26_raw     = standardized source data that changes rarely.
+AIC26_release = artifacts and reports for a specific pipeline run/release.
+```
 
 ## Local machine / server
 
@@ -664,7 +716,7 @@ System 2 không được phụ thuộc vào thứ tự ngầm trong `.npy` hoặ
 
 ```text
 - đổi model không được làm đổi video_id / shot_id / scene_id / keyframe_id;
-- đổi scene heuristic có thể làm đổi scene_id, nhưng không được làm đổi shot_id;
+- đổi scene builder config/provider có thể làm đổi scene_id, nhưng không được làm đổi shot_id;
 - đổi embedding model có thể sinh embedding_id mới, nhưng keyframe_id phải giữ nguyên;
 - doc_id phải stable nếu source_type, entity_id và normalized_text không đổi.
 ```
@@ -710,7 +762,8 @@ Mục tiêu của mô hình này:
 
 ## Vì sao dùng ZIP?
 
-Vì nếu upload hàng trăm nghìn keyframe/thumbnail rời rạc lên Google Drive:
+Vì nếu upload hàng trăm nghìn keyframe/thumbnail rời rạc lên shared storage
+như Hugging Face Dataset repos:
 
 ```text
 - chậm;
@@ -738,9 +791,10 @@ L21_V001/
 ├── shots.parquet
 ├── scenes.parquet
 ├── keyframes.parquet
+├── image_captions.parquet
 ├── shot_transcript_links.parquet
 ├── scene_transcript_links.parquet
-├── scene_summaries_initial.parquet
+├── scene_summaries.parquet
 ├── keyframes/
 │   ├── L21_V001_f0000000.jpg
 │   └── ...
@@ -765,7 +819,7 @@ L21_V001/
 ├── embeddings_meta.parquet
 ├── ocr.parquet
 ├── objects.parquet
-├── image_captions.parquet
+├── image_captions.parquet                 # optional/additive phase02 rows
 ├── shot_captions.parquet
 ├── scene_summaries_enriched.parquet
 ├── text_sources.parquet
@@ -779,6 +833,9 @@ Lưu ý:
 text_sources.parquet = text fragments cấp video.
 text_documents.parquet = global text table, build sau merge toàn dataset.
 feature_availability.parquet = global availability table, build sau merge toàn dataset.
+Minimum keyframe/image captions that are inputs to scene construction belong in
+the phase01 structure artifact. Phase02 may add heavier or additional caption
+rows as enrichment, but it should not be required to construct phase01 scenes.
 ```
 
 Không nên để `text_documents.parquet` trong từng per-video feature artifact nếu nó là global index table.
@@ -808,12 +865,12 @@ Tối thiểu, `manifest.json`, `feature_manifest.json` và `dataset_manifest.js
     "cuda": "12.1",
     "gpu": "T4"
   },
-  "models": {
-    "asr": "whisper-large-v3",
-    "shot_detector": "pyscenedetect-content",
-    "embedding": "clip-vit-base-patch32",
-    "ocr": "paddleocr",
-    "caption": "blip2"
+  "providers": {
+    "asr": "ASRProvider",
+    "shot_detector": "ShotDetectionProvider",
+    "embedding": "EmbeddingProvider",
+    "ocr": "OCRProvider",
+    "caption": "KeyframeCaptionProvider"
   },
   "thresholds": {
     "shot_threshold": 27.0,
@@ -1142,14 +1199,17 @@ asr_segments
 shots
   depends on raw video + shot detector config
 
-scenes
-  depends on shots + asr_segments + metadata + scene builder config
-
 keyframes
   depends on shots + raw video + keyframe config
 
+image_captions
+  depends on selected keyframes + keyframe caption provider config
+
+scenes
+  depends on shots + selected keyframes + minimum image_captions + asr_segments/transcript + metadata + scene builder config
+
 keyframes.scene_id
-  depends on scenes + shot_id mapping
+  depends on scenes + shot_id mapping after scene construction
 
 embeddings
   depends on keyframes + embedding model config
@@ -1159,9 +1219,6 @@ ocr
 
 objects
   depends on keyframes + object model config
-
-image_captions
-  depends on keyframes + caption model config
 
 shot_captions
   depends on image_captions + keyframes + shots
@@ -1185,7 +1242,7 @@ FAISS
 Ví dụ ứng dụng:
 
 ```text
-đổi scene heuristic
+đổi scene builder config/provider
 → rebuild scenes + downstream summaries/text
 → không cần rerun OCR/embeddings
 
@@ -1270,22 +1327,18 @@ config_hash
 created_at
 ```
 
-## `frame_timeline.parquet` schema
+## `frame_timeline/{video_id}.parquet` schema
 
-This staging/debug table is used when frame-accurate timestamp mapping matters, especially for VFR files or videos with unreliable metadata FPS.
+This per-video Phase00 table is the decoded frame-time authority when
+frame-accurate timestamp mapping matters, especially for VFR files or videos
+with unreliable metadata FPS. It is stored per video to avoid a single large
+global parquet bottleneck.
 
 ```text
 video_id
 frame_id
 pts_time
-dts_time
 duration_time
-is_key_packet
-width
-height
-decode_order
-timebase
-frame_id_method
 ```
 
 Timestamp interval mapping rule:
@@ -1301,8 +1354,8 @@ Keyframe extraction should prefer decoded `frame_id`. Timestamp seeking is allow
 Artifact policy:
 
 ```text
-frame_timeline.parquet is a staging/debug artifact for accurate timestamp-to-frame mapping.
-It may be generated per video, merged globally, sampled, or omitted from compact release if too large.
+frame_timeline/{video_id}.parquet is the Phase00 source of truth for decoded frame/time mapping.
+manifests/frame_timeline_manifest.parquet records availability and row counts.
 If omitted from compact release, key tables must still persist enough mapping fields such as frame_id, timestamp_sec, pts_time, frame_id_method, fps_detected, and is_vfr.
 ```
 
@@ -1457,17 +1510,19 @@ Cross-cutting contracts:
 - audio extraction
 - ASR
 - shot detection
-- transcript-shot alignment
-- scene construction
 - keyframe selection
 - thumbnail generation
+- minimum keyframe/image captioning required by scene construction
+- transcript-shot/keyframe alignment
+- semantic-light scene construction
+- scene summaries
 - structure artifact packaging
 
 02_worker_feature_enrichment.ipynb
 - visual embeddings
 - OCR
 - object detection
-- image captions
+- additional/heavier image captions when configured
 - shot captions
 - enriched scene summaries
 - text_sources
@@ -1554,10 +1609,13 @@ hcm-ai-system1/
 
 ```yaml
 fps_expected_default: 25
-frame_id_policy: "decoded_frame_index_primary"
+frame_id_policy: "decoded_frame_timeline_primary"
 fallback_frame_id_formula: "floor(timestamp_sec * fps_detected)"
 frame_id_method_allowed:
-  - decoded_frame_index
+  - decoded_frame_timeline
+  - ffprobe_nb_read_packets
+  - ffprobe_nb_frames
+  - first_frame_extraction_assumed_frame_0
   - timestamp_fps_fallback
 interval_convention: "[start_frame, end_frame)"
 ```
@@ -1624,13 +1682,15 @@ metadata/
 3. Extract video_id from filenames.
 4. Match video_id between video and metadata.
 5. Read metadata JSON.
-6. Run ffprobe for duration, FPS, resolution, codec.
+6. Run ffprobe packet/frame probe for duration, FPS, resolution, decoded frame timeline, and VFR detection.
 7. Normalize metadata fields.
 8. Create videos.parquet.
-9. Create media_store_manifest.parquet.
-10. Create master_manifest.parquet.
-11. Create dataset_report.json.
-12. Create ingestion_errors.jsonl.
+9. Create frame_timeline/{video_id}.parquet.
+10. Create manifests/frame_timeline_manifest.parquet.
+11. Create media_store_manifest.parquet.
+12. Create master_manifest.parquet.
+13. Create dataset_report.json.
+14. Create ingestion_errors.jsonl.
 ```
 
 ## Output
@@ -1638,6 +1698,8 @@ metadata/
 ```text
 01_manifests/
 ├── videos.parquet
+├── frame_timeline/{video_id}.parquet
+├── frame_timeline_manifest.parquet
 ├── media_store_manifest.parquet
 ├── master_manifest.parquet
 ├── dataset_report.json
@@ -1685,6 +1747,8 @@ frame_count_method
 fps_detected
 fps_source
 is_vfr
+has_frame_timeline
+frame_timeline_ref
 frame_id_method
 duration_source
 fps_expected_default
@@ -1700,13 +1764,21 @@ raw_metadata_json
 ## Count convention
 
 ```text
-frame_count = decoded_frame_count if available
-frame_count_estimated = floor(duration_sec * fps_detected)
-frame_count_method = decoded | ffprobe_nb_frames | duration_x_fps_estimate
+frame_count = decoded frame_timeline row count when available
+frame_count_estimated = false when frame_count comes from decoded timeline, packet count, or header frame count
+frame_count_method = decoded_frame_timeline | ffprobe_nb_read_packets | ffprobe_nb_frames | estimated_from_duration_and_fps
 scene_count = final number of scenes after scene construction
 shot_count = final number of shots after shot detection
 keyframe_count = final number of keyframes after keyframe selection
 ```
+
+For AIC 2026 frame ID safety, System 1 treats decoded
+`frame_timeline/{video_id}.parquet` rows as the primary frame-count and
+timestamp mapping source. Packet count is a fallback for videos without a
+decoded timeline. Header `nb_frames` is only a later fallback because it can
+drift when container metadata is stale or damaged. `duration_sec * fps_detected`
+is the last fallback and must be marked estimated/degraded because it can drift
+on VFR media.
 
 Ở Phase 1:
 
@@ -1857,7 +1929,7 @@ audio/L21_V001.wav
 Process:
 
 ```text
-Whisper / Vietnamese ASR model
+ASRProvider / TranscriptImportProvider
 ```
 
 Output:
@@ -1900,19 +1972,15 @@ Input:
 raw video
 ```
 
-MVP method:
+Provider contract, not fixed by this spec:
 
 ```text
-PySceneDetect
+ShotDetectionProvider
 ```
 
-Advanced methods:
-
-```text
-OpenCV histogram difference
-CLIP similarity difference
-TransNetV2
-```
+The selected shot detection algorithm must be chosen by provider/config, not by
+notebook code. If shot detection fails but the video is readable, emit a marked
+fallback shot instead of silently dropping the video.
 
 Output:
 
@@ -1998,10 +2066,22 @@ text
 
 ## Step E — Scene construction
 
+Execution note:
+
+```text
+If semantic scene construction uses visual captions, final scene construction
+must run after keyframe selection and minimum keyframe/image captioning. Do not
+push those minimum captions to Notebook 02 if phase01 scenes depend on them.
+This section defines the scene output contract; provider/model choice remains
+configuration-driven and is not fixed by this spec.
+```
+
 Input:
 
 ```text
 shots.parquet
+keyframes.parquet
+image_captions.parquet
 asr_segments.parquet
 shot_transcript_links.parquet
 metadata_normalized.json
@@ -2017,10 +2097,11 @@ Signals:
 
 ```text
 ASR transcript topic similarity
+keyframe/image captions
 metadata title / description / keywords
 shot continuity
 keyword shifts
-LLM optional
+optional summary provider signals
 ```
 
 Important rule:
@@ -2034,7 +2115,7 @@ Output:
 ```text
 scenes.parquet
 scene_transcript_links.parquet
-scene_summaries_initial.parquet
+scene_summaries.parquet
 ```
 
 `scenes.parquet` schema:
@@ -2050,7 +2131,7 @@ end_frame
 duration_sec
 frame_count
 shot_count
-keyframe_count        # null/0 initially, update after keyframe selection
+keyframe_count
 scene_type
 grouping_method
 confidence
@@ -2068,7 +2149,7 @@ Example:
 L21_V001_SC00001
 ```
 
-`scene_summaries_initial.parquet` schema:
+`scene_summaries.parquet` schema:
 
 ```text
 scene_id
@@ -2081,12 +2162,13 @@ model_name
 confidence
 ```
 
-Initial scene summary is based mainly on:
+Phase01 scene summaries are based mainly on:
 
 ```text
 ASR
 metadata
 shot transcript overlap
+keyframe/image captions when configured
 ```
 
 ---
@@ -2106,23 +2188,19 @@ MVP stable mode:
 ```text
 keyframes depend on shots + raw video + keyframe config.
 scene_id is assigned/remapped after extraction.
-Changing scene heuristic does not rerun keyframes/OCR/embeddings in MVP stable mode.
+Changing scene builder config/provider does not rerun keyframes/OCR/embeddings in MVP stable mode.
 ```
 
-Rule:
+Provider contract:
 
 ```text
-Shot <= 4s:
-  1 primary keyframe at shot middle.
-
-4s < shot <= 12s:
-  2 keyframes.
-
-shot > 12s:
-  1 keyframe every 2–3 seconds or motion peak.
-
-traffic/football-like shot detected by visual/motion heuristic:
-  increase density.
+The keyframe selection algorithm is provider/config driven.
+The contract requires deterministic keyframe_id assignment, shot_id linkage,
+logical keyframe/thumbnail refs, and enough selected keyframes for downstream
+captioning and scene construction. Do not hardcode a specific sampling rule,
+detector, or model in the notebook contract. Phase01 providers should consume
+the Phase00 decoded frame timeline when available and must mark degraded
+fallbacks when exact timeline data is unavailable.
 ```
 
 Output:
@@ -2143,6 +2221,10 @@ shot_id
 keyframe_index
 frame_id
 timestamp_sec
+time_seconds
+pts_time
+duration_time
+frame_id_method
 keyframe_ref
 thumbnail_ref
 is_primary
@@ -2161,7 +2243,48 @@ keyframe_id = "{video_id}:{frame_id}"
 
 ---
 
-## Step G — Update per-video counts
+## Step G — Minimum keyframe/image captioning for scene construction
+
+Input:
+
+```text
+keyframes/*.jpg
+keyframes.parquet
+shots.parquet
+metadata_normalized.json
+```
+
+Output:
+
+```text
+image_captions.parquet
+```
+
+These are the minimum caption rows required by phase01 semantic scene
+construction. The caption provider/model is configuration-driven. Phase02 may
+add heavier or additional caption evidence later, but phase01 must not depend on
+Notebook 02 to construct scenes.
+
+Schema:
+
+```text
+caption_id
+keyframe_id
+video_id
+scene_id
+shot_id
+frame_id
+caption
+language
+provider
+model_name
+confidence
+status
+```
+
+---
+
+## Step H — Update per-video counts
 
 After keyframe selection, update per-video/per-scene/per-shot count fields inside structure artifact:
 
@@ -2181,7 +2304,7 @@ Final global count will be recomputed again during merge.
 
 ---
 
-## Step H — Structure manifest
+## Step I — Structure manifest
 
 Each structure artifact must include:
 
@@ -2195,10 +2318,13 @@ Example:
 {
   "video_id": "L21_V001",
   "fps_expected_default": 25,
-  "frame_id_policy": "decoded_frame_index_primary",
+  "frame_id_policy": "decoded_frame_timeline_primary",
   "fallback_frame_id_formula": "floor(timestamp_sec * fps_detected)",
   "frame_id_method_allowed": [
-    "decoded_frame_index",
+    "decoded_frame_timeline",
+    "ffprobe_nb_read_packets",
+    "ffprobe_nb_frames",
+    "first_frame_extraction_assumed_frame_0",
     "timestamp_fps_fallback"
   ],
   "duration_sec": 1262,
@@ -2249,7 +2375,7 @@ Input:
 keyframes/*.jpg
 ```
 
-Models:
+Provider examples, not fixed by this spec:
 
 ```text
 CLIP
@@ -2296,12 +2422,10 @@ Input:
 keyframes/*.jpg
 ```
 
-Models:
+Provider contract, not fixed by this spec:
 
 ```text
-PaddleOCR
-VietOCR
-EasyOCR
+OCRProvider
 ```
 
 Output:
@@ -2336,12 +2460,10 @@ Input:
 keyframes/*.jpg
 ```
 
-Models:
+Provider contract, not fixed by this spec:
 
 ```text
-YOLO
-GroundingDINO
-Detectron
+ObjectDetectionProvider
 ```
 
 Output:
@@ -2368,6 +2490,11 @@ model_name
 ---
 
 ## Step D — Image captioning
+
+This feature-phase step is for additional or heavier caption evidence. Minimum
+keyframe/image captions required for phase01 scene construction belong in the
+structure artifact and must be available before semantic-light scene
+construction.
 
 Input:
 
@@ -2561,12 +2688,15 @@ L21_V001/
 ├── shots.parquet
 ├── scenes.parquet
 ├── keyframes.parquet
+├── image_captions.parquet
 ├── shot_transcript_links.parquet
 ├── scene_transcript_links.parquet
-├── scene_summaries_initial.parquet
+├── scene_summaries.parquet
 ├── keyframes/
 ├── thumbnails/
 ├── manifest.json
+├── artifact_manifest.json
+├── checksums.json
 └── errors.jsonl
 ```
 
@@ -2584,11 +2714,13 @@ L21_V001/
 ├── embeddings_meta.parquet
 ├── ocr.parquet
 ├── objects.parquet
-├── image_captions.parquet
+├── image_captions.parquet                 # optional/additive phase02 rows
 ├── shot_captions.parquet
 ├── scene_summaries_enriched.parquet
 ├── text_sources.parquet
 ├── feature_manifest.json
+├── artifact_manifest.json
+├── checksums.json
 └── errors.jsonl
 ```
 
@@ -2605,9 +2737,25 @@ L21_V001/
 ## Input
 
 ```text
-02_structure_artifacts/
-03_feature_artifacts/
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/**/*.zip
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/**/*.zip
 ```
+
+Current local package commands read the equivalent local layout first:
+
+```text
+artifacts/structure/{video_id}_structure.zip
+artifacts/features/{video_id}_features.zip
+manifests/worker_reports/
+```
+
+The Hugging Face paths above are the shared target layout for a separate
+phase01/phase02 sync/restore workflow. Do not read them as implying that the
+local package CLI directly uploads phase01/phase02 artifacts to Hugging Face.
+
+`artifact_manifest.json` inside each ZIP is the per-artifact package manifest.
+`manifests/artifact_manifest.parquet` produced after merge is the global
+release/staging manifest.
 
 ## Steps
 
@@ -2740,9 +2888,11 @@ videos.keyframe_count == count(keyframes where video_id)
 scenes.shot_count == count(shots where scene_id)
 scenes.keyframe_count == count(keyframes where scene_id)
 shots.keyframe_count == count(keyframes where shot_id)
-videos.frame_count == decoded_frame_count when frame_count_method = decoded.
-videos.frame_count_estimated ~= floor(duration_sec * fps_detected).
-If only estimated count exists, validation marks frame_count confidence as estimated/degraded.
+videos.frame_count == row count(frame_timeline/{video_id}.parquet) when frame_count_method = decoded_frame_timeline.
+videos.frame_count == ffprobe nb_read_packets only when decoded timeline is unavailable.
+videos.frame_count == ffprobe nb_frames only when decoded timeline and packet counting are unavailable.
+videos.frame_count_estimated == true only for duration/fps math fallback or unavailable counts.
+If only estimated count exists, validation marks frame_count confidence as estimated/degraded because frame IDs may drift.
 If scenes exist, scenes.frame_count == end_frame - start_frame.
 If shots exist, shots.frame_count == end_frame - start_frame.
 ```
@@ -2778,7 +2928,7 @@ videos.parquet
 asr_segments.parquet
 scenes.parquet
 shots.parquet
-scene_summaries_initial.parquet
+scene_summaries.parquet
 scene_summaries_enriched.parquet
 shot_captions.parquet
 image_captions.parquet
@@ -2908,7 +3058,7 @@ ocr
 objects
 image_captions
 shot_captions
-scene_summaries_initial
+scene_summaries
 scene_summaries_enriched
 embeddings_meta
 text_documents
@@ -3082,7 +3232,6 @@ competition_dataset_v001/
 │   ├── asr_segments.parquet
 │   ├── scenes.parquet
 │   ├── shots.parquet
-│   ├── frame_timeline.parquet
 │   ├── keyframes.parquet
 │   ├── shot_transcript_links.parquet
 │   ├── scene_transcript_links.parquet
@@ -3091,7 +3240,7 @@ competition_dataset_v001/
 │   ├── objects.parquet
 │   ├── image_captions.parquet
 │   ├── shot_captions.parquet
-│   ├── scene_summaries_initial.parquet
+│   ├── scene_summaries.parquet
 │   ├── scene_summaries_enriched.parquet
 │   ├── text_sources.parquet
 │   ├── feature_availability.parquet
@@ -3116,10 +3265,13 @@ competition_dataset_v001/
   "dataset_id": "aic2026_v001",
   "pipeline_run_id": "run_2026_07_01_001",
   "fps_expected_default": 25,
-  "frame_id_policy": "decoded_frame_index_primary",
+  "frame_id_policy": "decoded_frame_timeline_primary",
   "fallback_frame_id_formula": "floor(timestamp_sec * fps_detected)",
   "frame_id_method_allowed": [
-    "decoded_frame_index",
+    "decoded_frame_timeline",
+    "ffprobe_nb_read_packets",
+    "ffprobe_nb_frames",
+    "first_frame_extraction_assumed_frame_0",
     "timestamp_fps_fallback"
   ],
   "schema_version": "1.0.0",
@@ -3199,43 +3351,277 @@ Nguyên tắc:
 
 ---
 
-# 34. Team Drive structure
+# 34. Hugging Face storage contract
+
+System 1 uses two Hugging Face Dataset repos for shared storage:
 
 ```text
-aic2026_team_drive/
-├── 00_raw/
-│   ├── raw_videos/
-│   └── metadata/
-│
-├── 01_manifests/
-│   ├── videos.parquet
-│   ├── media_store_manifest.parquet
-│   ├── master_manifest.parquet
-│   ├── batch_manifest.csv
-│   ├── batch_000.txt
-│   └── ...
-│
-├── 02_structure_artifacts/
-│   ├── batch_000/
-│   │   ├── L21_V001_structure.zip
-│   │   └── ...
-│   └── batch_001/
-│
-├── 03_feature_artifacts/
-│   ├── L21_V001_features.zip
-│   └── ...
-│
-├── 04_merged_staging/
-│   ├── staging.duckdb
-│   └── merged_tables/
-│
-├── 05_release/
-│   ├── competition_dataset_v001.zip
-│   └── release_notes.md
-│
-└── 06_logs/
-    ├── validation_errors.jsonl
-    └── worker_errors/
+AIC26_raw
+AIC26_release
+```
+
+No Team Drive tree is part of the primary shared storage contract. Google
+Drive may still be used as an organizer handoff source or operator scratch
+area, but durable shared state belongs in Hugging Face.
+
+## `AIC26_raw`
+
+`AIC26_raw` is the canonical raw dataset repo:
+
+```text
+AIC26_raw/
+└── canonical_raw_v003/
+    ├── raw_videos/
+    │   ├── L21_V001.mp4
+    │   ├── L21_V002.mp4
+    │   └── ...
+    │
+    ├── metadata/
+    │   ├── L21_V001.json
+    │   ├── L21_V002.json
+    │   └── ...
+    │
+    └── manifests/
+        ├── canonical_file_manifest.jsonl
+        ├── canonical_import_report.json
+        ├── canonical_video_inventory.parquet
+        ├── missing_metadata.json
+        └── unmatched_metadata.json
+```
+
+`AIC26_raw` must not contain structure artifacts, feature artifacts, merged
+tables, `app.sqlite`, FAISS indexes, or final release packages.
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may carry snapshots of them under
+phase00 ingestion reports for a particular release run.
+
+```text
+AIC26_raw/canonical_raw_vXXX/manifests/
+```
+
+## `AIC26_release`
+
+`AIC26_release` is the processed workspace plus final release repo:
+
+```text
+AIC26_release/
+└── canonical_release_v003/
+    ├── phase00_ingestion/
+    │   ├── tables/
+    │   │   └── videos.parquet
+    │   ├── raw_mapping/
+    │   │   └── media_store_manifest.parquet
+    │   ├── manifests/
+    │   │   ├── batch_manifest.csv
+    │   │   ├── batch_000.txt
+    │   │   ├── batch_001.txt
+    │   │   └── ...
+    │   └── reports/
+    │       ├── dataset_report.json
+    │       ├── ingestion_errors.jsonl
+    │       ├── missing_metadata.json
+    │       ├── unmatched_metadata.json
+    │       ├── drive_shadow_report.json
+    │       ├── standardize_archives_report.json
+    │       └── standardize_progress.jsonl
+    │
+    ├── phase01_structure/
+    │   ├── artifacts/
+    │   │   ├── batch_000/
+    │   │   │   ├── L21_V001_structure.zip
+    │   │   │   ├── L21_V002_structure.zip
+    │   │   │   └── ...
+    │   │   └── batch_001/
+    │   │       └── ...
+    │   └── worker_reports/
+    │       ├── structure_batch_000_worker_kaggle_A_01.json
+    │       └── ...
+    │
+    ├── phase02_features/
+    │   ├── artifacts/
+    │   │   ├── batch_000/
+    │   │   │   ├── L21_V001_features.zip
+    │   │   │   ├── L21_V002_features.zip
+    │   │   │   └── ...
+    │   │   └── batch_001/
+    │   │       └── ...
+    │   └── worker_reports/
+    │       ├── features_batch_000_worker_kaggle_A_01.json
+    │       └── ...
+    │
+    ├── phase03_merged/
+    │   ├── tables/
+    │   │   ├── videos.parquet
+    │   │   ├── keyframes.parquet
+    │   │   ├── shots.parquet
+    │   │   ├── scenes.parquet
+    │   │   ├── text_sources.parquet
+    │   │   ├── text_documents.parquet
+    │   │   ├── feature_availability.parquet
+    │   │   └── ...
+    │   ├── raw_mapping/
+    │   │   └── media_store_manifest.parquet
+    │   ├── manifests/
+    │   │   ├── artifact_manifest.parquet
+    │   │   ├── video_processing_status.parquet
+    │   │   └── merge_report.json
+    │   └── db/
+    │       └── staging.duckdb
+    │
+    ├── releases/
+    │   ├── competition_dataset_v001/
+    │   │   ├── db/
+    │   │   │   ├── app.sqlite
+    │   │   │   └── staging.duckdb
+    │   │   ├── indexes/
+    │   │   │   ├── visual.faiss
+    │   │   │   ├── vector_map.parquet
+    │   │   │   └── index_version.json
+    │   │   ├── media/
+    │   │   │   ├── keyframes/
+    │   │   │   ├── thumbnails/
+    │   │   │   └── dense_frame_cache/
+    │   │   ├── tables/
+    │   │   ├── manifests/
+    │   │   └── raw_mapping/
+    │   │
+    │   └── competition_dataset_v001.zip
+    │
+    ├── checkpoints/
+    │   ├── phase00_ingestion/
+    │   ├── phase01_structure/
+    │   ├── phase02_features/
+    │   └── phase03_release/
+    │
+    └── logs/
+        ├── validation_errors.jsonl
+        ├── artifact_validation_errors.jsonl
+        └── worker_errors/
+```
+
+`phase00_ingestion` is Notebook 00 output and is not the final runtime release.
+Only `releases/competition_dataset_vXXX/` is the final app-ready release for
+System 2.
+
+Legacy flat layout under:
+
+```text
+canonical_release_vXXX/manifests
+canonical_release_vXXX/tables
+canonical_release_vXXX/raw_mapping
+```
+
+is deprecated. A future implementation may read it temporarily for migration,
+but all new outputs must use:
+
+```text
+canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}
+```
+
+## Notebook upload/download contract
+
+Notebook 00 uploads canonical raw output to:
+
+```text
+AIC26_raw/canonical_raw_vXXX/raw_videos/
+AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
+AIC26_raw/canonical_raw_vXXX/manifests/missing_metadata.json
+AIC26_raw/canonical_raw_vXXX/manifests/unmatched_metadata.json
+```
+
+Notebook 00 uploads phase00 ingestion and batch-planning outputs to:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/frame_timeline/{video_id}.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/frame_timeline_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_manifest.csv
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_*.txt
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/dataset_report.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/ingestion_errors.jsonl
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/missing_metadata.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/unmatched_metadata.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/drive_shadow_report.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/standardize_archives_report.json
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/standardize_progress.jsonl
+```
+
+`batch_manifest.csv` and `batch_*.txt` do not belong in `AIC26_raw` because
+they depend on a pipeline run: `num_batches`, worker strategy, execution
+profile, and release version.
+
+Notebook 01 reads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/frame_timeline/{video_id}.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/frame_timeline_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_XXX.txt
+```
+
+`restore-phase00-ingestion` keeps that `phase00_ingestion/` snapshot and also
+materializes `tables/`, `raw_mapping/`, `frame_timeline/`, and `manifests/` into
+the active local release root so `process-batch` can run without notebook-level
+copy logic.
+
+For each `video_id` in the batch file, `process-batch` resolves the raw video
+and metadata through `media_store_manifest.parquet`. With the canonical HF
+backend this points to:
+
+```text
+AIC26_raw/canonical_raw_vXXX/raw_videos/{video_file}
+AIC26_raw/canonical_raw_vXXX/metadata/{metadata_file}
+```
+
+Notebook 01 should stage only the current video/metadata pair into scratch when
+needed. It should reuse phase00 facts such as fps, duration, frame count,
+dimensions, logical refs, canonical HF paths, and decoded frame timeline rows
+when they are available. It should not copy the full raw dataset into local
+runtime storage and should not re-probe every video when phase00 facts are
+already present. If `frame_timeline/{video_id}.parquet` is unavailable,
+`process-batch` should emit degraded/warning metadata; Notebook 01 must not
+hide that by deriving exact frame ids with FPS math inside notebook cells.
+
+Notebook 01 uploads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/structure_{batch_id}_{worker_id}.json
+```
+
+Notebook 02 reads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/*_structure.zip
+```
+
+Notebook 02 uploads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/features_{batch_id}_{worker_id}.json
+```
+
+Notebook 03 reads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/**/*.zip
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/**/*.zip
+```
+
+Notebook 03 uploads:
+
+```text
+AIC26_release/canonical_release_vXXX/phase03_merged/
+AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/
+AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX.zip
+AIC26_release/canonical_release_vXXX/logs/
 ```
 
 ---

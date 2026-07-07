@@ -31,6 +31,26 @@ def _build_phase00_release(root: Path, release_id: str = DEFAULT_RELEASE_ID) -> 
     return release_dir
 
 
+def _write_checkpoint_artifact_inputs(release_dir: Path) -> None:
+    (release_dir / "manifests" / "batch_000.txt").write_text("L21_V001\n", encoding="utf-8")
+    (release_dir / "manifests" / "batch_001.txt").write_text("L21_V002\n", encoding="utf-8")
+    (release_dir / "artifacts" / "structure").mkdir(parents=True)
+    (release_dir / "artifacts" / "features").mkdir(parents=True)
+    (release_dir / "manifests" / "worker_reports").mkdir(parents=True)
+    for video_id in ("L21_V001", "L21_V002"):
+        (release_dir / "artifacts" / "structure" / f"{video_id}_structure.zip").write_bytes(f"{video_id} structure".encode())
+        (release_dir / "artifacts" / "features" / f"{video_id}_features.zip").write_bytes(f"{video_id} features".encode())
+    (release_dir / "manifests" / "worker_reports" / "structure_batch_000_worker_a.json").write_text('{"ok": true}\n', encoding="utf-8")
+    (release_dir / "manifests" / "worker_reports" / "structure_batch_001_worker_b.json").write_text('{"ok": true}\n', encoding="utf-8")
+    (release_dir / "manifests" / "worker_reports" / "features_batch_000_worker_a.json").write_text('{"ok": true}\n', encoding="utf-8")
+    (release_dir / "manifests" / "worker_reports" / "features_batch_001_worker_b.json").write_text('{"ok": true}\n', encoding="utf-8")
+
+
+def _zip_names(path: Path) -> set[str]:
+    with zipfile.ZipFile(path) as archive:
+        return set(archive.namelist())
+
+
 def test_checkpoint_name_rules() -> None:
     assert checkpoint_name("phase00_ingest_assignment") == "phase00_ingest_assignment"
     assert checkpoint_name("phase01_structure", "batch_000") == "phase01_structure_batch_000"
@@ -166,6 +186,36 @@ def test_save_checkpoint_phase00_missing_required_file_raises(tmp_path: Path) ->
 
     with pytest.raises(FileNotFoundError):
         save_checkpoint(release_dir, artifact_root, "phase00_ingest_assignment")
+
+
+def test_save_checkpoint_phase01_scopes_to_current_batch_artifacts_and_report(tmp_path: Path) -> None:
+    release_dir = _build_phase00_release(tmp_path / "output")
+    _write_checkpoint_artifact_inputs(release_dir)
+    artifact_root = tmp_path / "artifact-store"
+
+    checkpoint_path = save_checkpoint(release_dir, artifact_root, "phase01_structure", batch_id="batch_000", worker_id="worker_a")
+
+    names = _zip_names(Path(checkpoint_path))
+    assert "artifacts/structure/L21_V001_structure.zip" in names
+    assert "manifests/worker_reports/structure_batch_000_worker_a.json" in names
+    assert "artifacts/structure/L21_V002_structure.zip" not in names
+    assert "manifests/worker_reports/structure_batch_001_worker_b.json" not in names
+    assert not any(name.startswith("artifacts/features/") for name in names)
+
+
+def test_save_checkpoint_phase02_scopes_to_current_batch_artifacts_and_report(tmp_path: Path) -> None:
+    release_dir = _build_phase00_release(tmp_path / "output")
+    _write_checkpoint_artifact_inputs(release_dir)
+    artifact_root = tmp_path / "artifact-store"
+
+    checkpoint_path = save_checkpoint(release_dir, artifact_root, "phase02_features", batch_id="batch_000", worker_id="worker_a")
+
+    names = _zip_names(Path(checkpoint_path))
+    assert "artifacts/features/L21_V001_features.zip" in names
+    assert "manifests/worker_reports/features_batch_000_worker_a.json" in names
+    assert "artifacts/features/L21_V002_features.zip" not in names
+    assert "manifests/worker_reports/features_batch_001_worker_b.json" not in names
+    assert not any(name.startswith("artifacts/structure/") for name in names)
 
 
 def test_restore_checkpoint_rejects_zip_slip(tmp_path: Path) -> None:

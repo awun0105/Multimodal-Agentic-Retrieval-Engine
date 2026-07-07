@@ -27,6 +27,8 @@ Do not require live Google Drive or Hugging Face credentials for CI-grade proof.
 ```text
 uv run pytest
 jq empty system1/notebooks/00_master_ingestion_and_assignment.ipynb
+jq empty system1/notebooks/00A_master_ingestion_and_assignment.ipynb
+jq empty system1/notebooks/00B_master_ingestion_and_assignment.ipynb
 git diff --check
 system1/.venv/bin/system1 --help
 ```
@@ -42,7 +44,7 @@ system1/.venv/bin/system1 --help
   `--allow-partial` and keeps `--overwrite/--no-overwrite`.
 - `scripts/bin/harness-cli story verify SYS1-HR-001`: pass.
 - Notebook 00 now presents Drive shadow -> standardize archives -> input
-  readiness -> ingest -> assign batches -> sync-release to HF Dataset as the
+  readiness -> ingest -> assign batches -> phase00 sync to HF Dataset as the
   primary operator workflow, requires `AIC_HF_REPO_ID`, and requires an archive
   source path when Drive shadow is enabled.
 - `uv run pytest tests/test_smoke.py -q`: 37 passed after simplifying the
@@ -55,7 +57,7 @@ system1/.venv/bin/system1 --help
   presentation.
 - Notebook 00 now uses the exact primary workflow Drive shadow -> standardize
   archives -> input readiness -> local ingest -> assign batches -> required
-  `sync-release` to `AIC_HF_REPO_ID`. The notebook no longer runs
+  `sync-phase00-ingestion` to `AIC_HF_REPO_ID`. The notebook no longer runs
   `import-canonical` or `ingest --canonical-hf-repo-id`.
 - `python -m pytest tests/test_smoke.py -k "standardize_archive_source or
   local_ingest_video_primary_tolerates_missing_and_unmatched_metadata or
@@ -72,6 +74,13 @@ system1/.venv/bin/system1 --help
   probe/upload staging and zip `member_stage_*` cleanup were verified.
 - `python -m pytest tests/test_hf_artifact_store.py`: 11 passed after
   confirming HF artifact-store behavior stayed intact.
+- `python -m pytest tests/test_smoke.py -k "stream_standardize_upload_raw or notebooks_are_operator_ready" -q`:
+  validates the 00B/00C streaming command references, split video/metadata zip
+  pairing, batched HF upload, disk-safe stream options, scratch cleanup, and
+  canonical raw manifests.
+- Current 00B/00C notebook contract checks also require
+  `manifests/frame_timeline_manifest.parquet` in phase00 output and preview
+  decoded `frame_timeline/{video_id}.parquet` availability when present.
 - `uv run pytest tests/test_smoke.py -q`: 37 passed after making HF Dataset
   release sync required.
 - `uv run pytest`: 103 passed after making HF Dataset release sync required.

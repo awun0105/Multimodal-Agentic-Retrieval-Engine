@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -26,10 +26,12 @@ VIDEO_DIR_NAMES = {"raw_videos", "videos", "video", "raw", "clips"}
 METADATA_DIR_NAMES = {"metadata", "metadatas", "json", "annotations"}
 GENERIC_CONTEXT_NAMES = VIDEO_DIR_NAMES | METADATA_DIR_NAMES | {"dataset", "train", "val", "test", "data"}
 STANDARDIZE_TEMP_PREFIXES = ("member_stage_", "member_extract_", "archive_stage_", "source_stage_")
+STREAM_TEMP_PREFIXES = ("stream_pair_",)
 BYTES_PER_GB = 1024 ** 3
-RAW_UPLOAD_BATCH_SIZE = 50
+RAW_UPLOAD_BATCH_SIZE = 100
 RAW_UPLOAD_MAX_RETRIES = 5
 RAW_UPLOAD_RATE_LIMIT_DEFAULT_SLEEP_SECONDS = 120
+STREAM_UPLOAD_BATCH_MAX_GB = 50.0
 DRIVEFS_ROOT = Path("/content/drive")
 
 
@@ -55,6 +57,15 @@ class CanonicalRawUploadResult:
     error_count: int
     manifest_path: str
     report_path: str
+
+
+@dataclass(frozen=True)
+class CanonicalRawImportResult:
+    standardize_result: ArchiveStandardizeResult
+    upload_result: CanonicalRawUploadResult
+    stage_root: Path
+    standardized_dir: Path
+    cleaned_stage: bool
 
 
 @dataclass(frozen=True)
@@ -116,6 +127,30 @@ class _RawUploadItem:
     size_bytes: int
     status: str = "pending"
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class _StreamZipMember:
+    zip_path: Path
+    member_name: str
+    filename: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class _StreamPairPlan:
+    video_id: str
+    video: _StreamZipMember
+    metadata: _StreamZipMember | None
+
+
+@dataclass(frozen=True)
+class _StreamPairingPlan:
+    source_root: Path
+    zip_count: int
+    pairs: list[_StreamPairPlan]
+    missing_metadata: list[str]
+    unmatched_metadata: list[str]
 
 
 def import_organizer_source(source_uri: str, data_root: Path | str) -> SourceImportResult:
@@ -397,12 +432,14 @@ def standardize_archive_source(
     metadata_root.mkdir(parents=True, exist_ok=True)
     temp_root.mkdir(parents=True, exist_ok=True)
     resolved_progress_path.parent.mkdir(parents=True, exist_ok=True)
-    disk_manager = _StandardizeDiskManager(
+    disk_manager = _ScratchDiskManager(
         temp_root=temp_root,
         min_free_gb=min_free_gb,
         sleep_seconds=drive_sync_sleep_seconds,
         cleanup_every_files=cleanup_every_files,
         cleanup_every_gb=cleanup_every_gb,
+        cleanup_callback=_cleanup_standardize_temp,
+        log_prefix="standardize",
     )
 
     accepted_media_extensions = {ext.lower() for ext in (media_extensions or VIDEO_EXTENSIONS)}
@@ -632,13 +669,103 @@ def wait_for_drive_sync(
         time.sleep(sleep_seconds)
 
 
+def import_canonical_raw_to_hf(
+    source_dir: Path | str,
+    *,
+    repo_id: str,
+    raw_import_id: str,
+    local_stage_root: Path | str,
+    repo_type: str = "dataset",
+    revision: str = "main",
+    token: str | None = None,
+    media_extensions: set[str] | None = None,
+    overwrite: bool = False,
+    resume: bool = True,
+    min_free_gb: float = 15.0,
+    drive_sync_sleep_seconds: int = 30,
+    cleanup_every_files: int = 1,
+    cleanup_every_gb: float = 50.0,
+    keep_stage: bool = False,
+    progress_path: Path | str | None = None,
+) -> CanonicalRawImportResult:
+    """Standardize a raw source in local temp, upload canonical raw to HF, and cleanup.
+
+    This is a package-level orchestrator for notebook-friendly environments such as
+    Colab/Kaggle: source files can live on Drive/local/zip folders, but the heavy
+    standardize/probe/upload path happens inside a local stage folder first.
+    """
+    source_root = Path(source_dir).expanduser().resolve()
+    stage_base = Path(local_stage_root).expanduser().resolve()
+    if not source_root.exists() or not source_root.is_dir():
+        raise FileNotFoundError(f"source_dir does not exist: {source_root}")
+    if not repo_id:
+        raise ValueError("repo_id is required")
+    normalized_import_id = _normalize_raw_import_id(raw_import_id)
+
+    stage_root = stage_base / f"import_canonical_raw_{_sanitize_stem(normalized_import_id)}"
+    standardized_dir = stage_root / "standardized"
+    temp_extract_dir = stage_root / "temp_extract"
+    progress_root = stage_root / "progress"
+    standardize_progress_path = progress_root / "standardize_progress.jsonl"
+    raw_upload_progress_path = progress_root / "raw_upload_progress.jsonl"
+    if progress_path is not None:
+        raw_upload_progress_path = Path(progress_path).expanduser().resolve()
+
+    if not resume and stage_root.exists():
+        shutil.rmtree(stage_root, ignore_errors=True)
+    stage_root.mkdir(parents=True, exist_ok=True)
+    progress_root.mkdir(parents=True, exist_ok=True)
+
+    cleaned_stage = False
+    try:
+        standardize_result = standardize_archive_source(
+            source_root,
+            standardized_dir,
+            temp_dir=temp_extract_dir,
+            media_extensions=media_extensions,
+            overwrite=overwrite,
+            resume=resume,
+            progress_path=standardize_progress_path,
+            min_free_gb=min_free_gb,
+            drive_sync_sleep_seconds=drive_sync_sleep_seconds,
+            cleanup_every_files=cleanup_every_files,
+            cleanup_every_gb=cleanup_every_gb,
+        )
+        upload_result = upload_standardized_raw_to_hf(
+            standardized_dir,
+            repo_id=repo_id,
+            raw_import_id=normalized_import_id,
+            repo_type=repo_type,
+            revision=revision,
+            token=token,
+            progress_path=raw_upload_progress_path,
+        )
+        if not keep_stage:
+            shutil.rmtree(stage_root, ignore_errors=True)
+            cleaned_stage = True
+        return CanonicalRawImportResult(
+            standardize_result=standardize_result,
+            upload_result=upload_result,
+            stage_root=stage_root,
+            standardized_dir=standardized_dir,
+            cleaned_stage=cleaned_stage,
+        )
+    except Exception:
+        if not keep_stage:
+            # Keep failed stages for debugging by default; callers can delete stage_root after inspecting.
+            pass
+        raise
+
+
 @dataclass
-class _StandardizeDiskManager:
+class _ScratchDiskManager:
     temp_root: Path
     min_free_gb: float = 15.0
     sleep_seconds: int = 30
     cleanup_every_files: int = 1
     cleanup_every_gb: float = 50.0
+    cleanup_callback: Callable[[Path], int] | None = None
+    log_prefix: str = "scratch"
     processed_files: int = 0
     processed_bytes: int = 0
     _since_cleanup_files: int = 0
@@ -649,29 +776,37 @@ class _StandardizeDiskManager:
         _ensure_temp_disk_available(self.temp_root, size_bytes, self.min_free_gb, label)
 
     def after_file(self, size_bytes: int, *, reason: str) -> None:
+        cleanup_due = self.record_file(size_bytes)
+        if cleanup_due:
+            self.cleanup(reason=reason)
+        wait_for_drive_sync(min_free_gb=self.min_free_gb, sleep_seconds=self.sleep_seconds, path="/")
+
+    def record_file(self, size_bytes: int) -> bool:
         self.processed_files += 1
         self.processed_bytes += max(size_bytes, 0)
         self._since_cleanup_files += 1
         self._since_cleanup_bytes += max(size_bytes, 0)
-        if self._cleanup_due():
-            self.cleanup(reason=reason)
-        wait_for_drive_sync(min_free_gb=self.min_free_gb, sleep_seconds=self.sleep_seconds, path="/")
+        return self._cleanup_due()
 
     def cleanup(self, *, reason: str) -> None:
-        removed = _cleanup_standardize_temp(self.temp_root)
-        self._since_cleanup_files = 0
-        self._since_cleanup_bytes = 0
+        callback = self.cleanup_callback or _cleanup_standardize_temp
+        removed = callback(self.temp_root)
+        self.reset_cleanup_counters()
         if _aic_verbose():
             free_gb = shutil.disk_usage("/").free / BYTES_PER_GB
             temp_size_gb = _path_size_bytes(self.temp_root) / BYTES_PER_GB
             print(
-                "[standardize] cleanup done "
+                f"[{self.log_prefix}] cleanup done "
                 f"reason={reason} removed={removed} "
                 f"processed_files={self.processed_files} "
                 f"processed_gb={self.processed_bytes / BYTES_PER_GB:.3f} "
                 f"free_disk_gb={free_gb:.2f} temp_dir_size_gb={temp_size_gb:.3f}",
                 flush=True,
             )
+
+    def reset_cleanup_counters(self) -> None:
+        self._since_cleanup_files = 0
+        self._since_cleanup_bytes = 0
 
     def _cleanup_due(self) -> bool:
         files_due = self.cleanup_every_files > 0 and self._since_cleanup_files >= self.cleanup_every_files
@@ -694,11 +829,19 @@ def _ensure_temp_disk_available(temp_root: Path, size_bytes: int, min_free_gb: f
 
 
 def _cleanup_standardize_temp(temp_root: Path) -> int:
-    if not temp_root.exists() or not temp_root.is_dir():
+    return _cleanup_prefixed_children(temp_root, STANDARDIZE_TEMP_PREFIXES)
+
+
+def _cleanup_stream_temp(scratch_root: Path) -> int:
+    return _cleanup_prefixed_children(scratch_root, STREAM_TEMP_PREFIXES)
+
+
+def _cleanup_prefixed_children(root: Path, prefixes: tuple[str, ...]) -> int:
+    if not root.exists() or not root.is_dir():
         return 0
     removed = 0
-    for child in temp_root.iterdir():
-        if not child.name.startswith(STANDARDIZE_TEMP_PREFIXES):
+    for child in root.iterdir():
+        if not child.name.startswith(prefixes):
             continue
         if child.is_dir():
             shutil.rmtree(child, ignore_errors=True)
@@ -900,7 +1043,7 @@ def _process_standardize_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     progress_path: Path,
-    disk_manager: _StandardizeDiskManager,
+    disk_manager: _ScratchDiskManager,
 ) -> None:
     started_at = _utc_now_iso()
     before = dict(counters)
@@ -947,7 +1090,7 @@ def _process_non_zip_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     item_errors: list[str],
-    disk_manager: _StandardizeDiskManager,
+    disk_manager: _ScratchDiskManager,
 ) -> None:
     for candidate in item.candidates:
         if candidate.actual_path is None:
@@ -979,7 +1122,7 @@ def _process_zip_source_item(
     counters: dict[str, int],
     rows: list[dict[str, Any]],
     item_errors: list[str],
-    disk_manager: _StandardizeDiskManager,
+    disk_manager: _ScratchDiskManager,
 ) -> None:
     rows.extend(item.skipped_rows)
     counters["skipped_count"] += len(item.skipped_rows)
@@ -1762,9 +1905,18 @@ def upload_standardized_raw_to_hf(
             unmatched_path = tmp_path / "unmatched_metadata.json"
             manifest_path.write_text(manifest_text, encoding="utf-8")
             inventory_df = pd.DataFrame(
-                [_raw_upload_inventory_row(record) for record in pair_records],
+                [_raw_upload_inventory_row(record, repo_type=repo_type, revision=revision) for record in pair_records],
                 columns=[
                     "video_id",
+                    "video_filename",
+                    "metadata_filename",
+                    "video_size_bytes",
+                    "metadata_size_bytes",
+                    "canonical_backend",
+                    "canonical_repo_id",
+                    "canonical_repo_type",
+                    "canonical_revision",
+                    "canonical_prefix",
                     "canonical_video_path",
                     "canonical_metadata_path",
                     "duration_sec",
@@ -1875,16 +2027,638 @@ def upload_standardized_raw_to_hf(
     )
 
 
-def _raw_upload_inventory_row(record: dict[str, Any]) -> dict[str, Any]:
+def stream_standardize_upload_raw_to_hf(
+    source_dir: Path | str,
+    *,
+    repo_id: str,
+    raw_import_id: str,
+    scratch_dir: Path | str,
+    repo_type: str = "dataset",
+    revision: str = "main",
+    token: str | None = None,
+    media_extensions: set[str] | None = None,
+    progress_path: Path | str | None = None,
+    resume: bool = True,
+    overwrite: bool = False,
+    min_free_gb: float = 15.0,
+    drive_sync_sleep_seconds: int = 30,
+    cleanup_every_files: int = RAW_UPLOAD_BATCH_SIZE,
+    cleanup_every_gb: float = STREAM_UPLOAD_BATCH_MAX_GB,
+) -> CanonicalRawUploadResult:
+    """Stream zip-contained media/metadata pairs through local scratch into HF raw.
+
+    This Colab-oriented path avoids materializing a full standardized
+    raw_videos/metadata folder on DriveFS. It scans zip member names first to
+    build a global pairing plan, then extracts pair batches bounded by
+    RAW_UPLOAD_BATCH_SIZE files and scratch bytes, probes local videos, uploads
+    the batch with the existing HF batch helper, records per-pair progress, and
+    removes scratch pair directories.
+    """
+    source_root = Path(source_dir).expanduser().resolve()
+    scratch_root = Path(scratch_dir).expanduser().resolve()
+    if not source_root.exists() or not source_root.is_dir():
+        raise FileNotFoundError(f"stream source directory does not exist: {source_root}")
+    if _is_colab_drive_path(scratch_root):
+        raise ValueError(
+            "stream scratch_dir must be local runtime storage, not Google Drive mount: "
+            f"{scratch_root}. Use --scratch-dir /content/aic_scratch on Colab."
+        )
+    if not repo_id:
+        raise ValueError("repo_id is required")
+
+    accepted_media_extensions = {ext.lower() for ext in (media_extensions or VIDEO_EXTENSIONS)}
+    normalized_import_id = _normalize_raw_import_id(raw_import_id)
+    resolved_progress_path = Path(progress_path).expanduser().resolve() if progress_path else None
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    _cleanup_stream_temp(scratch_root)
+    stream_batch_file_limit = cleanup_every_files if cleanup_every_files > 0 else RAW_UPLOAD_BATCH_SIZE
+    stream_batch_max_bytes = int(cleanup_every_gb * BYTES_PER_GB) if cleanup_every_gb > 0 else 0
+    disk_manager = _ScratchDiskManager(
+        temp_root=scratch_root,
+        min_free_gb=min_free_gb,
+        sleep_seconds=drive_sync_sleep_seconds,
+        cleanup_every_files=cleanup_every_files,
+        cleanup_every_gb=cleanup_every_gb,
+        cleanup_callback=_cleanup_stream_temp,
+        log_prefix="stream-standardize-upload-raw",
+    )
+
+    plan = _build_stream_pairing_plan(source_root, accepted_media_extensions)
+    store = HuggingFaceDatasetArtifactStore(
+        repo_id=repo_id,
+        repo_type=repo_type,
+        revision=revision,
+        token=token or os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
+        prefix="",
+    )
+    existing_files = {path.as_posix() for path in store.list_files("")}
+    progress_records = _read_stream_upload_progress(resolved_progress_path) if resume else {}
+    errors: list[dict[str, Any]] = []
+    pair_records: list[dict[str, Any]] = []
+
+    print(
+        "[stream-standardize-upload-raw] "
+        f"phase=start repo_id={repo_id} raw_import_id={normalized_import_id} "
+        f"zip_count={plan.zip_count} pair_count={len(plan.pairs)} "
+        f"missing_metadata_count={len(plan.missing_metadata)} "
+        f"unmatched_metadata_count={len(plan.unmatched_metadata)} "
+        f"existing_remote_count={len(existing_files)} scratch_dir={scratch_root} "
+        f"min_free_gb={min_free_gb} drive_sync_sleep_seconds={drive_sync_sleep_seconds} "
+        f"cleanup_every_files={cleanup_every_files} cleanup_every_gb={cleanup_every_gb}",
+        flush=True,
+    )
+
+    uploaded_count = 0
+    skipped_count = 0
+    failed_count = 0
+    uploaded_bytes = 0
+    batch_records: list[dict[str, Any]] = []
+    batch_items: list[_RawUploadItem] = []
+    batch_bytes = 0
+    stream_batch_index = 0
+
+    def flush_batch() -> None:
+        nonlocal uploaded_count, skipped_count, failed_count, uploaded_bytes, batch_records, batch_items, batch_bytes, stream_batch_index
+        if not batch_records:
+            return
+        stream_batch_index += 1
+        batch_errors = _upload_raw_phase_batches(
+            store,
+            phase="stream_pairs",
+            items=batch_items,
+            skipped_count=0,
+            existing_files=existing_files,
+            progress_path=None,
+            repo_id=repo_id,
+            raw_import_id=normalized_import_id,
+        )
+        errors.extend(batch_errors)
+        for record in batch_records:
+            video_item = record["video_item"]
+            metadata_item = record["metadata_item"]
+            items = (video_item, metadata_item)
+            if any(item.status == "failed" for item in items):
+                failed_count += 1
+                _append_stream_pair_progress(resolved_progress_path, record, status="failed")
+            else:
+                pair_records.append(record)
+                uploaded_count += sum(1 for item in items if item.status == "uploaded")
+                skipped_count += sum(1 for item in items if item.status == "skipped_existing")
+                uploaded_bytes += sum(item.size_bytes for item in items if item.status == "uploaded")
+                _append_stream_pair_progress(resolved_progress_path, record, status="pass")
+            _cleanup_stream_record(record)
+        disk_manager.reset_cleanup_counters()
+        print(
+            "[stream-standardize-upload-raw] "
+            f"batch={stream_batch_index} pairs={len(batch_records)} "
+            f"pending_files={len(batch_items)} errors={len(batch_errors)}",
+            flush=True,
+        )
+        batch_records = []
+        batch_items = []
+        batch_bytes = 0
+
+    for index, pair in enumerate(plan.pairs, start=1):
+        try:
+            record = _prepare_stream_pair(
+                pair,
+                index=index,
+                total=len(plan.pairs),
+                scratch_root=scratch_root,
+                disk_manager=disk_manager,
+                existing_files=existing_files,
+                progress_records=progress_records,
+                repo_id=repo_id,
+                repo_type=repo_type,
+                revision=revision,
+                raw_import_id=normalized_import_id,
+                resume=resume,
+                overwrite=overwrite,
+            )
+            disk_cleanup_due = _record_stream_scratch_usage(disk_manager, record)
+            pending_items = _stream_pending_items(record)
+            pending_bytes = sum(item.size_bytes for item in pending_items)
+            if batch_records and (
+                len(batch_items) + len(pending_items) > stream_batch_file_limit
+                or (pending_items and stream_batch_max_bytes > 0 and batch_bytes + pending_bytes > stream_batch_max_bytes)
+            ):
+                flush_batch()
+            if pending_items:
+                batch_records.append(record)
+                batch_items.extend(pending_items)
+                batch_bytes += pending_bytes
+            else:
+                pair_records.append(record)
+                skipped_count += sum(
+                    1
+                    for item in (record["video_item"], record["metadata_item"])
+                    if item.status == "skipped_existing"
+                )
+                _append_stream_pair_progress(resolved_progress_path, record, status="pass")
+                _cleanup_stream_record(record)
+                if disk_cleanup_due:
+                    if batch_records:
+                        flush_batch()
+                    disk_manager.cleanup(reason=f"stream_pair_complete video_id={record['video_id']}")
+            if batch_records and (
+                len(batch_items) >= stream_batch_file_limit
+                or (stream_batch_max_bytes > 0 and batch_bytes >= stream_batch_max_bytes)
+                or disk_cleanup_due
+            ):
+                flush_batch()
+        except Exception as exc:
+            failed_count += 1
+            message = f"{type(exc).__name__}: {exc}"
+            errors.append({"video_id": pair.video_id, "kind": "stream_pair", "message": message})
+            _append_jsonl_record(
+                resolved_progress_path,
+                {
+                    "video_id": pair.video_id,
+                    "status": "failed",
+                    "error": message,
+                    "finished_at": _utc_now_iso(),
+                },
+            )
+            print(
+                "[stream-standardize-upload-raw] "
+                f"pair={index}/{len(plan.pairs)} video_id={pair.video_id} status=failed error={message}",
+                flush=True,
+            )
+
+    flush_batch()
+
+    manifest_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_file_manifest.jsonl")
+    report_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_import_report.json")
+    inventory_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "canonical_video_inventory.parquet")
+    missing_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "missing_metadata.json")
+    unmatched_remote_path = _raw_upload_remote_path(normalized_import_id, "manifests", "unmatched_metadata.json")
+
+    manifest_rows = [_stream_manifest_row(record) for record in pair_records]
+    report = {
+        "status": "pass" if not errors else "partial",
+        "raw_repo_id": repo_id,
+        "raw_import_id": normalized_import_id,
+        "source_dir": str(source_root),
+        "repo_type": repo_type,
+        "revision": revision,
+        "zip_count": plan.zip_count,
+        "video_count": len(pair_records),
+        "metadata_count": len(pair_records),
+        "uploaded_pair_count": len([row for row in manifest_rows if row["status"] == "pass"]),
+        "error_count": len(errors),
+        "errors": errors,
+        "upload_method": "stream_zip_batch",
+        "stream_batch_file_limit": stream_batch_file_limit,
+        "stream_batch_max_bytes": stream_batch_max_bytes,
+        "scratch_dir": str(scratch_root),
+        "resume": resume,
+        "overwrite": overwrite,
+        "min_free_gb": min_free_gb,
+        "drive_sync_sleep_seconds": drive_sync_sleep_seconds,
+        "cleanup_every_files": cleanup_every_files,
+        "cleanup_every_gb": cleanup_every_gb,
+        "progress_path": str(resolved_progress_path) if resolved_progress_path else None,
+        "inventory_path": inventory_remote_path,
+        "missing_metadata_path": missing_remote_path,
+        "unmatched_metadata_path": unmatched_remote_path,
+    }
+
+    with tempfile.TemporaryDirectory(prefix="system1_stream_raw_manifest_") as manifest_tmp:
+        tmp_path = Path(manifest_tmp)
+        manifest_path = tmp_path / "canonical_file_manifest.jsonl"
+        report_path = tmp_path / "canonical_import_report.json"
+        inventory_path = tmp_path / "canonical_video_inventory.parquet"
+        missing_path = tmp_path / "missing_metadata.json"
+        unmatched_path = tmp_path / "unmatched_metadata.json"
+        manifest_path.write_text(
+            "".join(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n" for row in manifest_rows),
+            encoding="utf-8",
+        )
+        pd.DataFrame(
+            [_stream_inventory_row(record) for record in pair_records],
+            columns=[
+                "video_id",
+                "video_filename",
+                "metadata_filename",
+                "video_size_bytes",
+                "metadata_size_bytes",
+                "canonical_backend",
+                "canonical_repo_id",
+                "canonical_repo_type",
+                "canonical_revision",
+                "canonical_prefix",
+                "canonical_video_path",
+                "canonical_metadata_path",
+                "duration_sec",
+                "fps",
+                "frame_count",
+                "file_size_bytes",
+            ],
+        ).to_parquet(inventory_path, index=False)
+        _write_stream_pairing_audit(
+            missing_path,
+            kind="missing_metadata",
+            key="missing_metadata",
+            ids=plan.missing_metadata,
+            source_root=source_root,
+        )
+        _write_stream_pairing_audit(
+            unmatched_path,
+            kind="unmatched_metadata",
+            key="unmatched_metadata",
+            ids=plan.unmatched_metadata,
+            source_root=source_root,
+        )
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+        manifest_items = [
+            _RawUploadItem("manifest", "", manifest_path, manifest_remote_path, 1, 5, manifest_path.stat().st_size),
+            _RawUploadItem("manifest", "", report_path, report_remote_path, 2, 5, report_path.stat().st_size),
+            _RawUploadItem("manifest", "", inventory_path, inventory_remote_path, 3, 5, inventory_path.stat().st_size),
+            _RawUploadItem("manifest", "", missing_path, missing_remote_path, 4, 5, missing_path.stat().st_size),
+            _RawUploadItem("manifest", "", unmatched_path, unmatched_remote_path, 5, 5, unmatched_path.stat().st_size),
+        ]
+        errors.extend(
+            _upload_raw_phase_batches(
+                store,
+                phase="manifests",
+                items=manifest_items,
+                skipped_count=0,
+                existing_files=existing_files,
+                progress_path=None,
+                repo_id=repo_id,
+                raw_import_id=normalized_import_id,
+            )
+        )
+
+    print(
+        "[stream-standardize-upload-raw] "
+        f"phase=done repo_id={repo_id} raw_import_id={normalized_import_id} "
+        f"videos={len(pair_records)} metadata={len(pair_records)} "
+        f"uploaded_files={uploaded_count} skipped_files={skipped_count} failed_pairs={failed_count} "
+        f"uploaded_mb={uploaded_bytes / (1024 ** 2):.2f} errors={len(errors)} "
+        f"manifest_path={manifest_remote_path} report_path={report_remote_path}",
+        flush=True,
+    )
+    return CanonicalRawUploadResult(
+        video_count=len(pair_records),
+        metadata_count=len(pair_records),
+        error_count=len(errors),
+        manifest_path=manifest_remote_path,
+        report_path=report_remote_path,
+    )
+
+
+def _build_stream_pairing_plan(
+    source_root: Path,
+    accepted_media_extensions: set[str],
+) -> _StreamPairingPlan:
+    zip_paths = sorted(path.resolve() for path in source_root.rglob("*.zip") if path.is_file())
+    if not zip_paths:
+        raise FileNotFoundError(f"no zip files found under stream source directory: {source_root}")
+
+    videos: dict[str, _StreamZipMember] = {}
+    metadata: dict[str, _StreamZipMember] = {}
+    duplicate_errors: list[str] = []
+    for zip_path in zip_paths:
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            for member in archive.infolist():
+                member_path = Path(member.filename)
+                _validate_zip_member_path(member_path)
+                if member.is_dir():
+                    continue
+                suffix = member_path.suffix.lower()
+                is_media = suffix in accepted_media_extensions
+                is_metadata = suffix in METADATA_EXTENSIONS
+                if not is_media and not is_metadata:
+                    continue
+                video_id = _sanitize_stem(member_path.stem)
+                if not video_id:
+                    continue
+                stream_member = _StreamZipMember(
+                    zip_path=zip_path,
+                    member_name=member.filename,
+                    filename=f"{video_id}{member_path.suffix.lower()}",
+                    size_bytes=member.file_size,
+                )
+                target = videos if is_media else metadata
+                if video_id in target:
+                    duplicate_errors.append(
+                        f"duplicate {'media' if is_media else 'metadata'} video_id={video_id}: "
+                        f"{target[video_id].zip_path}::{target[video_id].member_name} and "
+                        f"{zip_path}::{member.filename}"
+                    )
+                    continue
+                target[video_id] = stream_member
+    if duplicate_errors:
+        raise ValueError("; ".join(duplicate_errors))
+    if not videos:
+        raise ValueError(f"no media files found in zip files under {source_root}")
+
+    video_ids = sorted(videos)
+    metadata_ids = set(metadata)
+    pairs = [
+        _StreamPairPlan(video_id=video_id, video=videos[video_id], metadata=metadata.get(video_id))
+        for video_id in video_ids
+    ]
+    return _StreamPairingPlan(
+        source_root=source_root,
+        zip_count=len(zip_paths),
+        pairs=pairs,
+        missing_metadata=[video_id for video_id in video_ids if video_id not in metadata_ids],
+        unmatched_metadata=sorted(metadata_ids - set(video_ids)),
+    )
+
+
+def _read_stream_upload_progress(progress_path: Path | None) -> dict[str, dict[str, Any]]:
+    if progress_path is None or not progress_path.exists():
+        return {}
+    records: dict[str, dict[str, Any]] = {}
+    for line in progress_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        video_id = payload.get("video_id")
+        if video_id:
+            records[str(video_id)] = payload
+    return records
+
+
+def _prepare_stream_pair(
+    pair: _StreamPairPlan,
+    *,
+    index: int,
+    total: int,
+    scratch_root: Path,
+    disk_manager: _ScratchDiskManager,
+    existing_files: set[str],
+    progress_records: dict[str, dict[str, Any]],
+    repo_id: str,
+    repo_type: str,
+    revision: str,
+    raw_import_id: str,
+    resume: bool,
+    overwrite: bool,
+) -> dict[str, Any]:
+    video_remote_path = _raw_upload_remote_path(raw_import_id, "raw_videos", pair.video.filename)
+    metadata_filename = f"{pair.video_id}.json"
+    metadata_remote_path = _raw_upload_remote_path(raw_import_id, "metadata", metadata_filename)
+    progress_record = progress_records.get(pair.video_id)
+    if (
+        resume
+        and not overwrite
+        and progress_record
+        and progress_record.get("status") == "pass"
+        and video_remote_path in existing_files
+        and metadata_remote_path in existing_files
+        and isinstance(progress_record.get("inventory"), dict)
+    ):
+        video_item = _RawUploadItem("video", pair.video_id, Path(progress_record.get("local_video_path", pair.video.filename)), video_remote_path, index, total, int(progress_record.get("video_size_bytes") or pair.video.size_bytes), status="skipped_existing")
+        metadata_item = _RawUploadItem("metadata", pair.video_id, Path(progress_record.get("local_metadata_path", metadata_filename)), metadata_remote_path, index, total, int(progress_record.get("metadata_size_bytes") or 0), status="skipped_existing")
+        return {
+            "video_id": pair.video_id,
+            "video_filename": pair.video.filename,
+            "metadata_filename": metadata_filename,
+            "video_item": video_item,
+            "metadata_item": metadata_item,
+            "metadata_generated": bool(progress_record.get("metadata_generated")),
+            "pair_root": None,
+            "raw_repo_id": repo_id,
+            "raw_import_id": raw_import_id,
+            "inventory": progress_record["inventory"],
+        }
+
+    pair_root = scratch_root / f"stream_pair_{index:06d}_{pair.video_id}"
+    try:
+        extract_size_bytes = pair.video.size_bytes + (pair.metadata.size_bytes if pair.metadata is not None else 0)
+        disk_manager.before_file(extract_size_bytes, f"stream_pair video_id={pair.video_id}")
+        if pair_root.exists():
+            shutil.rmtree(pair_root, ignore_errors=True)
+        video_path = pair_root / "raw_videos" / pair.video.filename
+        metadata_path = pair_root / "metadata" / metadata_filename
+        _extract_stream_member(pair.video, video_path)
+        metadata_generated = pair.metadata is None
+        if pair.metadata is None:
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_minimal_metadata(metadata_path, pair.video_id, str(pair.video.zip_path))
+        else:
+            _extract_stream_member(pair.metadata, metadata_path)
+        probe = probe_video(video_path)
+        video_item = _RawUploadItem("video", pair.video_id, video_path, video_remote_path, index, total, video_path.stat().st_size)
+        metadata_item = _RawUploadItem("metadata", pair.video_id, metadata_path, metadata_remote_path, index, total, metadata_path.stat().st_size)
+        pending = []
+        for item in (video_item, metadata_item):
+            if item.remote_path in existing_files and not overwrite:
+                item.status = "skipped_existing"
+                _log_standardized_raw_upload_progress(item)
+                continue
+            pending.append(item)
+        inventory = {
+            "video_id": pair.video_id,
+            "video_filename": pair.video.filename,
+            "metadata_filename": metadata_filename,
+            "video_size_bytes": video_item.size_bytes,
+            "metadata_size_bytes": metadata_item.size_bytes,
+            "canonical_backend": "hf_dataset",
+            "canonical_repo_id": repo_id,
+            "canonical_repo_type": repo_type,
+            "canonical_revision": revision,
+            "canonical_prefix": raw_import_id,
+            "canonical_video_path": video_remote_path,
+            "canonical_metadata_path": metadata_remote_path,
+            "duration_sec": probe.duration_seconds,
+            "fps": probe.fps_detected,
+            "frame_count": probe.frame_count,
+            "file_size_bytes": video_item.size_bytes,
+        }
+        print(
+            "[stream-standardize-upload-raw] "
+            f"pair={index}/{total} video_id={pair.video_id} prepared "
+            f"pending_files={len(pending)}",
+            flush=True,
+        )
+        return {
+            "video_id": pair.video_id,
+            "video_filename": pair.video.filename,
+            "metadata_filename": metadata_filename,
+            "video_item": video_item,
+            "metadata_item": metadata_item,
+            "metadata_generated": metadata_generated,
+            "pair_root": pair_root,
+            "raw_repo_id": repo_id,
+            "raw_import_id": raw_import_id,
+            "inventory": inventory,
+        }
+    except Exception:
+        shutil.rmtree(pair_root, ignore_errors=True)
+        raise
+
+
+def _stream_pending_items(record: dict[str, Any]) -> list[_RawUploadItem]:
+    return [
+        item
+        for item in (record["video_item"], record["metadata_item"])
+        if item.status == "pending"
+    ]
+
+
+def _record_stream_scratch_usage(disk_manager: _ScratchDiskManager, record: dict[str, Any]) -> bool:
+    if record.get("pair_root") is None:
+        return False
+    cleanup_due = False
+    for item in (record["video_item"], record["metadata_item"]):
+        cleanup_due = disk_manager.record_file(item.size_bytes) or cleanup_due
+    return cleanup_due
+
+
+def _append_stream_pair_progress(progress_path: Path | None, record: dict[str, Any], *, status: str) -> None:
+    video_item = record["video_item"]
+    metadata_item = record["metadata_item"]
+    payload = {
+        "video_id": record["video_id"],
+        "status": status,
+        "video_remote_path": video_item.remote_path,
+        "metadata_remote_path": metadata_item.remote_path,
+        "video_upload_status": video_item.status,
+        "metadata_upload_status": metadata_item.status,
+        "video_size_bytes": video_item.size_bytes,
+        "metadata_size_bytes": metadata_item.size_bytes,
+        "metadata_generated": record["metadata_generated"],
+        "inventory": record["inventory"],
+        "finished_at": _utc_now_iso(),
+    }
+    if status == "failed":
+        payload["error"] = video_item.error or metadata_item.error or "upload failed"
+    _append_jsonl_record(progress_path, payload)
+
+
+def _cleanup_stream_record(record: dict[str, Any]) -> None:
+    pair_root = record.get("pair_root")
+    if pair_root is not None:
+        shutil.rmtree(Path(pair_root), ignore_errors=True)
+
+
+def _extract_stream_member(member: _StreamZipMember, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(member.zip_path, "r") as archive:
+        with archive.open(member.member_name, "r") as source, target.open("wb") as handle:
+            shutil.copyfileobj(source, handle)
+
+
+def _stream_manifest_row(record: dict[str, Any]) -> dict[str, Any]:
+    video_item = record["video_item"]
+    metadata_item = record["metadata_item"]
+    row = {
+        "video_id": record["video_id"],
+        "video_filename": record["video_filename"],
+        "metadata_filename": record["metadata_filename"],
+        "video_path": video_item.remote_path,
+        "metadata_path": metadata_item.remote_path,
+        "video_size_bytes": video_item.size_bytes,
+        "metadata_size_bytes": metadata_item.size_bytes,
+        "metadata_generated": record["metadata_generated"],
+        "raw_repo_id": record["raw_repo_id"],
+        "raw_import_id": record["raw_import_id"],
+        "video_upload_status": video_item.status,
+        "metadata_upload_status": metadata_item.status,
+        "status": "pass",
+    }
+    if video_item.status == "failed" or metadata_item.status == "failed":
+        row["status"] = "failed"
+        row["error"] = video_item.error or metadata_item.error or "upload failed"
+    return row
+
+
+def _stream_inventory_row(record: dict[str, Any]) -> dict[str, Any]:
+    return dict(record["inventory"])
+
+
+def _write_stream_pairing_audit(
+    path: Path,
+    *,
+    kind: str,
+    key: str,
+    ids: list[str],
+    source_root: Path,
+) -> None:
+    payload: dict[str, Any] = {
+        "kind": kind,
+        "source": "stream_standardize_upload_raw",
+        "source_dir": str(source_root),
+        "count": len(ids),
+        key: ids,
+    }
+    if kind == "missing_metadata":
+        payload["missing_video_ids"] = ids
+    elif kind == "unmatched_metadata":
+        payload["unmatched_metadata_ids"] = ids
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _raw_upload_inventory_row(
+    record: dict[str, Any],
+    *,
+    repo_type: str,
+    revision: str,
+) -> dict[str, Any]:
     video_item = record["video_item"]
     probe = _probe_video_drivefs_safe(video_item.local_path)
     return {
         "video_id": record["video_id"],
+        "video_filename": record["video_filename"],
+        "metadata_filename": record["metadata_filename"],
+        "video_size_bytes": record["video_size_bytes"],
+        "metadata_size_bytes": record["metadata_size_bytes"],
+        "canonical_backend": "hf_dataset",
+        "canonical_repo_id": record["raw_repo_id"],
+        "canonical_repo_type": repo_type,
+        "canonical_revision": revision,
+        "canonical_prefix": record["raw_import_id"],
         "canonical_video_path": record["video_path"],
         "canonical_metadata_path": record["metadata_path"],
         "duration_sec": probe.duration_seconds,
         "fps": probe.fps_detected,
         "frame_count": probe.frame_count,
+        # Backward-compatible alias used by existing HF ingest readers.
         "file_size_bytes": record["video_size_bytes"],
     }
 
@@ -2302,6 +3076,7 @@ def _write_minimal_metadata(target: Path, video_id: str, source_uri: str) -> Non
         "description": "",
         "watch_url": source_uri,
         "source": "organizer_source_auto_import",
+        "metadata_missing": True,
     }
     target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 

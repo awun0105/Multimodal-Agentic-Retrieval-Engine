@@ -11,6 +11,7 @@ class ValidationResult:
     errors: tuple[str, ...]
     degraded: tuple[str, ...] = ()
     capabilities: dict[str, str] | None = None
+    schema_validation: dict[str, object] | None = None
 
     @property
     def passed(self) -> bool:

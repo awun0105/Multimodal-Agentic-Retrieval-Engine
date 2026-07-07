@@ -35,15 +35,24 @@ raw video folder + metadata JSON folder
 | Video probing | probed media facts | Probe fps, duration, dimensions, codec/container facts; last-year evidence suggests 25 fps, but actual fps must be persisted per video. |
 | Timeline mapping | `frame_timeline` staging rows or equivalent mapping proof | Persist enough timing metadata to map timestamps to frame ids safely, especially for VFR or unreliable FPS metadata. |
 | Shot detection | `shots` rows | If shot detection fails but the video is otherwise readable, emit a fallback full-video shot and mark degraded status instead of dropping the whole video immediately. |
-| Scene construction | `scenes` rows | Scenes enrich inspection/runtime context, but MVP keyframe extraction should not depend on scene heuristics. |
-| Keyframe extraction | `keyframes` rows and media refs | Generate keyframes from raw videos; use `keyframe_id = "{video_id}:{frame_id}"`; compute timestamps from actual probed fps; store logical refs only. |
+| Keyframe extraction | `keyframes` rows and media refs | Generate keyframes from raw videos; use `keyframe_id = "{video_id}:{frame_id}"`; prefer decoded `frame_timeline` rows for `frame_id`/timestamp mapping, with FPS math only as a marked fallback; store logical refs only. |
 | Thumbnail generation | `thumbnail_ref` per keyframe | Generate missing thumbnails under `${AIC_DATA_ROOT}/processed/media/thumbnails/`. |
+| Minimum keyframe/image captioning | `image_captions` rows | If semantic scene construction uses visual captions, these minimum caption rows are phase01 structure inputs and must exist before scene construction. Provider/model choice is config-driven. |
+| Scene construction | `scenes` rows | Scenes enrich inspection/runtime context and may use shots, selected keyframes, minimum keyframe/image captions, ASR/transcript rows, and metadata. Scene boundary must snap to shot boundary. |
 | OCR import/generation | `ocr`, `text_documents` | Preserve confidence and optional boxes when available; global text search is built later from `text_documents`. |
 | ASR import/generation | `asr_segments`, `text_documents` | ASR is usually time-range evidence on `video_id`; canonical links are shot/scene transcript links. |
-| Caption import/generation | `image_captions`, `shot_captions`, `text_documents` | Captions may be image-level or shot-level; global text search is built from `text_documents`. |
+| Caption enrichment | `image_captions` additive rows, `shot_captions`, `text_documents` | Phase02 may add heavier/additional image captions and shot captions, but phase01 scene construction must not depend on Notebook 02. |
 | Object/concept import | `objects`, `text_documents` | Preserve label, score, optional box, source, and model/version. |
 | Embedding import/generation | FAISS index + `vector_map` | FAISS rows must resolve through SQLite before returning results. |
 | Validation | validation report and failure status | App-ready build is usable only when required checks pass. |
+
+Notebook 01 / phase01 workers should reuse phase00 probe facts from
+`tables/videos.parquet`, `raw_mapping/media_store_manifest.parquet`, and
+`frame_timeline/{video_id}.parquet` when available. Phase01 may verify or stage
+the current video when needed, but it should not re-probe every video or copy
+the full raw dataset into worker runtime storage. When a decoded timeline is
+missing, the structure artifact should carry a degraded/warning status rather
+than silently deriving exact frame ids in notebook code.
 
 ## CLI Contract
 
@@ -89,12 +98,136 @@ ${AIC_RUNTIME_ROOT}/indexes/index_version.json
 
 The earlier `data/` tree in source material is a logical artifact layout, not a physical repository layout. Raw videos are referenced by `video_ref = raw_videos/{video_id}.mp4` and are resolved through `MediaStorePort`; compact releases may omit raw-video copies. `frame_timeline` is staging/debug and may be per-video, merged, sampled, or omitted from compact release when key tables retain enough frame/timestamp mapping fields.
 
-For the versioned raw Hugging Face Dataset path, `upload-standardized-raw`
-emits `manifests/canonical_video_inventory.parquet` with one row per video:
-`video_id`, canonical video/metadata paths, `duration_sec`, `fps`,
-`frame_count`, and `file_size_bytes`. Canonical HF ingest consumes that
-inventory by default and does not download `raw_videos/*.mp4` solely for media
-probing unless `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
+For the versioned raw Hugging Face Dataset path, `upload-standardized-raw` and
+the Colab-oriented `stream-standardize-upload-raw` emit
+`manifests/canonical_video_inventory.parquet` with one row per video.
+The inventory carries:
+
+- `video_id`
+- `canonical_repo_id`
+- `canonical_repo_type`
+- `canonical_revision`
+- `canonical_prefix`
+- `canonical_video_path`
+- `canonical_metadata_path`
+- `duration_sec`
+- `fps`
+- `frame_count`
+- `file_size_bytes`
+
+`frame_count` should come from `ffprobe -count_packets` / `nb_read_packets`
+when available. Header `nb_frames` and duration/FPS math are fallbacks, with
+math estimates marked degraded because frame IDs may drift.
+
+Canonical HF ingest consumes that inventory by default and does not download
+`raw_videos/*.mp4` solely for media probing unless
+`AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
+
+## Hugging Face Shared Storage Contract
+
+System 1 uses exactly two Hugging Face Dataset repos for shared state:
+
+```text
+AIC26_raw
+AIC26_release
+```
+
+`AIC26_raw` is the canonical raw dataset repo. It contains only standardized
+raw videos, metadata, and raw-level import/inventory manifests:
+
+```text
+AIC26_raw/canonical_raw_vXXX/raw_videos/
+AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
+AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
+AIC26_raw/canonical_raw_vXXX/manifests/missing_metadata.json
+AIC26_raw/canonical_raw_vXXX/manifests/unmatched_metadata.json
+```
+
+`AIC26_raw` does not contain structure artifacts, feature artifacts, merged
+tables, `app.sqlite`, FAISS, final releases, or run-specific batch planning
+files.
+
+`AIC26_release` is the processed workspace plus final release repo. It is not
+only the final release folder:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/
+AIC26_release/canonical_release_vXXX/phase03_merged/
+AIC26_release/canonical_release_vXXX/releases/
+AIC26_release/canonical_release_vXXX/checkpoints/
+AIC26_release/canonical_release_vXXX/logs/
+```
+
+Local package commands currently write:
+
+```text
+artifacts/structure/{video_id}_structure.zip
+artifacts/features/{video_id}_features.zip
+manifests/worker_reports/
+```
+
+The phase01/phase02 Hugging Face paths are target storage for a separate
+sync/restore workflow, not direct upload behavior of the local package commands.
+
+Notebook 00 writes phase00 ingestion outputs to:
+
+```text
+AIC26_release/canonical_release_vXXX/phase00_ingestion/tables/videos.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/raw_mapping/media_store_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/frame_timeline/{video_id}.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/frame_timeline_manifest.parquet
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_manifest.csv
+AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_*.txt
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/
+```
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may also snapshot them under
+`phase00_ingestion/reports/` for a particular release run. Their authoritative
+source of truth is:
+
+```text
+AIC26_raw/canonical_raw_vXXX/manifests/
+```
+
+Legacy flat paths under:
+
+```text
+canonical_release_vXXX/manifests
+canonical_release_vXXX/tables
+canonical_release_vXXX/raw_mapping
+```
+
+are deprecated. New output must use
+`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}`.
+
+Google Drive may be used as an organizer handoff source or local operator
+scratch area. It is not the primary shared storage contract.
+
+Notebook 00B uses the streaming path for Colab free CPU runs: it scans zip
+members to build a pairing plan, extracts video/metadata pair batches bounded
+by `RAW_UPLOAD_BATCH_SIZE` files and scratch bytes into local scratch, probes
+those local files, uploads each batch to `AIC26_raw` with the same batched HF
+commit helper as canonical raw upload, records per-pair progress, and cleans the
+scratch batch before moving on. It does not materialize a full standardized
+`raw_videos/` and `metadata/` tree on Drive.
+
+The streaming path exposes the same disk-safe option family as archive
+standardization: `--min-free-gb`, `--drive-sync-sleep-seconds`,
+`--cleanup-every-files`, and `--cleanup-every-gb`. Notebook 00B uses these
+options to keep local scratch bounded while preserving batched Hugging Face
+commits.
+
+Notebook 00C uses the same streaming path for local laptop/workstation runs.
+The source is a local downloaded zip folder, so the notebook skips Google Drive
+mount/remount and `drive-shadow`, then continues with HF raw upload, canonical
+HF ingest, batch assignment, and `phase00_ingestion` sync.
 
 ## Validation Gate
 

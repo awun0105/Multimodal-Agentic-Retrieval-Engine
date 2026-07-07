@@ -40,6 +40,47 @@ Mục tiêu của throughput plan:
 
 ---
 
+## 1.1. Shared storage contract
+
+System 1 shared storage uses exactly two Hugging Face Dataset repos:
+
+```text
+AIC26_raw
+AIC26_release
+```
+
+`AIC26_raw` is the canonical raw dataset repo. It contains standardized
+`raw_videos/`, `metadata/`, and raw-level manifests such as
+`canonical_file_manifest.jsonl`, `canonical_import_report.json`, and
+`canonical_video_inventory.parquet`.
+
+`AIC26_release` is the processed workspace plus final release repo. It contains:
+
+```text
+canonical_release_vXXX/
+  phase00_ingestion/
+  phase01_structure/
+  phase02_features/
+  phase03_merged/
+  releases/
+  checkpoints/
+  logs/
+```
+
+Notebook 00 uploads batch planning and ingestion reports to
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/`. This phase is not
+the final runtime release. The app-ready System 2 package lives under
+`AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/`.
+
+`missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
+manifests in `AIC26_raw`. The release repo may also snapshot them under
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
+particular run.
+
+Legacy flat paths under
+`canonical_release_vXXX/{manifests,tables,raw_mapping}` are deprecated for new
+outputs.
+
 ## 2. Khái niệm chính
 
 ### 2.1. Teammate
@@ -252,7 +293,7 @@ Bronze tạo các artifact nền tảng để các mode sau reuse:
 
 ```text
 - videos.parquet
-- frame_timeline nếu có
+- frame_timeline/{video_id}.parquet
 - shots.parquet
 - scenes.parquet hoặc fallback scene
 - keyframes
@@ -274,7 +315,7 @@ Silver nên reuse từ bronze:
 
 ```text
 - video metadata
-- frame_timeline
+- frame_timeline/{video_id}.parquet
 - shots/scenes
 - keyframes
 - thumbnails
@@ -561,10 +602,21 @@ duration_sec
 width
 height
 fps_detected
+frame_count
 frame_count_estimated
+frame_count_method
+is_vfr
+has_frame_timeline
+frame_timeline_ref
 file_size_bytes
 has_audio
 ```
+
+`frame_count` should come from `ffprobe -count_packets` / `nb_read_packets`
+when available. Header `nb_frames` is only a fallback, and `duration_sec *
+fps_detected` is a last-resort estimate that must set
+`frame_count_estimated=true` because it can cause frame ID drift on VFR or
+malformed videos.
 
 Sau đó tính:
 
@@ -632,7 +684,9 @@ duration_sec
 width
 height
 fps_detected
+frame_count
 frame_count_estimated
+frame_count_method
 file_size_bytes
 has_audio
 estimated_compute_cost
@@ -694,9 +748,9 @@ Mỗi teammate làm theo flow đơn giản:
 7. Bấm Run All.
 8. Notebook kiểm tra artifact nào đã có thể reuse.
 9. Notebook chỉ chạy phần còn thiếu hoặc phần cần rebuild.
-10. Notebook xuất artifact ZIP.
-11. Notebook upload artifact vào shared output folder.
-12. Notebook ghi worker_runtime_report.json.
+10. Notebook xuất artifact ZIP vào local package layout.
+11. Notebook ghi worker report không overwrite.
+12. HF phase01/phase02 sync là workflow riêng, không phải hành vi mặc định của local package CLI hiện tại.
 ```
 
 Ví dụ:
@@ -710,15 +764,17 @@ execution_mode = silver_balanced
 Output:
 
 ```text
-outputs/
-├── structure_artifacts/
-│   ├── L21_V001_structure.zip
-│   └── L21_V004_structure.zip
-├── feature_artifacts/
-│   ├── L21_V001_features.zip
-│   └── L21_V004_features.zip
-└── worker_reports/
-    └── worker_kaggle_an_01_runtime_report.json
+output/competition_dataset_v001/
+├── artifacts/
+│   ├── structure/
+│   │   ├── L21_V001_structure.zip
+│   │   └── L21_V004_structure.zip
+│   └── features/
+│       ├── L21_V001_features.zip
+│       └── L21_V004_features.zip
+└── manifests/
+    └── worker_reports/
+        └── structure_batch_003_worker_kaggle_an_01.json
 ```
 
 ---
@@ -1051,7 +1107,7 @@ image_sha256 + embedding_model + embedding_model_version
 Nên cache:
 
 ```text
-- frame_timeline
+- frame_timeline/{video_id}.parquet
 - extracted keyframes
 - thumbnails
 - decoded audio
@@ -1187,16 +1243,10 @@ Nếu artifact lỗi:
 
 ## 17. Worker runtime report
 
-Mỗi worker nên xuất:
+Mỗi worker nên xuất report không overwrite theo phase, batch, và worker:
 
 ```text
-worker_runtime_report.json
-```
-
-hoặc:
-
-```text
-worker_runtime_report.jsonl
+manifests/worker_reports/{phase}_{batch_id}_{worker_id}.json
 ```
 
 Report này giúp team biết worker chạy gì, mất bao lâu, lỗi ở đâu.
@@ -1342,14 +1392,32 @@ Mỗi worker chạy:
 Notebook này làm:
 
 ```text
+- setup runtime, HF token, GitHub package checkout, and editable package install
+- restore AIC26_release/canonical_release_vXXX/phase00_ingestion/
+- materialize tables/, raw_mapping/, manifests/ into local active release root
 - đọc batch được giao
+- đọc videos.parquet + media_store_manifest.parquet để reuse phase00 video facts
 - kiểm tra structure artifact nào đã có thể reuse
-- chạy shot detection nếu cần
-- extract keyframes nếu cần
+- stage đúng video/metadata hiện tại từ AIC26_raw hoặc local input vào scratch nếu cần
+- chạy configured shot detection provider nếu cần
+- extract/select keyframes bằng configured keyframe provider nếu cần
 - tạo thumbnails nếu cần
+- tạo minimum keyframe/image captions nếu scene construction phụ thuộc caption
+- import/chạy ASR hoặc transcript provider nếu cấu hình yêu cầu
+- construct semantic-light scenes từ shots, selected keyframes, captions, transcript, metadata
+- tạo scene_summaries.parquet
 - tạo structure artifact ZIP
-- upload artifact
-- ghi runtime report
+- ghi local artifact to artifacts/structure/{video_id}_structure.zip
+- ghi local runtime report to manifests/worker_reports/structure_{batch_id}_{worker_id}.json
+- cleanup scratch
+- sync local batch artifact/report lên HF phase01_structure
+```
+
+HF sync target cho phase này, khi workflow sync riêng được implement:
+
+```text
+AIC26_release/canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
+AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/structure_{batch_id}_{worker_id}.json
 ```
 
 ---
@@ -1369,11 +1437,19 @@ Notebook này làm:
 - kiểm tra feature artifact nào đã có thể reuse
 - chạy embedding nếu cần
 - chạy OCR nếu mode yêu cầu và artifact chưa có
-- chạy ASR nếu mode yêu cầu và artifact chưa có
-- chạy object/caption nếu mode yêu cầu và artifact chưa có
+- chạy object detection nếu mode yêu cầu và artifact chưa có
+- chạy additional/heavier caption enrichment nếu mode yêu cầu và artifact chưa có
+- tạo shot_captions và scene_summaries_enriched nếu mode yêu cầu
 - tạo feature artifact ZIP
-- upload artifact
-- ghi runtime report
+- ghi local artifact to artifacts/features/{video_id}_features.zip
+- ghi local runtime report to manifests/worker_reports/features_{batch_id}_{worker_id}.json
+```
+
+HF sync target cho phase này, khi workflow sync riêng được implement:
+
+```text
+AIC26_release/canonical_release_vXXX/phase02_features/artifacts/{batch_id}/{video_id}_features.zip
+AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/features_{batch_id}_{worker_id}.json
 ```
 
 ---
@@ -1389,7 +1465,7 @@ Team lead hoặc một worker chính chạy:
 Notebook này làm:
 
 ```text
-- scan artifact ZIP
+- scan artifact ZIP từ local package layout hoặc từ HF target layout đã được restore riêng
 - validate manifest/checksum/schema
 - merge parquet tables
 - build text_documents
@@ -1399,7 +1475,7 @@ Notebook này làm:
 - build FAISS + vector_map
 - write validation_report
 - chạy smoke test
-- tạo release package
+- upload phase03_merged, releases, and logs under AIC26_release/canonical_release_vXXX/
 ```
 
 ---
@@ -1435,7 +1511,7 @@ MVP nên làm theo thứ tự:
 1. Implement cost-aware static batch assignment.
 2. Implement artifact manifest/checksum.
 3. Implement artifact reuse check bằng checksum/model version/config hash.
-4. Implement worker_runtime_report.json.
+4. Implement manifests/worker_reports/{phase}_{batch_id}_{worker_id}.json.
 5. Implement basic upload/validate flow.
 6. Implement merge/release skeleton.
 7. Chạy debug_small_sample.

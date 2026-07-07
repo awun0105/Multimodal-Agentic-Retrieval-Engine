@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from system1.artifacts.package import discover_artifact_zip, extract_artifact_zip
 from system1.release.types import write_json
 
 STRUCTURE_TABLES = [
@@ -15,9 +16,10 @@ STRUCTURE_TABLES = [
     "shots",
     "scenes",
     "keyframes",
+    "image_captions",
     "shot_transcript_links",
     "scene_transcript_links",
-    "scene_summaries_initial",
+    "scene_summaries",
 ]
 FEATURE_TABLES = [
     "embeddings_meta",
@@ -31,6 +33,11 @@ FEATURE_TABLES = [
 
 
 def merge_worker_outputs(release_dir: Path | str) -> Path:
+    """Merge worker artifacts.
+
+    Artifact ZIPs are the primary source. Extracted per-video folders are kept
+    as a local cache/debug fallback for developer workflows.
+    """
     release_path = Path(release_dir)
     structure_root = release_path / "artifacts" / "structure"
     feature_root = release_path / "artifacts" / "features"
@@ -44,12 +51,21 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
     quality_rows: list[dict[str, Any]] = []
     artifact_manifest_rows: list[dict[str, Any]] = []
     video_status_rows: list[dict[str, Any]] = []
+    feature_manifests: list[dict[str, Any]] = []
 
     for video_id in videos_df["video_id"].astype(str).tolist():
-        structure_dir = structure_root / video_id
-        feature_dir = feature_root / video_id
-        if not structure_dir.exists() or not feature_dir.exists():
-            raise FileNotFoundError(f"missing artifact pair for video_id={video_id}")
+        structure_dir = _resolve_artifact_dir_for_merge(
+            release_path,
+            artifact_root=structure_root,
+            video_id=video_id,
+            artifact_type="structure",
+        )
+        feature_dir = _resolve_artifact_dir_for_merge(
+            release_path,
+            artifact_root=feature_root,
+            video_id=video_id,
+            artifact_type="features",
+        )
         for table in STRUCTURE_TABLES:
             path = structure_dir / f"{table}.parquet"
             if not path.exists():
@@ -62,6 +78,7 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
             merged[table].append(pd.read_parquet(path))
         structure_manifest = json.loads((structure_dir / "manifest.json").read_text(encoding="utf-8"))
         feature_manifest = json.loads((feature_dir / "feature_manifest.json").read_text(encoding="utf-8"))
+        feature_manifests.append(feature_manifest)
         _materialize_runtime_media(release_path, video_id, structure_dir)
         video_status_rows.append({
             "video_id": video_id,
@@ -106,8 +123,9 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
     feature_availability.to_parquet(tables_dir / "feature_availability.parquet", index=False)
     counts["feature_availability"] = len(feature_availability)
 
-    release_capabilities = _build_release_capabilities(feature_availability, counts)
+    release_capabilities = _build_release_capabilities(feature_availability, counts, feature_manifests)
     release_capabilities.to_parquet(tables_dir / "release_capabilities.parquet", index=False)
+    capabilities = {str(row["capability"]): str(row["status"]) for row in release_capabilities.to_dict("records")}
 
     manifests_dir = release_path / "manifests"
     manifests_dir.mkdir(parents=True, exist_ok=True)
@@ -123,12 +141,35 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
             "fts5": "app.sqlite:text_documents_fts",
             "visual_index": "indexes/visual.faiss",
             "vector_map": "indexes/vector_map.parquet",
+            "capabilities": capabilities,
             "release_usable": False,
         },
     )
     report_path = manifests_dir / "merge_report.json"
     write_json(report_path, {"status": "pass", "video_count": len(video_status_rows), "counts": counts})
     return report_path
+
+
+def _resolve_artifact_dir_for_merge(
+    release_path: Path,
+    *,
+    artifact_root: Path,
+    video_id: str,
+    artifact_type: str,
+) -> Path:
+    zip_path = discover_artifact_zip(artifact_root, video_id=video_id, artifact_type=artifact_type)
+    if zip_path is not None:
+        return extract_artifact_zip(
+            zip_path,
+            release_path / "staging" / "extracted_artifacts" / "merge" / artifact_type,
+            expected_video_id=video_id,
+            expected_artifact_type=artifact_type,
+        )
+
+    local_dir = artifact_root / video_id
+    if local_dir.exists():
+        return local_dir
+    raise FileNotFoundError(f"missing {artifact_type} artifact zip or folder for video_id={video_id}: {artifact_root}")
 
 
 def _build_text_documents(text_sources: pd.DataFrame) -> pd.DataFrame:
@@ -183,19 +224,56 @@ def _build_feature_availability(keyframes: pd.DataFrame, asr: pd.DataFrame, ocr:
     return pd.DataFrame(rows)
 
 
-def _build_release_capabilities(feature_availability: pd.DataFrame, counts: dict[str, int]) -> pd.DataFrame:
+def _build_release_capabilities(
+    feature_availability: pd.DataFrame,
+    counts: dict[str, int],
+    feature_manifests: list[dict[str, Any]],
+) -> pd.DataFrame:
     has_embeddings = bool(counts.get("embeddings_meta"))
     has_text = bool(counts.get("text_documents"))
     has_context = bool(counts.get("keyframes")) and bool(counts.get("shots")) and bool(counts.get("scenes"))
     enrichment_status = "pass" if not feature_availability.empty and (feature_availability["status"] == "pass").all() else "degraded"
+    mode = _first_manifest_value(feature_manifests, "mode", "debug_small_sample")
+    provider_plan = _first_manifest_value(feature_manifests, "provider_plan", {})
+    asr_provider = str(provider_plan.get("asr", "mock")) if isinstance(provider_plan, dict) else "mock"
+    ocr_provider = str(provider_plan.get("ocr", "mock")) if isinstance(provider_plan, dict) else "mock"
+    asr_status = "degraded" if mode in {"debug_small_sample", "bronze_fast"} or asr_provider != "mock" else "pass"
+    ocr_status = "degraded" if mode in {"debug_small_sample", "bronze_fast"} or ocr_provider != "mock" else "pass"
     rows = [
         {"capability": "core_runtime", "status": "pass", "reason": "merged release tables available"},
         {"capability": "visual_search", "status": "degraded" if has_embeddings else "fail", "reason": "index built later"},
         {"capability": "text_search", "status": "pass" if has_text else "fail", "reason": "text_documents merged"},
         {"capability": "inspection_context", "status": "pass" if has_context else "fail", "reason": "structure tables merged"},
+        {
+            "capability": "asr",
+            "status": asr_status,
+            "reason": f"{asr_provider} ASR adapter unavailable; emitted schema-valid empty rows"
+            if asr_provider != "mock"
+            else ("mock empty ASR provider" if asr_status == "degraded" else "ASR provider contract emitted schema-valid rows"),
+        },
+        {
+            "capability": "ocr",
+            "status": ocr_status,
+            "reason": f"{ocr_provider} OCR adapter unavailable; emitted schema-valid empty rows"
+            if ocr_provider != "mock"
+            else ("mock empty OCR provider" if ocr_status == "degraded" else "OCR provider contract emitted schema-valid rows"),
+        },
         {"capability": "enrichment_overall", "status": enrichment_status, "reason": "feature availability merged"},
+        {
+            "capability": "incremental_reuse",
+            "status": "pass" if mode == "gold_full" else "degraded",
+            "reason": "phase checkpoints support resumable/reusable worker outputs",
+        },
     ]
     return pd.DataFrame(rows)
+
+
+def _first_manifest_value(feature_manifests: list[dict[str, Any]], key: str, default: Any) -> Any:
+    for manifest in feature_manifests:
+        value = manifest.get(key)
+        if value is not None:
+            return value
+    return default
 
 
 def _materialize_runtime_media(release_path: Path, video_id: str, structure_dir: Path) -> None:

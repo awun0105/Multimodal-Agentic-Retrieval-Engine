@@ -2,9 +2,11 @@ import shutil
 import json
 import sqlite3
 import csv
+import hashlib
 import os
 import subprocess
 import sys
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -14,26 +16,185 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
+from system1.commands import imports as imports_commands_module
 from system1.cli import app
+from system1.artifacts.package import validate_artifact_zip
 from system1.config import REQUIRED_CONFIGS, load_configs, load_provider_plan
 from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs
 from system1.ingest.source_importer import (
-    ArchiveStandardizeResult,
     DriveShadowResult,
     _hf_retry_sleep_seconds,
     _is_hf_rate_limit_error,
     import_organizer_source,
     shadow_google_drive_folder,
     standardize_archive_source,
+    stream_standardize_upload_raw_to_hf,
     upload_standardized_raw_to_hf,
 )
 from system1.ingest import source_importer as source_importer_module
-from system1.media.probe import VideoProbe
-from system1.release.artifacts import write_worker_artifacts
-from system1.release.mini_seed import build_mini_seed
+from system1.media.probe import VideoProbe, VideoProbeWithTimeline
 from system1.validation.release_validator import validate_release
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def local_phase_execution(monkeypatch):
+    monkeypatch.setenv("AIC_RESUME", "0")
+    monkeypatch.setenv("AIC_SYNC", "0")
+
+    def fake_probe_with_timeline(path: Path, *, video_id: str) -> VideoProbeWithTimeline:  # noqa: ARG001
+        return VideoProbeWithTimeline(
+            probe=VideoProbe(25.0, "test_frame_timeline", 3, False, "decoded_frame_timeline", 0.12, 640, 360, False),
+            frame_timeline=[
+                {"video_id": video_id, "frame_id": 0, "pts_time": 0.0, "duration_time": 0.04},
+                {"video_id": video_id, "frame_id": 1, "pts_time": 0.04, "duration_time": 0.04},
+                {"video_id": video_id, "frame_id": 2, "pts_time": 0.08, "duration_time": 0.04},
+            ],
+        )
+
+    monkeypatch.setattr("system1.ingest.pipeline.probe_video_with_timeline", fake_probe_with_timeline)
+
+
+def invoke_app(command: list[str]):
+    command_with_local_phase = list(command)
+    if command_with_local_phase and command_with_local_phase[0] in {"ingest", "assign-batches", "process-batch", "feature-batch"}:
+        if "--resume" not in command_with_local_phase and "--no-resume" not in command_with_local_phase:
+            command_with_local_phase.append("--no-resume")
+        if "--sync" not in command_with_local_phase and "--no-sync" not in command_with_local_phase:
+            command_with_local_phase.append("--no-sync")
+    return runner.invoke(app, command_with_local_phase)
+
+
+def run_cli_sequence(commands: list[list[str]]) -> None:
+    for command in commands:
+        result = invoke_app(command)
+        assert result.exit_code == 0, f"command failed: {command}\n{result.stdout}"
+
+
+def phase_based_commands(
+    output_dir: Path,
+    *,
+    mode: str = "debug_small_sample",
+    providers: str = "mock",
+) -> list[list[str]]:
+    return [
+        ["ingest", "--mode", mode, "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--mode", mode, "--num-batches", "1", "--output", str(output_dir)],
+        [
+            "process-batch",
+            "--batch-id",
+            "batch_000",
+            "--mode",
+            mode,
+            "--providers",
+            providers,
+            "--output",
+            str(output_dir),
+            "--input",
+            "input",
+        ],
+        [
+            "feature-batch",
+            "--batch-id",
+            "batch_000",
+            "--mode",
+            mode,
+            "--providers",
+            providers,
+            "--output",
+            str(output_dir),
+            "--input",
+            "input",
+        ],
+        ["merge", "--mode", mode, "--output", str(output_dir)],
+        ["build-index", "--mode", mode, "--output", str(output_dir)],
+        ["build-db", "--mode", mode, "--output", str(output_dir)],
+        ["validate", "--mode", mode, "--output", str(output_dir)],
+    ]
+
+
+def run_phase_based_release(
+    tmp_path: Path,
+    *,
+    mode: str = "debug_small_sample",
+    providers: str = "mock",
+    package: bool = False,
+) -> Path:
+    output_dir = tmp_path / "output"
+    run_cli_sequence(phase_based_commands(output_dir, mode=mode, providers=providers))
+    release_dir = output_dir / "competition_dataset_v001"
+    smoke = invoke_app(["smoke-test", "--release", str(release_dir)])
+    assert smoke.exit_code == 0, smoke.stdout
+    if package:
+        packaged = invoke_app(["release", "--mode", mode, "--output", str(output_dir)])
+        assert packaged.exit_code == 0, packaged.stdout
+    return release_dir
+
+
+def assert_artifact_zip_contract(
+    zip_path: Path,
+    *,
+    video_id: str,
+    artifact_type: str,
+    expected_payload_files: set[str],
+) -> None:
+    manifest = validate_artifact_zip(zip_path)
+    assert manifest["artifact_id"] == f"{video_id}_{artifact_type}"
+    assert manifest["video_id"] == video_id
+    assert manifest["artifact_type"] == artifact_type
+    assert manifest["files"]
+
+    with zipfile.ZipFile(zip_path) as archive:
+        names = {name for name in archive.namelist() if not name.endswith("/")}
+        assert all(name.startswith(f"{video_id}/") for name in names)
+        assert f"{video_id}/artifact_manifest.json" in names
+        assert f"{video_id}/checksums.json" in names
+        assert expected_payload_files.issubset(names)
+
+        checksums = json.loads(archive.read(f"{video_id}/checksums.json").decode("utf-8"))
+        assert f"{video_id}/artifact_manifest.json" not in checksums
+        assert f"{video_id}/checksums.json" not in checksums
+        assert {item["path"] for item in manifest["files"]} == set(checksums)
+        for path, expected in checksums.items():
+            data = archive.read(path)
+            assert expected["size_bytes"] == len(data)
+            assert expected["sha256"] == hashlib.sha256(data).hexdigest()
+
+
+def rewrite_zip_json_member(zip_path: Path, member_name: str, transform) -> None:
+    temp_path = zip_path.with_name(f"{zip_path.name}.tmp")
+    with zipfile.ZipFile(zip_path) as source, zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        for member in source.infolist():
+            data = source.read(member.filename)
+            if member.filename == member_name:
+                payload = json.loads(data.decode("utf-8"))
+                data = json.dumps(transform(payload), indent=2, sort_keys=True).encode("utf-8") + b"\n"
+            target.writestr(member, data)
+    temp_path.replace(zip_path)
+
+
+def remove_zip_member(zip_path: Path, member_name: str) -> None:
+    temp_path = zip_path.with_name(f"{zip_path.name}.tmp")
+    with zipfile.ZipFile(zip_path) as source, zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        for member in source.infolist():
+            if member.filename != member_name:
+                target.writestr(member, source.read(member.filename))
+    temp_path.replace(zip_path)
+
+
+def prepare_structure_and_feature_artifacts(output_dir: Path) -> Path:
+    commands = [
+        ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)],
+        ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+    ]
+    for command in commands:
+        result = invoke_app(command)
+        assert result.exit_code == 0, result.stdout
+    return output_dir / "competition_dataset_v001"
+
 
 
 def test_system1_package_imports():
@@ -99,12 +260,37 @@ def test_schema_files_are_complete_and_loadable():
 
 def test_notebooks_are_operator_ready_thin_orchestration_shells():
     expected_commands = {
-        "00_master_ingestion_and_assignment.ipynb": [
+        "00A_master_ingestion_and_assignment.ipynb": [
             "drive-shadow",
             "standardize-archives",
+            "upload-standardized-raw",
             "ingest",
             "assign-batches",
-            "sync-release",
+            "sync-phase00-ingestion",
+            "AIC_HF_REPO_ID",
+        ],
+        "00B_master_ingestion_and_assignment.ipynb": [
+            "drive-shadow",
+            "stream-standardize-upload-raw",
+            "--min-free-gb",
+            "--drive-sync-sleep-seconds",
+            "--cleanup-every-files",
+            "--cleanup-every-gb",
+            "ingest",
+            "assign-batches",
+            "sync-phase00-ingestion",
+            "AIC_HF_REPO_ID",
+        ],
+        "00C_master_ingestion_and_assignment (local).ipynb": [
+            "stream-standardize-upload-raw",
+            "AIC_LOCAL_DATASET_DIR",
+            "--min-free-gb",
+            "--drive-sync-sleep-seconds",
+            "--cleanup-every-files",
+            "--cleanup-every-gb",
+            "ingest",
+            "assign-batches",
+            "sync-phase00-ingestion",
             "AIC_HF_REPO_ID",
         ],
         "01_worker_structure_pipeline.ipynb": ["process-batch"],
@@ -130,13 +316,62 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         assert "AIC_RUNTIME_ROOT" in joined
         assert "AIC_ARTIFACT_ROOT" in joined
         assert "execution_mode" in joined
-        if path.name != "00_master_ingestion_and_assignment.ipynb":
+        if not path.name.startswith("00"):
             assert "worker_id" in joined
             assert "batch_id" in joined
             assert "provider_mode" in joined
         assert "run_cli" in joined
+        assert path.name in expected_commands
         for command in expected_commands[path.name]:
             assert command in joined
+
+
+def test_stream_standardize_upload_raw_cli_passes_disk_safe_options(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def fake_stream_standardize_upload_raw_to_hf(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return source_importer_module.CanonicalRawUploadResult(0, 0, 0, "manifest", "report")
+
+    monkeypatch.setattr(
+        imports_commands_module,
+        "stream_standardize_upload_raw_to_hf",
+        fake_stream_standardize_upload_raw_to_hf,
+    )
+    source_dir = tmp_path / "source"
+    scratch_dir = tmp_path / "scratch"
+    source_dir.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "stream-standardize-upload-raw",
+            "--source-dir",
+            str(source_dir),
+            "--target-hf-repo-id",
+            "org/repo",
+            "--raw-import-id",
+            "canonical_raw_v001",
+            "--scratch-dir",
+            str(scratch_dir),
+            "--min-free-gb",
+            "11",
+            "--drive-sync-sleep-seconds",
+            "12",
+            "--cleanup-every-files",
+            "13",
+            "--cleanup-every-gb",
+            "14",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["kwargs"]["min_free_gb"] == 11
+    assert captured["kwargs"]["drive_sync_sleep_seconds"] == 12
+    assert captured["kwargs"]["cleanup_every_files"] == 13
+    assert captured["kwargs"]["cleanup_every_gb"] == 14
+
 
 def test_input_discovery_pairs_real_subset():
     pairs = discover_paired_inputs("input")
@@ -162,7 +397,7 @@ def test_tolerant_input_discovery_reports_missing_and_unmatched_metadata(tmp_pat
 
 
 def test_debug_release_generates_valid_release(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input")
+    release_dir = run_phase_based_release(tmp_path)
     sqlite_path = release_dir / "db" / "app.sqlite"
     with sqlite3.connect(sqlite_path) as connection:
         row = connection.execute("SELECT document_id FROM text_documents_fts WHERE text_documents_fts MATCH ? LIMIT 1", ("L21",)).fetchone()
@@ -172,15 +407,17 @@ def test_debug_release_generates_valid_release(tmp_path):
     result = validate_release(release_dir)
     assert result.passed
     assert any("visual_search" in degraded for degraded in result.degraded)
+    report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
+    assert report["schema_validation"]["status"] == "pass"
 
 
 def test_bronze_fast_generates_real_media_files(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="bronze_fast")
+    release_dir = run_phase_based_release(tmp_path, mode="bronze_fast")
     result = validate_release(release_dir)
     assert result.passed
-    manifest = json.loads((release_dir / "manifests" / "dataset_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["capabilities"]["core_runtime"] == "pass"
-    assert manifest["capabilities"]["visual_search"] == "pass"
+    report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
+    assert report["capabilities"]["core_runtime"] == "pass"
+    assert report["capabilities"]["visual_search"] != "fail"
     assert list((release_dir / "media" / "keyframes").rglob("*.jpg"))
     assert list((release_dir / "media" / "thumbnails").rglob("*.webp"))
     assert (release_dir / "db" / "staging.duckdb").exists()
@@ -194,12 +431,12 @@ def test_cli_debug_pipeline_end_to_end(tmp_path):
         ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
-        result = runner.invoke(app, command)
+        result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
     release_dir = output_dir / "competition_dataset_v001"
     assert (release_dir / "manifests" / "dataset_report.json").exists()
     assert (release_dir / "manifests" / "batch_000.txt").exists()
-    assert (release_dir / "manifests" / "worker_runtime_report_structure.json").exists()
+    assert (release_dir / "manifests" / "worker_reports" / "structure_batch_000_worker_000.json").exists()
     assert not (release_dir / "manifests" / "merge_report.json").exists()
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "indexes" / "visual.faiss").exists()
@@ -207,8 +444,8 @@ def test_cli_debug_pipeline_end_to_end(tmp_path):
 def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
     output_dir = tmp_path / "output"
     command = ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"]
-    first = runner.invoke(app, command)
-    second = runner.invoke(app, command)
+    first = invoke_app(command)
+    second = invoke_app(command)
     assert first.exit_code == 0, first.stdout
     assert second.exit_code == 0, second.stdout
     release_dir = output_dir / "competition_dataset_v001"
@@ -220,6 +457,18 @@ def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
     assert videos["source_extension"].eq(".mp4").all()
     assert "fps_detected" in videos.columns
     assert "duration_seconds" in videos.columns
+    assert "is_vfr" in videos.columns
+    assert "has_frame_timeline" in videos.columns
+    assert "frame_timeline_ref" in videos.columns
+    assert videos["has_frame_timeline"].all()
+    frame_timeline_manifest = pd.read_parquet(release_dir / "manifests" / "frame_timeline_manifest.parquet")
+    assert frame_timeline_manifest["video_id"].tolist() == ["L21_V001", "L21_V002", "L21_V003"]
+    assert frame_timeline_manifest["status"].eq("pass").all()
+    for row in frame_timeline_manifest.to_dict("records"):
+        timeline = pd.read_parquet(release_dir / str(row["frame_timeline_ref"]))
+        assert list(timeline.columns) == ["video_id", "frame_id", "pts_time", "duration_time"]
+        assert timeline["video_id"].eq(row["video_id"]).all()
+        assert timeline["frame_id"].tolist() == list(range(len(timeline)))
     assert manifest["video_local_path"].str.startswith("/").all()
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "indexes" / "visual.faiss").exists()
@@ -274,8 +523,8 @@ def test_local_ingest_video_primary_tolerates_missing_and_unmatched_metadata(tmp
 
 def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_path):
     output_dir = tmp_path / "output"
-    ingest = runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    assigned = runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
+    ingest = invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    assigned = invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
     assert ingest.exit_code == 0, ingest.stdout
     assert assigned.exit_code == 0, assigned.stdout
     release_dir = output_dir / "competition_dataset_v001"
@@ -298,11 +547,11 @@ def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_
 
 def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
     release_dir = output_dir / "competition_dataset_v001"
     videos_before = (release_dir / "tables" / "videos.parquet").stat().st_mtime_ns
-    result = runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = release_dir / "artifacts" / "structure" / "L21_V001"
     assert artifact_dir.exists()
@@ -312,9 +561,10 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
+        "image_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
-        "scene_summaries_initial.parquet",
+        "scene_summaries.parquet",
         "manifest.json",
         "errors.jsonl",
     ]:
@@ -322,7 +572,29 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     assert (artifact_dir / "keyframes").exists()
     assert (artifact_dir / "thumbnails").exists()
     assert not (artifact_dir / "L21_V001").exists()
-    assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
+    structure_zip = release_dir / "artifacts" / "structure" / "L21_V001_structure.zip"
+    assert structure_zip.exists()
+    assert_artifact_zip_contract(
+        structure_zip,
+        video_id="L21_V001",
+        artifact_type="structure",
+        expected_payload_files={
+            "L21_V001/metadata_normalized.json",
+            "L21_V001/asr_segments.parquet",
+            "L21_V001/shots.parquet",
+            "L21_V001/scenes.parquet",
+            "L21_V001/keyframes.parquet",
+            "L21_V001/image_captions.parquet",
+            "L21_V001/shot_transcript_links.parquet",
+            "L21_V001/scene_transcript_links.parquet",
+            "L21_V001/scene_summaries.parquet",
+            "L21_V001/manifest.json",
+            "L21_V001/errors.jsonl",
+        },
+    )
+    with zipfile.ZipFile(structure_zip) as archive:
+        names = {name for name in archive.namelist() if not name.endswith("/")}
+        assert not any("_canonical_cache" in name or "phase01_scratch" in name for name in names)
     assert (release_dir / "artifacts" / "structure_batches" / "batch_000" / "L21_V001.json").exists()
     assert not (release_dir / "artifacts" / "features").exists()
     assert not (release_dir / "db" / "app.sqlite").exists()
@@ -333,25 +605,41 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
+        "image_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
-        "scene_summaries_initial.parquet",
+        "scene_summaries.parquet",
     ]:
         assert not (release_dir / "tables" / name).exists()
     keyframes = pd.read_parquet(artifact_dir / "keyframes.parquet")
     assert keyframes.iloc[0]["keyframe_ref"] == "media://keyframes/L21_V001/L21_V001_f0000000.jpg"
     assert keyframes.iloc[0]["thumbnail_ref"] == "media://thumbnails/L21_V001/L21_V001_f0000000.webp"
-    assert keyframes.iloc[0]["frame_id_method"] == "first_frame_extraction_assumed_frame_0"
+    assert keyframes.iloc[0]["frame_id_method"] == "decoded_frame_timeline"
+    assert keyframes.iloc[0]["pts_time"] == 0.0
+    assert keyframes.iloc[0]["duration_time"] == 0.04
     assert str(keyframes.iloc[0]["thumbnail_ref"]).endswith(".webp")
     shots = pd.read_parquet(artifact_dir / "shots.parquet")
     assert shots.iloc[0]["boundary_convention"] == "[start_frame, end_frame)"
+    assert shots.iloc[0]["detection_method"] == "fallback_full_video_from_frame_timeline"
+    scenes = pd.read_parquet(artifact_dir / "scenes.parquet")
+    assert scenes.iloc[0]["construction_method"] == "fallback_scene_from_timeline_shots"
+    image_captions = pd.read_parquet(artifact_dir / "image_captions.parquet")
+    assert {"caption_id", "keyframe_id", "video_id", "scene_id", "shot_id", "caption", "provider", "status"}.issubset(image_captions.columns)
+    assert image_captions.iloc[0]["keyframe_id"] == "L21_V001:0"
+    scene_summaries = pd.read_parquet(artifact_dir / "scene_summaries.parquet")
+    assert {"scene_id", "video_id", "summary", "provider", "status"}.issubset(scene_summaries.columns)
+    manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["phase01_contract"]["semantic_level"] == "semantic_light"
+    assert manifest["phase01_contract"]["uses_phase00_frame_timeline"] is True
+    assert manifest["phase01_contract"]["frame_timeline_ref"] == "frame_timeline/L21_V001.parquet"
+    assert manifest["phase01_contract"]["scene_summary_table"] == "scene_summaries.parquet"
 
 def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
     with patch("subprocess.run", side_effect=__import__("subprocess").CalledProcessError(1, "ffmpeg")):
-        result = runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+        result = invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = output_dir / "competition_dataset_v001" / "artifacts" / "structure" / "L21_V001"
     jpg = next((artifact_dir / "keyframes").glob("*.jpg"))
@@ -362,19 +650,19 @@ def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
 
 def test_process_batch_missing_batch_file_fails_clearly(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    result = runner.invoke(app, ["process-batch", "--batch-id", "batch_999", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["process-batch", "--batch-id", "batch_999", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
 
 def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
-    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     release_dir = output_dir / "competition_dataset_v001"
     structure_manifest = release_dir / "artifacts" / "structure" / "L21_V001" / "manifest.json"
     structure_before = structure_manifest.stat().st_mtime_ns
-    result = runner.invoke(app, ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = release_dir / "artifacts" / "features" / "L21_V001"
     assert artifact_dir.exists()
@@ -392,8 +680,26 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
     ]:
         assert (artifact_dir / name).exists()
     assert not (artifact_dir / "L21_V001").exists()
-    assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
-    assert (release_dir / "manifests" / "worker_runtime_report_features.json").exists()
+    features_zip = release_dir / "artifacts" / "features" / "L21_V001_features.zip"
+    assert features_zip.exists()
+    assert_artifact_zip_contract(
+        features_zip,
+        video_id="L21_V001",
+        artifact_type="features",
+        expected_payload_files={
+            "L21_V001/visual_embeddings.npy",
+            "L21_V001/embeddings_meta.parquet",
+            "L21_V001/ocr.parquet",
+            "L21_V001/objects.parquet",
+            "L21_V001/image_captions.parquet",
+            "L21_V001/shot_captions.parquet",
+            "L21_V001/scene_summaries_enriched.parquet",
+            "L21_V001/text_sources.parquet",
+            "L21_V001/feature_manifest.json",
+            "L21_V001/errors.jsonl",
+        },
+    )
+    assert (release_dir / "manifests" / "worker_reports" / "features_batch_000_worker_000.json").exists()
     embeddings = np.load(artifact_dir / "visual_embeddings.npy")
     embeddings_meta = pd.read_parquet(artifact_dir / "embeddings_meta.parquet")
     text_sources = pd.read_parquet(artifact_dir / "text_sources.parquet")
@@ -414,10 +720,52 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
 
 def test_feature_batch_missing_structure_artifact_fails_clearly(tmp_path):
     output_dir = tmp_path / "output"
-    runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    runner.invoke(app, ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
-    result = runner.invoke(app, ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
+
+
+def test_worker_reports_include_phase_batch_worker_and_do_not_overwrite(tmp_path):
+    output_dir = tmp_path / "output"
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
+    first = invoke_app(["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_a", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    second = invoke_app(["process-batch", "--batch-id", "batch_001", "--worker-id", "worker_b", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    assert first.exit_code == 0, first.stdout
+    assert second.exit_code == 0, second.stdout
+    release_dir = output_dir / "competition_dataset_v001"
+    report_a = release_dir / "manifests" / "worker_reports" / "structure_batch_000_worker_a.json"
+    report_b = release_dir / "manifests" / "worker_reports" / "structure_batch_001_worker_b.json"
+    assert report_a.exists()
+    assert report_b.exists()
+    payload_a = json.loads(report_a.read_text(encoding="utf-8"))
+    payload_b = json.loads(report_b.read_text(encoding="utf-8"))
+    assert payload_a["phase"] == "structure"
+    assert payload_a["batch_id"] == "batch_000"
+    assert payload_a["worker_id"] == "worker_a"
+    assert payload_a["status"] == "completed"
+    assert payload_a["videos_processed"] > 0
+    assert payload_b["phase"] == "structure"
+    assert payload_b["batch_id"] == "batch_001"
+    assert payload_b["worker_id"] == "worker_b"
+
+
+def test_feature_batch_restores_structure_from_zip_when_folder_missing(tmp_path):
+    output_dir = tmp_path / "output"
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    release_dir = output_dir / "competition_dataset_v001"
+    shutil.rmtree(release_dir / "artifacts" / "structure" / "L21_V001")
+
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+
+    assert result.exit_code == 0, result.stdout
+    extracted = release_dir / "staging" / "extracted_artifacts" / "structure" / "L21_V001"
+    assert (extracted / "keyframes.parquet").exists()
+    assert (release_dir / "artifacts" / "features" / "L21_V001_features.zip").exists()
+
 
 def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     output_dir = tmp_path / "output"
@@ -429,7 +777,7 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
         ["merge", "--mode", "debug_small_sample", "--output", str(output_dir)],
     ]
     for command in commands:
-        result = runner.invoke(app, command)
+        result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
     release_dir = output_dir / "competition_dataset_v001"
     assert (release_dir / "tables" / "text_documents.parquet").exists()
@@ -439,10 +787,10 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "indexes" / "visual.faiss").exists()
 
-    index = runner.invoke(app, ["build-index", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    db = runner.invoke(app, ["build-db", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    smoke = runner.invoke(app, ["smoke-test", "--release", str(release_dir)])
+    index = invoke_app(["build-index", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    db = invoke_app(["build-db", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    validate = invoke_app(["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    smoke = invoke_app(["smoke-test", "--release", str(release_dir)])
     assert index.exit_code == 0, index.stdout
     assert db.exit_code == 0, db.stdout
     assert validate.exit_code == 0, validate.stdout
@@ -465,27 +813,70 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     assert smoke_report["media_resolved"] is True
     assert media_refs is not None
 
+
+def test_merge_reads_zip_artifacts_when_extracted_folders_missing(tmp_path):
+    output_dir = tmp_path / "output"
+    release_dir = prepare_structure_and_feature_artifacts(output_dir)
+    shutil.rmtree(release_dir / "artifacts" / "structure" / "L21_V001")
+    shutil.rmtree(release_dir / "artifacts" / "features" / "L21_V001")
+
+    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+
+    assert result.exit_code == 0, result.stdout
+    assert (release_dir / "staging" / "extracted_artifacts" / "merge" / "structure" / "L21_V001" / "shots.parquet").exists()
+    assert (release_dir / "staging" / "extracted_artifacts" / "merge" / "features" / "L21_V001" / "embeddings_meta.parquet").exists()
+    assert (release_dir / "tables" / "text_documents.parquet").exists()
+
+
+def test_merge_fails_on_artifact_zip_checksum_mismatch(tmp_path):
+    output_dir = tmp_path / "output"
+    release_dir = prepare_structure_and_feature_artifacts(output_dir)
+    structure_zip = release_dir / "artifacts" / "structure" / "L21_V001_structure.zip"
+
+    def corrupt_first_checksum(payload: dict[str, object]) -> dict[str, object]:
+        first_key = sorted(payload)[0]
+        assert isinstance(payload[first_key], dict)
+        payload[first_key]["sha256"] = "0" * 64
+        return payload
+
+    rewrite_zip_json_member(structure_zip, "L21_V001/checksums.json", corrupt_first_checksum)
+    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+
+    assert result.exit_code != 0
+    assert result.exception is not None
+    assert "checksum mismatch" in str(result.exception)
+
+
+@pytest.mark.parametrize("member_name", ["L21_V001/artifact_manifest.json", "L21_V001/checksums.json"])
+def test_merge_fails_on_artifact_zip_missing_package_metadata(tmp_path, member_name):
+    output_dir = tmp_path / "output"
+    release_dir = prepare_structure_and_feature_artifacts(output_dir)
+    structure_zip = release_dir / "artifacts" / "structure" / "L21_V001_structure.zip"
+    remove_zip_member(structure_zip, member_name)
+
+    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+
+    assert result.exit_code != 0
+    assert result.exception is not None
+    assert Path(member_name).name in str(result.exception)
+
+
 def test_validate_fails_before_runtime_artifacts(tmp_path):
     output_dir = tmp_path / "output"
-    result = runner.invoke(app, ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
-    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    validate = invoke_app(["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
     assert validate.exit_code != 0
 
-def test_build_mini_seed_command_keeps_dev_helper_path(tmp_path):
+def test_build_mini_seed_command_is_removed_from_main_cli(tmp_path):
     output_dir = tmp_path / "output"
     result = runner.invoke(
         app,
         ["build-mini-seed", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     )
-    assert result.exit_code == 0, result.stdout
-    release_dir = output_dir / "competition_dataset_v001"
-    validate = runner.invoke(app, ["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    assert validate.exit_code == 0, validate.stdout
-    smoke = runner.invoke(app, ["smoke-test", "--release", str(release_dir)])
-    assert smoke.exit_code == 0, smoke.stdout
-    packaged = runner.invoke(app, ["release", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    assert packaged.exit_code == 0, packaged.stdout
+    assert result.exit_code != 0
+
+    release_dir = run_phase_based_release(tmp_path, package=True)
     assert (release_dir / "manifests" / "smoke_test_report.json").exists()
     assert (output_dir / "competition_dataset_v001.zip").exists()
 
@@ -498,12 +889,12 @@ def test_cli_bronze_pipeline_end_to_end(tmp_path):
         ["process-batch", "--batch-id", "batch_000", "--mode", "bronze_fast", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
-        result = runner.invoke(app, command)
+        result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
 
 
 def test_silver_balanced_outputs_asr_ocr_contracts(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="silver_balanced")
+    release_dir = run_phase_based_release(tmp_path, mode="silver_balanced")
     result = validate_release(release_dir)
     assert result.passed
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
@@ -514,7 +905,7 @@ def test_silver_balanced_outputs_asr_ocr_contracts(tmp_path):
 
 
 def test_real_provider_mode_fails_gracefully_with_degraded_asr_ocr(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="silver_balanced", providers="real")
+    release_dir = run_phase_based_release(tmp_path, mode="silver_balanced", providers="real")
     result = validate_release(release_dir)
     assert result.passed
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
@@ -524,23 +915,14 @@ def test_real_provider_mode_fails_gracefully_with_degraded_asr_ocr(tmp_path):
     assert report["release_usable"] is True
 
 
-def test_gold_full_outputs_enrichment_and_reuse_checkpoint(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
-    first_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
-    index_path = release_dir / "indexes" / "visual.faiss"
-    first_mtime = index_path.stat().st_mtime_ns
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
+def test_gold_full_outputs_enrichment_and_phase_artifacts(tmp_path):
+    release_dir = run_phase_based_release(tmp_path, mode="gold_full")
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
-    second_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
-    second_mtime = index_path.stat().st_mtime_ns
     assert report["capabilities"]["enrichment_overall"] == "pass"
-    assert report["capabilities"]["incremental_reuse"] == "pass"
-    assert first_checkpoint["rules"]["skip_keyframe_if_input_config_schema_unchanged"] is True
-    assert second_checkpoint["videos"]
-    assert all(video["media_reused"] for video in second_checkpoint["videos"].values())
-    assert second_checkpoint["embeddings_hash"] == first_checkpoint["embeddings_hash"]
-    assert second_mtime == first_mtime
-    for name in ["objects", "image_captions", "shot_captions", "scene_summaries_initial", "scene_summaries_enriched"]:
+    assert not (release_dir / "manifests" / "checkpoint_manifest.json").exists()
+    assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
+    assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
+    for name in ["objects", "image_captions", "shot_captions", "scene_summaries", "scene_summaries_enriched"]:
         assert (release_dir / "tables" / f"{name}.parquet").exists()
 
 
@@ -552,7 +934,7 @@ def test_cli_gold_pipeline_end_to_end(tmp_path):
         ["process-batch", "--batch-id", "batch_000", "--mode", "gold_full", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
-        result = runner.invoke(app, command)
+        result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
     release_dir = output_dir / "competition_dataset_v001"
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
@@ -571,26 +953,21 @@ def test_provider_plan_supports_named_modes():
 
 
 def test_worker_artifacts_and_runtime_reports_exist(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full")
-    structure_report = write_worker_artifacts(release_dir, batch_id="batch_000", phase="structure")
-    features_report = write_worker_artifacts(release_dir, batch_id="batch_000", phase="features")
-    assert structure_report.exists()
-    assert features_report.exists()
+    release_dir = run_phase_based_release(tmp_path, mode="gold_full")
+    assert (release_dir / "manifests" / "worker_reports" / "structure_batch_000_worker_000.json").exists()
+    assert (release_dir / "manifests" / "worker_reports" / "features_batch_000_worker_000.json").exists()
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
     assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
 
 
-def test_selective_rebuild_proof_embedding_change_keeps_asr_ocr_contracts(tmp_path):
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full", providers="mock")
-    first_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
-    release_dir = build_mini_seed(tmp_path, input_dir="input", mode="gold_full", providers="real")
-    second_checkpoint = json.loads((release_dir / "manifests" / "checkpoint_manifest.json").read_text(encoding="utf-8"))
+def test_selective_provider_change_keeps_phase_contracts(tmp_path):
+    release_dir = run_phase_based_release(tmp_path, mode="gold_full", providers="real")
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
-    assert first_checkpoint["videos"].keys() == second_checkpoint["videos"].keys()
-    assert all(video["media_reused"] for video in second_checkpoint["videos"].values())
     assert report["capabilities"]["asr"] == "degraded"
     assert report["capabilities"]["ocr"] == "degraded"
     assert report["capabilities"]["visual_search"] == "degraded"
+    assert (release_dir / "tables" / "asr_segments.parquet").exists()
+    assert (release_dir / "tables" / "ocr.parquet").exists()
 
 
 def test_import_organizer_source_from_local_folder(tmp_path):
@@ -711,6 +1088,15 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     assert manifest_row["video_upload_status"] == "uploaded"
     assert set(inventory.columns) == {
         "video_id",
+        "video_filename",
+        "metadata_filename",
+        "video_size_bytes",
+        "metadata_size_bytes",
+        "canonical_backend",
+        "canonical_repo_id",
+        "canonical_repo_type",
+        "canonical_revision",
+        "canonical_prefix",
         "canonical_video_path",
         "canonical_metadata_path",
         "duration_sec",
@@ -718,7 +1104,13 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         "frame_count",
         "file_size_bytes",
     }
-    assert inventory.sort_values("video_id")["canonical_video_path"].tolist() == [
+    sorted_inventory = inventory.sort_values("video_id")
+    assert sorted_inventory["canonical_prefix"].tolist() == [
+        "canonical_dataset_v001",
+        "canonical_dataset_v001",
+    ]
+    assert sorted_inventory["canonical_repo_id"].tolist() == ["org/repo", "org/repo"]
+    assert sorted_inventory["canonical_video_path"].tolist() == [
         "canonical_dataset_v001/raw_videos/L21_V001.mp4",
         "canonical_dataset_v001/raw_videos/L21_V002.mp4",
     ]
@@ -874,6 +1266,90 @@ def test_upload_standardized_raw_to_hf_verbose_prints_file_detail(monkeypatch, t
     assert result.error_count == 0
     assert "kind=video index=1/1 status=uploaded file=A.mp4" in output
     assert "kind=metadata index=1/1 status=uploaded file=A.json" in output
+
+
+def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monkeypatch, tmp_path):
+    source_root = tmp_path / "raw_dataset"
+    source_root.mkdir()
+    video_zip_root = tmp_path / "video_zip_root"
+    metadata_zip_root = tmp_path / "metadata_zip_root"
+    (video_zip_root / "nested").mkdir(parents=True)
+    (metadata_zip_root / "metadata").mkdir(parents=True)
+    video_ids = [f"L21_V{index:03d}" for index in range(1, 12)]
+    for video_id in video_ids:
+        (video_zip_root / "nested" / f"{video_id}.mp4").write_bytes(f"video-{video_id}".encode())
+    for video_id in video_ids[:-1]:
+        (metadata_zip_root / "metadata" / f"{video_id}.json").write_text(
+            json.dumps({"title": video_id}) + "\n",
+            encoding="utf-8",
+        )
+    (metadata_zip_root / "metadata" / "orphan.json").write_text('{"title":"orphan"}\n', encoding="utf-8")
+    shutil.make_archive(str(source_root / "Videos_L21_a"), "zip", video_zip_root)
+    shutil.make_archive(str(source_root / "metadata-info-aic-b1"), "zip", metadata_zip_root)
+    scratch_root = tmp_path / "scratch"
+    progress_path = tmp_path / "progress" / "stream_progress.jsonl"
+    uploaded: dict[str, bytes] = {}
+    commit_batches: list[list[str]] = []
+    probed_paths: list[Path] = []
+
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": [])
+
+    def fake_probe(path: Path):
+        probed_paths.append(path)
+        assert scratch_root in path.parents
+        return VideoProbe(30.0, "test", 300, False, "test", 10.0, 640, 360, False)
+
+    def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
+        commit_batches.append([str(relative_path) for _source, relative_path in files])
+        for source, relative_path in files:
+            uploaded[str(relative_path)] = source.read_bytes()
+            if str(relative_path).endswith(".mp4"):
+                assert scratch_root in source.parents
+        return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
+
+    monkeypatch.setattr(source_importer_module, "probe_video", fake_probe)
+    monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
+
+    result = stream_standardize_upload_raw_to_hf(
+        source_root,
+        repo_id="org/repo",
+        raw_import_id="canonical_dataset_v001",
+        scratch_dir=scratch_root,
+        progress_path=progress_path,
+    )
+
+    assert result.error_count == 0
+    assert result.video_count == len(video_ids)
+    for video_id in video_ids:
+        assert f"canonical_dataset_v001/raw_videos/{video_id}.mp4" in uploaded
+        assert f"canonical_dataset_v001/metadata/{video_id}.json" in uploaded
+    assert json.loads(uploaded[f"canonical_dataset_v001/metadata/{video_ids[-1]}.json"])["metadata_missing"] is True
+    assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
+    assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
+    assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
+    missing_audit = json.loads(uploaded["canonical_dataset_v001/manifests/missing_metadata.json"].decode())
+    unmatched_audit = json.loads(uploaded["canonical_dataset_v001/manifests/unmatched_metadata.json"].decode())
+    assert missing_audit["missing_metadata"] == [video_ids[-1]]
+    assert unmatched_audit["unmatched_metadata"] == ["orphan"]
+    inventory = pd.read_parquet(BytesIO(uploaded["canonical_dataset_v001/manifests/canonical_video_inventory.parquet"]))
+    assert inventory.sort_values("video_id")["video_id"].tolist() == video_ids
+    assert all(not path.exists() for path in probed_paths)
+    assert not any(scratch_root.glob("stream_pair_*"))
+    progress_records = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
+    assert [record["status"] for record in progress_records] == ["pass"] * len(video_ids)
+    raw_pair_batches = [
+        batch
+        for batch in commit_batches
+        if any(path.startswith("canonical_dataset_v001/raw_videos/") for path in batch)
+    ]
+    assert raw_pair_batches == [[
+        path
+        for video_id in video_ids
+        for path in (
+            f"canonical_dataset_v001/raw_videos/{video_id}.mp4",
+            f"canonical_dataset_v001/metadata/{video_id}.json",
+        )
+    ]]
 
 
 def test_upload_standardized_raw_rate_limit_helpers_parse_retry_after():
@@ -1383,8 +1859,8 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     source_root = tmp_path / "canonical_repo"
     (source_root / "raw_videos").mkdir(parents=True)
     (source_root / "metadata").mkdir(parents=True)
-    shutil.copy2(Path("input/raw_videos/L21_V001.mp4").resolve(), source_root / "raw_videos" / "L21_V001.mp4")
-    shutil.copy2(Path("input/metadata/L21_V001.json").resolve(), source_root / "metadata" / "L21_V001.json")
+    (source_root / "raw_videos" / "L21_V001.mp4").write_bytes(b"not-a-real-video")
+    (source_root / "metadata" / "L21_V001.json").write_text('{"title":"sample"}\n', encoding="utf-8")
     manifest = {
         "video_id": "L21_V001",
         "video_filename": "L21_V001.mp4",
@@ -1397,6 +1873,14 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     }
     (source_root / "manifests").mkdir()
     (source_root / "manifests" / "canonical_file_manifest.jsonl").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    (source_root / "manifests" / "missing_metadata.json").write_text(
+        json.dumps({"kind": "missing_metadata", "count": 0, "missing_metadata": []}) + "\n",
+        encoding="utf-8",
+    )
+    (source_root / "manifests" / "unmatched_metadata.json").write_text(
+        json.dumps({"kind": "unmatched_metadata", "count": 0, "unmatched_metadata": []}) + "\n",
+        encoding="utf-8",
+    )
     pd.DataFrame(
         [
             {
@@ -1442,9 +1926,15 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     assert videos.loc[0, "frame_count"] == 313
     assert mapping.loc[0, "canonical_backend"] == "hf_dataset"
     assert mapping.loc[0, "canonical_repo_id"] == "org/repo"
+    missing_audit = json.loads((release_dir / "manifests" / "missing_metadata.json").read_text(encoding="utf-8"))
+    unmatched_audit = json.loads((release_dir / "manifests" / "unmatched_metadata.json").read_text(encoding="utf-8"))
+    assert missing_audit["missing_metadata"] == []
+    assert unmatched_audit["unmatched_metadata"] == []
     assert download_calls == [
         "manifests/canonical_file_manifest.jsonl",
         "manifests/canonical_video_inventory.parquet",
+        "manifests/missing_metadata.json",
+        "manifests/unmatched_metadata.json",
         "metadata/L21_V001.json",
     ]
 
@@ -1537,6 +2027,8 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
     assert download_calls == [
         "manifests/canonical_file_manifest.jsonl",
         "manifests/canonical_video_inventory.parquet",
+        "manifests/missing_metadata.json",
+        "manifests/unmatched_metadata.json",
         "metadata/L21_V001.json",
         "metadata/L21_V002.json",
     ]
@@ -1776,3 +2268,185 @@ def test_release_sync_uploads_and_restores_release(monkeypatch, tmp_path):
     assert "releases/competition_dataset_v001/manifests/release_sync_manifest.json" in uploaded
     assert (restored_root / "competition_dataset_v001" / "tables" / "videos.parquet").read_bytes() == b"videos"
     assert restore.file_count == 3
+
+
+def test_phase00_ingestion_sync_maps_legacy_release_layout(monkeypatch, tmp_path):
+    from system1.release.sync import upload_phase00_ingestion_to_hf
+
+    release_dir = tmp_path / "output" / "canonical_release_v003"
+    (release_dir / "tables").mkdir(parents=True)
+    (release_dir / "raw_mapping").mkdir(parents=True)
+    (release_dir / "manifests").mkdir(parents=True)
+    (release_dir / "tables" / "videos.parquet").write_bytes(b"videos")
+    (release_dir / "raw_mapping" / "media_store_manifest.parquet").write_bytes(b"mapping")
+    (release_dir / "frame_timeline").mkdir()
+    (release_dir / "frame_timeline" / "L21_V001.parquet").write_bytes(b"timeline")
+    (release_dir / "manifests" / "batch_manifest.csv").write_text("batch_id\n", encoding="utf-8")
+    (release_dir / "manifests" / "batch_000.txt").write_text("L21_V001\n", encoding="utf-8")
+    (release_dir / "manifests" / "dataset_report.json").write_text('{"ok": true}\n', encoding="utf-8")
+    (release_dir / "manifests" / "ingestion_errors.jsonl").write_text("", encoding="utf-8")
+    (release_dir / "manifests" / "missing_metadata.json").write_text('{"count": 0}\n', encoding="utf-8")
+    (release_dir / "manifests" / "unmatched_metadata.json").write_text('{"count": 0}\n', encoding="utf-8")
+    uploaded: dict[str, bytes] = {}
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def upload_file(self, source: Path, relative_path):
+            uploaded[str(relative_path)] = source.read_bytes()
+            return Path("hf:/org/repo") / str(relative_path)
+
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    result = upload_phase00_ingestion_to_hf(release_dir, repo_id="org/repo")
+
+    assert result.file_count == 9
+    assert "canonical_release_v003/phase00_ingestion/tables/videos.parquet" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/frame_timeline/L21_V001.parquet" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/manifests/batch_manifest.csv" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/dataset_report.json" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/ingestion_errors.jsonl" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/missing_metadata.json" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/unmatched_metadata.json" in uploaded
+    assert "canonical_release_v003/phase00_ingestion/reports/phase00_sync_manifest.json" in uploaded
+    assert not any(path.startswith("releases/") for path in uploaded)
+
+
+def test_phase00_ingestion_restore_materializes_active_layout(monkeypatch, tmp_path):
+    from system1.release.sync import download_phase00_ingestion_from_hf
+
+    uploaded = {
+        "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
+        "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet": b"mapping",
+        "canonical_release_v003/phase00_ingestion/frame_timeline/L21_V001.parquet": b"timeline",
+        "canonical_release_v003/phase00_ingestion/manifests/batch_manifest.csv": b"batch_id\n",
+        "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
+        "canonical_release_v003/phase00_ingestion/reports/dataset_report.json": b'{"ok": true}\n',
+    }
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def list_files(self, prefix=""):
+            return [Path(path) for path in uploaded if path.startswith(str(prefix))]
+
+        def download_file(self, relative_path, target: Path, *, cache_dir=None):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(uploaded[str(relative_path)])
+            return target
+
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    result = download_phase00_ingestion_from_hf(
+        tmp_path / "output",
+        release_id="canonical_release_v003",
+        repo_id="org/repo",
+    )
+    release_dir = result.release_dir
+
+    assert (release_dir / "phase00_ingestion" / "tables" / "videos.parquet").read_bytes() == b"videos"
+    assert (release_dir / "phase00_ingestion" / "raw_mapping" / "media_store_manifest.parquet").read_bytes() == b"mapping"
+    assert (release_dir / "phase00_ingestion" / "frame_timeline" / "L21_V001.parquet").read_bytes() == b"timeline"
+    assert (release_dir / "phase00_ingestion" / "manifests" / "batch_000.txt").read_text(encoding="utf-8") == "L21_V001\n"
+    assert (release_dir / "phase00_ingestion" / "reports" / "dataset_report.json").exists()
+    assert (release_dir / "tables" / "videos.parquet").read_bytes() == b"videos"
+    assert (release_dir / "raw_mapping" / "media_store_manifest.parquet").read_bytes() == b"mapping"
+    assert (release_dir / "frame_timeline" / "L21_V001.parquet").read_bytes() == b"timeline"
+    assert (release_dir / "manifests" / "batch_manifest.csv").read_text(encoding="utf-8") == "batch_id\n"
+    assert (release_dir / "manifests" / "batch_000.txt").read_text(encoding="utf-8") == "L21_V001\n"
+    assert not (release_dir / "reports" / "dataset_report.json").exists()
+
+
+def test_phase00_ingestion_restore_no_overwrite_protects_active_layout(monkeypatch, tmp_path):
+    from system1.release.sync import download_phase00_ingestion_from_hf
+
+    uploaded = {
+        "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
+        "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
+    }
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def list_files(self, prefix=""):
+            return [Path(path) for path in uploaded if path.startswith(str(prefix))]
+
+        def download_file(self, relative_path, target: Path, *, cache_dir=None):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(uploaded[str(relative_path)])
+            return target
+
+    output_dir = tmp_path / "output"
+    active_batch = output_dir / "canonical_release_v003" / "manifests" / "batch_000.txt"
+    active_batch.parent.mkdir(parents=True)
+    active_batch.write_text("stale\n", encoding="utf-8")
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    with pytest.raises(FileExistsError, match="batch_000.txt"):
+        download_phase00_ingestion_from_hf(
+            output_dir,
+            release_id="canonical_release_v003",
+            repo_id="org/repo",
+            overwrite=False,
+        )
+
+    assert active_batch.read_text(encoding="utf-8") == "stale\n"
+
+
+def test_restore_phase00_ingestion_cli_unblocks_process_batch_manifest_check(monkeypatch, tmp_path):
+    uploaded = {
+        "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
+        "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet": b"mapping",
+        "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
+    }
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def list_files(self, prefix=""):
+            return [Path(path) for path in uploaded if path.startswith(str(prefix))]
+
+        def download_file(self, relative_path, target: Path, *, cache_dir=None):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(uploaded[str(relative_path)])
+            return target
+
+    def fake_process_structure_batch(output, **kwargs):
+        report_path = Path(output) / "canonical_release_v003" / "manifests" / "worker_reports" / "structure_batch_000_worker_000.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text('{"status": "completed"}\n', encoding="utf-8")
+        return report_path
+
+    monkeypatch.setenv("AIC_RELEASE_ID", "canonical_release_v003")
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+    monkeypatch.setattr("system1.commands.pipeline.process_structure_batch", fake_process_structure_batch)
+
+    restore = runner.invoke(
+        app,
+        [
+            "restore-phase00-ingestion",
+            "--output",
+            str(tmp_path / "output"),
+            "--release-id",
+            "canonical_release_v003",
+            "--hf-repo-id",
+            "org/repo",
+        ],
+    )
+    assert restore.exit_code == 0, restore.output
+
+    process = invoke_app([
+        "process-batch",
+        "--batch-id",
+        "batch_000",
+        "--output",
+        str(tmp_path / "output"),
+    ])
+    assert process.exit_code == 0, process.output
+    assert "missing batch manifest" not in process.output

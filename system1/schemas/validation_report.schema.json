@@ -5,7 +5,8 @@
   "required": [
     "status",
     "error_count",
-    "release_usable"
+    "release_usable",
+    "schema_validation"
   ],
   "properties": {
     "status": {
@@ -34,6 +35,30 @@
         "boolean",
         "null"
       ]
+    },
+    "schema_validation": {
+      "type": "object",
+      "required": [
+        "status",
+        "errors",
+        "warnings",
+        "tables"
+      ],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "errors": {
+          "type": "array"
+        },
+        "warnings": {
+          "type": "array"
+        },
+        "tables": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

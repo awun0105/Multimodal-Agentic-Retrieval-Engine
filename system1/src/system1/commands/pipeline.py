@@ -159,7 +159,7 @@ def register(app: typer.Typer) -> None:
         resume: bool = typer.Option(default_cli_resume(), "--resume/--no-resume"),
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
-        """Build mock ASR, shot, scene, keyframe, and thumbnail artifacts."""
+        """Build phase01 structure artifacts for one assigned batch."""
         require_supported_mode(mode)
         require_supported_providers(providers)
         if resume:

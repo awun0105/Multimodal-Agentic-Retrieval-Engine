@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 
 import numpy as np
@@ -58,26 +56,3 @@ def build_visual_index(release_dir: Path | str) -> Path:
     )
     return index_path
 
-
-def write_index_files(release_dir: Path, tables: dict[str, pd.DataFrame], previous_checkpoint: dict | None) -> str:
-    """Legacy dev helper for `build-mini-seed` only.
-
-    Do not use this helper for the phase-based worker pipeline. The main path
-    uses `build_visual_index()` after merge has produced release-level tables.
-    """
-    vectors = [row["vector"] for row in tables["_embeddings"].to_dict("records")]
-    vector_rows = []
-    for vector_id, row in enumerate(tables["vector_map"].to_dict("records")):
-        vector_rows.append(row | {"vector_id": vector_id})
-    indexes_dir = release_dir / "indexes"
-    indexes_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(vector_rows).to_parquet(indexes_dir / "vector_map.parquet", index=False)
-    index_path = indexes_dir / "visual.faiss"
-    embeddings_hash = hashlib.sha256(json.dumps(vectors, sort_keys=True).encode("utf-8")).hexdigest()
-    previous_hash = (previous_checkpoint or {}).get("embeddings_hash")
-    if previous_hash == embeddings_hash and index_path.exists():
-        kind = json.loads((indexes_dir / "index_version.json").read_text(encoding="utf-8")).get("index_backend", "stub") if (indexes_dir / "index_version.json").exists() else "stub"
-    else:
-        kind = write_visual_index(index_path, vectors)
-    write_json(indexes_dir / "index_version.json", {"index_name": INDEX_NAME, "index_version": INDEX_VERSION, "index_backend": kind, "vector_count": len(vector_rows)})
-    return kind

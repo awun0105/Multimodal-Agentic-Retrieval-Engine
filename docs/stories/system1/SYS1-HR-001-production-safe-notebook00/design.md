@@ -10,18 +10,45 @@
 
 ## Application Flow
 
-Notebook 00 presents the Colab/Drive path as the primary flow:
+Notebook 00A preserves the older Colab/Drive path:
 
 1. `system1 drive-shadow` when Drive folder IDs are configured.
 2. `system1 standardize-archives` when an archive source folder is configured.
 3. Local standardized input readiness check.
 4. Phase00 ingest.
 5. Batch assignment.
-6. Required `system1 sync-release` to the configured Hugging Face Dataset repo.
+6. Required `system1 sync-phase00-ingestion` to the configured Hugging Face Dataset repo.
 
-Already-standardized local input remains a fallback when Drive/archive config is
-empty. Canonical Hugging Face import is intentionally excluded from Notebook
-00's standard workflow to keep the operator path singular.
+Notebook 00B/00C are the current large-dataset streaming paths. They stream raw
+video/metadata pairs to `AIC26_raw`, then run canonical HF raw ingest to produce
+the phase00 release tables, raw mapping, frame timeline manifest, batch files,
+and reports.
+
+Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
+
+1. `system1 drive-shadow` copies the organizer folder into the operator/team
+   Drive folder.
+2. `system1 stream-standardize-upload-raw` scans zip members globally, builds
+   video/metadata pairs by `video_id`, extracts pair batches bounded by
+   `RAW_UPLOAD_BATCH_SIZE` files and scratch bytes into local scratch, probes
+   those local files, uploads the batch to `AIC26_raw` with the existing batched
+   HF commit helper, records per-pair progress, and deletes the batch scratch
+   directories before moving on.
+3. Canonical HF ingest reads the raw repo manifests and inventory.
+4. Batch assignment and required `system1 sync-phase00-ingestion` stay the same.
+
+The streaming variant does not materialize full `raw_videos/` and `metadata/`
+folders on Google Drive.
+
+Notebook 00C is the local-machine variant of the same streaming flow:
+
+1. The operator downloads organizer zip files to a local folder and points
+   `AIC_LOCAL_DATASET_DIR` or `archive_source_dir` at that folder.
+2. The notebook skips Google Drive mount/remount and `drive-shadow`.
+3. `system1 stream-standardize-upload-raw` uses local scratch, the same
+   disk-safe options, batched HF raw uploads, and per-pair progress JSONL.
+4. Canonical HF ingest, batch assignment, frame timeline manifest checks, and
+   `sync-phase00-ingestion` match Notebook 00B.
 
 The safety gate belongs in the CLI commands so Notebook 00, shell users, and
 tests share the same behavior.
@@ -40,6 +67,19 @@ tests share the same behavior.
 - Skips existing targets with identical size by default.
 - Uses `--overwrite` for explicit replacement.
 
+`system1 stream-standardize-upload-raw`:
+
+- Fails non-zero when pair scan, extraction, probe, or upload records errors.
+- Supports `--allow-partial` for manual recovery.
+- Uses `--resume` by default and appends pair progress to JSONL.
+- Uses `--overwrite` only for explicit remote replacement.
+- Rejects Google Drive paths as `--scratch-dir`.
+- Reuses `RAW_UPLOAD_BATCH_SIZE` and batched HF commits instead of committing
+  one pair at a time.
+- Reuses the same disk-safe option family as `standardize-archives`:
+  `--min-free-gb`, `--drive-sync-sleep-seconds`, `--cleanup-every-files`, and
+  `--cleanup-every-gb`.
+
 ## Data Model
 
 No database schema change.
@@ -52,10 +92,12 @@ Reports remain JSON files:
 - `unmatched_metadata.json`
 
 `missing_metadata.json` and `unmatched_metadata.json` are produced by the
-standardized raw-video/metadata pairing audit. They are not recomputed by
-canonical Hugging Face ingest, because HF ingest should consume the canonical
-raw manifest rather than re-scan or download raw videos solely for pairing
-audit.
+standardized raw-video/metadata pairing audit. They are raw-level audit
+manifests in `AIC26_raw/canonical_raw_vXXX/manifests/`. The release repo may
+also snapshot them under
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
+particular run. Canonical Hugging Face ingest should consume the raw-level
+manifests rather than re-scan or download raw videos solely for pairing audit.
 
 `upload-standardized-raw` also writes
 `manifests/canonical_video_inventory.parquet` beside the canonical file
@@ -65,6 +107,9 @@ ingest must use this small inventory by default and must not download
 `raw_videos/*.mp4` for probing unless the operator explicitly enables the
 legacy fallback with `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1`.
 
+`stream-standardize-upload-raw` writes the same canonical raw manifests and
+inventory while each video is present in local scratch.
+
 When standardized raw videos are mounted from Colab DriveFS under
 `/content/drive`, `upload-standardized-raw` stages each video read used for
 probe/upload into local runtime temp storage first. Direct DriveFS probing is a
@@ -73,8 +118,11 @@ downloads, when explicitly enabled, use per-run staging/cache directories and
 clean them in `finally`; the package must not blindly delete the user's global
 Hugging Face cache.
 
-Phase00 release output is synced under `releases/<AIC_RELEASE_ID>/...` in the
-configured Hugging Face Dataset repo.
+Phase00 release output is synced under
+`AIC26_release/canonical_release_vXXX/phase00_ingestion/` in the configured
+Hugging Face Dataset repo. The synced snapshot includes `tables/`,
+`raw_mapping/`, `frame_timeline/` when decoded timelines are available,
+`manifests/`, and `reports/`.
 
 ## UI / Platform Impact
 

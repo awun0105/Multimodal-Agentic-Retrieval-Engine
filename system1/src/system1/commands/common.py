@@ -15,6 +15,7 @@ from system1.artifacts.factory import make_artifact_store_from_env
 from system1.artifacts.hf_store import HF_EXPECTED_ERRORS
 from system1.runtime.environment import resolve_runtime_environment
 from system1.runtime.environment import resolve_runtime_paths
+from system1.runtime.environment import parse_bool
 from system1.release.types import release_root
 
 SUPPORTED_MODES = {"debug_small_sample", "bronze_fast", "silver_balanced", "gold_full"}
@@ -49,8 +50,7 @@ def default_cli_resume() -> bool:
     return resolve_runtime_paths().resume
 
 def default_cli_sync() -> bool:
-    # --- SỬA LỖI LOGIC: Luôn ưu tiên cơ chế phân giải tập trung của environment.py ---
-    return resolve_runtime_paths().sync
+    return parse_bool(os.environ.get("AIC_SYNC"), False)
 
 
 def release_dir(output: Path) -> Path:

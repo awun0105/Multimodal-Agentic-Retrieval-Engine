@@ -593,7 +593,8 @@ Mỗi dòng là một video.
 | `fps_detected` | FPS detect thực tế | `30.0` |
 | `fps_source` | nguồn detect FPS | `avg_frame_rate` |
 | `is_vfr` | video có VFR hay không | `false` |
-| `frame_id_method` | cách xác định `frame_id` | `decoded_frame_index` |
+| `frame_id_method` | cách xác định `frame_id` | `decoded_frame_timeline` |
+| `frame_timeline_ref` | logical ref tới decoded frame timeline nếu có | `frame_timeline/L01_V028.parquet` |
 | `fps_expected_default` | default planning/reference FPS | `25.0` |
 | `width` | chiều rộng video | `1920` |
 | `height` | chiều cao video | `1080` |
@@ -609,7 +610,8 @@ Ví dụ một dòng:
   "fps_detected": 30.0,
   "fps_source": "avg_frame_rate",
   "is_vfr": false,
-  "frame_id_method": "decoded_frame_index",
+  "frame_id_method": "decoded_frame_timeline",
+  "frame_timeline_ref": "frame_timeline/L01_V028.parquet",
   "fps_expected_default": 25.0,
   "width": 1920,
   "height": 1080,
