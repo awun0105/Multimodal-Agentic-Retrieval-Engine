@@ -70,7 +70,8 @@ Goal: persist enough frame/FPS metadata to make frame mapping auditable.
 Scope:
 
 - Probe duration, dimensions, codec/container facts, detected FPS, and VFR indicator when available.
-- Prefer decoded frame count when available.
+- Prefer packet-counted frame count (`ffprobe -count_packets` /
+  `nb_read_packets`) when available.
 - Emit `frame_count`, `frame_count_estimated`, `frame_count_method`, `fps_detected`, `fps_source`, `is_vfr`, and `frame_id_method`.
 - Emit `frame_timeline` staging rows or documented equivalent proof when frame-accurate timestamp mapping is needed.
 

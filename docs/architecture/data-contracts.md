@@ -218,8 +218,11 @@ in local scratch. It must contain one row per canonical video with:
 - `file_size_bytes`
 
 HF canonical ingest uses this inventory for duration, FPS, frame count, and
-file size. It must not download `raw_videos/*.mp4` only to probe media unless a
-debug/operator fallback explicitly enables that behavior.
+file size. Frame count should be produced from actual packet counting
+(`ffprobe -count_packets` / `nb_read_packets`) when possible; header
+`nb_frames` and duration/FPS math are fallbacks. It must not download
+`raw_videos/*.mp4` only to probe media unless a debug/operator fallback
+explicitly enables that behavior.
 
 ## Data Categories
 

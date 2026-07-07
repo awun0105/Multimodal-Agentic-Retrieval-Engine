@@ -602,10 +602,18 @@ duration_sec
 width
 height
 fps_detected
+frame_count
 frame_count_estimated
+frame_count_method
 file_size_bytes
 has_audio
 ```
+
+`frame_count` should come from `ffprobe -count_packets` / `nb_read_packets`
+when available. Header `nb_frames` is only a fallback, and `duration_sec *
+fps_detected` is a last-resort estimate that must set
+`frame_count_estimated=true` because it can cause frame ID drift on VFR or
+malformed videos.
 
 Sau đó tính:
 
@@ -673,7 +681,9 @@ duration_sec
 width
 height
 fps_detected
+frame_count
 frame_count_estimated
+frame_count_method
 file_size_bytes
 has_audio
 estimated_compute_cost

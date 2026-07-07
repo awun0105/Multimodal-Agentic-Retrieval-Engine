@@ -1758,13 +1758,19 @@ raw_metadata_json
 ## Count convention
 
 ```text
-frame_count = decoded_frame_count if available
-frame_count_estimated = floor(duration_sec * fps_detected)
-frame_count_method = decoded | ffprobe_nb_frames | duration_x_fps_estimate
+frame_count = ffprobe nb_read_packets if available
+frame_count_estimated = false when frame_count comes from packet count or header frame count
+frame_count_method = ffprobe_nb_read_packets | ffprobe_nb_frames | estimated_from_duration_and_fps
 scene_count = final number of scenes after scene construction
 shot_count = final number of shots after shot detection
 keyframe_count = final number of keyframes after keyframe selection
 ```
+
+For AIC 2026 frame ID safety, System 1 treats actual video packet counting as
+the primary frame-count source. Header `nb_frames` is only a fallback because it
+can drift when container metadata is stale or damaged. `duration_sec *
+fps_detected` is the last fallback and must be marked estimated/degraded because
+it can drift on VFR media.
 
 Ở Phase 1:
 
@@ -2865,9 +2871,10 @@ videos.keyframe_count == count(keyframes where video_id)
 scenes.shot_count == count(shots where scene_id)
 scenes.keyframe_count == count(keyframes where scene_id)
 shots.keyframe_count == count(keyframes where shot_id)
-videos.frame_count == decoded_frame_count when frame_count_method = decoded.
-videos.frame_count_estimated ~= floor(duration_sec * fps_detected).
-If only estimated count exists, validation marks frame_count confidence as estimated/degraded.
+videos.frame_count == ffprobe nb_read_packets when frame_count_method = ffprobe_nb_read_packets.
+videos.frame_count == ffprobe nb_frames only when packet counting is unavailable.
+videos.frame_count_estimated == true only for duration/fps math fallback or unavailable counts.
+If only estimated count exists, validation marks frame_count confidence as estimated/degraded because frame IDs may drift.
 If scenes exist, scenes.frame_count == end_frame - start_frame.
 If shots exist, shots.frame_count == end_frame - start_frame.
 ```

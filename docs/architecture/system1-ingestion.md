@@ -112,6 +112,10 @@ The inventory carries:
 - `frame_count`
 - `file_size_bytes`
 
+`frame_count` should come from `ffprobe -count_packets` / `nb_read_packets`
+when available. Header `nb_frames` and duration/FPS math are fallbacks, with
+math estimates marked degraded because frame IDs may drift.
+
 Canonical HF ingest consumes that inventory by default and does not download
 `raw_videos/*.mp4` solely for media probing unless
 `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
