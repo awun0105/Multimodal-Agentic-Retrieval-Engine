@@ -224,7 +224,7 @@ __marimo__/
 *.sqlite-wal
 *.sqlite-shm
 *.duckdb
-harness.db
+# Harness durable database is tracked intentionally. Do not ignore harness.db.
 harness.db-shm
 harness.db-wal
 
