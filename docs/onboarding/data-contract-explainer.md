@@ -138,7 +138,7 @@ Output canonical gồm:
 - `ocr`: chữ xuất hiện trong frame/keyframe.
 - `objects`: object/concept như person, car, bus, screen.
 - `image_captions`, `shot_captions`: caption theo image/shot.
-- `scene_summaries_initial`, `scene_summaries_enriched`: summary cấp scene.
+- `scene_summaries`, `scene_summaries_enriched`: summary cấp scene.
 - `shots` / `scenes`: ngữ cảnh thời gian để inspect sâu hơn từ keyframe về shot/scene/video.
 - `feature_availability`: cho UI biết entity nào có ASR/OCR/object/caption/inspection evidence.
 
@@ -522,7 +522,7 @@ Có những bảng chính nào?
 | `objects` | Object/concept detections gắn với `keyframe_id`. |
 | `image_captions` | Caption gắn với image/keyframe. |
 | `shot_captions` | Caption gắn với shot. |
-| `scene_summaries_initial` | Summary scene ban đầu. |
+| `scene_summaries` | Summary scene Phase01. |
 | `scene_summaries_enriched` | Summary scene enriched nếu có. |
 | `embeddings_meta` | Metadata về embeddings/model/index build. |
 | `text_documents` | Global text search contract. |
@@ -916,7 +916,7 @@ dataset_manifest.json / validation_report.json / release_capabilities
               -> shot_captions
               -> shot_transcript_links
           -> scene_transcript_links
-          -> scene_summaries_initial
+          -> scene_summaries
           -> scene_summaries_enriched
   -> asr_segments
   -> embeddings_meta
@@ -1208,7 +1208,7 @@ Nhìn theo data model logic, có thể chia dữ liệu thành **6 nhóm chính*
    - `objects`
    - `image_captions`
    - `shot_captions`
-   - `scene_summaries_initial`
+   - `scene_summaries`
    - `scene_summaries_enriched`
    - `feature_availability`
 
@@ -1633,7 +1633,7 @@ System 1 tạo hoặc import qua adapter:
 - `ocr`;
 - `asr_segments`;
 - `objects`;
-- `scene_summaries_initial`, `scene_summaries_enriched`;
+- `scene_summaries`, `scene_summaries_enriched`;
 - `text_documents` cho text search global.
 
 ### Bước 4: Build indexes

@@ -95,6 +95,9 @@ Bộ dữ liệu này phải cho phép System 2:
    * caption;
    * logical media ref của video gốc.
 9. Extract dense frames runtime nếu cần, dựa trên `video_ref` của video gốc và shot/scene boundary.
+10. Hỗ trợ System 2 làm temporal search bằng dữ liệu timeline/mapping/evidence có
+    thể join được: `keyframes -> shots -> scenes -> video`, ASR time ranges,
+    transcript links, text evidence, `vector_map`, và logical media refs.
 
 ## Runtime contract levels
 
@@ -150,6 +153,27 @@ System 1 **không làm**:
 ```
 
 System 1 chỉ chuẩn bị dữ liệu để System 2 dùng.
+
+## Temporal search boundary
+
+Temporal search là trách nhiệm của System 2 runtime, không phải một model hay
+artifact riêng của System 1.
+
+System 1 phải chuẩn bị dữ liệu đủ sạch để System 2 có thể:
+
+```text
+parse query thành event/constraint
+→ retrieve candidate từ visual/text/evidence adapters
+→ join candidate theo video_id + timeline
+→ rerank sequence theo thứ tự/khoảng cách/shot/scene context
+→ build evidence clip và neighboring keyframes
+```
+
+Không tạo `temporal_search.parquet` như source of truth trong System 1. Nếu
+Notebook 03 hoặc System 2 cần một bảng/view tối ưu như `temporal_keyframes`, nó
+chỉ là derived runtime cache từ các bảng canonical (`keyframes`, `shots`,
+`scenes`, `asr_segments`, `image_captions`, `shot_captions`,
+`scene_summaries`, `scene_summaries_enriched`, `text_documents`, `vector_map`).
 
 ---
 
@@ -1942,7 +1966,7 @@ asr_raw.json
 Schema:
 
 ```text
-asr_id
+asr_segment_id
 video_id
 start_sec
 end_sec
@@ -2054,11 +2078,9 @@ Schema:
 
 ```text
 shot_id
-asr_id
+asr_segment_id
 video_id
-overlap_start_sec
-overlap_end_sec
-overlap_ratio
+coverage
 text
 ```
 

@@ -292,6 +292,39 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | `agent_runs` | Automatic mode run metadata. |
 | `agent_steps` | Automatic mode trace steps. |
 
+## Temporal Retrieval Readiness
+
+System 1 does not need to publish a dedicated `temporal_search.parquet`
+source-of-truth table. Temporal retrieval in System 2 should be computed from
+the canonical runtime tables below.
+
+Minimum temporal-ready fields:
+
+- `videos`: `video_id`, `video_ref`, duration/FPS/VFR metadata.
+- `shots`: `shot_id`, `video_id`, `start_frame`, `end_frame`, `start_seconds`,
+  `end_seconds`.
+- `scenes`: `scene_id`, `video_id`, `start_frame`, `end_frame`,
+  `start_seconds`, `end_seconds`, and scene-to-shot grouping context such as
+  `shot_ids` when available.
+- `keyframes`: `keyframe_id`, `video_id`, `frame_id`, `shot_id`, `scene_id`,
+  `time_seconds` and/or `timestamp_sec`, `pts_time`, `duration_time`,
+  `keyframe_ref`, `thumbnail_ref`.
+- `asr_segments`: `asr_segment_id`, `video_id`, `start_sec`, `end_sec`,
+  `text`.
+- `shot_transcript_links` and `scene_transcript_links`: canonical overlap/link
+  rows from transcript evidence into shot/scene intervals.
+- `image_captions`, `shot_captions`, `scene_summaries`, `scene_summaries_enriched`,
+  `ocr`, and `objects`: searchable evidence rows that resolve back to
+  `keyframe_id`, `shot_id`, `scene_id`, or `video_id`.
+- `text_documents`: the global text-search contract used by FTS5.
+- `vector_map`: the visual-search mapping used to resolve FAISS hits into
+  keyframes before temporal reasoning.
+
+Runtime-specific optimization views or tables are allowed, for example a
+materialized same-video timeline view for faster temporal joins, but those are
+derived caches only. They must not replace the canonical tables above as the
+source of truth.
+
 ## FTS5 Tables
 
 Runtime text search uses SQLite FTS5 inside `app.sqlite`.

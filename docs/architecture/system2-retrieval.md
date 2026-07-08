@@ -60,6 +60,41 @@ Adapters return normalized hit records with `source`, `score`, `keyframe_id` or 
 7. Rerank top-K candidates with richer evidence when configured.
 8. Build UI-ready evidence summaries and validation warnings.
 
+## Temporal Search
+
+Temporal search is a System 2 query operator and reasoning layer, not a
+separate System 1 model or a dedicated release artifact.
+
+Canonical temporal flow:
+
+```text
+user query
+  -> temporal query parsing
+  -> event candidate retrieval
+  -> temporal constraint solving
+  -> sequence reranking
+  -> evidence clip / same-video context builder
+```
+
+Recommended runtime modules:
+
+- `TemporalQueryParser`: converts a user query into event clauses plus temporal
+  constraints such as `before`, `after`, `within`, `same_scene`, `same_shot`,
+  or ordered `sequence`.
+- `TemporalCandidateRetriever`: reuses the normal adapters and runtime
+  contracts to retrieve candidates for each event from visual, caption, OCR,
+  ASR, object, and metadata evidence.
+- `TemporalSequenceRanker`: joins candidates by `video_id` and timeline, applies
+  temporal constraints, and reranks valid sequences.
+- `EvidenceBuilder`: returns sequence evidence, not only a single frame, for
+  example start/end timestamps, neighboring keyframes, transcript overlap, and
+  same-shot or same-scene context.
+
+The baseline implementation may be rule-based. Learned reranking is optional
+later work. System 2 should prefer explicit temporal constraints and
+inspectable evidence over opaque sequence scoring that is difficult to debug in
+competition operations.
+
 ## Write Model
 
 Search reads are mostly read-only. Writes are scoped to Query Sessions:
