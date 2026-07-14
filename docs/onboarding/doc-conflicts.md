@@ -48,21 +48,26 @@ Resolved. Use SQLite FTS5 as MVP text search. Treat Tantivy/OpenSearch/BM25 JSON
 ## Conflict 7: Phase01 semantic structure target vs current fallback implementation
 
 - Target docs/spec now define Notebook 01 / `process-batch` as phase01
-  semantic-light structure: restore phase00, reuse phase00 video facts, process
-  only the assigned batch, stage per-video raw media from `AIC26_raw` or local
-  input, generate shots, selected keyframes, thumbnails, minimum keyframe/image
-  captions required for scene construction, ASR/transcript rows when configured,
-  scenes, scene summaries, structure ZIPs, worker report, and sync to
-  `phase01_structure`.
+  semantic structure: restore phase00, reuse phase00 video facts, process only
+  the assigned batch, stage per-video raw media from `AIC26_raw` or local input,
+  generate TransNet V2 shot boundaries, selected keyframes, thumbnails, one
+  representative keyframe per shot, one canonical `shot_captions` row per shot,
+  required ASR/transcript rows, shot transcript links, scenes, scene summaries,
+  structure ZIPs, worker report, and sync to `phase01_structure`.
 - Current package implementation can produce valid structure ZIPs and reports,
   and the fallback scaffold now consumes Phase00 decoded frame timelines when
-  available through provider interfaces. It still uses fallback/provider-
-  scaffold behavior for the production algorithms: one full-video shot, one
-  full-video scene, first-frame keyframe extraction, and mock/unavailable
-  providers for ASR/caption/scene summaries until real providers are selected
-  and implemented.
+  available through provider interfaces. The package layout now follows the
+  one-shot-caption-per-shot contract: `shot_captions` is produced in Phase01,
+  Phase02 no longer produces caption/enriched-summary artifacts, and merge
+  combines Phase01 text evidence with Phase02 feature evidence.
+- The remaining gap is provider/algorithmic implementation depth: the current
+  package still uses fallback/provider-scaffold behavior for production
+  algorithms such as TransNet V2 shot detection, full representative-keyframe
+  selection policy, mandatory real ASR, VLM shot captioning, and LLM scene
+  summarization.
 
-Partially resolved. File naming, package layout, and timeline-aware fallback
+Partially resolved. File naming, package layout, canonical Phase01
+shot-caption ownership, Phase02 caption removal, and timeline-aware fallback
 interfaces have been migrated toward the target phase01 contract. Real provider
-implementations and algorithm selection remain open package work and must not
-move into Notebook 01 cells.
+implementations and algorithm integrations remain open package work and must
+not move into Notebook 01 cells.

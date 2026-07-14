@@ -160,62 +160,31 @@ Artifact phải có manifest và checksum để merge/release có thể kiểm t
 
 ---
 
-## 3. Execution modes
+## 3. Production profile, not execution modes
 
-Execution mode là **cấu hình chạy pipeline**, không phải pipeline riêng biệt.
+Production notebooks should run the full end-to-end profile. Operators choose
+batch/workers and provider credentials, not bronze/silver/gold execution modes.
 
-Execution mode quyết định:
+Legacy names such as `debug_small_sample`, `bronze_fast`, `silver_balanced`, and
+`gold_full` may remain package-internal while tests and older CLIs are being
+refactored, but they are not the production notebook contract.
 
-```text
-- chạy module nào
-- bỏ qua module nào
-- dùng model nhẹ hay model nặng
-- keyframe dày hay thưa
-- batch size bao nhiêu
-- tạo release tier nào
-```
-
-Các mode chính:
+The production profile runs:
 
 ```text
-debug_small_sample
-→ bronze_fast
-→ silver_balanced
-→ gold_full
+Phase00 ingest + batch planning
+Phase01 semantic structure
+Phase02 feature extraction
+Phase03 merge + index + validate + release
 ```
 
-Quan trọng:
+Each phase owns one responsibility and should not defer core work to a later
+phase. In particular, Phase01 owns canonical shot captions and scene summaries;
+Phase02 does not add caption/enriched-summary work.
 
-```text
-Các mode là cumulative release levels.
-Tức là chúng tích lũy dần, không chạy lại toàn bộ từ đầu cho mỗi mode.
-```
-
-Nói cách khác:
-
-```text
-bronze_fast tạo bản usable đầu tiên.
-silver_balanced dùng lại bronze và chạy thêm OCR/ASR.
-gold_full dùng lại bronze/silver và chạy thêm caption/object/enriched summaries.
-```
-
-Không được hiểu là:
-
-```text
-chạy bronze xong rồi bỏ
-chạy lại silver từ đầu
-chạy lại gold từ đầu
-```
-
-Cách đúng là:
-
-```text
-chạy bronze
-→ reuse bronze artifacts
-→ bổ sung silver artifacts
-→ reuse bronze + silver artifacts
-→ bổ sung gold artifacts
-```
+The older mode sections below are retained as historical capacity-planning
+notes until the package/CLI is fully refactored. Do not use them as the
+production notebook contract.
 
 ---
 
@@ -253,9 +222,10 @@ Output của mode này không nhất thiết dùng cho release chính.
 
 ---
 
-## 5. Mode 2 — bronze_fast
+## 5. Legacy note — bronze_fast
 
-Dùng để tạo dataset usable sớm nhất cho System 2.
+Legacy planning note only. Production notebooks should not expose this as an
+operator mode.
 
 Mục tiêu:
 
@@ -270,14 +240,12 @@ Mục tiêu:
 - có release chạy được
 ```
 
-Bronze có thể bỏ qua hoặc dùng bản nhẹ cho:
+This legacy profile could skip or use a lightweight version of:
 
 ```text
 - ASR
 - OCR
-- captioning
 - object detection
-- enriched scene summaries
 ```
 
 Đặc điểm:
@@ -289,7 +257,7 @@ Bronze có thể bỏ qua hoặc dùng bản nhẹ cho:
 - chất lượng retrieval chưa tối đa
 ```
 
-Bronze tạo các artifact nền tảng để các mode sau reuse:
+This legacy profile created artifacts such as:
 
 ```text
 - videos.parquet
@@ -305,13 +273,14 @@ Bronze tạo các artifact nền tảng để các mode sau reuse:
 
 ---
 
-## 6. Mode 3 — silver_balanced
+## 6. Legacy note — silver_balanced
 
-Dùng cho bản dataset đủ nghiêm túc để thi.
+Legacy planning note only. The production profile now targets the full release
+contract directly.
 
-Silver **không chạy lại toàn bộ bronze nếu bronze artifact còn hợp lệ**.
+The older plan reused bronze artifacts if still valid.
 
-Silver nên reuse từ bronze:
+It reused:
 
 ```text
 - video metadata
@@ -323,7 +292,7 @@ Silver nên reuse từ bronze:
 - FAISS/vector_map nếu embedding model không đổi
 ```
 
-Silver chạy thêm hoặc nâng cấp:
+It added or upgraded:
 
 ```text
 - OCR
@@ -343,7 +312,7 @@ Silver chạy thêm hoặc nâng cấp:
 - hỗ trợ tốt hơn cho query có chữ trong ảnh, lời thoại, bảng hiệu, địa danh
 ```
 
-Ví dụ:
+Legacy example:
 
 ```text
 competition_dataset_v001_bronze
@@ -353,13 +322,14 @@ competition_dataset_v001_bronze
 
 ---
 
-## 7. Mode 4 — gold_full
+## 7. Legacy note — gold_full
 
-Dùng cho bản dataset giàu nhất.
+Legacy planning note only. This should not be implemented as a production
+notebook mode.
 
-Gold **không chạy lại bronze/silver nếu artifact và config/model không đổi**.
+The older plan reused bronze/silver artifacts if inputs/configs were unchanged.
 
-Gold nên reuse từ bronze/silver:
+It reused:
 
 ```text
 - video metadata
@@ -371,13 +341,10 @@ Gold nên reuse từ bronze/silver:
 - SQLite base tables
 ```
 
-Gold chạy thêm:
+It added:
 
 ```text
 - object detection
-- image captions
-- shot captions
-- enriched scene summaries
 - richer text_documents
 - SQLite FTS5 rebuild nếu text thay đổi
 - validation report mới
@@ -661,10 +628,8 @@ audio_factor:
   has_audio = true  → 1.2
   has_audio = false → 1.0
 
-tier_factor:
-  bronze_fast     → 1.0
-  silver_balanced → 1.5
-  gold_full       → 2.5
+profile_factor:
+  production_full → 1.0
 ```
 
 Công thức này chỉ là ước lượng. Không cần chính xác tuyệt đối. Mục tiêu là chia batch cân bằng hơn.
@@ -744,7 +709,7 @@ Mỗi teammate làm theo flow đơn giản:
 3. Mount hoặc connect storage.
 4. Nhập worker_id.
 5. Chọn batch_id.
-6. Chọn execution_mode.
+6. Chọn provider credentials/config nếu cần.
 7. Bấm Run All.
 8. Notebook kiểm tra artifact nào đã có thể reuse.
 9. Notebook chỉ chạy phần còn thiếu hoặc phần cần rebuild.
@@ -758,7 +723,6 @@ Ví dụ:
 ```text
 worker_id = worker_kaggle_an_01
 batch_id = batch_003
-execution_mode = silver_balanced
 ```
 
 Output:
@@ -1014,8 +978,8 @@ caption:
 Nguyên tắc:
 
 ```text
-- captioning thường chậm hơn embedding
-- chỉ bật trong gold_full hoặc khi cần
+- canonical shot captioning thuộc Phase01
+- chỉ caption representative keyframe của mỗi shot
 - output phải có model version
 ```
 
@@ -1056,9 +1020,8 @@ Nguyên tắc:
 
 ```text
 - ASR thường là bottleneck lớn
-- bronze_fast có thể bỏ qua hoặc dùng model nhỏ
-- silver_balanced nên có ASR
-- gold_full có thể dùng model tốt hơn nếu đủ thời gian
+- production profile yêu cầu ASR
+- model/provider có thể thay đổi qua config nhưng không qua notebook mode selector
 ```
 
 ---
@@ -1259,7 +1222,7 @@ Report này giúp team biết worker chạy gì, mất bao lâu, lỗi ở đâu
 {
   "worker_id": "worker_kaggle_an_01",
   "platform": "kaggle",
-  "execution_mode": "silver_balanced",
+  "profile": "production_full",
   "batch_id": "batch_003",
   "gpu_name": "Tesla T4",
   "started_at": "2026-07-01T09:00:00+07:00",
@@ -1399,12 +1362,14 @@ Notebook này làm:
 - đọc videos.parquet + media_store_manifest.parquet để reuse phase00 video facts
 - kiểm tra structure artifact nào đã có thể reuse
 - stage đúng video/metadata hiện tại từ AIC26_raw hoặc local input vào scratch nếu cần
-- chạy configured shot detection provider nếu cần
+- chạy TransNet V2 shot detection provider
 - extract/select keyframes bằng configured keyframe provider nếu cần
 - tạo thumbnails nếu cần
-- tạo minimum keyframe/image captions nếu scene construction phụ thuộc caption
-- import/chạy ASR hoặc transcript provider nếu cấu hình yêu cầu
-- construct semantic-light scenes từ shots, selected keyframes, captions, transcript, metadata
+- chọn 1 representative keyframe cho mỗi shot
+- tạo đúng 1 canonical shot caption cho mỗi shot từ representative keyframe
+- import/chạy ASR hoặc transcript provider
+- link transcript vào shot
+- construct scenes từ shot captions, transcript, timeline, metadata
 - tạo scene_summaries.parquet
 - tạo structure artifact ZIP
 - ghi local artifact to artifacts/structure/{video_id}_structure.zip
@@ -1436,10 +1401,9 @@ Notebook này làm:
 - đọc batch được giao
 - kiểm tra feature artifact nào đã có thể reuse
 - chạy embedding nếu cần
-- chạy OCR nếu mode yêu cầu và artifact chưa có
-- chạy object detection nếu mode yêu cầu và artifact chưa có
-- chạy additional/heavier caption enrichment nếu mode yêu cầu và artifact chưa có
-- tạo shot_captions và scene_summaries_enriched nếu mode yêu cầu
+- chạy OCR nếu artifact chưa có
+- chạy object detection nếu artifact chưa có
+- tạo text_sources từ OCR/object labels nếu cần
 - tạo feature artifact ZIP
 - ghi local artifact to artifacts/features/{video_id}_features.zip
 - ghi local runtime report to manifests/worker_reports/features_{batch_id}_{worker_id}.json
@@ -1514,11 +1478,9 @@ MVP nên làm theo thứ tự:
 4. Implement manifests/worker_reports/{phase}_{batch_id}_{worker_id}.json.
 5. Implement basic upload/validate flow.
 6. Implement merge/release skeleton.
-7. Chạy debug_small_sample.
-8. Chạy bronze_fast.
-9. Reuse bronze artifacts để chạy silver_balanced.
-10. Reuse bronze/silver artifacts để chạy gold_full nếu còn thời gian.
-11. Chỉ thêm dynamic queue nếu static batch không đủ nhanh.
+7. Chạy full production profile trên một batch nhỏ để smoke test.
+8. Mở rộng full production profile sang các batch còn lại.
+9. Chỉ thêm dynamic queue nếu static batch không đủ nhanh.
 ```
 
 Không nên implement dynamic queue quá sớm.
@@ -1554,16 +1516,16 @@ Mặc định dùng:
 cost-aware static batch assignment
 ```
 
-Execution modes là:
+Production profile là:
 
 ```text
-các mức release tích lũy dần
+full end-to-end release contract
 ```
 
 Không phải:
 
 ```text
-các pipeline độc lập phải chạy lại từ đầu
+bronze/silver/gold modes cho operator chọn trong notebook production
 ```
 
 Dynamic queue là advanced mode:

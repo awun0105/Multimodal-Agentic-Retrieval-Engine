@@ -183,6 +183,11 @@ uv sync
 
 Run this exact order for the current MVP mock pipeline:
 
+The `--mode debug_small_sample` flags below are current CLI/test compatibility
+for the mock pipeline. Production notebooks should run the full production
+profile and should not expose bronze/silver/gold execution-mode choices to
+operators.
+
 Verified clean mock E2E sequence:
 
 ```bash
@@ -317,15 +322,15 @@ into runtime storage. If a decoded frame timeline is unavailable, the package
 must mark the per-video structure artifact degraded/warning rather than hiding
 the fallback in notebook code.
 
-The target phase01 structure package is semantic-light structure, not final
-feature enrichment. It should contain shot rows, selected keyframes, thumbnails,
-ASR/transcript rows when configured, minimum keyframe/image caption rows needed
-for scene construction, scene rows, scene summaries, package manifests,
-checksums, and errors. Algorithm choices are provider/config driven; docs
-should not hardcode a specific shot detector, captioning model, or ASR model
-before those providers are chosen. Current mock/fallback code goes through
-timeline-aware provider interfaces and may emit one full-video shot/scene and a
-first-frame keyframe while production providers are unfinished.
+The target phase01 structure package is semantic structure, not feature
+enrichment. It should contain shot rows, selected keyframes, thumbnails,
+production ASR/transcript rows, one canonical shot caption per shot generated
+from that shot's representative keyframe, scene rows, scene summaries, package
+manifests, checksums, and errors. Production phase01 standardizes on TransNet V2
+for shot boundaries while package code may keep provider interfaces for tests
+and local development. Current mock/fallback code goes through timeline-aware
+provider interfaces and may emit one full-video shot/scene and a first-frame
+keyframe while production providers are unfinished.
 
 Target per-video structure ZIP layout:
 
@@ -337,7 +342,7 @@ Target per-video structure ZIP layout:
     ├── shots.parquet
     ├── scenes.parquet
     ├── keyframes.parquet
-    ├── image_captions.parquet
+    ├── shot_captions.parquet
     ├── shot_transcript_links.parquet
     ├── scene_transcript_links.parquet
     ├── scene_summaries.parquet

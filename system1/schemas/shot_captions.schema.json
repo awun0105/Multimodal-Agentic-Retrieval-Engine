@@ -3,7 +3,11 @@
   "title": "shot_captions.schema.json",
   "type": "object",
   "required": [
+    "shot_caption_id",
     "shot_id",
+    "video_id",
+    "representative_keyframe_id",
+    "representative_timestamp_sec",
     "caption"
   ],
   "properties": {
@@ -17,6 +21,42 @@
       ]
     },
     "caption": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "shot_caption_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "video_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "representative_keyframe_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "representative_timestamp_sec": {
       "type": [
         "string",
         "number",

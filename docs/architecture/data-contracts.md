@@ -270,11 +270,10 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | `datasets` | Dataset identity and build metadata. |
 | `videos` | One row per video; stores `video_id`, `source_video_stem`, `video_ref`, duration, fps, VFR/frame-count metadata, dimensions, normalized metadata, and selected raw metadata fields. |
 | `shots` | One row per shot or fallback full-video shot; stores `shot_id`, `video_id`, frame/time ranges, detection method, and degraded/full-fidelity status. |
-| `scenes` | Scene-level inspection context derived from shots, selected keyframes, minimum keyframe/image captions when configured, ASR/transcript rows, and metadata. |
-| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `time_seconds` or `timestamp_sec`, `pts_time`, `duration_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
-| `image_captions` | Caption evidence mapped to image/keyframe. Minimum phase01 caption rows may be required before scene construction; phase02 may add enrichment rows. |
-| `shot_captions` | Caption evidence mapped to shot-level intervals. |
-| `scene_summaries` | Phase01 scene summaries built from metadata, transcript links, and minimum keyframe/image captions when configured. |
+| `scenes` | Scene-level inspection context derived from consecutive shots, canonical shot captions, ASR/transcript rows, metadata, and timeline continuity. |
+| `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `shot_id`, `scene_id`, role/representative metadata, `time_seconds` or `timestamp_sec`, `pts_time`, `duration_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
+| `shot_captions` | Canonical shot-level caption evidence. Production Phase01 creates exactly one caption per shot from the representative keyframe. |
+| `scene_summaries` | Phase01 scene summaries built from shot captions, transcript links, timeline continuity, and metadata. |
 | `ocr` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
 | `asr_segments` | Transcript segments mapped to `video_id` and time range. |
 | `shot_transcript_links` | Canonical link rows between ASR segments and shots. |
@@ -313,8 +312,8 @@ Minimum temporal-ready fields:
   `text`.
 - `shot_transcript_links` and `scene_transcript_links`: canonical overlap/link
   rows from transcript evidence into shot/scene intervals.
-- `image_captions`, `shot_captions`, `scene_summaries`, `scene_summaries_enriched`,
-  `ocr`, and `objects`: searchable evidence rows that resolve back to
+- `shot_captions`, `scene_summaries`, `ocr`, and `objects`: searchable evidence
+  rows that resolve back to
   `keyframe_id`, `shot_id`, `scene_id`, or `video_id`.
 - `text_documents`: the global text-search contract used by FTS5.
 - `vector_map`: the visual-search mapping used to resolve FAISS hits into

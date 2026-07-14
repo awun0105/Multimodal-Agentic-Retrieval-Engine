@@ -4,6 +4,7 @@
   "type": "object",
   "required": [
     "scene_id",
+    "video_id",
     "summary"
   ],
   "properties": {
@@ -17,6 +18,15 @@
       ]
     },
     "summary": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "video_id": {
       "type": [
         "string",
         "number",

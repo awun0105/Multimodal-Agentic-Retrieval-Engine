@@ -32,6 +32,10 @@ def write_valid_schema_release(release_dir: Path) -> None:
                 "keyframe_id": "L21_V001:0",
                 "video_id": "L21_V001",
                 "frame_id": 0,
+                "shot_id": "L21_V001_SH00000",
+                "scene_id": "L21_V001_SC00000",
+                "keyframe_role": "representative",
+                "is_representative": True,
                 "keyframe_ref": "media://keyframes/L21_V001/L21_V001_f0000000.jpg",
                 "thumbnail_ref": "media://thumbnails/L21_V001/L21_V001_f0000000.webp",
             }
@@ -44,6 +48,26 @@ def write_valid_schema_release(release_dir: Path) -> None:
     write_table(
         release_dir / "tables" / "scenes.parquet",
         [{"scene_id": "L21_V001_SC00000", "video_id": "L21_V001", "start_frame": 0, "end_frame": 1}],
+    )
+    write_table(
+        release_dir / "tables" / "asr_segments.parquet",
+        [{"asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "start_sec": 0.0, "end_sec": 0.04, "text": "sample transcript"}],
+    )
+    write_table(
+        release_dir / "tables" / "shot_captions.parquet",
+        [
+            {
+                "shot_caption_id": "L21_V001_SH00000_caption",
+                "shot_id": "L21_V001_SH00000",
+                "video_id": "L21_V001",
+                "representative_keyframe_id": "L21_V001:0",
+                "caption": "sample shot caption",
+            }
+        ],
+    )
+    write_table(
+        release_dir / "tables" / "scene_summaries.parquet",
+        [{"scene_id": "L21_V001_SC00000", "video_id": "L21_V001", "summary": "sample scene summary"}],
     )
     write_table(
         release_dir / "tables" / "embeddings_meta.parquet",

@@ -242,7 +242,6 @@ def test_schema_files_are_complete_and_loadable():
         "embeddings_meta.schema.json",
         "ocr.schema.json",
         "objects.schema.json",
-        "image_captions.schema.json",
         "shot_captions.schema.json",
         "scene_summaries.schema.json",
         "text_sources.schema.json",
@@ -315,7 +314,7 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         assert "AIC_DATA_ROOT" in joined
         assert "AIC_RUNTIME_ROOT" in joined
         assert "AIC_ARTIFACT_ROOT" in joined
-        assert "execution_mode" in joined
+        assert "package_mode" in joined or "execution_mode" in joined
         if not path.name.startswith("00"):
             assert "worker_id" in joined
             assert "batch_id" in joined
@@ -561,7 +560,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
-        "image_captions.parquet",
+        "shot_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
         "scene_summaries.parquet",
@@ -584,7 +583,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
             "L21_V001/shots.parquet",
             "L21_V001/scenes.parquet",
             "L21_V001/keyframes.parquet",
-            "L21_V001/image_captions.parquet",
+            "L21_V001/shot_captions.parquet",
             "L21_V001/shot_transcript_links.parquet",
             "L21_V001/scene_transcript_links.parquet",
             "L21_V001/scene_summaries.parquet",
@@ -605,7 +604,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
-        "image_captions.parquet",
+        "shot_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
         "scene_summaries.parquet",
@@ -615,6 +614,9 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     assert keyframes.iloc[0]["keyframe_ref"] == "media://keyframes/L21_V001/L21_V001_f0000000.jpg"
     assert keyframes.iloc[0]["thumbnail_ref"] == "media://thumbnails/L21_V001/L21_V001_f0000000.webp"
     assert keyframes.iloc[0]["frame_id_method"] == "decoded_frame_timeline"
+    assert keyframes.iloc[0]["keyframe_role"] == "representative"
+    assert bool(keyframes.iloc[0]["is_representative"]) is True
+    assert keyframes.iloc[0]["timestamp_sec"] == 0.0
     assert keyframes.iloc[0]["pts_time"] == 0.0
     assert keyframes.iloc[0]["duration_time"] == 0.04
     assert str(keyframes.iloc[0]["thumbnail_ref"]).endswith(".webp")
@@ -623,15 +625,28 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     assert shots.iloc[0]["detection_method"] == "fallback_full_video_from_frame_timeline"
     scenes = pd.read_parquet(artifact_dir / "scenes.parquet")
     assert scenes.iloc[0]["construction_method"] == "fallback_scene_from_timeline_shots"
-    image_captions = pd.read_parquet(artifact_dir / "image_captions.parquet")
-    assert {"caption_id", "keyframe_id", "video_id", "scene_id", "shot_id", "caption", "provider", "status"}.issubset(image_captions.columns)
-    assert image_captions.iloc[0]["keyframe_id"] == "L21_V001:0"
+    shot_captions = pd.read_parquet(artifact_dir / "shot_captions.parquet")
+    assert {
+        "shot_caption_id",
+        "shot_id",
+        "video_id",
+        "scene_id",
+        "representative_keyframe_id",
+        "representative_timestamp_sec",
+        "caption",
+        "provider",
+        "status",
+    }.issubset(shot_captions.columns)
+    assert shot_captions.iloc[0]["representative_keyframe_id"] == "L21_V001:0"
+    assert shot_captions.iloc[0]["shot_id"] == shots.iloc[0]["shot_id"]
     scene_summaries = pd.read_parquet(artifact_dir / "scene_summaries.parquet")
     assert {"scene_id", "video_id", "summary", "provider", "status"}.issubset(scene_summaries.columns)
     manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["phase01_contract"]["semantic_level"] == "semantic_light"
     assert manifest["phase01_contract"]["uses_phase00_frame_timeline"] is True
     assert manifest["phase01_contract"]["frame_timeline_ref"] == "frame_timeline/L21_V001.parquet"
+    assert manifest["phase01_contract"]["canonical_shot_captions"] is True
+    assert manifest["phase01_contract"]["shot_caption_table"] == "shot_captions.parquet"
     assert manifest["phase01_contract"]["scene_summary_table"] == "scene_summaries.parquet"
 
 def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
@@ -671,9 +686,6 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
         "embeddings_meta.parquet",
         "ocr.parquet",
         "objects.parquet",
-        "image_captions.parquet",
-        "shot_captions.parquet",
-        "scene_summaries_enriched.parquet",
         "text_sources.parquet",
         "feature_manifest.json",
         "errors.jsonl",
@@ -691,9 +703,6 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
             "L21_V001/embeddings_meta.parquet",
             "L21_V001/ocr.parquet",
             "L21_V001/objects.parquet",
-            "L21_V001/image_captions.parquet",
-            "L21_V001/shot_captions.parquet",
-            "L21_V001/scene_summaries_enriched.parquet",
             "L21_V001/text_sources.parquet",
             "L21_V001/feature_manifest.json",
             "L21_V001/errors.jsonl",
@@ -707,7 +716,8 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
     assert {"embedding_id", "keyframe_id", "video_id", "frame_id", "embedding_model", "model_slug", "embedding_dim", "vector_dim", "status", "provider"}.issubset(embeddings_meta.columns)
     assert embeddings.shape[1] == int(embeddings_meta.iloc[0]["vector_dim"])
     assert {"source_id", "video_id", "entity_type", "entity_id", "source_type", "raw_text", "normalized_text", "normalized_no_diacritics", "language", "provider", "status"}.issubset(text_sources.columns)
-    assert "image_caption" in set(text_sources["source_type"])
+    assert {"ocr", "object_labels", "video_title", "video_description", "video_keywords"}.issubset(set(text_sources["source_type"]))
+    assert "image_caption" not in set(text_sources["source_type"])
     manifest = json.loads((artifact_dir / "feature_manifest.json").read_text(encoding="utf-8"))
     assert "source_structure_artifact" in manifest
     assert "visual_embeddings_shape" in manifest
@@ -922,7 +932,7 @@ def test_gold_full_outputs_enrichment_and_phase_artifacts(tmp_path):
     assert not (release_dir / "manifests" / "checkpoint_manifest.json").exists()
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
     assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
-    for name in ["objects", "image_captions", "shot_captions", "scene_summaries", "scene_summaries_enriched"]:
+    for name in ["objects", "shot_captions", "scene_summaries", "text_sources", "text_documents"]:
         assert (release_dir / "tables" / f"{name}.parquet").exists()
 
 

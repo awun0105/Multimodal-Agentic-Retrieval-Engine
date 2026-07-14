@@ -5,7 +5,13 @@
   "required": [
     "keyframe_id",
     "video_id",
-    "frame_id"
+    "frame_id",
+    "shot_id",
+    "scene_id",
+    "keyframe_role",
+    "is_representative",
+    "keyframe_ref",
+    "thumbnail_ref"
   ],
   "properties": {
     "keyframe_id": {
@@ -27,6 +33,60 @@
       ]
     },
     "frame_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "shot_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "scene_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "keyframe_role": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "is_representative": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "keyframe_ref": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "thumbnail_ref": {
       "type": [
         "string",
         "number",

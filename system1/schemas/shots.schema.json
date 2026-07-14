@@ -4,7 +4,11 @@
   "type": "object",
   "required": [
     "shot_id",
-    "video_id"
+    "video_id",
+    "start_frame",
+    "end_frame",
+    "start_sec",
+    "end_sec"
   ],
   "properties": {
     "shot_id": {
@@ -17,6 +21,42 @@
       ]
     },
     "video_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "start_frame": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "end_frame": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "start_sec": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "end_sec": {
       "type": [
         "string",
         "number",

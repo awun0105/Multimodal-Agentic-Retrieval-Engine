@@ -15,14 +15,15 @@ Raw videos + metadata JSON
 → metadata normalization
 → batch assignment
 → ASR
-→ shot detection
+→ TransNet V2 shot detection
 → keyframe selection
 → thumbnail generation
-→ minimum keyframe/image captioning for scene construction
+→ representative keyframe selection per shot
+→ one canonical shot caption per shot
 → transcript-shot/keyframe alignment
-→ semantic-light scene construction
+→ scene construction from shot captions + transcript + timeline
 → scene summaries
-→ OCR / object detection / additional captioning / visual embedding
+→ OCR / object detection / visual embedding
 → artifact packaging
 → merge structural + feature artifacts
 → global text document construction
@@ -124,7 +125,6 @@ System 1 nên sinh ra đầy đủ nhất có thể:
 - `asr_segments`
 - `ocr`
 - `objects`
-- `image_captions`
 - `shots`
 - `scenes`
 - `shot_captions`
@@ -172,8 +172,8 @@ parse query thành event/constraint
 Không tạo `temporal_search.parquet` như source of truth trong System 1. Nếu
 Notebook 03 hoặc System 2 cần một bảng/view tối ưu như `temporal_keyframes`, nó
 chỉ là derived runtime cache từ các bảng canonical (`keyframes`, `shots`,
-`scenes`, `asr_segments`, `image_captions`, `shot_captions`,
-`scene_summaries`, `scene_summaries_enriched`, `text_documents`, `vector_map`).
+`scenes`, `asr_segments`, `shot_captions`, `scene_summaries`,
+`text_documents`, `vector_map`).
 
 ---
 
@@ -254,13 +254,11 @@ competition_dataset_v001/
 │   ├── keyframes.parquet
 │   ├── shot_transcript_links.parquet
 │   ├── scene_transcript_links.parquet
+│   ├── shot_captions.parquet
+│   ├── scene_summaries.parquet
 │   ├── embeddings_meta.parquet
 │   ├── ocr.parquet
 │   ├── objects.parquet
-│   ├── image_captions.parquet
-│   ├── shot_captions.parquet
-│   ├── scene_summaries.parquet
-│   ├── scene_summaries_enriched.parquet
 │   ├── text_sources.parquet
 │   ├── feature_availability.parquet
 │   └── text_documents.parquet
@@ -815,7 +813,7 @@ L21_V001/
 ├── shots.parquet
 ├── scenes.parquet
 ├── keyframes.parquet
-├── image_captions.parquet
+├── shot_captions.parquet
 ├── shot_transcript_links.parquet
 ├── scene_transcript_links.parquet
 ├── scene_summaries.parquet
@@ -843,9 +841,6 @@ L21_V001/
 ├── embeddings_meta.parquet
 ├── ocr.parquet
 ├── objects.parquet
-├── image_captions.parquet                 # optional/additive phase02 rows
-├── shot_captions.parquet
-├── scene_summaries_enriched.parquet
 ├── text_sources.parquet
 ├── feature_manifest.json
 └── errors.jsonl
@@ -857,9 +852,10 @@ Lưu ý:
 text_sources.parquet = text fragments cấp video.
 text_documents.parquet = global text table, build sau merge toàn dataset.
 feature_availability.parquet = global availability table, build sau merge toàn dataset.
-Minimum keyframe/image captions that are inputs to scene construction belong in
-the phase01 structure artifact. Phase02 may add heavier or additional caption
-rows as enrichment, but it should not be required to construct phase01 scenes.
+Canonical shot captions that are inputs to scene construction belong in the
+phase01 structure artifact. Phase02 does not create canonical captions or
+enriched scene summaries; it focuses on embeddings, OCR, object/concept
+detections, and feature text-source rows.
 ```
 
 Không nên để `text_documents.parquet` trong từng per-video feature artifact nếu nó là global index table.
@@ -963,9 +959,9 @@ System 1 phải định nghĩa rõ required artifact, optional artifact và các
 | ASR                 |                  Important | warning nếu fail, vẫn release được      |
 | scenes              |                  Important | fallback scene = group theo shot/window |
 | visual embeddings   | Required for visual search | fail nếu release tier cần visual        |
-| OCR                 |            Optional/Silver | warning                                 |
-| object detection    |              Optional/Gold | warning                                 |
-| captions            |              Optional/Gold | warning                                 |
+| OCR                 | Feature phase output       | warning/fail theo provider policy       |
+| object detection    | Feature phase output       | warning/fail theo provider policy       |
+| shot captions       | Required for scene build   | fail nếu thiếu caption cho shot         |
 | text_documents      |   Required for text search | fail nếu release có FTS                 |
 | FAISS               |   Required for visual tier | fail                                    |
 | SQLite runtime      |                   Required | fail                                    |
@@ -1226,11 +1222,11 @@ shots
 keyframes
   depends on shots + raw video + keyframe config
 
-image_captions
-  depends on selected keyframes + keyframe caption provider config
+shot_captions
+  depends on shots + representative keyframe per shot + shot caption provider config
 
 scenes
-  depends on shots + selected keyframes + minimum image_captions + asr_segments/transcript + metadata + scene builder config
+  depends on shots + shot_captions + asr_segments/transcript + timeline + metadata + scene builder config
 
 keyframes.scene_id
   depends on scenes + shot_id mapping after scene construction
@@ -1244,14 +1240,8 @@ ocr
 objects
   depends on keyframes + object model config
 
-shot_captions
-  depends on image_captions + keyframes + shots
-
-scene_summaries_enriched
-  depends on asr + ocr + object_labels + captions
-
 text_sources
-  depends on metadata + asr + summaries + captions + ocr + object_labels
+  depends on metadata + asr + scene_summaries + shot_captions + ocr + object_labels
 
 text_documents
   depends on all merged text_sources
@@ -1277,43 +1267,30 @@ Ví dụ ứng dụng:
 
 ---
 
-# 18. Release tiers
+# 18. Production release profile
 
-Để team không bị kẹt vì muốn Gold ngay từ đầu, System 1 nên hỗ trợ release tier.
+Production notebooks should run the full end-to-end contract instead of asking
+operators to choose bronze/silver/gold execution modes. Lightweight/mock
+profiles may remain package-internal for CI and development, but they are not
+the user-facing production workflow.
 
-## Bronze
+The production release includes:
 
 ```text
 metadata
-keyframes
-thumbnails
+ASR
+TransNet V2 shot boundaries
+keyframes + thumbnails
+one canonical shot caption per shot
+scene grouping + scene_summaries
 visual embeddings
-visual.faiss
-app.sqlite
-text_documents from metadata title/description/keywords
-FTS5-backed text search contract
+OCR
+object detection
+text_sources + global text_documents
+app.sqlite + FTS5
+visual.faiss + vector_map
+quality reports + validation
 core video_ref/logical media ref mapping
-```
-
-## Silver
-
-```text
-Bronze
-+ ASR
-+ scenes or degraded inspection fallback
-+ OCR
-+ ASR/OCR-backed text_documents
-```
-
-## Gold
-
-```text
-Silver
-+ image captions
-+ shot captions
-+ enriched scene summaries
-+ object detection
-+ quality reports đầy đủ
 ```
 
 ---
@@ -1331,7 +1308,6 @@ scenes
 keyframes
 ocr
 objects
-image_captions
 shot_captions
 scene_summaries
 embeddings_meta
@@ -1533,22 +1509,20 @@ Cross-cutting contracts:
 01_worker_structure_pipeline.ipynb
 - audio extraction
 - ASR
-- shot detection
+- TransNet V2 shot detection
 - keyframe selection
 - thumbnail generation
-- minimum keyframe/image captioning required by scene construction
+- representative keyframe selection per shot
+- one canonical shot caption per shot
 - transcript-shot/keyframe alignment
-- semantic-light scene construction
+- scene construction from shot captions, transcript, and timeline
 - scene summaries
 - structure artifact packaging
 
 02_worker_feature_enrichment.ipynb
 - visual embeddings
 - OCR
-- object detection
-- additional/heavier image captions when configured
-- shot captions
-- enriched scene summaries
+- object/concept detection
 - text_sources
 - feature artifact packaging
 
@@ -1610,7 +1584,6 @@ hcm-ai-system1/
 │   ├── keyframes.schema.yaml
 │   ├── ocr.schema.yaml
 │   ├── objects.schema.yaml
-│   ├── image_captions.schema.yaml
 │   ├── shot_captions.schema.yaml
 │   ├── scene_summaries.schema.yaml
 │   ├── feature_availability.schema.yaml
@@ -2091,11 +2064,10 @@ text
 Execution note:
 
 ```text
-If semantic scene construction uses visual captions, final scene construction
-must run after keyframe selection and minimum keyframe/image captioning. Do not
-push those minimum captions to Notebook 02 if phase01 scenes depend on them.
-This section defines the scene output contract; provider/model choice remains
-configuration-driven and is not fixed by this spec.
+Scene construction must run after shot detection, keyframe extraction,
+representative-keyframe selection, canonical shot captioning, ASR, and
+shot-transcript linking. Do not push canonical shot captions to Notebook 02 if
+phase01 scenes depend on them. This section defines the scene output contract.
 ```
 
 Input:
@@ -2103,7 +2075,7 @@ Input:
 ```text
 shots.parquet
 keyframes.parquet
-image_captions.parquet
+shot_captions.parquet
 asr_segments.parquet
 shot_transcript_links.parquet
 metadata_normalized.json
@@ -2119,9 +2091,10 @@ Signals:
 
 ```text
 ASR transcript topic similarity
-keyframe/image captions
+canonical shot captions
 metadata title / description / keywords
 shot continuity
+timeline continuity
 keyword shifts
 optional summary provider signals
 ```
@@ -2190,7 +2163,8 @@ Phase01 scene summaries are based mainly on:
 ASR
 metadata
 shot transcript overlap
-keyframe/image captions when configured
+shot captions
+timeline continuity
 ```
 
 ---
@@ -2205,12 +2179,12 @@ shots.parquet
 optional scenes.parquet only for scene_id assignment/remap
 ```
 
-MVP stable mode:
+Production rebuild rule:
 
 ```text
 keyframes depend on shots + raw video + keyframe config.
 scene_id is assigned/remapped after extraction.
-Changing scene builder config/provider does not rerun keyframes/OCR/embeddings in MVP stable mode.
+Changing scene builder config/provider does not rerun keyframes/OCR/embeddings when their inputs and provider configs are unchanged.
 ```
 
 Provider contract:
@@ -2218,11 +2192,14 @@ Provider contract:
 ```text
 The keyframe selection algorithm is provider/config driven.
 The contract requires deterministic keyframe_id assignment, shot_id linkage,
-logical keyframe/thumbnail refs, and enough selected keyframes for downstream
-captioning and scene construction. Do not hardcode a specific sampling rule,
-detector, or model in the notebook contract. Phase01 providers should consume
-the Phase00 decoded frame timeline when available and must mark degraded
-fallbacks when exact timeline data is unavailable.
+logical keyframe/thumbnail refs, enough selected keyframes for downstream
+inspection, and exactly one representative keyframe per shot for shot
+captioning. The production baseline may use early/middle/late keyframes with
+the middle keyframe as representative, but the canonical `keyframe_id` remains
+`{video_id}:{frame_id}`. Role and representativeness are metadata fields, not
+part of the ID. Phase01 providers should consume the Phase00 decoded frame
+timeline when available and must mark degraded fallbacks when exact timeline
+data is unavailable.
 ```
 
 Output:
@@ -2250,6 +2227,8 @@ frame_id_method
 keyframe_ref
 thumbnail_ref
 is_primary
+keyframe_role
+is_representative
 selection_reason
 width
 height
@@ -2265,41 +2244,40 @@ keyframe_id = "{video_id}:{frame_id}"
 
 ---
 
-## Step G — Minimum keyframe/image captioning for scene construction
+## Step G — Canonical shot captioning
 
 Input:
 
 ```text
-keyframes/*.jpg
 keyframes.parquet
 shots.parquet
+representative keyframe image for each shot
 metadata_normalized.json
 ```
 
 Output:
 
 ```text
-image_captions.parquet
+shot_captions.parquet
 ```
 
-These are the minimum caption rows required by phase01 semantic scene
-construction. The caption provider/model is configuration-driven. Phase02 may
-add heavier or additional caption evidence later, but phase01 must not depend on
-Notebook 02 to construct scenes.
+Phase01 creates exactly one canonical caption per shot from that shot's
+representative keyframe. All frames/keyframes in the shot use the same shot
+caption by joining `keyframes.shot_id -> shot_captions.shot_id`. Do not create
+per-keyframe captions as the canonical Phase01 scene input, and do not defer
+canonical shot captioning to Notebook 02.
 
 Schema:
 
 ```text
-caption_id
-keyframe_id
+shot_caption_id
 video_id
-scene_id
 shot_id
-frame_id
+representative_keyframe_id
+representative_timestamp_sec
 caption
 language
-provider
-model_name
+caption_model
 confidence
 status
 ```
@@ -2511,111 +2489,30 @@ model_name
 
 ---
 
-## Step D — Image captioning
+## Step D — Feature text sources
 
-This feature-phase step is for additional or heavier caption evidence. Minimum
-keyframe/image captions required for phase01 scene construction belong in the
-structure artifact and must be available before semantic-light scene
-construction.
-
-Input:
-
-```text
-keyframes/*.jpg
-```
+Feature text sources are normalized text fragments derived from feature outputs
+that Notebook 02 owns, such as OCR and object labels. They are not a new
+captioning step.
 
 Output:
 
 ```text
-image_captions.parquet
+text_sources.parquet
 ```
 
 Schema:
 
 ```text
-keyframe_id
 video_id
-scene_id
-shot_id
-frame_id
-caption_vi
-caption_en
-model_name
-confidence
-```
-
----
-
-## Step E — Shot captioning
-
-Shot caption is a visual summary of a shot.
-
-It is not ASR transcript overlap.
-
-Example:
-
-```text
-Transcript:
-"Vụ tai nạn xảy ra vào sáng nay..."
-
-Shot caption:
-"Nhiều xe máy và ô tô đang ùn tắc tại một giao lộ đông đúc."
-```
-
-Output:
-
-```text
-shot_captions.parquet
-```
-
-Schema:
-
-```text
-shot_id
-video_id
-scene_id
-summary_caption_vi
-summary_caption_en
-representative_keyframe_ids
-model_name
-confidence
-```
-
----
-
-## Step F — Enriched scene summaries
-
-After OCR/object/caption are available, create enriched scene summaries.
-
-Output:
-
-```text
-scene_summaries_enriched.parquet
-```
-
-Schema:
-
-```text
-scene_id
-video_id
-summary_vi
-summary_en
-keywords
-evidence_sources
-model_name
-confidence
-```
-
-Enriched scene summary may use:
-
-```text
-ASR
-OCR
-objects
-image captions
-shot captions
-metadata
-
+entity_type
+entity_id
+source_type
+raw_text
+normalized_text
+language
+provider
+status
 ```
 
 ---
@@ -2684,8 +2581,6 @@ Example:
   "embedding_count": 390,
   "has_ocr": true,
   "has_objects": true,
-  "has_image_captions": true,
-  "has_shot_captions": true,
   "has_text_sources": true,
   "status": "complete"
 }
@@ -2710,7 +2605,7 @@ L21_V001/
 ├── shots.parquet
 ├── scenes.parquet
 ├── keyframes.parquet
-├── image_captions.parquet
+├── shot_captions.parquet
 ├── shot_transcript_links.parquet
 ├── scene_transcript_links.parquet
 ├── scene_summaries.parquet
@@ -2736,9 +2631,6 @@ L21_V001/
 ├── embeddings_meta.parquet
 ├── ocr.parquet
 ├── objects.parquet
-├── image_captions.parquet                 # optional/additive phase02 rows
-├── shot_captions.parquet
-├── scene_summaries_enriched.parquet
 ├── text_sources.parquet
 ├── feature_manifest.json
 ├── artifact_manifest.json
@@ -2951,9 +2843,7 @@ asr_segments.parquet
 scenes.parquet
 shots.parquet
 scene_summaries.parquet
-scene_summaries_enriched.parquet
 shot_captions.parquet
-image_captions.parquet
 ocr.parquet
 objects.parquet
 text_sources.parquet
@@ -3078,10 +2968,8 @@ shot_transcript_links
 scene_transcript_links
 ocr
 objects
-image_captions
 shot_captions
 scene_summaries
-scene_summaries_enriched
 embeddings_meta
 text_documents
 vector_map
@@ -3260,10 +3148,8 @@ competition_dataset_v001/
 │   ├── embeddings_meta.parquet
 │   ├── ocr.parquet
 │   ├── objects.parquet
-│   ├── image_captions.parquet
 │   ├── shot_captions.parquet
 │   ├── scene_summaries.parquet
-│   ├── scene_summaries_enriched.parquet
 │   ├── text_sources.parquet
 │   ├── feature_availability.parquet
 │   └── text_documents.parquet
@@ -3306,7 +3192,6 @@ competition_dataset_v001/
   "has_asr": true,
   "has_ocr": true,
   "has_objects": true,
-  "has_image_captions": true,
   "has_shot_captions": true,
   "has_scene_summaries": true,
   "has_visual_index": true,

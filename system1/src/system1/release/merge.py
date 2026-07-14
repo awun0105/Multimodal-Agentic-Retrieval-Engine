@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import unicodedata
 from pathlib import Path
@@ -16,7 +17,7 @@ STRUCTURE_TABLES = [
     "shots",
     "scenes",
     "keyframes",
-    "image_captions",
+    "shot_captions",
     "shot_transcript_links",
     "scene_transcript_links",
     "scene_summaries",
@@ -25,9 +26,6 @@ FEATURE_TABLES = [
     "embeddings_meta",
     "ocr",
     "objects",
-    "image_captions",
-    "shot_captions",
-    "scene_summaries_enriched",
     "text_sources",
 ]
 
@@ -109,7 +107,17 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
         combined.to_parquet(tables_dir / f"{table_name}.parquet", index=False)
         counts[table_name] = len(combined)
 
-    text_documents = _build_text_documents(pd.concat(merged["text_sources"], ignore_index=True))
+    structure_text_sources = _build_structure_text_sources(
+        pd.concat(merged["asr_segments"], ignore_index=True),
+        pd.concat(merged["shot_captions"], ignore_index=True),
+        pd.concat(merged["scene_summaries"], ignore_index=True),
+    )
+    feature_text_sources = pd.concat(merged["text_sources"], ignore_index=True)
+    text_sources = pd.concat([feature_text_sources, structure_text_sources], ignore_index=True)
+    text_sources.to_parquet(tables_dir / "text_sources.parquet", index=False)
+    counts["text_sources"] = len(text_sources)
+
+    text_documents = _build_text_documents(text_sources)
     text_documents.to_parquet(tables_dir / "text_documents.parquet", index=False)
     counts["text_documents"] = len(text_documents)
 
@@ -117,7 +125,7 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
         pd.concat(merged["keyframes"], ignore_index=True),
         pd.concat(merged["asr_segments"], ignore_index=True),
         pd.concat(merged["ocr"], ignore_index=True),
-        pd.concat(merged["image_captions"], ignore_index=True),
+        pd.concat(merged["shot_captions"], ignore_index=True),
         pd.concat(merged["embeddings_meta"], ignore_index=True),
     )
     feature_availability.to_parquet(tables_dir / "feature_availability.parquet", index=False)
@@ -148,6 +156,62 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
     report_path = manifests_dir / "merge_report.json"
     write_json(report_path, {"status": "pass", "video_count": len(video_status_rows), "counts": counts})
     return report_path
+
+
+def _build_structure_text_sources(asr: pd.DataFrame, shot_captions: pd.DataFrame, scene_summaries: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for row in asr.to_dict("records"):
+        rows.append(_text_source(
+            str(row.get("video_id", "")),
+            "video",
+            str(row.get("video_id", "")),
+            "asr",
+            str(row.get("text", "")),
+            str(row.get("provider", row.get("asr_provider", "asr"))),
+            str(row.get("status", "pass")),
+        ))
+    for row in shot_captions.to_dict("records"):
+        rows.append(_text_source(
+            str(row.get("video_id", "")),
+            "shot",
+            str(row.get("shot_id", "")),
+            "shot_caption",
+            str(row.get("normalized_text", row.get("caption", ""))),
+            str(row.get("provider", row.get("caption_model", "shot_caption"))),
+            str(row.get("status", "pass")),
+        ))
+    for row in scene_summaries.to_dict("records"):
+        rows.append(_text_source(
+            str(row.get("video_id", "")),
+            "scene",
+            str(row.get("scene_id", "")),
+            "scene_summary",
+            str(row.get("normalized_text", row.get("summary", ""))),
+            str(row.get("provider", row.get("model_name", "scene_summary"))),
+            str(row.get("status", "pass")),
+        ))
+    return pd.DataFrame(rows)
+
+
+def _text_source(video_id: str, entity_type: str, entity_id: str, source_type: str, raw_text: str, provider: str, status: str) -> dict[str, Any]:
+    normalized_text = raw_text or ""
+    normalized_no_diacritics = "".join(
+        char for char in unicodedata.normalize("NFD", normalized_text) if unicodedata.category(char) != "Mn"
+    )
+    digest = hashlib.sha256(f"{entity_type}|{entity_id}|{source_type}|{provider}|{raw_text}".encode("utf-8")).hexdigest()[:12]
+    return {
+        "source_id": f"{video_id}:{entity_type}:{source_type}:{provider}:{digest}",
+        "video_id": video_id,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "source_type": source_type,
+        "raw_text": raw_text,
+        "normalized_text": normalized_text,
+        "normalized_no_diacritics": normalized_no_diacritics,
+        "language": "vi",
+        "provider": provider,
+        "status": status,
+    }
 
 
 def _resolve_artifact_dir_for_merge(
@@ -197,18 +261,19 @@ def _build_text_documents(text_sources: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(grouped_rows)
 
 
-def _build_feature_availability(keyframes: pd.DataFrame, asr: pd.DataFrame, ocr: pd.DataFrame, captions: pd.DataFrame, embeddings: pd.DataFrame) -> pd.DataFrame:
+def _build_feature_availability(keyframes: pd.DataFrame, asr: pd.DataFrame, ocr: pd.DataFrame, shot_captions: pd.DataFrame, embeddings: pd.DataFrame) -> pd.DataFrame:
     rows = []
     asr_video_ids = set(asr["video_id"].astype(str)) if not asr.empty else set()
     ocr_keyframes = set(ocr[ocr["status"] != "failed"]["keyframe_id"].astype(str)) if not ocr.empty else set()
-    caption_keyframes = set(captions[captions["status"] != "failed"]["keyframe_id"].astype(str)) if not captions.empty else set()
+    caption_shots = set(shot_captions[shot_captions["status"] != "failed"]["shot_id"].astype(str)) if not shot_captions.empty else set()
     embedding_keyframes = set(embeddings[embeddings["status"] != "failed"]["keyframe_id"].astype(str)) if not embeddings.empty else set()
     for row in keyframes.to_dict("records"):
         keyframe_id = str(row["keyframe_id"])
         video_id = str(row["video_id"])
+        shot_id = str(row.get("shot_id", ""))
         has_embedding = keyframe_id in embedding_keyframes
         has_ocr = keyframe_id in ocr_keyframes
-        has_caption = keyframe_id in caption_keyframes
+        has_caption = shot_id in caption_shots
         has_asr = video_id in asr_video_ids
         status = "pass" if all([has_embedding, has_caption]) else "degraded"
         rows.append({

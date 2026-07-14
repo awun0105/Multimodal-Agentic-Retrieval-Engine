@@ -137,8 +137,8 @@ Output canonical gồm:
 - `shot_transcript_links`, `scene_transcript_links`: liên kết transcript với shot/scene.
 - `ocr`: chữ xuất hiện trong frame/keyframe.
 - `objects`: object/concept như person, car, bus, screen.
-- `image_captions`, `shot_captions`: caption theo image/shot.
-- `scene_summaries`, `scene_summaries_enriched`: summary cấp scene.
+- `shot_captions`: caption canonical cấp shot, tạo từ representative keyframe.
+- `scene_summaries`: summary cấp scene.
 - `shots` / `scenes`: ngữ cảnh thời gian để inspect sâu hơn từ keyframe về shot/scene/video.
 - `feature_availability`: cho UI biết entity nào có ASR/OCR/object/caption/inspection evidence.
 
@@ -209,7 +209,7 @@ Bên trong System 1 release `app.sqlite` có các bảng read-only cho runtime:
 
 - `videos`, `scenes`, `shots`, `keyframes`
 - `asr_segments`, `ocr`, `objects`
-- `image_captions`, `shot_captions`, scene summaries
+- `shot_captions`, scene summaries
 - `embeddings_meta`, `text_documents`, `vector_map`
 - `feature_availability`, `release_capabilities`
 
@@ -520,10 +520,8 @@ Có những bảng chính nào?
 | `scene_transcript_links` | Link transcript segment với scene. |
 | `ocr` | OCR gắn với keyframe/frame. |
 | `objects` | Object/concept detections gắn với `keyframe_id`. |
-| `image_captions` | Caption gắn với image/keyframe. |
-| `shot_captions` | Caption gắn với shot. |
+| `shot_captions` | Caption canonical gắn với shot. |
 | `scene_summaries` | Summary scene Phase01. |
-| `scene_summaries_enriched` | Summary scene enriched nếu có. |
 | `embeddings_meta` | Metadata về embeddings/model/index build. |
 | `text_documents` | Global text search contract. |
 | `vector_map` | Map `(index_name, vector_id)` về `keyframe_id`. |
@@ -549,7 +547,7 @@ Nói ngắn gọn để dễ hình dung:
 - quan hệ = khái niệm logic;
 - bảng = hình thức lưu trữ/biểu diễn của quan hệ trong database.
 
-Trong tài liệu này, khi nói `videos`, `keyframes`, `ocr`, `objects`, `image_captions`... thì bạn có thể hiểu gần như là “các quan hệ chính của runtime database”.
+Trong tài liệu này, khi nói `videos`, `keyframes`, `ocr`, `objects`, `shot_captions`... thì bạn có thể hiểu gần như là “các quan hệ chính của runtime database”.
 
 ### C1.2. Thuộc tính và ví dụ dữ liệu cho từng quan hệ chính
 
@@ -645,14 +643,17 @@ Ví dụ một dòng:
 }
 ```
 
-#### Quan hệ `image_captions` / `shot_captions`
+#### Quan hệ `shot_captions`
 
-System 1 v1.1 dùng `image_captions` cho caption cấp image/keyframe và `shot_captions` cho caption cấp shot.
+System 1 v1.1 dùng `shot_captions` làm caption canonical. Mỗi shot có đúng một
+caption, được tạo từ `representative_keyframe_id`; mọi keyframe/frame trong
+cùng shot dùng caption này qua join `keyframes.shot_id -> shot_captions.shot_id`.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
-| `caption_id` | ID dòng caption | `cap_0001` |
-| `keyframe_id` | keyframe được mô tả | `L01_V028:25300` |
+| `shot_caption_id` | ID dòng caption | `L01_V028_SH00042_caption` |
+| `shot_id` | shot được mô tả | `L01_V028_SH00042` |
+| `representative_keyframe_id` | keyframe đại diện dùng để tạo caption | `L01_V028:25300` |
 | `text` | nội dung caption | `A red bus on a rainy street.` |
 | `source` | caption từ đâu | `generated_blip2` |
 | `confidence` | độ tin cậy nếu có | `0.82` |
@@ -661,8 +662,9 @@ Ví dụ một dòng:
 
 ```json
 {
-  "caption_id": "cap_0001",
-  "keyframe_id": "L01_V028:25300",
+  "shot_caption_id": "L01_V028_SH00042_caption",
+  "shot_id": "L01_V028_SH00042",
+  "representative_keyframe_id": "L01_V028:25300",
   "text": "A red bus on a rainy street.",
   "source": "generated_blip2",
   "confidence": 0.82
@@ -911,13 +913,11 @@ dataset_manifest.json / validation_report.json / release_capabilities
               -> keyframes
                   -> ocr
                   -> objects
-                  -> image_captions
                   -> vector_map
               -> shot_captions
               -> shot_transcript_links
           -> scene_transcript_links
           -> scene_summaries
-          -> scene_summaries_enriched
   -> asr_segments
   -> embeddings_meta
   -> text_documents
@@ -939,7 +939,7 @@ query_sessions
 Đây là cách nhìn rất gần với logic chương trình:
 
 - `videos`, `scenes`, `shots`, `keyframes` là phần lõi media/timeline identity;
-- `ocr`, `asr_segments`, `objects`, `image_captions`, `shot_captions`, `scene_summaries_*` là evidence;
+- `ocr`, `asr_segments`, `objects`, `shot_captions`, `scene_summaries` là evidence;
 - `text_documents` là global text search contract;
 - `vector_map` nối FAISS với keyframes;
 - `query_sessions` và các bảng con là System 2 runtime state.
@@ -1206,10 +1206,8 @@ Nhìn theo data model logic, có thể chia dữ liệu thành **6 nhóm chính*
    - `scene_transcript_links`
    - `ocr`
    - `objects`
-   - `image_captions`
    - `shot_captions`
    - `scene_summaries`
-   - `scene_summaries_enriched`
    - `feature_availability`
 
 4. **Index/text model**
@@ -1547,7 +1545,7 @@ FAISS vector_id
   -> keyframe_id
   -> video_id + frame_id
   -> keyframe_ref + thumbnail_ref
-  -> image_captions / ocr / asr_segments / objects / metadata-derived text_documents
+  -> shot_captions / ocr / asr_segments / objects / metadata-derived text_documents
 ```
 
 Giải thích từng bước:
@@ -1629,11 +1627,11 @@ System 1 chuẩn hóa:
 
 System 1 tạo hoặc import qua adapter:
 
-- `image_captions`, `shot_captions`;
+- `shot_captions`;
 - `ocr`;
 - `asr_segments`;
 - `objects`;
-- `scene_summaries`, `scene_summaries_enriched`;
+- `scene_summaries`;
 - `text_documents` cho text search global.
 
 ### Bước 4: Build indexes

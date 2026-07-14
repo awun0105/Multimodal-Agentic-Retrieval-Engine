@@ -4,7 +4,10 @@
   "type": "object",
   "required": [
     "asr_segment_id",
-    "video_id"
+    "video_id",
+    "start_sec",
+    "end_sec",
+    "text"
   ],
   "properties": {
     "asr_segment_id": {
@@ -17,6 +20,33 @@
       ]
     },
     "video_id": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "start_sec": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "end_sec": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "text": {
       "type": [
         "string",
         "number",
