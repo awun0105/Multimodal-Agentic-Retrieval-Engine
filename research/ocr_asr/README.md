@@ -1,66 +1,74 @@
-# Thư mục Nghiên cứu & Thực nghiệm: OCR & ASR Tiếng Việt
+# Dự án Thử Nghiệm OCR & ASR
 
-Thư mục này chứa toàn bộ các nghiên cứu, đánh giá so sánh hiệu năng của nhiều mô hình OCR (Nhận dạng chữ viết) và ASR (Nhận dạng giọng nói) Tiếng Việt trên GPU, cùng các script tiện ích tích hợp dùng cho production.
+Kho lưu trữ mã nguồn và các tài liệu thử nghiệm cho hai tác vụ:
+1. **OCR (Optical Character Recognition)**: Nhận diện văn bản từ hình ảnh (keyframes trích xuất từ video).
+2. **ASR (Automatic Speech Recognition)**: Nhận diện giọng nói từ âm thanh (trích xuất từ video).
 
 ---
 
-## 1. Cấu Trúc Thư Mục `research/ocr_asr`
+## 1. Cấu Trúc Thư Mục Dự Án
 
-Các đường dẫn của toàn bộ dự án đã được chuẩn hóa thành đường dẫn tương đối:
+Dự án được tổ chức gọn gàng để tách biệt dữ liệu lớn và mã nguồn thử nghiệm:
 
 ```text
-research/ocr_asr/
-├── data/                       # Dữ liệu mẫu đầu vào (Đã được copy đồng bộ)
-│   ├── frame/                  # Keyframe trích xuất từ video cho OCR
-│   │   └── L02_V016/           # Tập keyframe .webp mẫu
-│   └── audio/                  # Âm thanh .wav mẫu (16,000 Hz, mono) cho ASR
-├── ocr/                        # Phân tích & So sánh OCR
+├── data/                       # Thư mục dữ liệu chứa hình ảnh/âm thanh (Bị Git ignore)
+│   ├── frame/                  # Các keyframe trích xuất từ video làm dữ liệu đầu vào cho OCR
+│   ├── video/                  # Video gốc dạng .mp4 tải từ YouTube
+│   └── audio/                  # Âm thanh dạng .wav được trích xuất (16,000 Hz, mono)
+├── ocr/                        # Thư mục chứa toàn bộ mã nguồn và thực nghiệm OCR
+│   ├── ocr.ipynb               # Notebook chạy baseline (PaddleOCR + VietOCR)
 │   ├── ocr_comparison.ipynb    # Notebook so sánh 5 pipeline OCR trên GPU
-│   ├── ocr_comparison_results.json # Dữ liệu đầu ra nhận diện của 5 pipeline OCR
-│   └── ocr_evaluation_summary.md   # Bảng phân tích chi tiết ưu/nhược điểm các model OCR
-├── asr/                        # Phân tích & So sánh ASR
+│   ├── OCR.json                # Kết quả trích xuất văn bản từ baseline
+│   ├── ocr_comparison_results.json # Kết quả dạng JSON lưu thông tin nhận diện & thời gian chạy của 5 pipeline
+│   ├── ocr_evaluation_summary.md   # Bảng nhận xét, so sánh chi tiết hiệu năng/độ chính xác của 5 pipeline
+│   └── visualize/              # Ảnh kết quả vẽ khung chữ và nhận diện (Bị Git ignore)
+├── asr/                        # Thư mục chứa toàn bộ mã nguồn và thực nghiệm ASR
 │   ├── asr_comparison.ipynb    # Notebook so sánh 5 cấu hình ASR trên GPU
-│   ├── run_asr_comparison.py   # Script tự động chạy và đo thời gian chạy của cả 5 cấu hình ASR
-│   ├── asr_comparison_results.json # Dữ liệu đầu ra dạng phân đoạn kèm start_time/end_time
-│   └── asr_evaluation_summary.md   # Bảng phân tích chi tiết hiệu năng và tiêu chí quy mô lớn (200k samples)
-├── main.py                     # Script tiện ích chính chạy CLI (EasyOCR + NeMo)
-└── ocr_asr_utils.py            # Bản sao tiện ích hỗ trợ import nhanh vào project lớn
+│   ├── run_asr_comparison.py   # Runner script chạy thử nghiệm ASR tự động
+│   ├── asr_comparison_results.json # Kết quả trích xuất dạng JSON kèm start_time và end_time của 5 cấu hình
+│   └── asr_evaluation_summary.md   # Bảng báo cáo phân tích, so sánh hiệu năng và chất lượng của 5 cấu hình ASR
+├── main.py                     # File chạy chính của chương trình (Boilerplate)
+├── pyproject.toml              # Định nghĩa các package phụ thuộc (Pillow, EasyOCR, Transformers, PyTorch GPU...)
+├── README.md                   # Tài liệu hướng dẫn sử dụng này
+└── uv.lock                     # Lockfile của bộ quản lý thư viện UV
 ```
 
 ---
 
-## 2. Hướng Dẫn Tự Kiểm Thử (Verification Guide)
+## 2. Hướng Dẫn Cài Đặt Môi Trường
 
-Bạn có thể tự chạy kiểm thử (verify) chức năng của mô hình OCR và ASR trực tiếp bằng dòng lệnh từ thư mục gốc của repository (`Multimodal-Agentic-Retrieval-Engine`):
+Dự án sử dụng bộ quản lý package **UV** và được cấu hình để tận dụng tối đa phần cứng **NVIDIA GPU** thông qua CUDA 12.4.
 
-### Kiểm thử OCR (Sử dụng EasyOCR)
-Lệnh này sẽ nhận diện văn bản trên một keyframe webp mẫu:
+### Bước 1: Khởi tạo virtual environment và cài đặt thư viện
+Chạy lệnh sau tại thư mục gốc của dự án để UV tự động tạo môi trường ảo `.venv` và tải các bản build CUDA của PyTorch/PaddlePaddle:
 ```bash
-uv run research/ocr_asr/main.py --mode ocr --input research/ocr_asr/data/frame/L02_V016/keyframe_10056.webp
+uv sync
 ```
-*Kết quả kỳ vọng:* Đầu ra in ra các bounding box tọa độ, độ tin cậy và văn bản được giải mã chính xác (ví dụ: `"Ông ĐÔ TÂN LONG"`, `"Pho GiaM ĐỖC TT Ha TÃNG..."`).
 
-### Kiểm thử ASR (Sử dụng NVIDIA NeMo parakeet-ctc-0.6b-vi)
-Lệnh này sẽ nhận dạng giọng nói trên file âm thanh wav 16kHz mẫu:
-```bash
-uv run research/ocr_asr/main.py --mode asr --input research/ocr_asr/data/audio/1yHly8dYhIQ.wav
+### Bước 2: Kiểm tra thiết bị GPU
+Bạn có thể mở Python trong môi trường ảo và kiểm tra xem PyTorch/Paddle đã nhận diện được GPU chưa:
+```python
+import torch
+import paddle
+print("PyTorch GPU Available:", torch.cuda.is_available())
+print("Paddle GPU Available:", paddle.is_compiled_with_cuda())
 ```
-> Lưu ý: Đôi khi phải cài thêm ffmmpeg
-
-*Kết quả kỳ vọng:* Chương trình chia file âm thanh thành các chunk 30s và in ra các câu nhận diện tiếng Việt hoàn chỉnh kèm mốc thời gian bắt đầu/kết thúc (ví dụ: `[0.00s - 30.00s]: "K kính chào quý vị, rất hân hạnh..."`).
 
 ---
 
 ## 3. Các Thử Nghiệm OCR Đã Thực Hiện
 
-Các thử nghiệm so sánh hiệu năng được thực hiện trên 5 cấu hình pipeline khác nhau:
+Các thử nghiệm so sánh hiệu năng được thực hiện trên các cấu hình pipeline khác nhau:
 1. **PaddleOCR + VietOCR**: Phát hiện vùng chữ bằng Paddle và giải mã bằng VietOCR (vgg_seq2seq).
 2. **PaddleOCR Only**: Sử dụng mô hình PP-OCRv5 end-to-end (Nhanh nhất, khoảng ~0.038s/ảnh).
 3. **EasyOCR**: Hỗ trợ tiếng Việt rất tốt, giữ dấu chuẩn xác nhất (Tốt nhất cho Tiếng Việt, khoảng ~0.060s/ảnh).
 4. **PaddleOCR + TrOCR**: Dùng TrOCR để giải mã hộp chữ (Model gốc tiếng Anh, không tối ưu cho tiếng Việt).
 5. **Florence-2**: Vision-Language Model của Microsoft chạy autoregressive trên GPU (Độ trễ cao ~2.6s/ảnh và không tối ưu cho tiếng Việt).
+6. **Vintern-1B-v3_5 (Mới - SOTA)**: Vision-Language Model chuyên biệt cho tiếng Việt, có độ chính xác Word Error Rate (WER) tốt nhất hiện tại (~0.34), độ trễ ~0.69s/ảnh trên GPU RTX 4060.
+7. **Qwen2-VL-2B-Instruct (Mới)**: Vision-Language Model đa ngôn ngữ mạnh mẽ của Alibaba, độ trễ ~1.25s/ảnh nhưng thỉnh thoảng gặp lỗi từ chối trả lời (refusal) bằng tiếng Việt.
 
-Chi tiết báo cáo và bảng kết quả có thể được xem tại [ocr_evaluation_summary.md](./ocr/ocr_evaluation_summary.md).
+Chi tiết báo cáo và bảng kết quả của 5 pipeline ban đầu có tại [ocr_evaluation_summary.md](./ocr/ocr_evaluation_summary.md). 
+Thử nghiệm mới nhất về các mô hình VLM được lưu và chạy trực quan tại notebook [ocr_colab_benchmark.ipynb](./ocr/ocr_colab_benchmark.ipynb) và kết quả lưu tại [colab_benchmark_results.json](./ocr/colab_benchmark_results.json).
 
 ---
 
@@ -77,23 +85,25 @@ Chi tiết báo cáo và bảng kết quả so sánh có thể được xem tạ
 
 ---
 
-## 5. Cách Cài Đặt Dependencies
+## 5. Hướng Dẫn Tải Lại Trọng Số Mô Hình (Model Weights Download Guide)
 
-Để chạy thành công, môi trường của dự án cần cài đặt các thư viện sau:
+Để giữ cho repository gọn nhẹ, toàn bộ trọng số mô hình cồng kềnh (binary weights) đã được xóa bỏ khỏi thư mục dự án và thêm vào quy tắc Git loại trừ. Khi bạn chạy lại các thử nghiệm hoặc script production, các mô hình sẽ được xử lý như sau:
 
-```bash
-# 1. Cài đặt PyTorch CUDA tương thích với GPU
-uv add torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+### 1. Các mô hình tự động tải (Auto-download)
+Hầu hết các mô hình sẽ tự động được tải xuống từ Hugging Face Hub hoặc máy chủ tương ứng trong lần chạy đầu tiên:
+- **EasyOCR**: Tự động tải trọng số tiếng Việt & Anh về thư mục `~/.EasyOCR/model/`.
+- **NVIDIA FastConformer**: Tự động tải checkpoint từ NeMo Hub về thư mục `~/.cache/torch/NeMo/`.
+- **faster-whisper (medium / large-v3)**: Tự động tải về cache Hugging Face (`~/.cache/huggingface/hub/`).
+- **wav2vec 2.0 (`khanhld/...`)**: Tự động tải về cache Hugging Face thông qua thư viện `transformers`.
 
-# 2. Cài đặt các package xử lý OCR & ASR
-uv add easyocr nemo-toolkit[asr] soundfile librosa
-```
-
----
-
-## 6. Hướng dẫn Tải và Chuẩn bị Dữ liệu (Data Download & Setup)
-
-*Phần này dành cho bạn tự cập nhật phương pháp tải/chuẩn bị bộ dữ liệu quy mô lớn (ví dụ: script tải từ YouTube, link Drive chứa dữ liệu frame, cấu trúc convert sang WebP/WAV 16kHz, v.v.):*
+### 2. Mô hình cần tải thủ công và vá lỗi (`vibert-capu` cho ASR Punctuation)
+Để chạy lại thử nghiệm số 4 (**Wav2Vec 2.0 + Punctuation**), bạn cần chuẩn bị lại mô hình khôi phục dấu câu `vibert-capu` như sau:
+1. Tạo lại thư mục: `asr/capu/`.
+2. Truy cập [dragonSwing/vibert-capu](https://huggingface.co/dragonSwing/vibert-capu) trên Hugging Face.
+3. Tải toàn bộ các file cấu hình và file trọng số lớn `pytorch_model.bin` bỏ vào thư mục `asr/capu/`.
+4. Để khắc phục lỗi không tương thích với PyTorch/Transformers mới, hãy mở file `asr/capu/modeling_seq2labels.py` và sửa 2 lỗi sau:
+   - Thêm decorator `@dataclass` ngay trước class `Seq2LabelsOutput` (khoảng dòng 17).
+   - Truyền thêm `mean_resizing=False` vào lời gọi phương thức `resize_token_embeddings` (khoảng dòng 50).
 
 # Link Data
 
