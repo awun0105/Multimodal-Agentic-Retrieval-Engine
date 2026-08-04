@@ -263,3 +263,10 @@ GOAL.md
 *_cleanup.zip
 *_audit*.zip
 *_phase*.zip
+
+# Harness core maintenance binary
+scripts/bin/harness
+scripts/bin/harness.exe
+
+# Local Harness installer backups; recovery history is kept in Git.
+.harness-backup/
