@@ -435,16 +435,23 @@ Chứa gì:
 - fps metadata nếu có
 - annotations hoặc các bảng mô tả khác tùy nguồn
 
-Canonical input của System 1 v1.1 là `raw_videos/` + `metadata/`. Keyframes và thumbnails do System 1 generate. Nếu sau này organizer cung cấp keyframes sẵn, phần đó cần import adapter riêng và không đổi core contract.
+Canonical input hiện tại của System 1 là official videos cùng metadata/support
+artifacts hữu ích khi có. Organizer keyframes, map-keyframes/media-info,
+objects, và CLIP features có thể được import qua adapter nếu validate được
+mapping; System 1 vẫn có thể generate keyframes, thumbnails, OCR, ASR,
+captions, objects, và embeddings riêng khi việc đó giúp retrieval tốt hơn.
 
 ### A3. Ghi chú về keyframe/thumbnails
 
-Trong System 1 v1.1, keyframes và thumbnails là **output được generate**, không phải canonical input.
+Trong System 1, keyframes và thumbnails trong app-ready release là output đã
+được chuẩn hóa. Chúng có thể đến từ organizer import hoặc do pipeline generate,
+miễn là resolve được về `video_id` / `frame_id` đúng contract.
 
 - `keyframe_ref` canonical: `media://keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg`
 - `thumbnail_ref` canonical: `media://thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp`
 
-Nếu sau này có organizer-provided keyframes, cần adapter import riêng để map chúng vào contract này, thay vì đổi core contract.
+Organizer-provided keyframes cần adapter import riêng để map chúng vào contract
+này; không dùng trực tiếp raw organizer folder ở System 2 runtime.
 
 ## B. Trong `${AIC_DATA_ROOT}/processed/media/`
 
@@ -844,8 +851,9 @@ Mỗi dòng là một lần user hoặc agent bấm search.
 | `session_id` | session liên quan | `qs_001` |
 | `query_type` | loại query | `tkis` |
 | `query_text` | text search | `red bus on rainy street` |
-| `top_k` | số kết quả lấy | `100` |
-| `rerank_top_k` | số kết quả rerank | `50` |
+| `candidate_pool_k` | số candidate nội bộ có thể lấy trước rerank | `500` |
+| `top_k` | số kết quả trả về/export, tối đa 100 cho sơ tuyển | `100` |
+| `rerank_top_k` | số kết quả rerank kỹ hơn | `200` |
 
 #### Quan hệ `search_results`
 
@@ -1490,7 +1498,7 @@ Các filter/control đã có trong canonical docs:
 | `video_id` | Chỉ search trong một video cụ thể. |
 | `modalities` | Chỉ dùng một số nguồn như visual/caption/OCR/ASR/object/metadata. |
 | `group_by_video` | Tránh result bị dồn vào một video duy nhất. |
-| `query_type` | Chọn logic search cho TKIS/Q&A/TRAKE/VKIS. |
+| `query_type` | Chọn logic search cho TKIS/Q&A/TRAKE; VKIS là optional later-round/internal mode. |
 | `clue_mode` | Dùng clue hiện tại hoặc toàn bộ clue đã tích lũy. |
 | `top_k` | Số result muốn lấy. |
 | `rerank_top_k` | Số result đầu được rerank kỹ hơn. |
@@ -1513,8 +1521,9 @@ Ví dụ:
     "modalities": ["ocr", "caption", "object"],
     "group_by_video": false
   },
+  "candidate_pool_k": 500,
   "top_k": 100,
-  "rerank_top_k": 50
+  "rerank_top_k": 200
 }
 ```
 

@@ -11,7 +11,7 @@ decisions.
 | --- | --- | --- | --- | --- | --- |
 | `MVP-0` | Documentation canonicalization and decision records | docs | P0 | none | Update conflicts, add decisions, promote `docs/architecture/system1-ingestion.md` as canonical ingestion source. |
 | `MVP-0.5` | App-ready Data Contract | docs | P0 | `MVP-0` | Canonicalize `docs/architecture/data-contracts.md`; define roots, logical refs, IDs, SQLite/FTS5/FAISS mapping, and validation rules before runtime implementation. |
-| `MVP-0.6` | System 1 mini seed dataset builder | implementation | P0 | `MVP-0.5` | Use a tiny paired subset of raw videos and metadata JSON to validate stem-based `video_id`, generate first app-ready artifacts, and emit validation report before building System 2. Story: `docs/stories/mvp-0.6-system1-mini-seed-and-validation.md`. |
+| `MVP-0.6` | System 1 mini seed dataset builder | implementation | P0 | `MVP-0.5` | Use a tiny subset of official videos and available support artifacts to validate stem-based `video_id`, generate first app-ready artifacts, and emit validation report before building System 2. Story: `docs/stories/mvp-0.6-system1-mini-seed-and-validation.md`. |
 | `MVP-1` | App-ready artifact builder + runtime SQLite validation | implementation | P0 | `MVP-0.6`, `SYS1-004` | Build validated runtime SQLite/FTS5/FAISS artifacts from System 1 outputs; reject absolute paths and unresolved media refs before System 2 depends on them. |
 | `MVP-2` | Backend API vertical slice | implementation | P0 | `MVP-1` | FastAPI reads app-ready artifacts produced by System 1 and returns keyframe-first result/detail payloads. |
 | `MVP-3` | Keyframe-first UI vertical slice | implementation | P0 | `MVP-2` | One React/Vite SPA with result grid, thumbnail lazy loading, detail view, same-video nearby keyframe strip, and copy `video_id/frame_id`. |
@@ -44,7 +44,7 @@ decisions.
 | ID | Title | Type | Priority | Depends On | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `SYS1-001` | Vision embedding notebook pipeline | implementation | P1 | `MVP-0.5` | Task-specific pipeline for generated keyframes and CLIP/openCLIP embeddings by dataset shard. |
-| `SYS1-002` | OCR + metadata notebook pipeline | implementation | P1 | `MVP-0.5` | Pipeline for OCR extraction plus raw-video/metadata pairing and organizer metadata normalization by shard. |
+| `SYS1-002` | OCR + metadata notebook pipeline | implementation | P1 | `MVP-0.5` | Pipeline for OCR extraction plus optional organizer metadata/support artifact normalization by shard. |
 | `SYS1-003` | Audio transcription notebook pipeline | implementation | P1 | `MVP-0.5` | Notebook for Whisper transcription by shard with time ranges. |
 | `SYS1-004` | DuckDB aggregation and app-ready artifact merge | implementation | P1 | `SYS1-001`, `SYS1-002`, `SYS1-003` | Merge System 1 modality outputs into validated runtime SQLite, FTS5, FAISS, and mapping artifacts. |
 | `SYS2-001` | FastAPI runtime scaffold | implementation | P1 | `MVP-1` | Base runtime API and SQLite repository layer. |

@@ -7,15 +7,15 @@ Canonical for offline preprocessing. System 1 produces the app-ready contract in
 ## Responsibility
 
 System 1 is required because organizer input is not app-ready runtime data. For
-the preliminary Batch 1 profile, the video is the official competition data and
-the organizer also provides support artifacts such as keyframes, objects, CLIP
-features, media-info, map-keyframes, and metadata when available. System 1
-converts official videos plus validated support artifacts and project-generated
-signals into app-ready artifacts. System 2 reads only SQLite, FTS5 tables,
-FAISS indexes, and logical media refs produced by this system.
+the preliminary Batch 1 profile, the official videos are the base media source
+and the organizer also provides support artifacts such as keyframes, objects,
+CLIP features, media-info, map-keyframes, and metadata when available. System 1
+converts official videos, useful validated support artifacts, and
+project-generated signals into app-ready artifacts. System 2 reads only SQLite,
+FTS5 tables, FAISS indexes, and logical media refs produced by this system.
 
 ```text
-raw video folder + optional organizer support artifacts
+official videos + useful validated organizer support artifacts
   -> dataset registration
   -> video identity and support-artifact mapping
   -> media discovery
@@ -239,11 +239,11 @@ Google Drive may be used as an organizer handoff source or local operator
 scratch area. It is not the primary shared storage contract.
 
 Notebook 00B uses the streaming path for Colab free CPU runs: it scans zip
-members to build a video-first import plan, extracts bounded video and available
-support-artifact batches into local scratch, probes local videos, uploads each
-batch to `AIC26_raw` with the same batched HF commit helper as canonical raw
-upload, records per-video progress, and cleans the scratch batch before moving
-on. It does not materialize a full standardized raw tree on Drive.
+members to build an official-source import plan, extracts bounded video and
+available support-artifact batches into local scratch, probes local videos,
+uploads each batch to `AIC26_raw` with the same batched HF commit helper as
+canonical raw upload, records per-video progress, and cleans the scratch batch
+before moving on. It does not materialize a full standardized raw tree on Drive.
 
 The streaming path exposes the same disk-safe option family as archive
 standardization: `--min-free-gb`, `--drive-sync-sleep-seconds`,

@@ -21,7 +21,7 @@ Dự án đang đi theo hướng **System 1 trước System 2**:
 
 ```text
 data contract
-  -> System 1 mini trên subset raw video + metadata JSON đã pair theo stem
+  -> System 1 mini trên subset official videos + support artifacts hữu ích khi có
   -> System 1 app-ready artifact builder
   -> System 2 runtime/API/UI/search
 ```
@@ -330,7 +330,7 @@ Validate/refine nhóm docs này để kiểm tra nội dung đã rõ, đúng, đ
 ### Trọng tâm validate
 
 1. System 1 mini cần làm gì đã rõ chưa?
-2. Dùng subset raw video + metadata JSON đã pair theo stem có hợp lý không?
+2. Dùng subset official videos + support artifacts hữu ích khi có có hợp lý không?
 3. Output tối thiểu của mini path đã đủ chưa?
 4. Có bước nào thiếu giữa raw data và app-ready artifacts không?
 5. Work này có đủ nhỏ để tạo milestone/issue đầu tiên không?

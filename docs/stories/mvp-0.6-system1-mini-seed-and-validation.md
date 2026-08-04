@@ -11,8 +11,9 @@ normal
 ## Product Contract
 
 Create the smallest executable System 1 slice that proves the app-ready data
-contract can be built from real organizer-style inputs: paired raw `.mp4`
-videos and per-video metadata JSON matched by filename stem.
+contract can be built from real organizer-style inputs: official raw `.mp4`
+videos plus available metadata/support artifacts mapped by `video_id` and
+`frame_id` where applicable.
 
 This story does not build the full competition pipeline. It creates a tiny
 seed path that proves the repo can discover inputs, assign stable IDs, generate
@@ -31,19 +32,22 @@ emit a validation report that System 2 can trust.
 
 ### Ticket 1 — Tiny Seed Dataset Layout
 
-Goal: define a tiny seed input layout using 1-2 paired raw videos and metadata JSON files.
+Goal: define a tiny seed input layout using 1-2 raw videos plus available
+metadata/support artifacts.
 
 Scope:
 
 - Choose or document the fixture location.
 - Keep raw media out of the repo unless intentionally tiny.
-- Record expected folder names for raw videos and metadata JSON.
+- Record expected folder names for raw videos, metadata, and support artifacts.
 
 Acceptance criteria:
 
-- Raw video and metadata roots are configurable.
-- Each fixture pair uses the same filename stem.
-- Missing, duplicate, or extra stems are treated as validation errors.
+- Raw video, metadata, and support artifact roots are configurable.
+- Each video fixture uses the filename stem as `video_id`.
+- Duplicate video stems and support artifacts that cannot map to known
+  `video_id` / `frame_id` are treated as validation errors or excluded with
+  warnings according to the app-ready contract.
 
 ### Ticket 2 — Pairing And Manifest Builder
 
@@ -139,10 +143,11 @@ Acceptance criteria:
 
 ## Acceptance Criteria
 
-- A tiny paired seed dataset path exists or is documented as an operator-provided input.
-- System 1 mini can build app-ready seed artifacts from raw video + metadata JSON roots.
+- A tiny official-source seed dataset path exists or is documented as an operator-provided input.
+- System 1 mini can build app-ready seed artifacts from raw video, metadata, and support artifact roots.
 - Generated `app.sqlite` contains canonical IDs, logical refs, minimal FTS5/text evidence, `vector_map`, and `feature_availability`.
-- Validation report proves pairing, refs, frame metadata, vector map, and SQLite path safety.
+- Validation report proves video identity, optional support-artifact mapping,
+  refs, frame metadata, vector map, and SQLite path safety.
 - The story leaves full dataset ingestion, advanced OCR/ASR/caption quality, and full FAISS scale to later stories.
 
 ## Design Notes

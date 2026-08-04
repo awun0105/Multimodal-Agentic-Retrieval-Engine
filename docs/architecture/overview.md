@@ -127,4 +127,5 @@ The UI must let humans edit/review before submit and must show submission histor
 - Simplicity is prioritized over distributed scalability.
 - Runtime and preprocessing use different databases on purpose.
 - Raw video playback is secondary to keyframe-first retrieval.
-- Official 2026 rules are still incomplete, so ingest and submission behavior must stay configurable.
+- Preliminary task rules are now documented, while later-round behavior,
+  Batch 2 delivery, and final submission transport must stay configurable.

@@ -37,8 +37,9 @@ In scope:
 - Import organizer-provided keyframes, objects, CLIP features, media-info, and
   map-keyframes when they validate cleanly and improve retrieval or frame
   mapping.
-- Keep metadata as optional evidence. Missing metadata must not exclude a video
-  from the app-ready dataset when video identity and frame mapping are valid.
+- Keep metadata as one useful evidence source. System 1 should use it when
+  present, but System 2 readiness depends on the complete retrieval-ready
+  release rather than metadata presence alone.
 - Implement enough System 2 runtime behavior for preliminary use, not only a UI
   scaffold.
 
@@ -85,6 +86,8 @@ Out of scope:
 - [x] Store official preliminary-round Batch 1 source files under
   `docs/product/official/aic2026-preliminary-round-batch1/`.
 - [x] Align product and architecture contracts with official preliminary facts.
+- [x] Clean up active planning, story, validation, and onboarding docs that still
+  implied required metadata pairing or over-emphasized "video-first" wording.
 - [ ] Implement and validate System 1 support-artifact import.
 - [ ] Build a competition release containing app-ready SQLite, FTS, FAISS,
   vector mappings, logical media refs, and exact-frame inspection support.

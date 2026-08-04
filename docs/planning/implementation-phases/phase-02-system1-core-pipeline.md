@@ -8,7 +8,8 @@
 
 ## Goal
 
-Mở rộng từ System 1 mini thành các pipeline lõi trên raw videos và metadata JSON đã pair theo stem:
+Mở rộng từ System 1 mini thành các pipeline lõi trên official videos cùng
+metadata/support artifacts hữu ích khi có:
 
 - visual embeddings
 - shot detection and fallback full-video shot generation
@@ -18,7 +19,9 @@ Mở rộng từ System 1 mini thành các pipeline lõi trên raw videos và me
 
 ## Main Question This Phase Answers
 
-"Chúng ta có thể tạo được các modality outputs chính từ raw videos và metadata JSON theo dạng shard-safe, resumable, và có thể merge không?"
+"Chúng ta có thể tạo được các modality outputs chính từ official videos và các
+support artifacts hữu ích theo dạng shard-safe, resumable, và có thể merge
+không?"
 
 ## Scope
 

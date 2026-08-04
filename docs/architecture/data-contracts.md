@@ -23,8 +23,9 @@ System 1 converts raw organizer inputs into app-ready artifacts. System 2 reads 
 | Filesystem | Large media assets: videos, keyframes, thumbnails |
 | DuckDB | Offline preprocessing, staging, analytics, validation |
 
-Organizer-provided raw videos plus optional support artifacts are not acceptable
-by themselves for runtime search, state, or FAISS result resolution.
+Organizer-provided files are not acceptable by themselves for runtime search,
+state, or FAISS result resolution. System 1 must convert the official videos
+and any useful validated support artifacts into app-ready data.
 
 ## Organizer Input Contract
 
@@ -46,11 +47,11 @@ The video filename stem, such as `L21_0001`, is the organizer dataset key and
 the canonical `video_id` for this project. It does not depend on `watch_url`,
 YouTube ID, or any online identifier.
 
-The video is the official competition data. Organizer keyframes, objects, CLIP
-features, media-info, map-keyframes, and metadata are support inputs. System 1
-may import them with provenance after validating their mapping, but it must not
-depend on them as complete or sufficient app-ready retrieval artifacts. System
-1 still owns runtime SQLite, FTS5, FAISS, vector mapping, generated or imported
+The official videos are the base media source. Organizer keyframes, objects,
+CLIP features, media-info, map-keyframes, and metadata are support inputs.
+System 1 may import them with provenance after validating their mapping, and it
+may generate better or additional retrieval artifacts from the videos. System 1
+still owns runtime SQLite, FTS5, FAISS, vector mapping, generated or imported
 evidence normalization, validation, and release packaging.
 
 ## Roots

@@ -31,10 +31,11 @@ Batch 1 includes:
 - YouTube metadata JSON when available.
 - Additional download artifacts such as map-keyframes and media-info.
 
-The official competition data is the video. Keyframes, objects, CLIP features,
-and metadata are support artifacts for solution building. System 1 may import
-them as evidence after validating mapping and provenance, but must still be able
-to generate its own app-ready artifacts from video.
+The official dataset includes videos as the base media source. Keyframes,
+objects, CLIP features, and metadata are support artifacts for solution
+building. System 1 may import them as evidence after validating mapping and
+provenance, and may also generate better or additional app-ready artifacts from
+the videos when that improves retrieval.
 
 Metadata is useful evidence when present. Missing metadata must not exclude a
 video from the app-ready dataset if the video identity and frame mapping are

@@ -16,7 +16,7 @@ Các phase ở đây bám theo canonical backlog, nhưng được **tổ chức 
 Sau khi chốt `MVP-0.5 App-ready Data Contract`, bước hợp logic tiếp theo không phải là dựng backend/UI ngay, mà là:
 
 1. implement System 1 ở mức nhỏ trước;
-2. dùng subset raw video + metadata JSON đã pair theo stem để tạo app-ready artifacts;
+2. dùng subset official videos cùng metadata/support artifacts hữu ích khi có để tạo app-ready artifacts;
 3. validate các artifacts đó;
 4. rồi mới dựng System 2 trên dữ liệu đã có thật.
 

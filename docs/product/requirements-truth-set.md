@@ -13,7 +13,7 @@ Canonical requirement summary for the current planning phase. This file separate
 | Ranking limit | Each query may submit at most 100 answers; scoring averages best `R@k` over `k = {1, 5, 20, 50, 100}`. | Official preliminary info. |
 | TRAKE precision | TRAKE first retrieves one video, then aligns one semantic keyframe per event; answer intervals are usually very short. | Official preliminary info. |
 | Dataset input | Organizer Batch 1 provides videos plus support artifacts: keyframes, object JSON, CLIP features, map-keyframes/media-info, and YouTube metadata where available. | Official preliminary info and `batch1-downloads.csv`. |
-| Official source of truth | Official competition data is the video; support artifacts may be imported when validated but must not become hard limits on System 1 generation. | Official preliminary info. |
+| Official base source material | The official dataset includes videos as the base media source; support artifacts may be imported when validated but must not become hard limits on System 1 generation. | Official preliminary info. |
 | Video format | Raw videos are `.mp4`. | Official preliminary info examples and download package names. |
 | Metadata pairing | Metadata may be missing for some videos and is optional retrieval evidence, not a condition for including a valid video. | Official preliminary info. |
 | Canonical `video_id` | Use the raw video filename stem as canonical `video_id`; do not derive it from `watch_url` or YouTube ID. | Human-confirmed decision. |

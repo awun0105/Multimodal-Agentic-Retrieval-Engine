@@ -84,14 +84,22 @@ The ingestion pipeline should prepare:
 
 ## Canonical Input Strategy
 
-Input layout must stay flexible at the file-extension level, but the current dataset understanding is now specific: organizer input provides raw videos plus one metadata JSON per video, matched by filename stem.
+Input layout must stay flexible at the file-extension level. For the current
+preliminary profile, organizer input includes official videos plus support
+artifacts such as keyframes, objects, CLIP features, media-info, map-keyframes,
+and metadata when available.
 
 Required organizer inputs:
 
 - raw videos
-- metadata JSON files paired 1-1 with raw videos by stem
 
-Derived project-generated inputs or artifacts may later include:
+Useful optional organizer support inputs:
+
+- metadata JSON files matched to videos by stem when available
+- organizer keyframes and map-keyframes/media-info
+- organizer object JSON and CLIP features
+
+Derived project-generated inputs or artifacts may include:
 
 - extracted keyframes
 - generated embeddings
@@ -103,8 +111,8 @@ Derived project-generated inputs or artifacts may later include:
 Ingestion validation should catch:
 
 - missing video files
-- missing metadata JSON for a raw video stem
 - metadata JSON without a matching raw video stem
+- support artifacts that do not resolve to known `video_id` / `frame_id`
 - missing keyframes
 - missing thumbnails when expected
 - duplicate video/frame IDs
@@ -117,7 +125,7 @@ Ingestion validation should catch:
 
 1. Scan dataset inputs.
 2. Import/stage in DuckDB.
-3. Normalize and validate metadata in DuckDB.
+3. Normalize metadata and support artifacts in DuckDB when present.
 4. Produce runtime SQLite tables.
 5. Build SQLite FTS5 tables.
 6. Build/load FAISS index.

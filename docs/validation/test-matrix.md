@@ -23,7 +23,7 @@ SQLite Harness database.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | MVP-0 | Canonical docs and accepted decisions define the repository contract | no | no | no | no | implemented | `docs/onboarding/doc-conflicts.md`, `docs/decisions/` |
 | MVP-0.5 | App-ready Data Contract defines organizer input, canonical IDs and refs, SQLite/FTS5/FAISS boundaries, and validation rules | no | no | no | no | implemented | `docs/architecture/data-contracts.md`, `docs/architecture/system1-ingestion.md` |
-| MVP-0.6 | System 1 builds app-ready seed artifacts from paired raw video and metadata | yes | yes | no | no | partial | Debug/mock CLI integration is covered in `system1/tests/test_smoke.py`; production provider depth remains incomplete. |
+| MVP-0.6 | System 1 builds app-ready seed artifacts from official videos and available support inputs | yes | yes | no | no | partial | Debug/mock CLI integration is covered in `system1/tests/test_smoke.py`; production provider depth remains incomplete. |
 | MVP-1 | System 1 builds validated runtime SQLite/FTS5/FAISS artifacts for System 2 | yes | yes | no | no | partial | The debug/mock path builds and validates `app.sqlite`, FTS5, visual index, vector map, and smoke report; production-scale/provider proof remains open. |
 | MVP-2 | Backend API vertical slice reads System 1 app-ready artifacts and returns keyframe-first payloads | no | no | no | no | planned | backend scaffold only |
 | MVP-3 | One React/Vite SPA provides keyframe-first query and inspection workflow | no | no | no | no | planned | frontend scaffold only |

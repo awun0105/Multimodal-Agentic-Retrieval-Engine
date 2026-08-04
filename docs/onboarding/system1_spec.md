@@ -11,8 +11,8 @@
 ```text
 System 1 = Data Preparation / Preprocessing / Index Factory
 
-Raw videos + metadata JSON
-→ metadata normalization
+Official videos + useful validated metadata/support artifacts
+→ metadata/support artifact normalization when available
 → batch assignment
 → ASR
 → TransNet V2 shot detection
@@ -3722,7 +3722,7 @@ A distributed multimedia dataset factory.
 It converts:
 
 ```text
-raw videos + metadata JSON
+official videos + useful validated metadata/support artifacts
 ```
 
 into:
