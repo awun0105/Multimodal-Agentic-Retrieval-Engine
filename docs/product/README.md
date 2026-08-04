@@ -15,6 +15,12 @@ The upstream `repository-harness` contract lives in the root README, current
 workflow and architecture documents, lasting decisions, optional orchestration
 contract, implementation, and executable tests.
 
+## Official Source Inputs
+
+`official/` stores organizer-provided source material that informs the derived
+product and architecture docs. Keep original PDFs, spreadsheets, and searchable
+extractions there; update canonical behavior documents separately.
+
 ## Update Rule
 
 When behavior changes:
