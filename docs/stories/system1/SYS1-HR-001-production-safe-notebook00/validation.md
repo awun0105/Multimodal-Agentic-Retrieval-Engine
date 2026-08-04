@@ -42,7 +42,8 @@ system1/.venv/bin/system1 --help
 - `system1/.venv/bin/system1 drive-shadow --help`: exposes `--allow-partial`.
 - `system1/.venv/bin/system1 standardize-archives --help`: exposes
   `--allow-partial` and keeps `--overwrite/--no-overwrite`.
-- `scripts/bin/harness-cli story verify SYS1-HR-001`: pass.
+- The retired legacy Harness story verification passed before the Repository
+  Harness Core migration.
 - Notebook 00 now presents Drive shadow -> standardize archives -> input
   readiness -> ingest -> assign batches -> phase00 sync to HF Dataset as the
   primary operator workflow, requires `AIC_HF_REPO_ID`, and requires an archive

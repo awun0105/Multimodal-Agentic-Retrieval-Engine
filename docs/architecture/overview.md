@@ -2,10 +2,13 @@
 
 ## Current Status
 
-This repository currently contains product and architecture documentation only.
-No application runtime code, package manifests, or tests were found during
-onboarding.
+This repository contains an implemented System 1 Python package and test suite,
+plus System 2 backend and frontend scaffolds. The System 1 debug/mock pipeline
+can build and validate release artifacts; production semantic providers remain
+unfinished. The System 2 architecture below is an accepted target, not a
+running application.
 
+Current implementation status: `docs/product/current-state.md`.
 Current requirement truth set: `docs/product/requirements-truth-set.md`.
 
 ## Canonical MVP Stack

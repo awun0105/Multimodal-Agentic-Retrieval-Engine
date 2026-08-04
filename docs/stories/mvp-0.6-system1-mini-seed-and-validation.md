@@ -161,8 +161,8 @@ Acceptance criteria:
 
 ## Validation
 
-When updating durable proof status, use numeric booleans:
-`scripts/bin/harness-cli story update --id MVP-0.6 --unit 1 --integration 1 --e2e 0 --platform 0`.
+When updating durable proof status, update `docs/validation/test-matrix.md` with
+the focused test or runtime evidence that justifies each changed field.
 
 | Layer | Expected proof |
 | --- | --- |
@@ -172,10 +172,10 @@ When updating durable proof status, use numeric booleans:
 | Platform | Optional operator smoke command proving local build works with configured roots. |
 | Release | Validation report and matrix update when implemented. |
 
-## Harness Delta
+## Repository Workflow Delta
 
-No Harness changes required for story creation. When implemented, update
-`docs/validation/test-matrix.md` and durable story status with real proof.
+No workflow change is required for this story. When implementation proof
+changes, update `docs/validation/test-matrix.md` with the real evidence.
 
 ## Evidence
 

@@ -14,7 +14,6 @@ and process overhead.
 - `docs/plans/active/`: complex work currently in progress.
 - `docs/plans/completed/`: completed execution history worth retaining.
 - Project code, tests, CI, and runtime signals: executable and observable truth.
-- `scripts/README.md`: upstream Harness development and compatibility commands.
 
 Use `docs/README.md` for the map; prefer targeted search.
 
@@ -123,14 +122,9 @@ Git history, pull-request discussion, test artifacts, screenshots, videos,
 logs, metrics, and plan progress are preferred evidence because they arise from
 the work. Manual descriptions may add context but do not replace observed proof.
 
-## Compatibility Control Plane
+## Durable Repository State
 
-The Rust CLI and SQLite durable layer remain supported for historical state and
-optional external orchestration. Their intake, story, matrix, trace, scoring,
-audit, intervention, proposal, snapshot, and changeset commands are not part of
-the default repository workflow.
-
-Use those commands only when a user explicitly requests them, a maintenance task
-targets that compatibility surface, or an external orchestrator's documented
-contract requires them. Compatibility documents are references, not authority
-to reintroduce mandatory control-plane writes.
+This repository has retired the legacy Rust CLI and SQLite Harness control
+plane. Plans, decisions, stories, validation documents, code, tests, and Git
+history are the durable record. Do not recreate a parallel control plane unless
+a user explicitly requests a separate compatibility migration.

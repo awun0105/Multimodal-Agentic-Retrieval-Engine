@@ -34,7 +34,8 @@ and validation material.
 - Claim completion only with relevant executable or observable evidence. Report
   the outcome, important changes, validation, and unresolved risks.
 
-SQLite intake, story, trace, scoring, audit, and proposal commands are optional
-compatibility features. Use them only when explicitly requested or required by
-an external orchestrator.
+This repository uses Markdown plans, decisions, stories, validation documents,
+code, tests, and Git history as durable state. The legacy SQLite Harness control
+plane has been retired; do not recreate it unless a user explicitly requests a
+separate compatibility migration.
 <!-- HARNESS:END -->

@@ -25,7 +25,7 @@ This file records the canonical docs that supersede older source inputs. Archive
 | Technical risks | `docs/architecture/technical-risks.md` | earlier risk notes |
 | Canonicalization gap report | `docs/onboarding/canonicalization-gap-report.md` | migration gap verification report |
 | Backlog | `docs/stories/backlog.md` | prior informal roadmap notes |
-| Validation matrix | `docs/validation/test-matrix.md` and `harness.db` | prior placeholder matrix |
+| Validation matrix | `docs/validation/test-matrix.md` | prior placeholder matrix and retired SQLite Harness state |
 
 ## Rule
 
