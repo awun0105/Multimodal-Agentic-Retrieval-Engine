@@ -23,25 +23,35 @@ System 1 converts raw organizer inputs into app-ready artifacts. System 2 reads 
 | Filesystem | Large media assets: videos, keyframes, thumbnails |
 | DuckDB | Offline preprocessing, staging, analytics, validation |
 
-Organizer-provided raw videos plus JSON metadata are not acceptable by themselves for runtime search, state, or FAISS result resolution.
+Organizer-provided raw videos plus optional support artifacts are not acceptable
+by themselves for runtime search, state, or FAISS result resolution.
 
 ## Organizer Input Contract
 
-The official dataset input for this project is:
+The official preliminary Batch 1 dataset input for this project is:
 
-1. a folder of raw `.mp4` video files;
-2. a folder of metadata JSON files;
-3. one metadata JSON per raw video;
-4. raw video and metadata matched by the same filename stem.
+1. raw `.mp4` video files;
+2. organizer keyframes under per-video folders;
+3. object JSON files per keyframe;
+4. CLIP ViT-B/32 keyframe features in `.npy` files;
+5. map-keyframes and media-info support files;
+6. YouTube metadata JSON files where available.
 
 Example pairing:
 
 - `videos/L21_0001.mp4`
 - `metadata/L21_0001.json`
 
-The stem, such as `L21_0001`, is the organizer dataset key and the canonical `video_id` for this project. It does not depend on `watch_url`, YouTube ID, or any online identifier.
+The video filename stem, such as `L21_0001`, is the organizer dataset key and
+the canonical `video_id` for this project. It does not depend on `watch_url`,
+YouTube ID, or any online identifier.
 
-Organizer input does not include derived retrieval artifacts such as keyframes, embeddings, FAISS indexes, OCR, ASR, object detections, or runtime SQLite databases. Those are project-generated System 1 outputs.
+The video is the official competition data. Organizer keyframes, objects, CLIP
+features, media-info, map-keyframes, and metadata are support inputs. System 1
+may import them with provenance after validating their mapping, but it must not
+depend on them as complete or sufficient app-ready retrieval artifacts. System
+1 still owns runtime SQLite, FTS5, FAISS, vector mapping, generated or imported
+evidence normalization, validation, and release packaging.
 
 ## Roots
 
@@ -50,7 +60,7 @@ The repo, large data, and hot runtime artifacts are separate.
 | Root | Purpose | Notes |
 | --- | --- | --- |
 | `${REPO_ROOT}` | Source code, docs, config, schemas, small fixtures | Do not store real competition media here. |
-| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos/metadata and processed media live here. |
+| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos, organizer support artifacts, and processed media live here. |
 | `${AIC_RUNTIME_ROOT}` | Runtime hot artifact root, preferably SSD | SQLite, FAISS, and runtime cache live here. |
 
 ## Physical Layout
@@ -69,8 +79,11 @@ ${REPO_ROOT}/
 ${AIC_DATA_ROOT}/
   raw/
     videos/
-    keyframes_original/
-    metadata_original/
+    organizer_keyframes/
+    organizer_objects/
+    organizer_clip_features/
+    organizer_metadata/
+    organizer_maps/
   processed/
     media/
       videos/
@@ -103,11 +116,16 @@ AIC26_release
 ```
 
 `AIC26_raw` is the canonical raw dataset repo. It stores standardized raw
-videos, metadata, and raw-level inventory/import manifests only:
+videos, organizer support artifacts when mirrored, metadata when available, and
+raw-level inventory/import manifests only:
 
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
-AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/organizer_keyframes/
+AIC26_raw/canonical_raw_vXXX/organizer_objects/
+AIC26_raw/canonical_raw_vXXX/organizer_clip_features/
+AIC26_raw/canonical_raw_vXXX/organizer_metadata/
+AIC26_raw/canonical_raw_vXXX/organizer_maps/
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -211,7 +229,8 @@ in local scratch. It must contain one row per canonical video with:
 - `canonical_revision`
 - `canonical_prefix`
 - `canonical_video_path`
-- `canonical_metadata_path`
+- `canonical_metadata_path` when metadata exists, otherwise null with
+  `metadata_missing` recorded in raw audit manifests
 - `duration_sec`
 - `fps`
 - `frame_count`
@@ -229,8 +248,8 @@ explicitly enables that behavior.
 The app-ready contract covers these categories:
 
 1. Raw videos
-2. Video metadata JSON matched by stem
-3. Generated keyframes
+2. Optional video metadata JSON matched by stem when available
+3. Generated and/or imported keyframes
 4. Thumbnails
 5. Keyframe metadata
 6. Captions
@@ -361,8 +380,14 @@ A dataset is app-ready only when validation proves all required checks pass.
 
 Required checks:
 
-- Every raw video has exactly one metadata JSON with the same filename stem.
-- Every metadata JSON has exactly one raw video with the same filename stem.
+- Every raw video has a unique canonical `video_id` derived from its filename
+  stem.
+- Metadata JSON files, when present, match exactly one raw video by filename
+  stem.
+- Missing metadata is recorded as optional evidence absence and must not exclude
+  a valid video from the app-ready dataset.
+- Organizer support artifacts imported into the release resolve to known
+  `video_id` / `frame_id` values, or are excluded with a validation warning.
 - No duplicate `video_id`.
 - No duplicate `(video_id, frame_id)`.
 - Every `videos.source_video_stem` equals `videos.video_id` for this dataset contract.
@@ -383,7 +408,8 @@ Required checks:
 Before runtime implementation, the project needs a tiny seed dataset under `system1/tests/fixtures/` or equivalent. It should include:
 
 - At least one video record.
-- Its matching metadata JSON.
+- Optional matching metadata JSON, plus at least one fixture case where missing
+  metadata does not remove the video.
 - Multiple keyframes for the video.
 - Thumbnails for those keyframes.
 - At least one caption row.
@@ -395,6 +421,6 @@ Before runtime implementation, the project needs a tiny seed dataset under `syst
 
 ## Open Questions
 
-- Official AIC 2026 dataset structure and submission format are not confirmed.
+- Official Batch 2 dataset structure and final submission transport are not confirmed.
 - Final object/OCR/ASR provider formats are not confirmed.
 - Exact schema DDL will be finalized in `MVP-1 Runtime SQLite Schema + Validation`.

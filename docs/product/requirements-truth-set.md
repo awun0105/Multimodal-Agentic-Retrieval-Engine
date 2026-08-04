@@ -8,11 +8,16 @@ Canonical requirement summary for the current planning phase. This file separate
 
 | Area | Requirement | Evidence / Source |
 | --- | --- | --- |
-| Dataset input | Organizer provides raw video files and per-video metadata JSON files. | Human-provided dataset detail. |
-| Video format | Raw videos are `.mp4`. | Human-provided dataset detail. |
-| Metadata pairing | Each raw video has one matching metadata JSON with the same filename stem. | Human-provided dataset detail. |
+| Preliminary query types | AIC 2026 preliminary Batch 1 defines Textual KIS, Q&A, and TRAKE workflows. | Official preliminary info in `docs/product/official/aic2026-preliminary-round-batch1/preliminary-round-info.md`. |
+| Submission answer unit | Textual KIS and Q&A answers require `video_id` and `frame_id`; Q&A also requires an answer string; TRAKE requires `video_id` plus one `frame_id` per event. | Official preliminary info. |
+| Ranking limit | Each query may submit at most 100 answers; scoring averages best `R@k` over `k = {1, 5, 20, 50, 100}`. | Official preliminary info. |
+| TRAKE precision | TRAKE first retrieves one video, then aligns one semantic keyframe per event; answer intervals are usually very short. | Official preliminary info. |
+| Dataset input | Organizer Batch 1 provides videos plus support artifacts: keyframes, object JSON, CLIP features, map-keyframes/media-info, and YouTube metadata where available. | Official preliminary info and `batch1-downloads.csv`. |
+| Official source of truth | Official competition data is the video; support artifacts may be imported when validated but must not become hard limits on System 1 generation. | Official preliminary info. |
+| Video format | Raw videos are `.mp4`. | Official preliminary info examples and download package names. |
+| Metadata pairing | Metadata may be missing for some videos and is optional retrieval evidence, not a condition for including a valid video. | Official preliminary info. |
 | Canonical `video_id` | Use the raw video filename stem as canonical `video_id`; do not derive it from `watch_url` or YouTube ID. | Human-confirmed decision. |
-| Derived artifacts | Organizer does not provide keyframes, embeddings, OCR, ASR, object detections, FAISS indexes, or runtime SQLite. | Human-provided dataset detail. |
+| Organizer support artifacts | Organizer-provided keyframes, object detections, and CLIP ViT-B/32 features are support inputs only; System 1 may import them with provenance after mapping validation. | Official preliminary info. |
 | System 1 role | System 1 must generate and validate app-ready retrieval artifacts before System 2 depends on them. | Derived from dataset input constraints. |
 | System 2 role | System 2 consumes app-ready artifacts and should not scan raw organizer folders during live retrieval. | Architecture boundary. |
 | Runtime target | App must run locally on one machine. | Human-provided runtime requirement. |
@@ -31,7 +36,6 @@ Canonical requirement summary for the current planning phase. This file separate
 
 | Area | Assumption | Revisit Trigger |
 | --- | --- | --- |
-| Query types | Plan around last-year-style Textual KIS, VKIS / Video KIS, Q&A, and TRAKE until official 2026 rules are released. | Official 2026 rules. |
 | FPS | Last-year dataset videos were observed at 25 fps; use 25 fps as expected/default while probing actual FPS per current-year video. | Current-year raw media probe. |
 | Local-first reliability | Even though internet is allowed, core retrieval should remain local/LAN-first and artifact-backed so network or provider failures do not break correctness. | Design phase and provider selection. |
 | Online providers | External APIs/models may be used as optional accelerators, not required source-of-truth dependencies. | Design phase and competition constraints. |
@@ -40,10 +44,11 @@ Canonical requirement summary for the current planning phase. This file separate
 
 | Area | Unknown |
 | --- | --- |
-| Official rules | Final 2026 task definitions, timing, and scoring details. |
+| Later-round rules | Final-round task timing, progressive reveal behavior, and scoring penalties remain separate from the confirmed preliminary profile. |
 | Submission API | Endpoint, auth/session mechanism, payload, response semantics, rate limits, and whether correctness feedback is immediate. |
-| Metadata completeness | Whether current-year metadata always contains the same fields as the observed sample. |
-| Filename stem format | Exact current-year naming pattern, beyond stem matching between `.mp4` and `.json`. |
+| Submission file schema | Exact upload/export schema remains unknown beyond the official answer fields. |
+| Full 2026 dataset | Batch 2 contents and delivery shape are not yet present in the repo. |
+| Filename stem format | Exact future-batch naming pattern, beyond using video filename stem as `video_id`. |
 | Timing | Time limit per clue batch and per question session. |
 | Compute | Actual host machine CPU/GPU/RAM/disk available during preparation and final-round operation. |
 | Provider choices | Which online APIs/models, if any, the team will use. |
@@ -54,7 +59,10 @@ Canonical requirement summary for the current planning phase. This file separate
 - Submit permission enforcement inside the app.
 - Public cloud deployment as the primary runtime target.
 - Multi-node distributed runtime.
-- Assuming organizer-provided derived artifacts.
+- Assuming organizer-provided support artifacts are complete, correct, or
+  sufficient without validation.
+- Precomputing query-specific TRAKE event sequences as System 1 canonical
+  artifacts.
 - Hard-coded organizer submission payload before official API docs exist.
 - Hard dependency on online URLs or external providers for core retrieval correctness.
 
@@ -62,8 +70,13 @@ Canonical requirement summary for the current planning phase. This file separate
 
 - Query Session must store clue batches because the public screen does not preserve earlier clues.
 - UI must support fast manual entry from screen-observed clues.
-- System 1 must validate raw video / metadata pairing before producing artifacts.
+- System 1 must validate video identity, support-artifact mapping, and exact
+  frame/timestamp resolution before producing app-ready artifacts.
 - System 1 must probe media facts including actual FPS.
 - System 2 should support current-only and accumulated clue search modes.
+- System 2 must treat TRAKE as runtime retrieval, same-video sequence ranking,
+  and exact-frame refinement over System 1 reusable artifacts.
+- Internal retrieval candidate pools may be larger than 100; exported/submitted
+  answer lists must respect the official 100-answer limit.
 - Submission UI should show previous attempts before allowing another submit.
 - Online providers can be adapterized later, but local artifacts remain the retrieval source of truth.

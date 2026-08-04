@@ -20,7 +20,8 @@ human UI or agent query
 
 System 2 must not scan raw organizer folders or raw metadata JSON at query time. It reads only app-ready artifacts defined in `docs/architecture/data-contracts.md`.
 
-System 2 assumes `video_id` is the organizer filename stem chosen by System 1 during dataset pairing and validation.
+System 2 assumes `video_id` is the organizer filename stem chosen by System 1
+during video identity and artifact-mapping validation.
 
 ## Core Ports And Adapters
 
@@ -45,13 +46,16 @@ Minimum adapters:
 - OCR adapter: text detected in keyframes.
 - ASR adapter: spoken transcript segments by video/time range.
 - Object adapter: object/concept labels and optional boxes.
-- Metadata adapter: title, source/channel, normalized organizer metadata, tags, duration, fps.
+- Metadata adapter: title, source/channel, normalized organizer metadata, tags,
+  duration, fps when metadata exists. Missing metadata is a missing evidence
+  source, not a search failure.
 
 Adapters return normalized hit records with `source`, `score`, `keyframe_id` or resolvable `video_id`/time range, and evidence snippets. API responses must resolve to `keyframe_id`, `video_id`, and `frame_id` before reaching UI.
 
 ## Fusion Pipeline
 
-1. Parse query type: TKIS, Q&A, TRAKE, VKIS, or generic hybrid.
+1. Parse query type: TKIS, Q&A, TRAKE, or optional later-round/internal VKIS or
+   generic hybrid.
 2. Run relevant adapters in parallel when available.
 3. Normalize scores per adapter to `[0, 1]`.
 4. Apply query-type weights from `docs/product/search-fusion.md`.
@@ -71,8 +75,10 @@ Canonical temporal flow:
 user query
   -> temporal query parsing
   -> event candidate retrieval
-  -> temporal constraint solving
+  -> same-video sequence construction
+  -> temporal constraint solving when required by query semantics
   -> sequence reranking
+  -> exact-frame refinement
   -> evidence clip / same-video context builder
 ```
 
@@ -93,7 +99,8 @@ Recommended runtime modules:
 The baseline implementation may be rule-based. Learned reranking is optional
 later work. System 2 should prefer explicit temporal constraints and
 inspectable evidence over opaque sequence scoring that is difficult to debug in
-competition operations.
+competition operations. TRAKE answer rows rank complete sequences, not
+independent frame hits.
 
 ## Write Model
 

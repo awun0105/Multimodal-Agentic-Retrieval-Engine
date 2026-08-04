@@ -33,7 +33,7 @@ Dataset health payload:
   "counts": {
     "videos": 0,
     "keyframes": 0,
-    "image_captions": 0,
+    "shot_captions": 0,
     "ocr": 0,
     "asr_segments": 0,
     "objects": 0,
@@ -60,6 +60,7 @@ GET /api/media/video/{video_id}
 GET /api/videos/{video_id}
 GET /api/keyframes/{keyframe_id}
 GET /api/videos/{video_id}/keyframes?around_frame_id=25300&window=20
+GET /api/videos/{video_id}/frames?center_frame_id=25300&radius=30
 GET /api/keyframes/{keyframe_id}/evidence
 ```
 
@@ -132,10 +133,16 @@ Request:
     "modalities": ["visual", "caption", "ocr", "asr", "object", "metadata"],
     "group_by_video": true
   },
+  "candidate_pool_k": 500,
   "top_k": 100,
-  "rerank_top_k": 50
+  "rerank_top_k": 200
 }
 ```
+
+`top_k` is the number of ranked results returned for review/export and must
+not exceed the official preliminary 100-answer limit. `candidate_pool_k` and
+`rerank_top_k` are internal retrieval controls and may be larger than 100 so
+the correct answer can be promoted into the submitted top ranks.
 
 Response:
 
@@ -164,10 +171,40 @@ Response:
         {"type": "object", "text": "bus", "score": 0.66, "source": "text_documents"}
       ],
       "warnings": []
+    },
+    {
+      "result_type": "trake_sequence",
+      "video_id": "L01_V028",
+      "score": 0.83,
+      "trake_sequence": [
+        {
+          "event_index": 1,
+          "event_text": "person opens the door",
+          "frame_id": 25300,
+          "keyframe_id": "L01_V028:25300",
+          "timestamp_sec": 843.33,
+          "score": 0.84
+        },
+        {
+          "event_index": 2,
+          "event_text": "person walks into the room",
+          "frame_id": 25342,
+          "keyframe_id": "L01_V028:25342",
+          "timestamp_sec": 844.73,
+          "score": 0.81
+        }
+      ],
+      "evidence": [],
+      "warnings": []
     }
   ]
 }
 ```
+
+For TRAKE, a result represents one ranked same-video event sequence, not
+independent frame hits. The backend should preserve labelled event order from
+the query and enforce chronological order only when the query semantics require
+it.
 
 ## Candidates
 
@@ -188,13 +225,20 @@ Candidate payload:
   "video_id": "L01_V028",
   "frame_id": 25300,
   "answer_text": null,
-  "trake_sequence": [],
+  "trake_sequence": [
+    {"event_index": 1, "frame_id": 25300, "event_text": "person opens the door"},
+    {"event_index": 2, "frame_id": 25342, "event_text": "person walks into the room"}
+  ],
   "score_snapshot": 0.87,
   "evidence_snapshot": [],
   "validation_warnings": [],
   "created_by": "teammate-a"
 }
 ```
+
+For TKIS and Q&A, `frame_id` is the candidate answer frame. For TRAKE,
+`video_id` and `trake_sequence[*].frame_id` are the candidate answer; top-level
+`frame_id` may point to the first event or preview frame for UI convenience.
 
 ## Submission Drafts And History
 
@@ -207,6 +251,7 @@ PATCH /api/sessions/{session_id}/submission-drafts/{draft_id}
 POST /api/sessions/{session_id}/submissions
 GET /api/sessions/{session_id}/submissions
 GET /api/submissions/{submission_id}
+GET /api/sessions/{session_id}/submission-export?format=csv
 ```
 
 Submission draft payload:
@@ -221,7 +266,10 @@ Submission draft payload:
     "video_id": "L21_0001",
     "frame_id": 25300,
     "answer_text": null,
-    "trake_sequence": []
+    "trake_sequence": [
+      {"event_index": 1, "frame_id": 25300},
+      {"event_index": 2, "frame_id": 25342}
+    ]
   },
   "validation_warnings": ["official submission payload format unknown"],
   "edited_by": "teammate-a"

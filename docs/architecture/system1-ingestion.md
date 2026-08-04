@@ -6,14 +6,21 @@ Canonical for offline preprocessing. System 1 produces the app-ready contract in
 
 ## Responsibility
 
-System 1 is required because organizer input contains only raw `.mp4` videos and per-video metadata JSON. It converts those inputs plus project-generated signals into validated app-ready artifacts. System 2 reads only SQLite, FTS5 tables, FAISS indexes, and logical media refs produced by this system.
+System 1 is required because organizer input is not app-ready runtime data. For
+the preliminary Batch 1 profile, the video is the official competition data and
+the organizer also provides support artifacts such as keyframes, objects, CLIP
+features, media-info, map-keyframes, and metadata when available. System 1
+converts official videos plus validated support artifacts and project-generated
+signals into app-ready artifacts. System 2 reads only SQLite, FTS5 tables,
+FAISS indexes, and logical media refs produced by this system.
 
 ```text
-raw video folder + metadata JSON folder
+raw video folder + optional organizer support artifacts
   -> dataset registration
-  -> dataset pairing by filename stem
+  -> video identity and support-artifact mapping
   -> media discovery
-  -> metadata normalization
+  -> optional metadata normalization
+  -> support artifact import with provenance
   -> structure artifact per video
   -> feature artifact per video
   -> merge structural + feature artifacts
@@ -29,9 +36,10 @@ raw video folder + metadata JSON folder
 | Stage | Required Output | Notes |
 | --- | --- | --- |
 | Dataset registration | `datasets` row and build manifest | Assign stable `dataset_id`, source version, build time, and source roots. |
-| Dataset pairing | paired input manifest | Match raw videos and metadata JSON by the same filename stem; use that stem as `video_id`; fail on missing, extra, or duplicate stems. |
+| Dataset mapping | input manifest | Use the raw video filename stem as `video_id`; fail on duplicate video stems; record missing metadata as optional evidence absence; exclude or warn on support artifacts that cannot map to a known video/frame. |
 | Media discovery | `videos`, discovered media manifest | Discover videos from configurable roots; do not hardcode personal paths or filename regexes. |
-| Metadata normalization | normalized staging tables | Preserve raw metadata; normalize title, author/channel, duration, publish date, keywords, description, watch URL, and thumbnail URL. |
+| Metadata normalization | normalized staging tables | Preserve raw metadata when present; normalize title, author/channel, duration, publish date, keywords, description, watch URL, and thumbnail URL. Missing metadata must not remove the video. |
+| Support artifact import | organizer keyframe/object/CLIP staging tables | Import organizer keyframes, map-keyframes, media-info, object JSON, and CLIP ViT-B/32 features only after validating `video_id`, `frame_id`, vector count/order, and provenance. |
 | Video probing | probed media facts | Probe fps, duration, dimensions, codec/container facts; last-year evidence suggests 25 fps, but actual fps must be persisted per video. |
 | Timeline mapping | `frame_timeline` staging rows or equivalent mapping proof | Persist enough timing metadata to map timestamps to frame ids safely, especially for VFR or unreliable FPS metadata. |
 | Shot detection | `shots` rows | Production Phase01 standardizes on TransNet V2 as the shot-boundary provider. Package code may keep a provider interface for testability, but production notebooks should not expose multiple shot-detection modes. |
@@ -62,7 +70,11 @@ Preprocessing must be runnable from batch CLI scripts. Minimum interface:
 aic-prepare build \
   --dataset-id aic2026 \
   --raw-video-dir ${AIC_DATA_ROOT}/raw/videos \
-  --metadata-dir ${AIC_DATA_ROOT}/raw/metadata_original \
+  --metadata-dir ${AIC_DATA_ROOT}/raw/organizer_metadata \
+  --organizer-keyframes-dir ${AIC_DATA_ROOT}/raw/organizer_keyframes \
+  --organizer-objects-dir ${AIC_DATA_ROOT}/raw/organizer_objects \
+  --organizer-clip-features-dir ${AIC_DATA_ROOT}/raw/organizer_clip_features \
+  --organizer-maps-dir ${AIC_DATA_ROOT}/raw/organizer_maps \
   --data-root ${AIC_DATA_ROOT} \
   --runtime-root ${AIC_RUNTIME_ROOT} \
   --report ${AIC_DATA_ROOT}/staging/reports/aic2026-validation.json
@@ -72,6 +84,8 @@ CLI rules:
 
 - Accept input roots and output roots as config or flags.
 - Treat the raw video stem as canonical `video_id` after uniqueness validation.
+- Treat organizer support artifact roots as optional inputs that must validate
+  before they become app-ready evidence.
 - Do not derive `video_id` from `watch_url`, YouTube ID, title, or channel metadata.
 - Treat `video_ref` as the canonical logical raw-video reference.
 - Treat `keyframe_ref` and `thumbnail_ref` as canonical logical refs for derived images.
@@ -96,7 +110,15 @@ ${AIC_RUNTIME_ROOT}/indexes/visual.faiss
 ${AIC_RUNTIME_ROOT}/indexes/index_version.json
 ```
 
-The earlier `data/` tree in source material is a logical artifact layout, not a physical repository layout. Raw videos are referenced by `video_ref = raw_videos/{video_id}.mp4` and are resolved through `MediaStorePort`; compact releases may omit raw-video copies. `frame_timeline` is staging/debug and may be per-video, merged, sampled, or omitted from compact release when key tables retain enough frame/timestamp mapping fields.
+The earlier `data/` tree in source material is a logical artifact layout, not a
+physical repository layout. Raw videos are referenced by
+`video_ref = raw_videos/{video_id}.mp4` and are resolved through
+`MediaStorePort`. A preliminary-ready release must provide managed video access
+and an exact-frame resolver for System 2 inspection. It may avoid duplicating
+video bytes when `MediaStorePort` can resolve the referenced videos reliably.
+`frame_timeline` is staging/debug and may be per-video, merged, sampled, or
+omitted from compact release when key tables retain enough frame/timestamp
+mapping fields and System 2 can still resolve exact frame IDs.
 
 For the versioned raw Hugging Face Dataset path, `upload-standardized-raw` and
 the Colab-oriented `stream-standardize-upload-raw` emit
@@ -109,7 +131,8 @@ The inventory carries:
 - `canonical_revision`
 - `canonical_prefix`
 - `canonical_video_path`
-- `canonical_metadata_path`
+- `canonical_metadata_path` when metadata exists, otherwise null with
+  `metadata_missing` recorded in raw audit manifests
 - `duration_sec`
 - `fps`
 - `frame_count`
@@ -133,11 +156,16 @@ AIC26_release
 ```
 
 `AIC26_raw` is the canonical raw dataset repo. It contains only standardized
-raw videos, metadata, and raw-level import/inventory manifests:
+raw videos, mirrored organizer support artifacts when used, metadata when
+available, and raw-level import/inventory manifests:
 
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
-AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/organizer_keyframes/
+AIC26_raw/canonical_raw_vXXX/organizer_objects/
+AIC26_raw/canonical_raw_vXXX/organizer_clip_features/
+AIC26_raw/canonical_raw_vXXX/organizer_metadata/
+AIC26_raw/canonical_raw_vXXX/organizer_maps/
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -211,12 +239,11 @@ Google Drive may be used as an organizer handoff source or local operator
 scratch area. It is not the primary shared storage contract.
 
 Notebook 00B uses the streaming path for Colab free CPU runs: it scans zip
-members to build a pairing plan, extracts video/metadata pair batches bounded
-by `RAW_UPLOAD_BATCH_SIZE` files and scratch bytes into local scratch, probes
-those local files, uploads each batch to `AIC26_raw` with the same batched HF
-commit helper as canonical raw upload, records per-pair progress, and cleans the
-scratch batch before moving on. It does not materialize a full standardized
-`raw_videos/` and `metadata/` tree on Drive.
+members to build a video-first import plan, extracts bounded video and available
+support-artifact batches into local scratch, probes local videos, uploads each
+batch to `AIC26_raw` with the same batched HF commit helper as canonical raw
+upload, records per-video progress, and cleans the scratch batch before moving
+on. It does not materialize a full standardized raw tree on Drive.
 
 The streaming path exposes the same disk-safe option family as archive
 standardization: `--min-free-gb`, `--drive-sync-sleep-seconds`,
@@ -234,7 +261,13 @@ HF ingest, batch assignment, and `phase00_ingestion` sync.
 System 1 must prove:
 
 - No duplicate `video_id` and no duplicate `(video_id, frame_id)`.
-- Every raw video has exactly one metadata JSON with the same stem, and every metadata JSON has exactly one raw video.
+- Every raw video has a unique canonical `video_id` derived from its filename
+  stem.
+- Metadata JSON files, when present, match exactly one raw video by filename
+  stem. Missing metadata is recorded as optional evidence absence and must not
+  exclude a valid video.
+- Organizer support artifacts imported into the release resolve to known
+  `video_id` / `frame_id` values, or are excluded with a validation warning.
 - Every video has probed fps; non-25 fps is reported against the planning/default expected value until current-year FPS is confirmed.
 - Every `keyframe_id` matches `"{video_id}:{frame_id}"`.
 - Every `video_ref`, `keyframe_ref`, and `thumbnail_ref` resolves through `MediaStorePort`.

@@ -4,13 +4,14 @@
 
 Canonical workflow model for human and agent use. One Web UI supports all workflows through Query Sessions.
 
-See `docs/product/requirements-truth-set.md` for confirmed final-round operating assumptions and unknowns.
+See `docs/product/requirements-truth-set.md` for confirmed preliminary
+requirements, later-round assumptions, and unknowns.
 
 ## Shared Query Session Model
 
 A Query Session stores:
 
-- query type: `tkis`, `qa`, `trake`, `vkis`, or `hybrid`;
+- query type: `tkis`, `qa`, `trake`, or optional later-round `vkis` / `hybrid`;
 - current clue batch;
 - accumulated clues;
 - selected clues enabled for a search;
@@ -30,7 +31,9 @@ Progressive reveal supports two modes:
 
 Pinned candidates persist across clue batches.
 
-Official 2026 rules are not confirmed. Planning may temporarily assume last-year-style query types: Textual KIS, VKIS / Video KIS, Q&A, and TRAKE. This assumption must be revisited when official rules are released.
+The confirmed preliminary query types are Textual KIS, Q&A, and TRAKE. VKIS
+and generic hybrid search remain useful later-round or internal exploration
+modes, but they are not part of the current preliminary-ready acceptance gate.
 
 ## Textual KIS
 
@@ -62,19 +65,27 @@ The UI must support editing answer text after saving a candidate.
 
 ## TRAKE
 
-Goal: produce an ordered frame sequence, usually within one video.
+Goal: produce one ranked same-video event sequence with one exact `frame_id` per
+query event.
 
 Flow:
 
-1. Search the first clue or anchor frame.
-2. Inspect same-video timeline around the candidate.
-3. Add frames to a sequence editor in order.
-4. Use object/text/time evidence to validate sequence continuity.
-5. Prepare ordered `(video_id, frame_id)` rows for review and submit.
+1. Split the query into labelled event clauses.
+2. Retrieve candidate frames/shots for each event.
+3. Join candidates by `video_id` and preserve the query's event labels.
+4. Apply chronological constraints only when the query semantics require them.
+5. Inspect same-video timeline and refine exact event frame IDs.
+6. Prepare `<video_id>, <frame_id_1>, ..., <frame_id_n>` rows for top-100
+   review and export.
 
-TRAKE candidates may contain multiple keyframes instead of one `keyframe_id`.
+TRAKE candidates contain one `video_id` and multiple event frame IDs. Any
+runtime temporal cache is derived state; System 1 does not publish a canonical
+`temporal_search.parquet`.
 
 ## VKIS / Video KIS
+
+Status: optional later-round or internal exploration mode, outside the current
+preliminary-ready acceptance gate.
 
 Goal: locate a video moment from a visual/video description.
 

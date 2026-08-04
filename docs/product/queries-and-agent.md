@@ -6,14 +6,16 @@ Canonical behavior contract for query handling and automatic mode.
 
 ## Query Types
 
-Official 2026 query types are not confirmed. Current planning assumes the last-year-style set below until official rules are released.
+The confirmed AIC 2026 preliminary query types are Textual KIS, Q&A, and
+TRAKE. VKIS remains an optional later-round or internal exploration mode, not a
+preliminary-ready acceptance requirement.
 
 | Type | User Intent | Primary Outputs |
 | --- | --- | --- |
 | Textual KIS (`tkis`) | Find a frame from text clues. | `video_id`, `frame_id`, evidence. |
 | Q&A (`qa`) | Answer a question with supporting frame/evidence. | `video_id`, `frame_id`, `answer_text`, evidence. |
-| TRAKE (`trake`) | Build an ordered frame sequence. | ordered `(video_id, frame_id)` sequence. |
-| VKIS (`vkis`) | Find a video moment from visual/video description. | `video_id`, `frame_id`, evidence. |
+| TRAKE (`trake`) | Retrieve one video and align one semantic frame per event. | `video_id`, event-indexed `frame_id` sequence. |
+| VKIS (`vkis`) | Optional later-round/internal mode for visual descriptions. | `video_id`, `frame_id`, evidence. |
 
 ## Clues
 
@@ -46,6 +48,7 @@ Required constraints:
 | `get_keyframe` | Inspect one keyframe payload. |
 | `get_evidence` | Fetch caption/OCR/ASR/object/metadata evidence. |
 | `get_neighbors` | Inspect nearby keyframes in the same video. |
+| `get_frames` | Inspect exact decoded frames around a candidate frame. |
 | `save_candidate` | Persist a proposed candidate. |
 | `update_candidate` | Edit answer text, TRAKE sequence, notes, or validation state. |
 | `prepare_submission_draft` | Create a task-type-specific answer draft from selected candidates. |
