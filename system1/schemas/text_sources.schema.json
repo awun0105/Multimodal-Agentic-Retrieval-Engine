@@ -3,9 +3,16 @@
   "title": "text_sources.schema.json",
   "type": "object",
   "required": [
+    "source_id",
+    "video_id",
+    "entity_type",
     "source_type",
     "entity_id",
-    "normalized_text"
+    "raw_text",
+    "normalized_text",
+    "language",
+    "provider",
+    "status"
   ],
   "properties": {
     "source_type": {

@@ -12,14 +12,14 @@ Next implementation phase.
 ## Goal
 
 Implement một lát cắt nhỏ của System 1 để dùng **subset nhỏ gồm official videos
-cùng metadata/support artifacts hữu ích khi có** tạo ra bộ app-ready artifacts
+cùng metadata khi có** tạo ra bộ app-ready artifacts
 đầu tiên.
 
 Mục tiêu không phải ingest toàn bộ dataset ngay, mà là chứng minh:
 
 - data contract có thể chạy thật;
 - video identity dùng filename stem làm `video_id` ổn định;
-- metadata/support artifacts có thể được map vào video/frame khi có;
+- metadata có thể được map vào video theo filename stem khi có;
 - pipeline tối thiểu có thể tạo SQLite/media refs/report;
 - app-ready artifacts đầu tiên đủ làm input thật cho System 2.
 
@@ -29,12 +29,12 @@ Nếu nhảy thẳng sang System 2, team sẽ phải dùng mock hoặc giả đ�
 
 ## Scope
 
-### A. Chọn subset official videos và support artifacts
+### A. Chọn subset official videos và optional metadata
 
 - 1-2 video hoặc một phần dataset rất nhỏ
 - metadata JSON tương ứng cho từng video nếu có
-- support artifacts của BTC nếu có và validate được mapping
-- không assume keyframes/features/OCR/ASR/object từ ban tổ chức là đầy đủ hoặc đủ tốt
+- không import keyframes/features/objects/map/media-info của BTC
+- tự generate toàn bộ derived evidence từ official video
 
 ### B. Implement System 1 mini
 
@@ -42,7 +42,7 @@ Pipeline tối thiểu cần làm được:
 
 - media discovery
 - video identity theo filename stem
-- optional metadata/support artifact mapping theo `video_id` / `frame_id`
+- optional metadata mapping theo `video_id`
 - metadata normalization ở mức đủ dùng
 - `video_ref` and logical media refs, without absolute paths in runtime DB
 - frame probing with `fps_detected`, VFR flag/method metadata, and decoded-frame-count preference
@@ -67,8 +67,8 @@ Output mong muốn:
 ## Suggested Issue Breakdown
 
 1. Define tiny official-source subset scope
-2. Create video, metadata, and support artifact discovery rules
-3. Validate stem-based `video_id` and support artifact mapping
+2. Create video and optional metadata discovery rules
+3. Validate stem-based `video_id` and metadata pairing
 4. Normalize video/keyframe identity
 5. Extract minimal keyframes and thumbnails
 6. Build minimal app-ready SQLite
@@ -79,8 +79,8 @@ Output mong muốn:
 
 ## Done Criteria
 
-1. Có subset nhỏ official videos và support artifacts được chọn rõ.
-2. Identity validation pass: mỗi raw video có unique `video_id`; metadata/support artifacts present in the subset map cleanly or are excluded with warnings.
+1. Có subset nhỏ official videos và optional metadata được chọn rõ.
+2. Identity validation pass: mỗi raw video có unique `video_id`; metadata present in the subset maps cleanly or is reported unmatched.
 3. System 1 mini tạo được app-ready artifacts đầu tiên.
 4. Validation report pass.
 5. Team có input thật để thiết kế System 2, không còn chỉ dùng mock.
@@ -89,7 +89,7 @@ Output mong muốn:
 
 - inspect generated artifact tree
 - inspect `app.sqlite`
-- verify video stem identity and optional metadata/support artifact mapping
+- verify video stem identity and optional metadata mapping
 - verify logical refs
 - verify `video_ref` / derived logical refs resolve
 - verify frame id/count method fields are present

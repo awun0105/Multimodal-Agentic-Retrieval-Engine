@@ -2,8 +2,8 @@
 
 ## Status
 
-Repository snapshot refreshed during the Harness Core 0.1.7 migration on
-2026-08-04.
+Repository snapshot refreshed after the Notebook 01 production-contract sync
+on 2026-08-05.
 
 ## Implemented And Observed
 
@@ -17,7 +17,8 @@ Repository snapshot refreshed during the Harness Core 0.1.7 migration on
 
 | Area | State | Evidence |
 | --- | --- | --- |
-| Production phase01 semantic algorithms | partial | Timeline-aware provider interfaces and fallback artifacts exist; production TransNet V2, ASR, VLM captioning, and scene summarization providers remain unfinished. |
+| Production Phase01 semantic algorithms | partial | Timeline-aware provider interfaces and explicit debug/fallback artifacts exist. The accepted target is TransNet V2, 20%/50%/80% keyframes, faster-whisper large-v3, Gemini bilingual captions, multimodal context-focus scene grouping, and Gemini bilingual scene summaries. Production providers and their real-video proof remain unfinished; see `docs/architecture/system1-notebook01-production-pipeline.md`. |
+| Production Phase02 enrichment and dual visual indexes | partial/debug only | Current code builds a single debug visual embedding/index path. The accepted target is Gemini OCR, configured object detection, and separate SigLIP and BEiT3 FAISS indexes over Notebook 01 keyframes with shared `embeddings_meta`/`vector_map`; it is not implemented yet. |
 | System 2 backend | scaffold only | `system2/backend/pyproject.toml` and package placeholders |
 | System 2 frontend | scaffold only | minimal `system2/frontend/package.json` and no application source |
 | Search adapters, live fusion, Query Sessions, agent runtime, and organizer submission adapter | not implemented | target documentation exists, but System 2 runtime code does not implement it |

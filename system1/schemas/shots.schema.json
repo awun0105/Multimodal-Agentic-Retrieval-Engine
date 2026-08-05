@@ -5,10 +5,13 @@
   "required": [
     "shot_id",
     "video_id",
+    "scene_id",
     "start_frame",
     "end_frame",
     "start_sec",
-    "end_sec"
+    "end_sec",
+    "detection_method",
+    "status"
   ],
   "properties": {
     "shot_id": {

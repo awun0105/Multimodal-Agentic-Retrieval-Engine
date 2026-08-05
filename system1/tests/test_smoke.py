@@ -251,6 +251,7 @@ def test_schema_files_are_complete_and_loadable():
         "validation_report.schema.json",
     }
     assert expected.issubset({path.name for path in schema_dir.glob("*.json")})
+    assert not (schema_dir / "image_captions.schema.json").exists()
     for filename in expected:
         schema = json.loads((schema_dir / filename).read_text(encoding="utf-8"))
         assert schema["type"] == "object"
@@ -296,7 +297,9 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         "02_worker_feature_enrichment.ipynb": ["feature-batch"],
         "03_merge_validate_index_release.ipynb": ["merge", "build-db", "build-index", "validate", "smoke-test", "release"],
     }
-    for path in Path("notebooks").glob("*.ipynb"):
+    for filename, commands in expected_commands.items():
+        path = Path("notebooks") / filename
+        assert path.exists(), path
         notebook = json.loads(path.read_text(encoding="utf-8"))
         assert len(notebook["cells"]) >= 6, path
         joined = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
@@ -320,8 +323,7 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "batch_id" in joined
             assert "provider_mode" in joined
         assert "run_cli" in joined
-        assert path.name in expected_commands
-        for command in expected_commands[path.name]:
+        for command in commands:
             assert command in joined
 
 
@@ -625,6 +627,15 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     assert shots.iloc[0]["detection_method"] == "fallback_full_video_from_frame_timeline"
     scenes = pd.read_parquet(artifact_dir / "scenes.parquet")
     assert scenes.iloc[0]["construction_method"] == "fallback_scene_from_timeline_shots"
+    assert {
+        "start_shot_id",
+        "end_shot_id",
+        "shot_count",
+        "grouping_method",
+        "grouping_version",
+        "status",
+    }.issubset(scenes.columns)
+    assert shots.iloc[0]["scene_id"] == scenes.iloc[0]["scene_id"]
     shot_captions = pd.read_parquet(artifact_dir / "shot_captions.parquet")
     assert {
         "shot_caption_id",
@@ -633,21 +644,39 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "scene_id",
         "representative_keyframe_id",
         "representative_timestamp_sec",
-        "caption",
+        "caption_vi",
+        "caption_en",
         "provider",
+        "model_name",
+        "model_version",
+        "prompt_version",
+        "schema_version",
         "status",
     }.issubset(shot_captions.columns)
     assert shot_captions.iloc[0]["representative_keyframe_id"] == "L21_V001:0"
     assert shot_captions.iloc[0]["shot_id"] == shots.iloc[0]["shot_id"]
     scene_summaries = pd.read_parquet(artifact_dir / "scene_summaries.parquet")
-    assert {"scene_id", "video_id", "summary", "provider", "status"}.issubset(scene_summaries.columns)
+    assert {
+        "scene_id",
+        "video_id",
+        "summary_vi",
+        "summary_en",
+        "provider",
+        "model_name",
+        "model_version",
+        "prompt_version",
+        "schema_version",
+        "status",
+    }.issubset(scene_summaries.columns)
     manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["phase01_contract"]["semantic_level"] == "semantic_light"
     assert manifest["phase01_contract"]["uses_phase00_frame_timeline"] is True
     assert manifest["phase01_contract"]["frame_timeline_ref"] == "frame_timeline/L21_V001.parquet"
     assert manifest["phase01_contract"]["canonical_shot_captions"] is True
+    assert manifest["phase01_contract"]["bilingual_shot_captions"] is True
     assert manifest["phase01_contract"]["shot_caption_table"] == "shot_captions.parquet"
     assert manifest["phase01_contract"]["scene_summary_table"] == "scene_summaries.parquet"
+    assert manifest["phase01_contract"]["bilingual_scene_summaries"] is True
 
 def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
     output_dir = tmp_path / "output"
@@ -957,7 +986,6 @@ def test_provider_plan_supports_named_modes():
     assert plan.ocr == "paddleocr"
     assert plan.embedding == "openclip"
     assert plan.object_detection == "yolo"
-    assert plan.image_caption == "blip"
     assert plan.shot_caption == "vlm"
     assert plan.scene_summary == "llm"
 

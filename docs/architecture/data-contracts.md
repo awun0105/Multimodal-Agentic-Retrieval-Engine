@@ -24,12 +24,13 @@ System 1 converts raw organizer inputs into app-ready artifacts. System 2 reads 
 | DuckDB | Offline preprocessing, staging, analytics, validation |
 
 Organizer-provided files are not acceptable by themselves for runtime search,
-state, or FAISS result resolution. System 1 must convert the official videos
-and any useful validated support artifacts into app-ready data.
+state, or FAISS result resolution. System 1 converts the official videos and
+optional metadata into app-ready data and regenerates all derived retrieval
+evidence.
 
 ## Organizer Input Contract
 
-The official preliminary Batch 1 dataset input for this project is:
+The organizer makes these preliminary Batch 1 files available:
 
 1. raw `.mp4` video files;
 2. organizer keyframes under per-video folders;
@@ -47,12 +48,12 @@ The video filename stem, such as `L21_0001`, is the organizer dataset key and
 the canonical `video_id` for this project. It does not depend on `watch_url`,
 YouTube ID, or any online identifier.
 
-The official videos are the base media source. Organizer keyframes, objects,
-CLIP features, media-info, map-keyframes, and metadata are support inputs.
-System 1 may import them with provenance after validating their mapping, and it
-may generate better or additional retrieval artifacts from the videos. System 1
-still owns runtime SQLite, FTS5, FAISS, vector mapping, generated or imported
-evidence normalization, validation, and release packaging.
+The project input policy is narrower: System 1 consumes only the official videos
+and metadata where available. It does not import organizer keyframes, object
+JSON, CLIP features, media-info, or map-keyframes. System 1 regenerates
+keyframes, objects, embeddings, timing mappings, captions, OCR, ASR, and scene
+evidence under one project-owned provenance and frame-ID contract. It also owns
+runtime SQLite, FTS5, FAISS, vector mapping, validation, and release packaging.
 
 ## Roots
 
@@ -61,7 +62,7 @@ The repo, large data, and hot runtime artifacts are separate.
 | Root | Purpose | Notes |
 | --- | --- | --- |
 | `${REPO_ROOT}` | Source code, docs, config, schemas, small fixtures | Do not store real competition media here. |
-| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos, organizer support artifacts, and processed media live here. |
+| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos, optional metadata, and project-generated processed media live here. |
 | `${AIC_RUNTIME_ROOT}` | Runtime hot artifact root, preferably SSD | SQLite, FAISS, and runtime cache live here. |
 
 ## Physical Layout
@@ -80,11 +81,7 @@ ${REPO_ROOT}/
 ${AIC_DATA_ROOT}/
   raw/
     videos/
-    organizer_keyframes/
-    organizer_objects/
-    organizer_clip_features/
     organizer_metadata/
-    organizer_maps/
   processed/
     media/
       videos/
@@ -100,7 +97,9 @@ ${AIC_RUNTIME_ROOT}/
   db/
     app.sqlite
   indexes/
-    visual.faiss
+    siglip.faiss
+    beit3.faiss
+    vector_map.parquet
     index_version.json
   cache/
 ```
@@ -117,16 +116,11 @@ AIC26_release
 ```
 
 `AIC26_raw` is the canonical raw dataset repo. It stores standardized raw
-videos, organizer support artifacts when mirrored, metadata when available, and
-raw-level inventory/import manifests only:
+videos, metadata when available, and raw-level inventory/import manifests only:
 
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
-AIC26_raw/canonical_raw_vXXX/organizer_keyframes/
-AIC26_raw/canonical_raw_vXXX/organizer_objects/
-AIC26_raw/canonical_raw_vXXX/organizer_clip_features/
 AIC26_raw/canonical_raw_vXXX/organizer_metadata/
-AIC26_raw/canonical_raw_vXXX/organizer_maps/
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -250,7 +244,7 @@ The app-ready contract covers these categories:
 
 1. Raw videos
 2. Optional video metadata JSON matched by stem when available
-3. Generated and/or imported keyframes
+3. Project-generated keyframes
 4. Thumbnails
 5. Keyframe metadata
 6. Captions
@@ -258,8 +252,8 @@ The app-ready contract covers these categories:
 8. ASR transcript segments
 9. Object/concept detections
 10. Scene/shot inspection context
-11. Image embeddings
-12. FAISS index
+11. SigLIP and BEiT3 image embeddings
+12. Separate SigLIP and BEiT3 FAISS indexes
 13. Vector mapping
 14. Feature availability
 15. Query sessions
@@ -289,17 +283,17 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | --- | --- |
 | `datasets` | Dataset identity and build metadata. |
 | `videos` | One row per video; stores `video_id`, `source_video_stem`, `video_ref`, duration, fps, VFR/frame-count metadata, dimensions, normalized metadata, and selected raw metadata fields. |
-| `shots` | One row per shot or fallback full-video shot; stores `shot_id`, `video_id`, frame/time ranges, detection method, and degraded/full-fidelity status. |
-| `scenes` | Scene-level inspection context derived from consecutive shots, canonical shot captions, ASR/transcript rows, metadata, and timeline continuity. |
+| `shots` | One row per TransNet V2 shot; a successful no-cut result is one valid full-video shot. Stores `shot_id`, `video_id`, final `scene_id`, frame/time ranges, detection method, and status. Production model/inference failure is not converted into a fallback shot. |
+| `scenes` | Deterministic contiguous partitions of ordered shots. Production Phase01 uses the multimodal context-focus boundary design in `docs/architecture/system1-scene-grouping.md`; package code derives IDs, ranges, counts, mappings, status, and provenance. |
 | `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `shot_id`, `scene_id`, role/representative metadata, `time_seconds` or `timestamp_sec`, `pts_time`, `duration_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
-| `shot_captions` | Canonical shot-level caption evidence. Production Phase01 creates exactly one caption per shot from the representative keyframe. |
-| `scene_summaries` | Phase01 scene summaries built from shot captions, transcript links, timeline continuity, and metadata. |
+| `shot_captions` | Canonical shot-level caption evidence. Production Phase01 creates exactly one bilingual row per shot from the representative keyframe, with `caption_vi` and `caption_en`. |
+| `scene_summaries` | Exactly one bilingual row per final Phase01 scene, with `summary_vi` and `summary_en`, built from ordered representative images, shot captions, transcript evidence, and timeline. |
 | `ocr` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
 | `asr_segments` | Transcript segments mapped to `video_id` and time range. |
 | `shot_transcript_links` | Canonical link rows between ASR segments and shots. |
 | `scene_transcript_links` | Canonical link rows between ASR segments and scenes. |
 | `objects` | Object/concept detections mapped to `keyframe_id`; text source type is `object_labels`. |
-| `embeddings_meta` | Registered embedding/index metadata: name, model, dimension, metric, path/ref. |
+| `embeddings_meta` | Per-vector embedding provenance for the separate SigLIP and BEiT3 indexes. Rows are distinguished by `index_name` and model/version while resolving to the same canonical keyframes. |
 | `vector_map` | Mandatory mapping from `(index_name, vector_id)` to `keyframe_id`, `video_id`, `frame_id`. |
 | `feature_availability` | Runtime/UI convenience table describing whether ASR/OCR/object/caption/inspection evidence exists per entity and whether it is pass/degraded/missing/failed. |
 | `release_capabilities` | Dataset/release capability flags for runtime gating and degraded behavior. |
@@ -320,11 +314,12 @@ the canonical runtime tables below.
 Minimum temporal-ready fields:
 
 - `videos`: `video_id`, `video_ref`, duration/FPS/VFR metadata.
-- `shots`: `shot_id`, `video_id`, `start_frame`, `end_frame`, `start_seconds`,
-  `end_seconds`.
+- `shots`: `shot_id`, `video_id`, `scene_id`, `start_frame`, `end_frame`,
+  `start_seconds`, `end_seconds`.
 - `scenes`: `scene_id`, `video_id`, `start_frame`, `end_frame`,
-  `start_seconds`, `end_seconds`, and scene-to-shot grouping context such as
-  `shot_ids` when available.
+  `start_seconds`, `end_seconds`, `start_shot_id`, `end_shot_id`, `shot_count`,
+  grouping method/version/status, and `[start_frame, end_frame)` boundary
+  convention.
 - `keyframes`: `keyframe_id`, `video_id`, `frame_id`, `shot_id`, `scene_id`,
   `time_seconds` and/or `timestamp_sec`, `pts_time`, `duration_time`,
   `keyframe_ref`, `thumbnail_ref`.
@@ -387,19 +382,34 @@ Required checks:
   stem.
 - Missing metadata is recorded as optional evidence absence and must not exclude
   a valid video from the app-ready dataset.
-- Organizer support artifacts imported into the release resolve to known
-  `video_id` / `frame_id` values, or are excluded with a validation warning.
+- No organizer keyframe, object, CLIP, map-keyframes, or media-info artifact is
+  imported into the app-ready release.
 - No duplicate `video_id`.
 - No duplicate `(video_id, frame_id)`.
 - Every `videos.source_video_stem` equals `videos.video_id` for this dataset contract.
 - Every video has probed `fps`; mismatch from expected `25` must be reported until current-year FPS is confirmed.
 - Every `video_ref`, `keyframe_ref`, and `thumbnail_ref` resolves through `MediaStorePort`.
-- `frame_id` uses decoded original frame index when available; fallback timestamp-to-fps mapping must be marked estimated/degraded when it is the only method.
+- Every production-included `frame_id` is the decoded original frame index from
+  the Phase00 frame timeline. Estimated FPS mapping is debug-only and cannot
+  satisfy app-ready validation.
 - Every keyframe has `keyframe_ref` and `thumbnail_ref`.
-- Every FAISS vector has a corresponding `vector_map` row.
+- Every normal shot has distinct early/middle/late keyframes near
+  20%/50%/80%; short shots emit every distinct decodable frame once; every shot
+  has exactly one representative keyframe.
+- Every SigLIP and BEiT3 FAISS vector has a corresponding `vector_map` row with
+  the correct `index_name`.
 - Every `vector_map.keyframe_id` exists in `keyframes`.
-- Every caption/OCR/object row points to an existing keyframe.
+- Every shot has exactly one successful `shot_captions` row with non-empty
+  `caption_vi` and `caption_en`, resolving to its representative keyframe.
+- Every scene has exactly one successful `scene_summaries` row with non-empty
+  `summary_vi` and `summary_en`.
+- Every OCR/object row points to an existing keyframe.
 - Every ASR segment points to an existing video.
+- Every shot belongs to exactly one scene after production Phase01 grouping.
+- Scenes partition each video's ordered shots without overlap, omission, or a
+  gap in shot order; scene frame/time ranges equal their first/last shot ranges.
+- Every keyframe's `scene_id` agrees with the scene assigned to its `shot_id`.
+- Every scene-transcript link references existing scene and ASR rows.
 - SQLite contains no absolute paths.
 - SQLite contains no machine-specific paths.
 - FTS5 row counts match source relational tables or documented expectations.
@@ -417,7 +427,8 @@ Before runtime implementation, the project needs a tiny seed dataset under `syst
 - At least one OCR row.
 - At least one ASR segment.
 - At least one object/concept row.
-- A small FAISS-compatible vector-map fixture, even if the actual FAISS index is stubbed for early tests.
+- Small SigLIP/BEiT3-compatible vector-map fixtures, even if the actual FAISS
+  indexes are stubbed for early tests.
 - Validation report proving the seed dataset is app-ready.
 
 ## Open Questions

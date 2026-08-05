@@ -1,6 +1,6 @@
 # Execution Plan: Preliminary Ready E2E
 
-Date: 2026-08-04
+Date: 2026-08-05
 
 ## Status
 
@@ -9,8 +9,9 @@ Active
 ## Outcome
 
 System 1 and System 2 are ready for the AIC 2026 preliminary round workflow:
-System 1 produces a validated app-ready release from official videos and useful
-support artifacts, and System 2 can run Textual KIS, Q&A, and TRAKE end to end
+System 1 produces a validated app-ready release from official videos and
+optional metadata while regenerating all derived evidence, and System 2 can run
+Textual KIS, Q&A, and TRAKE end to end
 against that release with exact `video_id` / `frame_id` inspection and top-100
 answer export.
 
@@ -21,6 +22,10 @@ answer export.
 - Rules profile: `docs/product/rules-2026.md`.
 - App-ready contract: `docs/architecture/data-contracts.md`.
 - System 1 preprocessing contract: `docs/architecture/system1-ingestion.md`.
+- Phase01 scene-grouping design:
+  `docs/architecture/system1-scene-grouping.md`.
+- Notebook 01 production pipeline:
+  `docs/architecture/system1-notebook01-production-pipeline.md`.
 - System 2 API shape: `docs/product/api-contracts.md`.
 - Current implementation status: `docs/product/current-state.md`.
 - Validation tracker: `docs/validation/test-matrix.md`.
@@ -34,9 +39,8 @@ In scope:
 - Preserve the System 1 / System 2 boundary: System 1 creates reusable,
   query-independent app-ready artifacts; System 2 performs query-specific
   retrieval, TRAKE alignment, exact-frame refinement, and export.
-- Import organizer-provided keyframes, objects, CLIP features, media-info, and
-  map-keyframes when they validate cleanly and improve retrieval or frame
-  mapping.
+- Generate all derived retrieval data from official videos; do not import
+  organizer keyframes, objects, CLIP features, media-info, or map-keyframes.
 - Keep metadata as one useful evidence source. System 1 should use it when
   present, but System 2 readiness depends on the complete retrieval-ready
   release rather than metadata presence alone.
@@ -47,8 +51,11 @@ Out of scope:
 
 - Precomputing a canonical `temporal_search.parquet` or all possible TRAKE
   event sequences.
-- Adding multiple visual embedding models by default before a measured need.
-- Building a hard dependency on online providers for core retrieval correctness.
+- Adding visual embedding models beyond the accepted SigLIP and BEiT3 indexes
+  before a measured need.
+- Building a hard dependency on online providers in System 2 runtime retrieval;
+  offline System 1 preprocessing may use the accepted Gemini stages with cache
+  and resume.
 - Hard-coding final organizer API submission transport before the official
   endpoint or upload schema is known.
 - Refactoring metadata handling as a standalone workstream.
@@ -56,25 +63,28 @@ Out of scope:
 ## Approach
 
 1. Align docs with official preliminary rules and dataset facts.
-2. Update System 1 ingestion/release contracts for organizer support artifact
-   import, frame-safe mapping, optional metadata, and managed video access.
-3. Update System 2 contracts for top-100 answer export, larger internal
+2. Complete Notebook 01 production structure processing: shots, keyframes, ASR,
+   canonical shot captions, multimodal scene grouping, summaries, mappings,
+   validation, and per-video structure artifacts.
+3. Update System 1 ingestion/release contracts for self-generated evidence,
+   frame-safe mapping, optional metadata, and managed video access.
+4. Update System 2 contracts for top-100 answer export, larger internal
    candidate pools, TRAKE sequence ranking, and exact-frame refinement.
-4. Implement System 1 import and validation increments against small fixtures
-   before full Batch 1 runs.
-5. Implement System 2 backend search/export capabilities against a seed release,
+5. Implement System 1 provider and validation increments against one real video
+   and a small batch before full Batch 1 runs.
+6. Implement System 2 backend search/export capabilities against a seed release,
    then connect the frontend inspection workflow.
-6. Rehearse TKIS, Q&A, and TRAKE with known-answer fixtures and a Batch 1 smoke
+7. Rehearse TKIS, Q&A, and TRAKE with known-answer fixtures and a Batch 1 smoke
    slice before calling the system preliminary-ready.
 
 ## Risks And Recovery
 
-- Risk: organizer support artifacts have inconsistent mapping or ordering.
-  Mitigation: treat them as optional imported evidence and require validation
-  against `video_id`, `frame_id`, media-info, and map-keyframes before indexing.
+- Risk: regenerating every derived signal increases model/API cost and runtime.
+  Mitigation: content-addressed cache, resumable checkpoints, rate limiting,
+  one-video proof, and a heterogeneous small-batch rehearsal before Batch 1.
 - Risk: exact frame IDs drift because of FPS math or VFR media.
-  Mitigation: prefer decoded frame mapping or organizer map-keyframes/media-info
-  evidence; mark any fallback estimated and expose exact-frame resolver behavior.
+  Mitigation: use the project-decoded frame timeline and original decoded frame
+  indexes; do not depend on organizer map-keyframes/media-info.
 - Risk: System 2 becomes too broad before basic retrieval works.
   Mitigation: implement one common retrieval pipeline with query-type strategies
   and keep agent automation out of the critical preliminary path.
@@ -88,9 +98,18 @@ Out of scope:
 - [x] Align product and architecture contracts with official preliminary facts.
 - [x] Clean up active planning, story, validation, and onboarding docs that still
   implied required metadata pairing or over-emphasized "video-first" wording.
-- [ ] Implement and validate System 1 support-artifact import.
-- [ ] Build a competition release containing app-ready SQLite, FTS, FAISS,
-  vector mappings, logical media refs, and exact-frame inspection support.
+- [x] Accept and document the Phase01 multimodal context-focus scene-grouping
+  design, canonical schema mappings, validation, caching, and failure behavior.
+- [x] Accept the video-plus-optional-metadata source policy and production
+  Notebook 01/02 provider contract in ADR 0015.
+- [x] Migrate canonical caption/summary schemas and debug compatibility rows to
+  one bilingual row per shot/scene; retain and validate both transcript-link
+  tables; retire `image_captions`.
+- [ ] Implement and validate Notebook 01 production structure providers and
+  multimodal scene grouping.
+- [ ] Build a competition release containing app-ready SQLite, FTS, separate
+  SigLIP/BEiT3 FAISS indexes, shared vector mappings, logical media refs, and
+  exact-frame inspection support.
 - [ ] Implement System 2 TKIS/Q&A/TRAKE search, refinement, candidate, and
   export flows.
 - [ ] Run fixture and Batch 1 smoke rehearsals for all official preliminary
@@ -104,20 +123,30 @@ Out of scope:
 - 2026-08-04: Metadata is optional evidence. It should be used when present but
   missing metadata is not a critical-path failure if video/frame mapping and
   retrieval evidence are valid.
-- 2026-08-04: Organizer keyframes, objects, CLIP features, media-info, and
-  map-keyframes are support inputs, not the official source of truth. Import
-  them only when validation proves their mapping is usable.
+- 2026-08-05: Although the organizer provides baseline support artifacts,
+  System 1 consumes only official videos and optional metadata and regenerates
+  all derived evidence. Organizer keyframes, objects, CLIP, map-keyframes, and
+  media-info are not imported.
 - 2026-08-04: Preliminary readiness means top-100 answer export and exact-frame
   inspection for TKIS, Q&A, and TRAKE. Direct organizer API submission remains a
   thin adapter until official transport details exist.
+- 2026-08-05: Phase01 scene grouping uses overlapping multimodal context/focus
+  windows. The VLM judges Boolean adjacent-shot boundaries only; deterministic
+  package code owns voting, follow-up review, partitioning, IDs/ranges,
+  validation, cache provenance, and explicit failure behavior. See ADR 0014.
+- 2026-08-05: Notebook 01 production uses TransNet V2, 20/50/80 keyframes,
+  faster-whisper large-v3, Gemini bilingual captions/grouping/summaries, and
+  explicit failure after bounded retry. Notebook 02 generates Gemini OCR,
+  configured objects, and separate SigLIP/BEiT3 indexes. See ADR 0015.
 
 Promote lasting product or architecture decisions into `docs/decisions/`.
 
 ## Validation
 
-- Focused proof: docs diff review and targeted search for stale requirements
-  such as organizer "raw video + metadata only", hard metadata pairing failure,
-  and canonical `temporal_search.parquet`.
+- Focused proof: docs diff review, schema/tests for the bilingual
+  caption/summary contract, and targeted searches for stale organizer-import,
+  single-index, hard metadata-pairing, and canonical `temporal_search.parquet`
+  requirements.
 - Integration or end-to-end proof: later System 1 seed release and System 2
   fixture search/export rehearsal for TKIS, Q&A, and TRAKE.
 - Repository-required checks: markdown/link sanity and focused code tests when
@@ -125,4 +154,7 @@ Promote lasting product or architecture decisions into `docs/decisions/`.
 
 ## Result
 
-Pending.
+The decision/docs/schema alignment increment is complete and covered by the
+System 1 schema and smoke suites. The overall plan remains active because the
+production Notebook 01 providers, Notebook 02 dual-index pipeline, final
+release, and System 2 runtime are not implemented yet.

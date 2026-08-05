@@ -4,7 +4,9 @@
   "type": "object",
   "required": [
     "shot_id",
-    "asr_segment_id"
+    "asr_segment_id",
+    "video_id",
+    "coverage"
   ],
   "properties": {
     "shot_id": {

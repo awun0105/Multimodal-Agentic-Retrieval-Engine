@@ -137,8 +137,10 @@ Output canonical gồm:
 - `shot_transcript_links`, `scene_transcript_links`: liên kết transcript với shot/scene.
 - `ocr`: chữ xuất hiện trong frame/keyframe.
 - `objects`: object/concept như person, car, bus, screen.
-- `shot_captions`: caption canonical cấp shot, tạo từ representative keyframe.
-- `scene_summaries`: summary cấp scene.
+- `shot_captions`: một hàng song ngữ `caption_vi`/`caption_en` cho mỗi shot,
+  tạo từ representative keyframe.
+- `scene_summaries`: một hàng song ngữ `summary_vi`/`summary_en` cho mỗi scene
+  sau khi boundary cố định.
 - `shots` / `scenes`: ngữ cảnh thời gian để inspect sâu hơn từ keyframe về shot/scene/video.
 - `feature_availability`: cho UI biết entity nào có ASR/OCR/object/caption/inspection evidence.
 
@@ -149,7 +151,7 @@ Tác dụng: đây là nguồn dữ liệu để search text, filter, giải th�
 Output gồm:
 
 - FTS5-backed text search contract built from global `text_documents` inside `app.sqlite`.
-- FAISS visual index cho vector search.
+- Hai FAISS visual indexes, SigLIP và BEiT3, cho vector search.
 - `vector_map` để map FAISS vector row về keyframe.
 - index manifest để biết index được build như thế nào.
 
@@ -174,7 +176,9 @@ ${AIC_DATA_ROOT}/staging/frame_timeline/{video_id}.parquet
 ${AIC_DATA_ROOT}/staging/staging.duckdb
 ${AIC_DATA_ROOT}/staging/reports/{dataset_id}-validation.json
 ${AIC_RUNTIME_ROOT}/db/app.sqlite
-${AIC_RUNTIME_ROOT}/indexes/visual.faiss
+${AIC_RUNTIME_ROOT}/indexes/siglip.faiss
+${AIC_RUNTIME_ROOT}/indexes/beit3.faiss
+${AIC_RUNTIME_ROOT}/indexes/vector_map.parquet
 ${AIC_RUNTIME_ROOT}/indexes/index_version.json
 ```
 
@@ -226,7 +230,9 @@ Contract System 1 v1.1 là **FTS5-backed text search build từ global `text_doc
 FAISS files:
 
 ```text
-${AIC_RUNTIME_ROOT}/indexes/visual.faiss
+${AIC_RUNTIME_ROOT}/indexes/siglip.faiss
+${AIC_RUNTIME_ROOT}/indexes/beit3.faiss
+${AIC_RUNTIME_ROOT}/indexes/vector_map.parquet
 ${AIC_RUNTIME_ROOT}/indexes/index_version.json
 ```
 
@@ -300,7 +306,6 @@ Không dùng để lưu:
 Dùng để lưu:
 
 - raw videos
-- optional organizer-provided/imported keyframes nếu có adapter riêng
 - original metadata
 - processed videos
 - processed keyframes
@@ -389,13 +394,15 @@ Nói cách khác:
 Nếu nhìn theo “loại file cốt lõi mà app phụ thuộc để chạy”, thì tối thiểu có các artifact lõi sau:
 
 1. `app.sqlite`
-2. `visual.faiss`
-3. `index_version.json`
-4. video files đã chuẩn hóa
-5. keyframe image files đã chuẩn hóa
-6. thumbnail image files đã chuẩn hóa
-7. validation report file
-8. `staging.duckdb` cho preprocessing side
+2. `siglip.faiss`
+3. `beit3.faiss`
+4. `vector_map.parquet`
+5. `index_version.json`
+6. video files đã chuẩn hóa
+7. keyframe image files đã chuẩn hóa
+8. thumbnail image files đã chuẩn hóa
+9. validation report file
+10. `staging.duckdb` cho preprocessing side
 
 Nhưng cần nhớ rằng các nhóm media gồm **nhiều file**, không phải một file duy nhất.
 
@@ -435,23 +442,23 @@ Chứa gì:
 - fps metadata nếu có
 - annotations hoặc các bảng mô tả khác tùy nguồn
 
-Canonical input hiện tại của System 1 là official videos cùng metadata/support
-artifacts hữu ích khi có. Organizer keyframes, map-keyframes/media-info,
-objects, và CLIP features có thể được import qua adapter nếu validate được
-mapping; System 1 vẫn có thể generate keyframes, thumbnails, OCR, ASR,
-captions, objects, và embeddings riêng khi việc đó giúp retrieval tốt hơn.
+Canonical input hiện tại của System 1 là official videos cùng metadata khi có.
+Theo ADR 0015, organizer keyframes, map-keyframes/media-info, objects, và CLIP
+features không được import vào project evidence. System 1 tự generate
+keyframes, thumbnails, OCR, ASR, captions, objects, và embeddings để giữ một
+mapping/provenance contract thống nhất.
 
 ### A3. Ghi chú về keyframe/thumbnails
 
-Trong System 1, keyframes và thumbnails trong app-ready release là output đã
-được chuẩn hóa. Chúng có thể đến từ organizer import hoặc do pipeline generate,
-miễn là resolve được về `video_id` / `frame_id` đúng contract.
+Trong System 1, keyframes và thumbnails trong app-ready release luôn là output
+do pipeline generate từ official video và được chuẩn hóa về `video_id` /
+decoded-original `frame_id`.
 
 - `keyframe_ref` canonical: `media://keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg`
 - `thumbnail_ref` canonical: `media://thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp`
 
-Organizer-provided keyframes cần adapter import riêng để map chúng vào contract
-này; không dùng trực tiếp raw organizer folder ở System 2 runtime.
+Organizer-provided keyframes không được đưa vào app-ready contract và System 2
+không đọc raw organizer folders.
 
 ## B. Trong `${AIC_DATA_ROOT}/processed/media/`
 
@@ -527,8 +534,8 @@ Có những bảng chính nào?
 | `scene_transcript_links` | Link transcript segment với scene. |
 | `ocr` | OCR gắn với keyframe/frame. |
 | `objects` | Object/concept detections gắn với `keyframe_id`. |
-| `shot_captions` | Caption canonical gắn với shot. |
-| `scene_summaries` | Summary scene Phase01. |
+| `shot_captions` | Một hàng caption Việt/Anh canonical cho mỗi shot. |
+| `scene_summaries` | Một hàng summary Việt/Anh cho mỗi scene Phase01. |
 | `embeddings_meta` | Metadata về embeddings/model/index build. |
 | `text_documents` | Global text search contract. |
 | `vector_map` | Map `(index_name, vector_id)` về `keyframe_id`. |
@@ -653,16 +660,19 @@ Ví dụ một dòng:
 #### Quan hệ `shot_captions`
 
 System 1 v1.1 dùng `shot_captions` làm caption canonical. Mỗi shot có đúng một
-caption, được tạo từ `representative_keyframe_id`; mọi keyframe/frame trong
-cùng shot dùng caption này qua join `keyframes.shot_id -> shot_captions.shot_id`.
+hàng song ngữ được Gemini tạo từ `representative_keyframe_id`; mọi
+keyframe/frame trong cùng shot dùng hàng này qua join
+`keyframes.shot_id -> shot_captions.shot_id`.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
 | `shot_caption_id` | ID dòng caption | `L01_V028_SH00042_caption` |
 | `shot_id` | shot được mô tả | `L01_V028_SH00042` |
 | `representative_keyframe_id` | keyframe đại diện dùng để tạo caption | `L01_V028:25300` |
-| `text` | nội dung caption | `A red bus on a rainy street.` |
-| `source` | caption từ đâu | `generated_blip2` |
+| `caption_vi` | nội dung tiếng Việt | `Một xe buýt đỏ trên đường mưa.` |
+| `caption_en` | nội dung tiếng Anh | `A red bus on a rainy street.` |
+| `provider` | provider caption | `gemini` |
+| `model_name` / version fields | model, prompt, response schema provenance | giá trị từ config/manifest |
 | `confidence` | độ tin cậy nếu có | `0.82` |
 
 Ví dụ một dòng:
@@ -672,8 +682,12 @@ Ví dụ một dòng:
   "shot_caption_id": "L01_V028_SH00042_caption",
   "shot_id": "L01_V028_SH00042",
   "representative_keyframe_id": "L01_V028:25300",
-  "text": "A red bus on a rainy street.",
-  "source": "generated_blip2",
+  "caption_vi": "Một xe buýt đỏ trên đường mưa.",
+  "caption_en": "A red bus on a rainy street.",
+  "provider": "gemini",
+  "model_name": "<configured-gemini-model>",
+  "prompt_version": "shot_caption_v1",
+  "schema_version": "1.0.0",
   "confidence": 0.82
 }
 ```
@@ -689,6 +703,7 @@ Mỗi dòng là một OCR snippet trên keyframe.
 | `text` | chữ OCR đọc được | `BUS STOP` |
 | `confidence` | độ tin cậy OCR | `0.91` |
 | `boxes_json` | bounding boxes nếu có | `[{"x":10,"y":20,"w":80,"h":30}]` |
+| `provider` | OCR provider | `gemini` |
 
 Ví dụ một dòng:
 
@@ -698,7 +713,8 @@ Ví dụ một dòng:
   "keyframe_id": "L01_V028:25300",
   "text": "BUS STOP",
   "confidence": 0.91,
-  "boxes_json": [{"x": 10, "y": 20, "w": 80, "h": 30}]
+  "boxes_json": [{"x": 10, "y": 20, "w": 80, "h": 30}],
+  "provider": "gemini"
 }
 ```
 
@@ -713,7 +729,8 @@ Mỗi dòng là một đoạn transcript theo time range của video.
 | `start_sec` | thời gian bắt đầu | `840.00` |
 | `end_sec` | thời gian kết thúc | `845.00` |
 | `text` | nội dung transcript | `The red bus is arriving.` |
-| `source` | engine hoặc nguồn transcript | `whisper_large_v3` |
+| `provider` | ASR engine | `faster-whisper` |
+| `model_name` | ASR model | `large-v3` |
 
 Ví dụ một dòng:
 
@@ -724,7 +741,8 @@ Ví dụ một dòng:
   "start_sec": 840.0,
   "end_sec": 845.0,
   "text": "The red bus is arriving.",
-  "source": "whisper_large_v3"
+  "provider": "faster-whisper",
+  "model_name": "large-v3"
 }
 ```
 
@@ -736,7 +754,7 @@ System 1 v1.1 canonical dùng liên kết transcript với shot/scene. Nếu imp
 | --- | --- | --- |
 | `shot_id` hoặc `scene_id` | shot/scene được align | `L01_V028_SH00042` |
 | `asr_segment_id` | segment transcript liên quan | `asr_0001` |
-| `overlap_score` | mức độ liên quan theo time overlap | `0.93` |
+| `coverage` | coverage được derive từ time overlap | `0.93` |
 
 #### Quan hệ `objects`
 
@@ -749,7 +767,7 @@ Mỗi dòng là một object/concept detection trên keyframe.
 | `label` | nhãn object | `bus` |
 | `score` | confidence | `0.95` |
 | `box_json` | bounding box nếu có | `{"x":100,"y":150,"w":400,"h":220}` |
-| `source` | model hoặc nguồn detection | `yolo_world` |
+| `provider` | model/provider detection | `<configured-object-detector>` |
 
 Ví dụ một dòng:
 
@@ -760,7 +778,7 @@ Ví dụ một dòng:
   "label": "bus",
   "score": 0.95,
   "box_json": {"x": 100, "y": 150, "w": 400, "h": 220},
-  "source": "yolo_world"
+  "provider": "<configured-object-detector>"
 }
 ```
 
@@ -782,11 +800,11 @@ Mô tả metadata của embedding/model/index build.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
-| `index_name` | tên index | `visual` |
-| `embedding_model` | model tạo embedding | `openclip_vit_l_14` |
-| `dimension` | số chiều vector | `768` |
+| `index_name` | tên index | `siglip` hoặc `beit3` |
+| `embedding_model` | model tạo embedding | model ID được cấu hình cho index |
+| `dimension` | số chiều vector | dimension của model được cấu hình |
 | `metric` | độ đo | `cosine` |
-| `index_ref` | logical ref hoặc path index | `indexes/visual.faiss` |
+| `index_ref` | logical ref hoặc path index | `indexes/siglip.faiss` |
 
 #### Quan hệ `vector_map`
 
@@ -794,7 +812,7 @@ Mô tả metadata của embedding/model/index build.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
-| `index_name` | index nào tạo ra vector | `visual` |
+| `index_name` | index nào tạo ra vector | `siglip` |
 | `vector_id` | row id trong FAISS | `123456` |
 | `keyframe_id` | keyframe tương ứng | `L01_V028:25300` |
 | `video_id` | video tương ứng | `L01_V028` |
@@ -804,7 +822,7 @@ Ví dụ một dòng:
 
 ```json
 {
-  "index_name": "visual",
+  "index_name": "siglip",
   "vector_id": 123456,
   "keyframe_id": "L01_V028:25300",
   "video_id": "L01_V028",
@@ -992,7 +1010,7 @@ Nói ngắn gọn:
 
 ```text
 MVP runtime DB = 1 file chính: app.sqlite
-MVP vector index = file FAISS riêng
+MVP vector indexes = hai file FAISS riêng cho SigLIP và BEiT3
 MVP media = file riêng trên filesystem
 ```
 
@@ -1018,26 +1036,22 @@ Theo contract MVP hiện tại, **vector runtime để search được lưu tron
 
 Ví dụ:
 
-- visual embeddings sau khi build sẽ nằm trong `visual.faiss`;
-- SQLite chỉ giữ metadata của index và `vector_map` để biết mỗi `vector_id` thuộc keyframe nào.
+- SigLIP vectors nằm trong `siglip.faiss`;
+- BEiT3 vectors nằm trong `beit3.faiss`;
+- SQLite giữ metadata của cả hai index và `vector_map` dùng khóa
+  `(index_name, vector_id)` để resolve mỗi vector về keyframe.
 
-### C5. Embedding từ CLIP thì lưu ở đâu?
+### C5. Embedding từ SigLIP và BEiT3 lưu ở đâu?
 
-Nếu là **image embedding / visual embedding** từ CLIP hoặc OpenCLIP, thì theo contract hiện tại:
-
-- vector runtime dùng để search nằm trong FAISS file, ví dụ `visual.faiss`;
-- metadata của index nằm ở `embeddings_meta`;
-- mapping từ `vector_id` về `keyframe_id` nằm ở `vector_map`.
-
-Tức là flow là:
+Notebook 02 tạo hai matrix và hai runtime index độc lập:
 
 ```text
-CLIP image embedding
-  -> build FAISS index
-  -> lưu vector runtime trong visual.faiss
-  -> lưu metadata index trong embeddings_meta
-  -> lưu mapping trong vector_map
+SigLIP -> embeddings/siglip.npy -> indexes/siglip.faiss
+BEiT3  -> embeddings/beit3.npy  -> indexes/beit3.faiss
 ```
+
+Hai model dùng chung `embeddings_meta` và `vector_map`, nhưng mọi hàng đều mang
+`index_name` để không phụ thuộc vào row order hoặc trộn vector giữa hai model.
 
 ### C6. Embedding từ transcript hoặc description đi qua text encoder thì lưu ở đâu?
 
@@ -1103,7 +1117,7 @@ Cách nói chính xác nhất theo docs hiện tại là:
 
 ## D. Trong `${AIC_RUNTIME_ROOT}/indexes/`
 
-### D1. `visual.faiss`
+### D1. `siglip.faiss` và `beit3.faiss`
 
 Dạng file:
 
@@ -1111,7 +1125,7 @@ Dạng file:
 
 Chứa gì:
 
-- visual embedding index để search vector
+- hai visual embedding index độc lập để search vector
 - FAISS không chứa trực tiếp `video_id` hay `frame_id`
 - nó chỉ chứa vector rows và cấu trúc index phục vụ nearest-neighbor search
 
@@ -1245,7 +1259,8 @@ Nếu ai hỏi “project này có những file data gì?”, bạn có thể tr
 - raw videos/metadata ở `${AIC_DATA_ROOT}/raw/`
 - processed videos/keyframes/thumbnails ở `${AIC_DATA_ROOT}/processed/media/`
 - runtime SQLite DB ở `${AIC_RUNTIME_ROOT}/db/app.sqlite`
-- runtime FAISS index ở `${AIC_RUNTIME_ROOT}/indexes/visual.faiss`
+- runtime FAISS indexes ở `${AIC_RUNTIME_ROOT}/indexes/siglip.faiss` và
+  `${AIC_RUNTIME_ROOT}/indexes/beit3.faiss`
 - FAISS manifest ở `${AIC_RUNTIME_ROOT}/indexes/index_version.json`
 - DuckDB staging/preprocessing ở `${AIC_DATA_ROOT}/staging/staging.duckdb` nếu implementation bật staging/preprocessing
 - validation reports ở `${AIC_DATA_ROOT}/staging/reports/`
@@ -1273,10 +1288,11 @@ System có 2 nhóm index chính để search, cộng thêm 1 lớp mapping bắt
 
 FAISS dùng để search bằng vector embedding.
 
-Trong MVP hiện tại, canonical artifact là:
+Canonical artifacts là:
 
 ```text
-visual.faiss
+siglip.faiss
+beit3.faiss
 ```
 
 Dùng cho:
@@ -1318,7 +1334,7 @@ Bao gồm:
 
 Tóm tắt số lượng:
 
-- **1 nhóm vector index**: FAISS.
+- **1 nhóm vector index**: FAISS, gồm hai index SigLIP và BEiT3.
 - **1 FTS5-backed text search contract** build từ `text_documents`.
 - **Per-source FTS5 tables optional** nếu implementation cần.
 - **1 relational mapping layer** trong SQLite.
@@ -1560,12 +1576,13 @@ FAISS vector_id
 Giải thích từng bước:
 
 1. User search bằng visual clue.
-2. `FaissRetriever` query `visual.faiss`.
-3. FAISS trả về `vector_id` và score.
+2. `FaissRetriever` query `siglip.faiss` và `beit3.faiss` theo retrieval plan.
+3. Mỗi FAISS index trả về `vector_id` và score gắn với `index_name`.
 4. Backend lookup `vector_map` trong SQLite.
 5. `vector_map` cho biết vector đó thuộc `keyframe_id` nào.
 6. Từ `keyframe_id`, backend lấy `video_id`, `frame_id`, timestamp, media refs.
-7. Backend join thêm evidence: image captions, OCR, ASR, objects, metadata-derived text documents.
+7. Backend join thêm evidence: shot captions, scene summaries, OCR, ASR,
+   objects, và metadata-derived text documents khi có.
 8. UI nhận result đã đầy đủ thông tin để hiển thị.
 
 Text search cũng cần mapping:
@@ -1619,7 +1636,9 @@ Input canonical ban đầu gồm:
 - `raw_videos/`;
 - `metadata/`.
 
-Keyframes/OCR/ASR/image captions/object detections/embeddings nếu organizer cung cấp thì là optional imported evidence qua adapter, không phải required MVP input.
+Keyframes, OCR, ASR, shot captions, object detections, và embeddings đều do
+System 1 sinh từ video; organizer support artifacts không được import vào
+project evidence.
 
 ### Bước 2: Normalize data
 
@@ -1647,7 +1666,7 @@ System 1 tạo hoặc import qua adapter:
 
 System 1 build:
 
-- FAISS visual index;
+- hai FAISS visual indexes SigLIP và BEiT3;
 - FTS5-backed text search contract built from global `text_documents` inside `app.sqlite`;
 - `vector_map`;
 - index manifest.

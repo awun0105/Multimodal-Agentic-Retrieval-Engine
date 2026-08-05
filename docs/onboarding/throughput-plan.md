@@ -234,8 +234,8 @@ Mục tiêu:
 - có shot/keyframe metadata
 - có keyframes
 - có thumbnails
-- có visual embeddings
-- có FAISS index
+- có SigLIP/BEiT3 embeddings
+- có hai FAISS indexes
 - có SQLite/FTS cơ bản
 - có release chạy được
 ```
@@ -266,8 +266,8 @@ This legacy profile created artifacts such as:
 - scenes.parquet hoặc fallback scene
 - keyframes
 - thumbnails
-- image embeddings
-- FAISS/vector_map
+- SigLIP/BEiT3 embeddings
+- two FAISS indexes/vector_map
 - app.sqlite base
 ```
 
@@ -288,8 +288,8 @@ It reused:
 - shots/scenes
 - keyframes
 - thumbnails
-- image embeddings nếu embedding model không đổi
-- FAISS/vector_map nếu embedding model không đổi
+- SigLIP/BEiT3 embeddings nếu model tương ứng không đổi
+- FAISS/vector_map rows của model không đổi
 ```
 
 It added or upgraded:
@@ -457,9 +457,9 @@ FAISS
 Chỉ cần chạy lại:
 
 ```text
-image embeddings
-→ FAISS
-→ vector_map
+affected SigLIP or BEiT3 embeddings
+→ affected FAISS index
+→ affected vector_map rows
 → validation
 → release
 ```
@@ -485,10 +485,11 @@ Cần chạy lại:
 keyframes
 → thumbnails
 → OCR
-→ image embeddings
-→ image captions / shot captions nếu có
-→ object detection nếu có
-→ FAISS/vector_map
+→ SigLIP + BEiT3 embeddings
+→ canonical bilingual shot captions
+→ scene grouping + bilingual scene summaries
+→ object detection
+→ both FAISS indexes/vector_map
 → text_documents
 → validation
 → release
@@ -923,7 +924,7 @@ Model inference thường là phần tốn thời gian nhất. Không nên chạ
 
 ### 14.1. Embedding
 
-Dùng cho CLIP/SigLIP/EVA-CLIP.
+Dùng riêng cho SigLIP và BEiT3; mỗi model có batch/config/checkpoint độc lập.
 
 Gợi ý:
 
@@ -1076,8 +1077,8 @@ Nên cache:
 - decoded audio
 - ASR result
 - OCR result
-- image embeddings
-- image captions / shot captions
+- SigLIP/BEiT3 embeddings
+- Gemini shot-caption responses and canonical bilingual rows
 - object detections
 ```
 
@@ -1092,7 +1093,7 @@ Ví dụ:
 → chỉ rebuild OCR + text_sources + text_documents + FTS
 
 đổi embedding model
-→ rebuild embeddings + FAISS + vector_map
+→ rebuild only that model's embeddings + FAISS index + vector_map rows
 
 đổi keyframe extraction config
 → rebuild keyframes + thumbnails + downstream visual/text features
@@ -1363,14 +1364,14 @@ Notebook này làm:
 - kiểm tra structure artifact nào đã có thể reuse
 - stage đúng video/metadata hiện tại từ AIC26_raw hoặc local input vào scratch nếu cần
 - chạy TransNet V2 shot detection provider
-- extract/select keyframes bằng configured keyframe provider nếu cần
+- extract các frame gần 20%/50%/80% của mỗi shot
 - tạo thumbnails nếu cần
-- chọn 1 representative keyframe cho mỗi shot
-- tạo đúng 1 canonical shot caption cho mỗi shot từ representative keyframe
-- import/chạy ASR hoặc transcript provider
+- chọn middle làm representative, rồi early/late nếu quality check thất bại
+- tạo đúng 1 hàng caption song ngữ/shot bằng Gemini từ representative keyframe
+- chạy faster-whisper large-v3 với language auto và VAD
 - link transcript vào shot
-- construct scenes từ shot captions, transcript, timeline, metadata
-- tạo scene_summaries.parquet
+- construct scenes từ images, shot captions, transcript, và timeline
+- tạo scene_summaries.parquet song ngữ bằng Gemini sau khi boundary cố định
 - tạo structure artifact ZIP
 - ghi local artifact to artifacts/structure/{video_id}_structure.zip
 - ghi local runtime report to manifests/worker_reports/structure_{batch_id}_{worker_id}.json
@@ -1400,8 +1401,8 @@ Notebook này làm:
 ```text
 - đọc batch được giao
 - kiểm tra feature artifact nào đã có thể reuse
-- chạy embedding nếu cần
-- chạy OCR nếu artifact chưa có
+- chạy riêng SigLIP và BEiT3 embedding nếu cần
+- chạy Gemini OCR nếu artifact chưa có
 - chạy object detection nếu artifact chưa có
 - tạo text_sources từ OCR/object labels nếu cần
 - tạo feature artifact ZIP
@@ -1436,7 +1437,7 @@ Notebook này làm:
 - build/write feature_availability
 - build/write release_capabilities
 - build app.sqlite + FTS5
-- build FAISS + vector_map
+- build riêng siglip.faiss và beit3.faiss + shared vector_map
 - write validation_report
 - chạy smoke test
 - upload phase03_merged, releases, and logs under AIC26_release/canonical_release_vXXX/

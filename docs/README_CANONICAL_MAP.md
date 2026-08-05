@@ -10,6 +10,8 @@ This file records the canonical docs that supersede older source inputs. Archive
 | --- | --- | --- |
 | Architecture decisions | `docs/decisions/` | earlier scattered decision notes |
 | System 1 ingestion | `docs/architecture/system1-ingestion.md` | earlier ingestion drafts |
+| System 1 Notebook 01 production pipeline | `docs/architecture/system1-notebook01-production-pipeline.md` | provisional provider/model and Phase01 artifact notes |
+| System 1 Phase01 scene grouping | `docs/architecture/system1-scene-grouping.md` | informal scene-grouping proposals and provider-specific drafts |
 | System 2 retrieval app | `docs/architecture/system2-retrieval.md` | earlier runtime architecture notes |
 | General architecture overview | `docs/architecture/overview.md` | earlier high-level architecture notes |
 | Storage strategy | `docs/architecture/storage-strategy.md` | earlier physical/logical storage drafts |

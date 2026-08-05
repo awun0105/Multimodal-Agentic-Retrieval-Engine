@@ -9,7 +9,8 @@ Canonical Acceptance Criteria. Supersedes the earlier source specification accep
 The system is acceptable for MVP when:
 
 1. A developer can register a local dataset from System 1 release artifacts.
-2. The runtime system (System 2) can load `app.sqlite`, logical media refs, and a visual FAISS index.
+2. The runtime system (System 2) can load `app.sqlite`, logical media refs, and
+   separate SigLIP and BEiT3 FAISS indexes.
 3. The Web UI can search and display ranked keyframes.
 4. A user can click a result and see the larger keyframe, metadata, and evidence summary.
 5. A user can browse nearby keyframes from the same video.

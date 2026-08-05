@@ -42,6 +42,7 @@ class TableSchemaSpec:
     numeric_columns: tuple[ColumnRequirement, ...] = ()
     integer_columns: tuple[ColumnRequirement, ...] = ()
     text_columns: tuple[ColumnRequirement, ...] = ()
+    non_empty_text_columns: tuple[ColumnRequirement, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,30 +94,84 @@ TABLE_SCHEMA_SPECS: tuple[TableSchemaSpec, ...] = (
         "shots",
         Path("tables/shots.parquet"),
         True,
-        (column("shot_id"), column("video_id"), column("start_frame"), column("end_frame")),
-        non_null_columns=(column("shot_id"), column("video_id")),
+        (
+            column("shot_id"),
+            column("video_id"),
+            column("scene_id"),
+            column("start_frame"),
+            column("end_frame"),
+            column("start_sec"),
+            column("end_sec"),
+            column("detection_method"),
+            column("status"),
+        ),
+        non_null_columns=(column("shot_id"), column("video_id"), column("scene_id")),
         unique_keys=((column("shot_id"),),),
+        numeric_columns=(column("start_sec"), column("end_sec")),
         integer_columns=(column("start_frame"), column("end_frame")),
-        text_columns=(column("shot_id"), column("video_id")),
+        text_columns=(column("shot_id"), column("video_id"), column("scene_id"), column("detection_method"), column("status")),
     ),
     TableSchemaSpec(
         "scenes",
         Path("tables/scenes.parquet"),
         True,
-        (column("scene_id"), column("video_id"), column("start_frame"), column("end_frame")),
-        non_null_columns=(column("scene_id"), column("video_id")),
+        (
+            column("scene_id"),
+            column("video_id"),
+            column("start_shot_id"),
+            column("end_shot_id"),
+            column("start_frame"),
+            column("end_frame"),
+            column("start_sec"),
+            column("end_sec"),
+            column("shot_count"),
+            column("grouping_method"),
+            column("grouping_version"),
+            column("status"),
+        ),
+        non_null_columns=(column("scene_id"), column("video_id"), column("start_shot_id"), column("end_shot_id")),
         unique_keys=((column("scene_id"),),),
-        integer_columns=(column("start_frame"), column("end_frame")),
-        text_columns=(column("scene_id"), column("video_id")),
+        numeric_columns=(column("start_sec"), column("end_sec")),
+        integer_columns=(column("start_frame"), column("end_frame"), column("shot_count")),
+        text_columns=(
+            column("scene_id"),
+            column("video_id"),
+            column("start_shot_id"),
+            column("end_shot_id"),
+            column("grouping_method"),
+            column("grouping_version"),
+            column("status"),
+        ),
     ),
     TableSchemaSpec(
         "asr_segments",
         Path("tables/asr_segments.parquet"),
         True,
-        (column("video_id"), any_column("start_sec", "start_seconds"), any_column("end_sec", "end_seconds"), column("text")),
-        non_null_columns=(column("video_id"),),
+        (column("asr_segment_id"), column("video_id"), any_column("start_sec", "start_seconds"), any_column("end_sec", "end_seconds"), column("text")),
+        non_null_columns=(column("asr_segment_id"), column("video_id")),
+        unique_keys=((column("asr_segment_id"),),),
         numeric_columns=(any_column("start_sec", "start_seconds"), any_column("end_sec", "end_seconds")),
-        text_columns=(column("video_id"), column("text")),
+        text_columns=(column("asr_segment_id"), column("video_id"), column("text")),
+    ),
+    TableSchemaSpec(
+        "shot_transcript_links",
+        Path("tables/shot_transcript_links.parquet"),
+        True,
+        (column("shot_id"), column("asr_segment_id"), column("video_id"), column("coverage")),
+        non_null_columns=(column("shot_id"), column("asr_segment_id"), column("video_id")),
+        unique_keys=((column("shot_id"), column("asr_segment_id")),),
+        numeric_columns=(column("coverage"),),
+        text_columns=(column("shot_id"), column("asr_segment_id"), column("video_id")),
+    ),
+    TableSchemaSpec(
+        "scene_transcript_links",
+        Path("tables/scene_transcript_links.parquet"),
+        True,
+        (column("scene_id"), column("asr_segment_id"), column("video_id"), column("coverage")),
+        non_null_columns=(column("scene_id"), column("asr_segment_id"), column("video_id")),
+        unique_keys=((column("scene_id"), column("asr_segment_id")),),
+        numeric_columns=(column("coverage"),),
+        text_columns=(column("scene_id"), column("asr_segment_id"), column("video_id")),
     ),
     TableSchemaSpec(
         "embeddings_meta",
@@ -147,35 +202,65 @@ TABLE_SCHEMA_SPECS: tuple[TableSchemaSpec, ...] = (
         "shot_captions",
         Path("tables/shot_captions.parquet"),
         True,
-        (column("shot_caption_id"), column("shot_id"), column("video_id"), column("representative_keyframe_id"), column("caption")),
-        non_null_columns=(column("shot_caption_id"), column("shot_id"), column("video_id"), column("representative_keyframe_id")),
-        unique_keys=((column("shot_caption_id"),),),
-        text_columns=(column("shot_caption_id"), column("shot_id"), column("video_id"), column("representative_keyframe_id"), column("caption")),
+        (
+            column("shot_caption_id"),
+            column("shot_id"),
+            column("video_id"),
+            column("representative_keyframe_id"),
+            column("representative_timestamp_sec"),
+            column("caption_vi"),
+            column("caption_en"),
+            column("provider"),
+            column("model_name"),
+            column("model_version"),
+            column("prompt_version"),
+            column("schema_version"),
+            column("status"),
+        ),
+        non_null_columns=(column("shot_caption_id"), column("shot_id"), column("video_id"), column("representative_keyframe_id"), column("caption_vi"), column("caption_en")),
+        unique_keys=((column("shot_caption_id"),), (column("shot_id"),)),
+        numeric_columns=(column("representative_timestamp_sec"),),
+        text_columns=(column("shot_caption_id"), column("shot_id"), column("video_id"), column("representative_keyframe_id"), column("caption_vi"), column("caption_en"), column("provider"), column("model_name"), column("model_version"), column("prompt_version"), column("schema_version"), column("status")),
+        non_empty_text_columns=(column("caption_vi"), column("caption_en")),
     ),
     TableSchemaSpec(
         "scene_summaries",
         Path("tables/scene_summaries.parquet"),
         True,
-        (column("scene_id"), column("video_id")),
-        non_null_columns=(column("scene_id"), column("video_id")),
-        text_columns=(column("scene_id"), column("video_id")),
+        (column("scene_id"), column("video_id"), column("summary_vi"), column("summary_en"), column("provider"), column("model_name"), column("model_version"), column("prompt_version"), column("schema_version"), column("status")),
+        non_null_columns=(column("scene_id"), column("video_id"), column("summary_vi"), column("summary_en")),
+        unique_keys=((column("scene_id"),),),
+        text_columns=(column("scene_id"), column("video_id"), column("summary_vi"), column("summary_en"), column("provider"), column("model_name"), column("model_version"), column("prompt_version"), column("schema_version"), column("status")),
+        non_empty_text_columns=(column("summary_vi"), column("summary_en")),
     ),
     TableSchemaSpec(
         "text_sources",
         Path("tables/text_sources.parquet"),
         True,
-        (column("video_id"), column("source_type"), any_column("raw_text", "normalized_text")),
-        non_null_columns=(column("video_id"), column("source_type")),
-        text_columns=(column("video_id"), column("source_type"), any_column("raw_text", "normalized_text")),
+        (
+            column("source_id"),
+            column("video_id"),
+            column("entity_type"),
+            column("entity_id"),
+            column("source_type"),
+            column("raw_text"),
+            column("normalized_text"),
+            column("language"),
+            column("provider"),
+            column("status"),
+        ),
+        non_null_columns=(column("source_id"), column("video_id"), column("entity_type"), column("entity_id"), column("source_type"), column("language"), column("provider"), column("status")),
+        unique_keys=((column("source_id"),),),
+        text_columns=(column("source_id"), column("video_id"), column("entity_type"), column("entity_id"), column("source_type"), column("raw_text"), column("normalized_text"), column("language"), column("provider"), column("status")),
     ),
     TableSchemaSpec(
         "text_documents",
         Path("tables/text_documents.parquet"),
         True,
-        (any_column("doc_id", "document_id"), column("video_id"), any_column("source_type", "source_types"), any_column("raw_text", "normalized_text")),
+        (any_column("doc_id", "document_id"), column("video_id"), any_column("source_type", "source_types"), any_column("raw_text", "normalized_text"), column("language")),
         non_null_columns=(any_column("doc_id", "document_id"), column("video_id"), any_column("source_type", "source_types")),
         unique_keys=((any_column("doc_id", "document_id"),),),
-        text_columns=(any_column("doc_id", "document_id"), column("video_id"), any_column("source_type", "source_types")),
+        text_columns=(any_column("doc_id", "document_id"), column("video_id"), any_column("source_type", "source_types"), column("language")),
     ),
     TableSchemaSpec(
         "vector_map",
@@ -245,6 +330,7 @@ def validate_table_schema(table_name: str, dataframe: pd.DataFrame, spec: TableS
     errors: list[str] = []
     errors.extend(validate_required_columns(table_name, dataframe, spec.required_columns))
     errors.extend(validate_non_null_columns(table_name, dataframe, spec.non_null_columns))
+    errors.extend(validate_non_empty_text_columns(table_name, dataframe, spec.non_empty_text_columns))
     for key_columns in spec.unique_keys:
         errors.extend(validate_unique_key(table_name, dataframe, key_columns))
     errors.extend(validate_column_types(table_name, dataframe, spec))
@@ -278,6 +364,23 @@ def validate_non_null_columns(
         null_count = int(dataframe[column_name].isna().sum())
         if null_count:
             errors.append(f"schema validation: {table_name}.{column_name} has {null_count} null values")
+    return errors
+
+
+def validate_non_empty_text_columns(
+    table_name: str,
+    dataframe: pd.DataFrame,
+    non_empty_text_columns: tuple[ColumnRequirement, ...],
+) -> list[str]:
+    columns = set(dataframe.columns)
+    errors: list[str] = []
+    for requirement in non_empty_text_columns:
+        column_name = requirement.resolve(columns)
+        if column_name is None:
+            continue
+        empty_count = int(dataframe[column_name].fillna("").astype(str).str.strip().eq("").sum())
+        if empty_count:
+            errors.append(f"schema validation: {table_name}.{column_name} has {empty_count} empty text values")
     return errors
 
 
@@ -327,6 +430,7 @@ def resolved_column_map(dataframe: pd.DataFrame, spec: TableSchemaSpec) -> dict[
     requirements.update(spec.numeric_columns)
     requirements.update(spec.integer_columns)
     requirements.update(spec.text_columns)
+    requirements.update(spec.non_empty_text_columns)
     return {requirement.label: requirement.resolve(columns) for requirement in sorted(requirements, key=lambda item: item.label)}
 
 

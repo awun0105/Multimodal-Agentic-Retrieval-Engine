@@ -11,19 +11,19 @@
 ```text
 System 1 = Data Preparation / Preprocessing / Index Factory
 
-Official videos + useful validated metadata/support artifacts
-→ metadata/support artifact normalization when available
+Official videos + optional metadata
+→ metadata normalization when available
 → batch assignment
-→ ASR
 → TransNet V2 shot detection
-→ keyframe selection
+→ keyframes near 20%/50%/80% of each shot
 → thumbnail generation
 → representative keyframe selection per shot
-→ one canonical shot caption per shot
+→ faster-whisper large-v3 ASR with auto language + VAD
+→ one canonical bilingual shot-caption row per shot
 → transcript-shot/keyframe alignment
 → scene construction from shot captions + transcript + timeline
-→ scene summaries
-→ OCR / object detection / visual embedding
+→ bilingual scene summaries
+→ Gemini OCR / configured object detection / SigLIP + BEiT3 embeddings
 → artifact packaging
 → merge structural + feature artifacts
 → global text document construction
@@ -90,7 +90,7 @@ Bộ dữ liệu này phải cho phép System 2:
    * scene;
    * shot;
    * keyframe;
-   * frame_id theo decoded frame timeline khi có, với probed FPS chỉ là fallback/degraded;
+   * frame_id theo decoded original frame timeline;
    * transcript;
    * OCR;
    * caption;
@@ -113,14 +113,14 @@ System 2 được phép phụ thuộc cứng vào:
 - `thumbnails`
 - `app.sqlite`
 - FTS5-backed text search contract
-- `visual.faiss`
+- `siglip.faiss` and `beit3.faiss`
 - `vector_map`
 - `video_ref` and logical media refs
 - validation report
 
 ### First-class enrichment contract
 
-System 1 nên sinh ra đầy đủ nhất có thể:
+Production preliminary-ready System 1 must generate:
 
 - `asr_segments`
 - `ocr`
@@ -134,9 +134,11 @@ System 1 nên sinh ra đầy đủ nhất có thể:
 
 Nguyên tắc:
 
-- Enrichment nào có thì System 2 tận dụng tối đa.
-- Enrichment nào degraded hoặc unavailable thì UI/runtime fallback thay vì hỏng toàn bộ.
-- `shots` và `scenes` là first-class inspection artifacts: rất quan trọng cho inspect UX, nhưng không được làm core retrieval unusable nếu một phần segmentation degraded ở một subset video.
+- System 2 may remain defensive when loading debug or partial releases, but a
+  production preliminary-ready release cannot claim completion while any
+  required Phase01/Phase02 evidence is missing or degraded.
+- `shots`, `scenes`, captions, summaries, OCR, objects, and both visual indexes
+  are required app-ready evidence for the accepted production profile.
 
 ## Non-goals
 
@@ -237,7 +239,8 @@ competition_dataset_v001/
 │   └── staging.duckdb
 │
 ├── indexes/
-│   ├── visual.faiss
+│   ├── siglip.faiss
+│   ├── beit3.faiss
 │   ├── vector_map.parquet
 │   └── index_version.json
 │
@@ -341,7 +344,7 @@ start_sec
 end_sec
 start_frame
 end_frame
-summary (optional/degraded allowed)
+summary_vi + summary_en (required in production)
 quality/status metadata
 ```
 
@@ -356,7 +359,9 @@ Quyết định kiến trúc:
 
 ```text
 Shots are more canonical than scenes.
-Scenes are derived from shots + ASR + metadata + optional semantic grouping.
+Scenes are derived from shots + representative images + bilingual shot
+captions + ASR transcript evidence + timeline through the accepted Gemini
+context-focus grouping workflow.
 Scenes có thể rebuild độc lập mà không cần rerun ASR, shot detection, keyframe extraction, OCR hoặc embeddings.
 ```
 
@@ -372,7 +377,8 @@ change scene builder config/provider
 → no need to rerun image extraction/OCR/embedding
 ```
 
-System 2 phải có khả năng fallback về shot + keyframe + ASR segment nếu scene quality chưa tốt.
+System 2 may expose shot/keyframe/ASR evidence for diagnostics, but an invalid
+or missing production scene partition fails that video's Phase01 artifact.
 
 ## Shot
 
@@ -396,19 +402,19 @@ Shot nên chứa tối thiểu:
 ```text
 shot_id
 video_id
-scene_id (nullable during degraded enrichment states)
+scene_id (nullable only before the final scene partition is backfilled)
 start_sec
 end_sec
 start_frame
 end_frame
-representative_keyframe_id (optional)
 quality/status metadata
 ```
 
 ## Frame
 
-Frame là frame gốc trong video theo decoded frame timeline của Phase00 khi có;
-probed FPS chỉ là fallback/degraded cho trường hợp không có decoded timeline.
+Frame là frame gốc trong video theo decoded frame timeline của Phase00.
+Production Notebook 01 fails the video if that exact mapping cannot be
+established; FPS math is debug-only estimated behavior.
 
 ```text
 frame_id = decoded original frame index
@@ -426,7 +432,7 @@ preview
 visual embedding
 OCR
 object detection
-image captioning
+shot-caption evidence lookup
 ```
 
 ---
@@ -438,11 +444,13 @@ FPS planning default là **25 FPS**, nhưng actual fps phải được probe và
 Frame ID policy:
 
 ```text
-Primary:
-  frame_id = decoded original frame index from frame_timeline/{video_id}.parquet when available.
+Production:
+  frame_id = decoded original frame index from frame_timeline/{video_id}.parquet.
+  missing exact timeline = fail the video.
 
-Fallback:
-  frame_id = floor(timestamp_sec * fps_detected) only for CFR videos or when decoded frame timeline is unavailable.
+Debug/test compatibility only:
+  estimated frame_id = floor(timestamp_sec * fps_detected)
+  status = degraded
 
 Persist:
   fps_detected
@@ -489,7 +497,7 @@ Canonical identity rules:
 
 ```text
 video_id    = filename stem của raw video sau khi pair và validate uniqueness
-frame_id    = frame index theo decoded frame timeline khi có; probed FPS chỉ là fallback/degraded
+frame_id    = decoded original frame index; production requires the decoded timeline
 keyframe_id = {video_id}:{frame_id}
 ```
 
@@ -655,7 +663,8 @@ HDD:
 SSD:
 - app.sqlite
 - FTS5 tables/indexes
-- visual.faiss
+- siglip.faiss
+- beit3.faiss
 - vector_map.parquet
 - staging.duckdb
 ```
@@ -715,8 +724,11 @@ keyframe_id:
 embedding_id:
   {keyframe_id}_{embedding_model_slug}
 
+source_id:
+  hash(entity_type + entity_id + source_type + language + provider + raw_text)
+
 doc_id:
-  hash(source_type + entity_id + normalized_text)
+  doc:{video_id}:{entity_type}:{entity_id}
 ```
 
 ## Vector mapping
@@ -740,7 +752,9 @@ System 2 không được phụ thuộc vào thứ tự ngầm trong `.npy` hoặ
 - đổi model không được làm đổi video_id / shot_id / scene_id / keyframe_id;
 - đổi scene builder config/provider có thể làm đổi scene_id, nhưng không được làm đổi shot_id;
 - đổi embedding model có thể sinh embedding_id mới, nhưng keyframe_id phải giữ nguyên;
-- doc_id phải stable nếu source_type, entity_id và normalized_text không đổi.
+- source_id must distinguish language-specific text rows even when Vietnamese
+  and English strings happen to be identical; doc_id remains stable for the
+  same logical entity while its aggregated text can be rebuilt.
 ```
 
 ---
@@ -764,7 +778,7 @@ Layer 2: dataset_merged
 Layer 3: runtime_release
 - app.sqlite
 - FTS5 tables/indexes
-- visual.faiss
+- siglip.faiss + beit3.faiss
 - vector_map.parquet
 - keyframes/thumbnails
 - dataset_manifest.json
@@ -886,16 +900,20 @@ Tối thiểu, `manifest.json`, `feature_manifest.json` và `dataset_manifest.js
     "gpu": "T4"
   },
   "providers": {
-    "asr": "ASRProvider",
-    "shot_detector": "ShotDetectionProvider",
-    "embedding": "EmbeddingProvider",
-    "ocr": "OCRProvider",
-    "caption": "KeyframeCaptionProvider"
+    "asr": "faster-whisper",
+    "asr_model": "large-v3",
+    "shot_detector": "transnet-v2",
+    "caption": "gemini",
+    "scene_boundary_judge": "gemini",
+    "scene_summary": "gemini",
+    "ocr": "gemini",
+    "embedding_indexes": ["siglip", "beit3"]
   },
-  "thresholds": {
-    "shot_threshold": 27.0,
-    "scene_similarity_threshold": 0.72,
-    "ocr_min_confidence": 0.5
+  "versions": {
+    "caption_prompt": "shot_caption_v1",
+    "scene_grouping": "scene_grouping_v1",
+    "scene_summary_prompt": "scene_summary_v1",
+    "response_schema": "1.0.0"
   }
 }
 ```
@@ -950,17 +968,18 @@ System 1 phải định nghĩa rõ required artifact, optional artifact và các
 
 | Artifact / Step     | Required?                  | Nếu fail thì sao?                       |
 | ------------------- | -------------------------: | --------------------------------------- |
-| metadata normalized |                   Required | video fail                              |
+| metadata normalized | Required generated record; organizer fields optional | missing organizer metadata is not a fail |
 | video_ref / logical media ref mapping | Required | video fail |
 | shots.parquet       |                   Required | video fail                              |
 | keyframes.parquet   |                   Required | video fail                              |
 | keyframe `.jpg`     |                   Required | video fail                              |
-| thumbnail `.webp`   |            Required for UI | warning hoặc fail tùy release tier      |
-| ASR                 |                  Important | warning nếu fail, vẫn release được      |
-| scenes              |                  Important | fallback scene = group theo shot/window |
-| visual embeddings   | Required for visual search | fail nếu release tier cần visual        |
-| OCR                 | Feature phase output       | warning/fail theo provider policy       |
-| object detection    | Feature phase output       | warning/fail theo provider policy       |
+| thumbnail `.webp`   |            Required for UI | video fail                              |
+| ASR                 | Required stage; empty audio/speech is valid | extraction/model/inference error after retry fails the video |
+| scenes              |                   Required | unresolved provider/model failure fails the video |
+| SigLIP embeddings   | Required for visual search | feature artifact/release fail           |
+| BEiT3 embeddings    | Required for visual search | feature artifact/release fail           |
+| OCR                 | Required Phase02 output    | feature artifact/release fail after retry |
+| object detection    | Required Phase02 output    | feature artifact/release fail after retry |
 | shot captions       | Required for scene build   | fail nếu thiếu caption cho shot         |
 | text_documents      |   Required for text search | fail nếu release có FTS                 |
 | FAISS               |   Required for visual tier | fail                                    |
@@ -969,8 +988,13 @@ System 1 phải định nghĩa rõ required artifact, optional artifact và các
 
 Clarifications:
 
-- If shot detection fails but raw video metadata is valid, create one `fallback_full_video` shot and mark the video `completed_with_warnings` / degraded. Missing or corrupt `shots.parquet` after fallback is a video fail.
-- If ASR fails, emit an empty schema-valid `asr_segments.parquet` plus explicit failed status so downstream merge/index code does not crash.
+- A successful TransNet V2 run with no transition emits one successful
+  full-video shot. Model load, decode, dependency, or inference failure after
+  bounded retry fails the video; production does not emit
+  `fallback_full_video`.
+- `no_audio` and `no_speech` emit empty schema-valid ASR and transcript-link
+  tables and continue. Audio extraction/model/inference failure is not an empty
+  observation and fails the video after bounded retry.
 
 ## Video processing status state machine
 
@@ -1151,11 +1175,9 @@ video_title
 video_description
 video_keywords
 asr
-scene_summary_initial
-scene_summary_enriched
+scene_summary
 scene_keywords
 shot_caption
-image_caption
 ocr
 object_labels
 ```
@@ -1168,7 +1190,8 @@ video_description
 video_keywords
 asr
 ocr
-image_caption
+shot_caption
+scene_summary
 object_labels
 ```
 
@@ -1188,11 +1211,10 @@ Ranking prior ban đầu có thể là:
 ```text
 video_title: 1.2
 video_keywords: 1.1
-scene_summary_enriched: 1.1
+scene_summary: 1.1
 ocr: 1.0
 asr: 0.9
 shot_caption: 0.9
-image_caption: 0.8
 object_labels: 0.7
 video_description: 0.6
 ```
@@ -1200,7 +1222,7 @@ video_description: 0.6
 `dedup_key` gợi ý:
 
 ```text
-hash(level + entity_id + source_type + normalized_text)
+hash(level + entity_id + source_type + language + normalized_text)
 ```
 
 ---
@@ -1211,7 +1233,7 @@ System 1 chưa cần incremental engine hoàn chỉnh, nhưng phải chốt depe
 
 ```text
 metadata_normalized
-  depends on raw metadata JSON
+  depends on Phase00 video facts + optional raw metadata JSON
 
 asr_segments
   depends on raw video/audio + ASR config
@@ -1226,7 +1248,7 @@ shot_captions
   depends on shots + representative keyframe per shot + shot caption provider config
 
 scenes
-  depends on shots + shot_captions + asr_segments/transcript + timeline + metadata + scene builder config
+  depends on shots + keyframe images + shot_captions + asr_segments/transcript + timeline + scene builder config
 
 keyframes.scene_id
   depends on scenes + shot_id mapping after scene construction
@@ -1250,7 +1272,7 @@ FTS
   depends on text_documents
 
 FAISS
-  depends on visual_embeddings + embeddings_meta
+  depends on SigLIP/BEiT3 matrices + embeddings_meta grouped by index_name
 ```
 
 Ví dụ ứng dụng:
@@ -1281,14 +1303,14 @@ metadata
 ASR
 TransNet V2 shot boundaries
 keyframes + thumbnails
-one canonical shot caption per shot
+one canonical bilingual shot-caption row per shot
 scene grouping + scene_summaries
-visual embeddings
+separate SigLIP and BEiT3 embeddings
 OCR
 object detection
 text_sources + global text_documents
 app.sqlite + FTS5
-visual.faiss + vector_map
+siglip.faiss + beit3.faiss + vector_map
 quality reports + validation
 core video_ref/logical media ref mapping
 ```
@@ -1349,7 +1371,9 @@ end_frame = first frame_id where pts_time >= end_sec
 interval = [start_frame, end_frame)
 ```
 
-Keyframe extraction should prefer decoded `frame_id`. Timestamp seeking is allowed only when exact decoded-frame extraction is unavailable or when validation marks the output as estimated/degraded.
+Production keyframe extraction uses decoded `frame_id` and fails the video when
+exact decoded-frame extraction is unavailable. Timestamp seeking with estimated
+IDs remains an explicitly degraded debug/test path only.
 
 Artifact policy:
 
@@ -1508,20 +1532,20 @@ Cross-cutting contracts:
 
 01_worker_structure_pipeline.ipynb
 - audio extraction
-- ASR
+- faster-whisper large-v3 ASR with automatic language and VAD
 - TransNet V2 shot detection
-- keyframe selection
+- keyframes near 20%/50%/80% of each shot
 - thumbnail generation
 - representative keyframe selection per shot
-- one canonical shot caption per shot
+- one canonical Gemini bilingual shot-caption row per shot
 - transcript-shot/keyframe alignment
 - scene construction from shot captions, transcript, and timeline
-- scene summaries
+- Gemini bilingual scene summaries
 - structure artifact packaging
 
 02_worker_feature_enrichment.ipynb
-- visual embeddings
-- OCR
+- separate SigLIP and BEiT3 embeddings
+- Gemini OCR
 - object/concept detection
 - text_sources
 - feature artifact packaging
@@ -1606,10 +1630,10 @@ hcm-ai-system1/
 
 ```yaml
 fps_expected_default: 25
-frame_id_policy: "decoded_frame_timeline_primary"
-fallback_frame_id_formula: "floor(timestamp_sec * fps_detected)"
-frame_id_method_allowed:
+production_frame_id_policy: "decoded_frame_timeline_required"
+production_frame_id_method_allowed:
   - decoded_frame_timeline
+debug_frame_id_methods_allowed:
   - ffprobe_nb_read_packets
   - ffprobe_nb_frames
   - first_frame_extraction_assumed_frame_0
@@ -1771,11 +1795,10 @@ keyframe_count = final number of keyframes after keyframe selection
 
 For AIC 2026 frame ID safety, System 1 treats decoded
 `frame_timeline/{video_id}.parquet` rows as the primary frame-count and
-timestamp mapping source. Packet count is a fallback for videos without a
-decoded timeline. Header `nb_frames` is only a later fallback because it can
-drift when container metadata is stale or damaged. `duration_sec * fps_detected`
-is the last fallback and must be marked estimated/degraded because it can drift
-on VFR media.
+timestamp mapping source. Phase00 may retain packet/header/duration estimates
+as inventory diagnostics, but they do not authorize a production Notebook 01
+artifact. Production structure processing requires the decoded timeline;
+otherwise that video fails before canonical frame IDs/keyframes are emitted.
 
 Ở Phase 1:
 
@@ -1926,8 +1949,16 @@ audio/L21_V001.wav
 Process:
 
 ```text
-ASRProvider / TranscriptImportProvider
+faster-whisper large-v3
+language = auto
+VAD = enabled
 ```
+
+ASR runs for every video. A video with no audio stream records `no_audio` and
+continues with empty schema-valid ASR/link tables. A successfully processed
+audio stream with no speech records `no_speech` and also continues. Audio
+extraction, model, or inference failure after bounded retry fails the video;
+production does not fabricate transcript rows or silently switch providers.
 
 Output:
 
@@ -1954,9 +1985,10 @@ model_name
 Mapping:
 
 ```text
-start_frame = derived from decoded frame index when available
-end_frame = derived from decoded frame index when available
-fallback = floor/ceil(timestamp_sec * fps_detected) only for CFR or when decoded frame index is unavailable
+start_frame = derived from the decoded original frame timeline
+end_frame = derived from the decoded original frame timeline
+production = fail if exact decoded-frame mapping cannot be established
+debug-only estimated mapping = floor/ceil(timestamp_sec * fps_detected), marked degraded
 ```
 
 ---
@@ -1969,15 +2001,16 @@ Input:
 raw video
 ```
 
-Provider contract, not fixed by this spec:
+Production provider:
 
 ```text
-ShotDetectionProvider
+TransNet V2
 ```
 
-The selected shot detection algorithm must be chosen by provider/config, not by
-notebook code. If shot detection fails but the video is readable, emit a marked
-fallback shot instead of silently dropping the video.
+The model/config version belongs in package configuration and provenance, not
+notebook code. A successful inference with no transition emits one valid shot
+covering `[0, frame_count)`. A model load, decode, dependency, or inference
+error after bounded retry fails the video.
 
 Output:
 
@@ -2020,14 +2053,16 @@ Derived:
 frame_count = end_frame - start_frame
 ```
 
-Fallback rule:
+No-cut and failure rules:
 
 ```text
-if shot detection fails:
-  create one fallback shot covering [0, frame_count)
-  detection_method = "fallback_full_video"
-  confidence = 0
-  status = degraded
+if TransNet V2 succeeds and detects no cut:
+  create one shot covering [0, frame_count)
+  detection_method = "transnet_v2_no_cut"
+  status = pass
+
+if model/decode/inference fails after bounded retry:
+  fail the video
 ```
 
 ---
@@ -2061,6 +2096,18 @@ text
 
 ## Step E — Scene construction
 
+Canonical production design:
+
+```text
+docs/architecture/system1-scene-grouping.md
+```
+
+That document is authoritative for context/focus window planning, contact
+sheets, structured boundary responses, weighted overlap voting, ambiguous-gap
+review, regional consistency review, caching, production failure behavior, partition
+construction, validation, and tests. This section keeps the Phase01 handoff and
+table shape synchronized with it.
+
 Execution note:
 
 ```text
@@ -2078,8 +2125,10 @@ keyframes.parquet
 shot_captions.parquet
 asr_segments.parquet
 shot_transcript_links.parquet
-metadata_normalized.json
 ```
+
+Metadata, OCR, object detections, and visual embeddings are not canonical
+inputs to this Phase01 grouper.
 
 Goal:
 
@@ -2090,13 +2139,12 @@ Group consecutive shots into semantic scenes.
 Signals:
 
 ```text
-ASR transcript topic similarity
+representative keyframe visual context
+optional early/late keyframe context
 canonical shot captions
-metadata title / description / keywords
+ASR transcript evidence joined through shot_transcript_links
 shot continuity
 timeline continuity
-keyword shifts
-optional summary provider signals
 ```
 
 Important rule:
@@ -2119,6 +2167,8 @@ scene_summaries.parquet
 scene_id
 video_id
 scene_index
+start_shot_id
+end_shot_id
 start_sec
 end_sec
 start_frame
@@ -2129,7 +2179,10 @@ shot_count
 keyframe_count
 scene_type
 grouping_method
+grouping_version
 confidence
+boundary_convention
+status
 ```
 
 ID convention:
@@ -2141,8 +2194,16 @@ scene_id = "{video_id}_SC{scene_index:05d}"
 Example:
 
 ```text
-L21_V001_SC00001
+L21_V001_SC00000
 ```
+
+Scene indexes are zero-based and frame ranges use
+`[start_frame, end_frame)`. The VLM judges only the Boolean boundary after an
+adjacent shot; package code derives IDs, ranges, counts, mappings, and status.
+
+After the final partition, backfill `shots.scene_id` and
+`keyframes.scene_id`, then rebuild `scene_transcript_links.parquet` and generate
+scene summaries.
 
 `scene_summaries.parquet` schema:
 
@@ -2151,21 +2212,27 @@ scene_id
 video_id
 summary_vi
 summary_en
-keywords
-evidence_sources
+provider
 model_name
+model_version
+prompt_version
+schema_version
 confidence
+status
 ```
 
-Phase01 scene summaries are based mainly on:
+Phase01 creates one bilingual summary row only after the scene partition is
+fixed. Gemini receives:
 
 ```text
-ASR
-metadata
-shot transcript overlap
-shot captions
-timeline continuity
+ordered representative images
+bilingual shot captions
+ASR transcript evidence
+timeline
 ```
+
+and must return strict JSON with exactly `summary_vi` and `summary_en`.
+Persistent provider failure after bounded retry fails the video.
 
 ---
 
@@ -2187,19 +2254,16 @@ scene_id is assigned/remapped after extraction.
 Changing scene builder config/provider does not rerun keyframes/OCR/embeddings when their inputs and provider configs are unchanged.
 ```
 
-Provider contract:
+Production contract:
 
 ```text
-The keyframe selection algorithm is provider/config driven.
-The contract requires deterministic keyframe_id assignment, shot_id linkage,
-logical keyframe/thumbnail refs, enough selected keyframes for downstream
-inspection, and exactly one representative keyframe per shot for shot
-captioning. The production baseline may use early/middle/late keyframes with
-the middle keyframe as representative, but the canonical `keyframe_id` remains
-`{video_id}:{frame_id}`. Role and representativeness are metadata fields, not
-part of the ID. Phase01 providers should consume the Phase00 decoded frame
-timeline when available and must mark degraded fallbacks when exact timeline
-data is unavailable.
+Select decoded original frames near 20%, 50%, and 80% of each shot and label
+them early, middle, and late. Use middle as the first representative candidate;
+if it fails versioned decode/blur/black-frame checks, try early and then late.
+If every available candidate fails, fail the video. Short shots emit every
+distinct decodable frame once rather than duplicating keyframe IDs. All frame
+mapping uses the Phase00 decoded timeline; production does not silently replace
+missing exact mapping with timestamp-times-FPS estimates.
 ```
 
 Output:
@@ -2252,7 +2316,6 @@ Input:
 keyframes.parquet
 shots.parquet
 representative keyframe image for each shot
-metadata_normalized.json
 ```
 
 Output:
@@ -2261,11 +2324,15 @@ Output:
 shot_captions.parquet
 ```
 
-Phase01 creates exactly one canonical caption per shot from that shot's
-representative keyframe. All frames/keyframes in the shot use the same shot
-caption by joining `keyframes.shot_id -> shot_captions.shot_id`. Do not create
-per-keyframe captions as the canonical Phase01 scene input, and do not defer
-canonical shot captioning to Notebook 02.
+Phase01 creates exactly one canonical bilingual caption row per shot from that
+shot's representative keyframe. Gemini must return strict JSON containing only
+non-empty `caption_vi` and `caption_en` strings. All frames/keyframes in the
+shot use the same row by joining
+`keyframes.shot_id -> shot_captions.shot_id`. Do not create per-keyframe
+captions as the canonical Phase01 scene input, and do not defer canonical shot
+captioning to Notebook 02. Calls require content-addressed cache, bounded
+retry, rate limiting, resume, model version, prompt version, and response-schema
+version. Persistent failure fails the video.
 
 Schema:
 
@@ -2275,9 +2342,13 @@ video_id
 shot_id
 representative_keyframe_id
 representative_timestamp_sec
-caption
-language
-caption_model
+caption_vi
+caption_en
+provider
+model_name
+model_version
+prompt_version
+schema_version
 confidence
 status
 ```
@@ -2318,15 +2389,8 @@ Example:
 {
   "video_id": "L21_V001",
   "fps_expected_default": 25,
-  "frame_id_policy": "decoded_frame_timeline_primary",
-  "fallback_frame_id_formula": "floor(timestamp_sec * fps_detected)",
-  "frame_id_method_allowed": [
-    "decoded_frame_timeline",
-    "ffprobe_nb_read_packets",
-    "ffprobe_nb_frames",
-    "first_frame_extraction_assumed_frame_0",
-    "timestamp_fps_fallback"
-  ],
+  "production_frame_id_policy": "decoded_frame_timeline_required",
+  "frame_id_method": "decoded_frame_timeline",
   "duration_sec": 1262,
   "frame_count": 31550,
   "scene_count": 28,
@@ -2367,7 +2431,7 @@ L21_V001_features.zip
 
 ---
 
-## Step A — Visual embeddings
+## Step A — SigLIP and BEiT3 embeddings
 
 Input:
 
@@ -2375,35 +2439,43 @@ Input:
 keyframes/*.jpg
 ```
 
-Provider examples, not fixed by this spec:
+Production providers:
 
 ```text
-CLIP
 SigLIP
-EVA-CLIP
+BEiT3
 ```
 
 Output:
 
 ```text
-visual_embeddings.npy
+embeddings/siglip.npy
+embeddings/beit3.npy
 embeddings_meta.parquet
 ```
+
+The two matrices are independent model outputs and later become two separate
+FAISS indexes. They share one metadata table instead of duplicating table
+schemas.
 
 `embeddings_meta.parquet` schema:
 
 ```text
 embedding_id
+index_name
 keyframe_id
 video_id
 scene_id
 shot_id
 frame_id
 timestamp_sec
+provider
 model_name
+model_version
 embedding_dim
 dtype
 vector_offset
+status
 ```
 
 Recommended:
@@ -2422,10 +2494,10 @@ Input:
 keyframes/*.jpg
 ```
 
-Provider contract, not fixed by this spec:
+Production provider:
 
 ```text
-OCRProvider
+Gemini multimodal OCR
 ```
 
 Output:
@@ -2465,6 +2537,9 @@ Provider contract, not fixed by this spec:
 ```text
 ObjectDetectionProvider
 ```
+
+The concrete detector and model/version remain required configuration and
+manifest values until selected; production may not silently use a mock.
 
 Output:
 
@@ -2557,11 +2632,9 @@ video_title
 video_description
 video_keywords
 asr
-scene_summary_initial
-scene_summary_enriched
+scene_summary
 scene_keywords
 shot_caption
-image_caption
 ocr
 object_labels
 ```
@@ -2575,10 +2648,22 @@ Example:
 ```json
 {
   "video_id": "L21_V001",
-  "embedding_model": "clip-vit-base-patch32",
-  "embedding_dim": 512,
-  "embedding_dtype": "float16",
-  "embedding_count": 390,
+  "embedding_indexes": [
+    {
+      "index_name": "siglip",
+      "model_name": "<configured-siglip-model>",
+      "embedding_dim": "<model-dimension>",
+      "embedding_dtype": "float16",
+      "embedding_count": 390
+    },
+    {
+      "index_name": "beit3",
+      "model_name": "<configured-beit3-model>",
+      "embedding_dim": "<model-dimension>",
+      "embedding_dtype": "float16",
+      "embedding_count": 390
+    }
+  ],
   "has_ocr": true,
   "has_objects": true,
   "has_text_sources": true,
@@ -2706,7 +2791,7 @@ Detailed logical steps:
 16. Build global text_documents.parquet.
 17. Build app.sqlite including text_documents and vector_map runtime table.
 18. Build FTS5-backed text search contract inside app.sqlite.
-19. Build visual.faiss.
+19. Build separate siglip.faiss and beit3.faiss indexes.
 20. Export vector_map.parquet as debug/mirror artifact.
 21. Build dataset_manifest.json.
 22. Build validation_report.json.
@@ -2737,22 +2822,21 @@ release_usable: true | false
 
 ```text
 pass:
-  - >= 95% processed videos have shot rows.
-  - >= 90% processed videos have scene rows or deterministic scene fallback rows.
-  - >= 95% indexed keyframes resolve to video_id and video_ref/logical media refs.
-  - >= 90% indexed keyframes resolve to shot_id.
-  - >= 80% indexed keyframes resolve to scene_id.
+  - 100% of included production videos have valid TransNet shot rows.
+  - 100% have one complete, non-overlapping scene partition.
+  - 100% of indexed keyframes resolve to video_id, shot_id, scene_id, frame_id,
+    and logical media refs.
+  - every shot has one bilingual caption row and every scene has one bilingual
+    summary row.
 
 degraded:
-  - core_runtime is pass.
-  - shot/scene coverage exists but is below pass thresholds.
-  - System 2 can still inspect keyframe/video context with reduced shot/scene UI.
+  - allowed for explicit debug/test releases only.
+  - production preliminary-ready validation sets release_usable=false.
 
 fail:
-  - shot/scene tables are corrupt, references are inconsistent, or validation cannot determine safe fallback behavior.
+  - any required production row/file is missing, corrupt, unresolved, or built
+    from a silent fallback.
 ```
-
-Thresholds are initial defaults. They may be tuned after real dataset profiling, but changes must be recorded in release notes.
 
 Hierarchy:
 
@@ -2787,10 +2871,10 @@ Thumbnail extension = .webp.
 Embeddings:
 
 ```text
-embedding_count == embeddings_meta row count.
-embedding vector_offset is unique.
+For each index_name, embedding_count == embeddings_meta row count.
+embedding vector_offset is unique within index_name.
 Every embedding_meta.keyframe_id exists.
-FAISS ntotal == vector_map row count.
+For each index_name, FAISS ntotal == vector_map row count.
 ```
 
 Counts:
@@ -2803,10 +2887,9 @@ scenes.shot_count == count(shots where scene_id)
 scenes.keyframe_count == count(keyframes where scene_id)
 shots.keyframe_count == count(keyframes where shot_id)
 videos.frame_count == row count(frame_timeline/{video_id}.parquet) when frame_count_method = decoded_frame_timeline.
-videos.frame_count == ffprobe nb_read_packets only when decoded timeline is unavailable.
-videos.frame_count == ffprobe nb_frames only when decoded timeline and packet counting are unavailable.
-videos.frame_count_estimated == true only for duration/fps math fallback or unavailable counts.
-If only estimated count exists, validation marks frame_count confidence as estimated/degraded because frame IDs may drift.
+Every production-included video has frame_count_method = decoded_frame_timeline.
+Packet/header/duration estimates may exist in Phase00 diagnostics but cannot
+satisfy production Phase01 frame-ID validation.
 If scenes exist, scenes.frame_count == end_frame - start_frame.
 If shots exist, shots.frame_count == end_frame - start_frame.
 ```
@@ -2898,11 +2981,9 @@ video_title
 video_description
 video_keywords
 asr
-scene_summary_initial
-scene_summary_enriched
+scene_summary
 scene_keywords
 shot_caption
-image_caption
 ocr
 object_labels
 ```
@@ -2924,7 +3005,7 @@ Example:
 Query: "kẹt xe giao lộ đông xe máy"
 
 Matches:
-- image caption
+- shot caption
 - scene summary
 - OCR if any
 - ASR transcript
@@ -3033,26 +3114,39 @@ normalized_no_diacritics
 ## FAISS
 
 ```text
-indexes/visual.faiss
+indexes/siglip.faiss
+indexes/beit3.faiss
 ```
 
 Input:
 
 ```text
-visual_embeddings.npy
+embeddings/siglip.npy
+embeddings/beit3.npy
 ```
 
 Index metadata in `index_version.json`:
 
 ```json
 {
-  "embedding_model": "clip-vit-base-patch32",
-  "embedding_dim": 512,
+  "indexes": [
+    {
+      "index_name": "siglip",
+      "embedding_model": "<configured-siglip-model>",
+      "embedding_dim": "<model-dimension>",
+      "index_ref": "indexes/siglip.faiss"
+    },
+    {
+      "index_name": "beit3",
+      "embedding_model": "<configured-beit3-model>",
+      "embedding_dim": "<model-dimension>",
+      "index_ref": "indexes/beit3.faiss"
+    }
+  ],
   "stored_dtype": "float16",
   "faiss_build_dtype": "float32",
   "metric": "inner_product",
-  "vectors_l2_normalized": true,
-  "faiss_index_type": "IndexFlatIP"
+  "vectors_l2_normalized": true
 }
 ```
 
@@ -3062,7 +3156,7 @@ Validation:
 embedding_dim is consistent.
 No embedding vector contains NaN.
 No embedding vector has zero norm.
-FAISS ntotal == vector_map row count.
+Each FAISS `ntotal` equals the `vector_map` row count for its `index_name`.
 embedding_id model slug matches index metadata.
 ```
 
@@ -3128,7 +3222,8 @@ competition_dataset_v001/
 │   └── staging.duckdb
 │
 ├── indexes/
-│   ├── visual.faiss
+│   ├── siglip.faiss
+│   ├── beit3.faiss
 │   ├── vector_map.parquet
 │   └── index_version.json
 │
@@ -3173,15 +3268,8 @@ competition_dataset_v001/
   "dataset_id": "aic2026_v001",
   "pipeline_run_id": "run_2026_07_01_001",
   "fps_expected_default": 25,
-  "frame_id_policy": "decoded_frame_timeline_primary",
-  "fallback_frame_id_formula": "floor(timestamp_sec * fps_detected)",
-  "frame_id_method_allowed": [
-    "decoded_frame_timeline",
-    "ffprobe_nb_read_packets",
-    "ffprobe_nb_frames",
-    "first_frame_extraction_assumed_frame_0",
-    "timestamp_fps_fallback"
-  ],
+  "production_frame_id_policy": "decoded_frame_timeline_required",
+  "frame_id_method": "decoded_frame_timeline",
   "schema_version": "1.0.0",
   "minimum_system2_version": "1.0.0",
   "video_count": 1000,
@@ -3194,7 +3282,7 @@ competition_dataset_v001/
   "has_objects": true,
   "has_shot_captions": true,
   "has_scene_summaries": true,
-  "has_visual_index": true,
+  "visual_indexes": ["siglip", "beit3"],
   "has_text_fts": true,
   "created_at": "2026-xx-xx",
   "system1_version": "1.1.0"
@@ -3217,7 +3305,6 @@ keyframe_id
 has_asr
 has_ocr
 has_objects
-has_image_caption
 has_shot_caption
 has_scene_summary
 inspection_ready
@@ -3382,7 +3469,8 @@ AIC26_release/
     │   │   │   ├── app.sqlite
     │   │   │   └── staging.duckdb
     │   │   ├── indexes/
-    │   │   │   ├── visual.faiss
+    │   │   │   ├── siglip.faiss
+    │   │   │   ├── beit3.faiss
     │   │   │   ├── vector_map.parquet
     │   │   │   └── index_version.json
     │   │   ├── media/
@@ -3492,8 +3580,9 @@ dimensions, logical refs, canonical HF paths, and decoded frame timeline rows
 when they are available. It should not copy the full raw dataset into local
 runtime storage and should not re-probe every video when phase00 facts are
 already present. If `frame_timeline/{video_id}.parquet` is unavailable,
-`process-batch` should emit degraded/warning metadata; Notebook 01 must not
-hide that by deriving exact frame ids with FPS math inside notebook cells.
+production `process-batch` fails that video; Notebook 01 must not derive
+apparently exact frame IDs with FPS math inside notebook cells. Explicit
+estimated behavior remains available only in non-production debug/test modes.
 
 Notebook 01 uploads:
 
@@ -3632,14 +3721,14 @@ System 1 release is ready only when:
 ```text
 [ ] All videos have normalized metadata.
 [ ] All videos have video_ref/logical media ref mapping.
-[ ] All videos have ASR or explicit ASR failed status.
+[ ] All videos have ASR rows or explicit `no_audio`/`no_speech` status.
 [ ] All videos have shot detection output.
 [ ] If `inspection_context=pass`, all shots map to scenes.
 [ ] If `inspection_context=pass`, keyframes map cleanly to shots and scenes.
 [ ] Keyframe .jpg files exist.
 [ ] Thumbnail .webp files exist.
-[ ] Visual embeddings exist for indexed keyframes.
-[ ] embeddings_meta maps every vector to a keyframe.
+[ ] SigLIP and BEiT3 embeddings exist for indexed keyframes.
+[ ] embeddings_meta maps every vector in both indexes to a keyframe.
 [ ] OCR/object/caption follow schema.
 [ ] feature_availability.parquet exists.
 [ ] text_sources.parquet exists.
@@ -3647,7 +3736,7 @@ System 1 release is ready only when:
 [ ] quality_report.parquet exists.
 [ ] app.sqlite is built.
 [ ] FTS5-backed text search contract is built.
-[ ] visual.faiss is built.
+[ ] siglip.faiss and beit3.faiss are built.
 [ ] vector_map.parquet maps vector_id to keyframe_id.
 [ ] dataset_manifest.json has final counts.
 [ ] validation_report.json has no critical errors.
@@ -3698,7 +3787,9 @@ dataset:
   root: "./competition_dataset"
   runtime_db: "./competition_dataset/db/app.sqlite"
   text_fts_db: "./competition_dataset/db/app.sqlite"
-  visual_index: "./competition_dataset/indexes/visual.faiss"
+  visual_indexes:
+    siglip: "./competition_dataset/indexes/siglip.faiss"
+    beit3: "./competition_dataset/indexes/beit3.faiss"
   vector_map_table: "app.sqlite.vector_map"
   vector_map_export: "./competition_dataset/indexes/vector_map.parquet"
   thumbnails_root: "./competition_dataset/media/thumbnails"
@@ -3722,7 +3813,7 @@ A distributed multimedia dataset factory.
 It converts:
 
 ```text
-official videos + useful validated metadata/support artifacts
+official videos + optional metadata
 ```
 
 into:
@@ -3738,11 +3829,10 @@ with:
 ASR
 OCR
 object detections
-image captions
 shot captions
 scene summaries
 
-visual embeddings
+SigLIP and BEiT3 embeddings
 text documents
 FAISS index
 SQLite runtime DB

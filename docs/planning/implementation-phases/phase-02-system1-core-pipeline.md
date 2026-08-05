@@ -8,39 +8,42 @@
 
 ## Goal
 
-Mở rộng từ System 1 mini thành các pipeline lõi trên official videos cùng
-metadata/support artifacts hữu ích khi có:
+Mở rộng từ System 1 mini thành các pipeline lõi tự sinh trên official videos
+cùng metadata khi có:
 
-- visual embeddings
-- shot detection and fallback full-video shot generation
+- separate SigLIP and BEiT3 embeddings
+- TransNet V2 shot detection without silent production fallback
 - frame timeline / timestamp-to-frame mapping for VFR safety
-- OCR + metadata normalization
-- ASR transcription
+- Gemini OCR + metadata normalization
+- faster-whisper large-v3 ASR transcription
 
 ## Main Question This Phase Answers
 
-"Chúng ta có thể tạo được các modality outputs chính từ official videos và các
-support artifacts hữu ích theo dạng shard-safe, resumable, và có thể merge
+"Chúng ta có thể tạo được các modality outputs chính từ official videos theo
+dạng shard-safe, resumable, và có thể merge
 không?"
 
 ## Scope
 
 ### A. Vision embedding pipeline
 
-- chọn model CLIP/OpenCLIP
+- generate separate SigLIP and BEiT3 vectors
 - xử lý theo shard
 - output embeddings/manifest trung gian
 
 ### A2. Structure/timeline pipeline
 
-- detect shots, with `fallback_full_video` shot when detector fails but video is readable
+- detect shots with TransNet V2; a successful no-cut result is one valid
+  full-video shot, while production model/decode/inference failure fails the
+  video after bounded retry
 - build `frame_timeline` staging rows or equivalent mapping proof when accurate timestamp-to-frame mapping is needed
-- keep keyframe extraction in MVP stable mode: depends on shots + raw video + keyframe config, not scene heuristics
+- extract distinct decoded frames near 20%/50%/80% of each shot and select the
+  middle/early/late representative using versioned quality checks
 
 ### B. OCR + metadata pipeline
 
 - normalize organizer metadata
-- import/generate OCR
+- generate OCR with Gemini from System 1 keyframes
 - output shard-safe intermediate artifacts
 
 ### C. Audio transcription pipeline
@@ -57,7 +60,7 @@ không?"
 4. Implement ASR transcription flow
 5. Add shard/resume strategy
 6. Add output manifests for each modality
-7. Add frame/timeline and shot fallback validation
+7. Add frame/timeline, no-cut, and production shot-failure validation
 
 ## Done Criteria
 

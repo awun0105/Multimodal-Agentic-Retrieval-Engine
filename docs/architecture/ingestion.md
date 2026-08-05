@@ -37,7 +37,7 @@ Runtime SQLite scope:
 - agent runs
 - metadata lookup
 - vector ID mapping
-- image captions / shot captions
+- bilingual shot captions and scene summaries
 - OCR
 - ASR
 - objects
@@ -78,24 +78,27 @@ The ingestion pipeline should prepare:
 
 - runtime SQLite database with validated lookup tables and app/session tables
 - FTS5-backed text search contract built from global `text_documents` inside `app.sqlite`
-- FAISS visual index
+- separate SigLIP and BEiT3 FAISS visual indexes
 - local media paths/URIs for videos, keyframes, thumbnails, and generated assets
 - validation reports for completeness and mapping integrity
 
 ## Canonical Input Strategy
 
-Input layout must stay flexible at the file-extension level. For the current
-preliminary profile, organizer input includes official videos plus support
-artifacts such as keyframes, objects, CLIP features, media-info, map-keyframes,
-and metadata when available.
+Input layout must stay flexible at the file-extension level. The organizer
+publishes videos and baseline support artifacts, but this project's canonical
+input policy consumes official videos plus metadata when available and
+regenerates all derived evidence.
 
 Required organizer inputs:
 
 - raw videos
 
-Useful optional organizer support inputs:
+Optional organizer input:
 
 - metadata JSON files matched to videos by stem when available
+
+Explicitly unused organizer support material:
+
 - organizer keyframes and map-keyframes/media-info
 - organizer object JSON and CLIP features
 
@@ -112,7 +115,6 @@ Ingestion validation should catch:
 
 - missing video files
 - metadata JSON without a matching raw video stem
-- support artifacts that do not resolve to known `video_id` / `frame_id`
 - missing keyframes
 - missing thumbnails when expected
 - duplicate video/frame IDs
@@ -125,10 +127,10 @@ Ingestion validation should catch:
 
 1. Scan dataset inputs.
 2. Import/stage in DuckDB.
-3. Normalize metadata and support artifacts in DuckDB when present.
+3. Normalize metadata in DuckDB when present.
 4. Produce runtime SQLite tables.
 5. Build SQLite FTS5 tables.
-6. Build/load FAISS index.
+6. Build/load separate SigLIP and BEiT3 FAISS indexes.
 7. Validate local file paths and mapping integrity.
 8. Write validation reports.
 

@@ -42,7 +42,8 @@ during video identity and artifact-mapping validation.
 Minimum adapters:
 
 - Visual adapter: FAISS image/keyframe vectors.
-- Caption adapter: generated or imported image/shot captions.
+- Caption adapter: project-generated bilingual shot captions and scene
+  summaries.
 - OCR adapter: text detected in keyframes.
 - ASR adapter: spoken transcript segments by video/time range.
 - Object adapter: object/concept labels and optional boxes.

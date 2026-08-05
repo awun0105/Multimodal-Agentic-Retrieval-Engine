@@ -13,11 +13,11 @@ Canonical requirement summary for the current planning phase. This file separate
 | Ranking limit | Each query may submit at most 100 answers; scoring averages best `R@k` over `k = {1, 5, 20, 50, 100}`. | Official preliminary info. |
 | TRAKE precision | TRAKE first retrieves one video, then aligns one semantic keyframe per event; answer intervals are usually very short. | Official preliminary info. |
 | Dataset input | Organizer Batch 1 provides videos plus support artifacts: keyframes, object JSON, CLIP features, map-keyframes/media-info, and YouTube metadata where available. | Official preliminary info and `batch1-downloads.csv`. |
-| Official base source material | The official dataset includes videos as the base media source; support artifacts may be imported when validated but must not become hard limits on System 1 generation. | Official preliminary info. |
+| Project preprocessing source policy | System 1 consumes official videos and optional metadata only; it deliberately does not import organizer keyframes, objects, CLIP, map-keyframes, or media-info and regenerates all derived evidence. | Accepted ADR 0015. |
 | Video format | Raw videos are `.mp4`. | Official preliminary info examples and download package names. |
 | Metadata pairing | Metadata may be missing for some videos and is optional retrieval evidence, not a condition for including a valid video. | Official preliminary info. |
 | Canonical `video_id` | Use the raw video filename stem as canonical `video_id`; do not derive it from `watch_url` or YouTube ID. | Human-confirmed decision. |
-| Organizer support artifacts | Organizer-provided keyframes, object detections, and CLIP ViT-B/32 features are support inputs only; System 1 may import them with provenance after mapping validation. | Official preliminary info. |
+| Organizer support artifacts | The organizer provides keyframes, object detections, CLIP ViT-B/32 features, map-keyframes, and media-info as baseline/support material, but this project does not consume them in System 1. | Official preliminary info plus accepted ADR 0015. |
 | System 1 role | System 1 must generate and validate app-ready retrieval artifacts before System 2 depends on them. | Derived from dataset input constraints. |
 | System 2 role | System 2 consumes app-ready artifacts and should not scan raw organizer folders during live retrieval. | Architecture boundary. |
 | Runtime target | App must run locally on one machine. | Human-provided runtime requirement. |
@@ -38,7 +38,7 @@ Canonical requirement summary for the current planning phase. This file separate
 | --- | --- | --- |
 | FPS | Last-year dataset videos were observed at 25 fps; use 25 fps as expected/default while probing actual FPS per current-year video. | Current-year raw media probe. |
 | Local-first reliability | Even though internet is allowed, core retrieval should remain local/LAN-first and artifact-backed so network or provider failures do not break correctness. | Design phase and provider selection. |
-| Online providers | External APIs/models may be used as optional accelerators, not required source-of-truth dependencies. | Design phase and competition constraints. |
+| Online providers | Gemini is a selected production preprocessing provider for captions, scene grouping/summaries, and OCR; cache/resume/retry and explicit failure behavior are therefore required. Runtime retrieval remains artifact-backed. | Accepted ADR 0015 and competition constraints. |
 
 ## Unknowns
 
@@ -51,7 +51,7 @@ Canonical requirement summary for the current planning phase. This file separate
 | Filename stem format | Exact future-batch naming pattern, beyond using video filename stem as `video_id`. |
 | Timing | Time limit per clue batch and per question session. |
 | Compute | Actual host machine CPU/GPU/RAM/disk available during preparation and final-round operation. |
-| Provider choices | Which online APIs/models, if any, the team will use. |
+| Exact model IDs | Exact Gemini, object detector, SigLIP, and BEiT3 model identifiers and runtime limits must be configured and recorded before a production run. |
 
 ## Out Of Scope For MVP
 
@@ -59,19 +59,20 @@ Canonical requirement summary for the current planning phase. This file separate
 - Submit permission enforcement inside the app.
 - Public cloud deployment as the primary runtime target.
 - Multi-node distributed runtime.
-- Assuming organizer-provided support artifacts are complete, correct, or
-  sufficient without validation.
+- Importing organizer-provided keyframes, objects, CLIP features,
+  map-keyframes, or media-info into the project-generated evidence lineage.
 - Precomputing query-specific TRAKE event sequences as System 1 canonical
   artifacts.
 - Hard-coded organizer submission payload before official API docs exist.
-- Hard dependency on online URLs or external providers for core retrieval correctness.
+- Live online providers during System 2 query-time retrieval; preprocessing API
+  results must already be cached and materialized by System 1.
 
 ## Design Implications, Not Final Strategy
 
 - Query Session must store clue batches because the public screen does not preserve earlier clues.
 - UI must support fast manual entry from screen-observed clues.
-- System 1 must validate video identity, support-artifact mapping, and exact
-  frame/timestamp resolution before producing app-ready artifacts.
+- System 1 must validate video identity and exact decoded frame/timestamp
+  resolution before producing app-ready artifacts.
 - System 1 must probe media facts including actual FPS.
 - System 2 should support current-only and accumulated clue search modes.
 - System 2 must treat TRAKE as runtime retrieval, same-video sequence ranking,

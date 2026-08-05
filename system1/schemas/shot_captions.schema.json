@@ -8,7 +8,14 @@
     "video_id",
     "representative_keyframe_id",
     "representative_timestamp_sec",
-    "caption"
+    "caption_vi",
+    "caption_en",
+    "provider",
+    "model_name",
+    "model_version",
+    "prompt_version",
+    "schema_version",
+    "status"
   ],
   "properties": {
     "shot_id": {
@@ -20,14 +27,13 @@
         "null"
       ]
     },
-    "caption": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
+    "caption_vi": {
+      "type": ["string"],
+      "minLength": 1
+    },
+    "caption_en": {
+      "type": ["string"],
+      "minLength": 1
     },
     "shot_caption_id": {
       "type": [
@@ -64,6 +70,27 @@
         "boolean",
         "null"
       ]
+    },
+    "provider": {
+      "type": ["string"]
+    },
+    "model_name": {
+      "type": ["string"]
+    },
+    "model_version": {
+      "type": ["string"]
+    },
+    "prompt_version": {
+      "type": ["string"]
+    },
+    "schema_version": {
+      "type": ["string"]
+    },
+    "confidence": {
+      "type": ["number", "null"]
+    },
+    "status": {
+      "type": ["string"]
     }
   },
   "additionalProperties": true

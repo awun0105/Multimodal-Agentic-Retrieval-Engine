@@ -169,36 +169,52 @@ def _build_structure_text_sources(asr: pd.DataFrame, shot_captions: pd.DataFrame
             str(row.get("text", "")),
             str(row.get("provider", row.get("asr_provider", "asr"))),
             str(row.get("status", "pass")),
+            str(row.get("language", "und")),
         ))
     for row in shot_captions.to_dict("records"):
-        rows.append(_text_source(
-            str(row.get("video_id", "")),
-            "shot",
-            str(row.get("shot_id", "")),
-            "shot_caption",
-            str(row.get("normalized_text", row.get("caption", ""))),
-            str(row.get("provider", row.get("caption_model", "shot_caption"))),
-            str(row.get("status", "pass")),
-        ))
+        for language, column in (("vi", "caption_vi"), ("en", "caption_en")):
+            rows.append(_text_source(
+                str(row.get("video_id", "")),
+                "shot",
+                str(row.get("shot_id", "")),
+                "shot_caption",
+                str(row.get(column, "")),
+                str(row.get("provider", row.get("caption_model", "shot_caption"))),
+                str(row.get("status", "pass")),
+                language,
+            ))
     for row in scene_summaries.to_dict("records"):
-        rows.append(_text_source(
-            str(row.get("video_id", "")),
-            "scene",
-            str(row.get("scene_id", "")),
-            "scene_summary",
-            str(row.get("normalized_text", row.get("summary", ""))),
-            str(row.get("provider", row.get("model_name", "scene_summary"))),
-            str(row.get("status", "pass")),
-        ))
+        for language, column in (("vi", "summary_vi"), ("en", "summary_en")):
+            rows.append(_text_source(
+                str(row.get("video_id", "")),
+                "scene",
+                str(row.get("scene_id", "")),
+                "scene_summary",
+                str(row.get(column, "")),
+                str(row.get("provider", row.get("model_name", "scene_summary"))),
+                str(row.get("status", "pass")),
+                language,
+            ))
     return pd.DataFrame(rows)
 
 
-def _text_source(video_id: str, entity_type: str, entity_id: str, source_type: str, raw_text: str, provider: str, status: str) -> dict[str, Any]:
+def _text_source(
+    video_id: str,
+    entity_type: str,
+    entity_id: str,
+    source_type: str,
+    raw_text: str,
+    provider: str,
+    status: str,
+    language: str,
+) -> dict[str, Any]:
     normalized_text = raw_text or ""
     normalized_no_diacritics = "".join(
         char for char in unicodedata.normalize("NFD", normalized_text) if unicodedata.category(char) != "Mn"
     )
-    digest = hashlib.sha256(f"{entity_type}|{entity_id}|{source_type}|{provider}|{raw_text}".encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(
+        f"{entity_type}|{entity_id}|{source_type}|{language}|{provider}|{raw_text}".encode("utf-8")
+    ).hexdigest()[:12]
     return {
         "source_id": f"{video_id}:{entity_type}:{source_type}:{provider}:{digest}",
         "video_id": video_id,
@@ -208,7 +224,7 @@ def _text_source(video_id: str, entity_type: str, entity_id: str, source_type: s
         "raw_text": raw_text,
         "normalized_text": normalized_text,
         "normalized_no_diacritics": normalized_no_diacritics,
-        "language": "vi",
+        "language": language,
         "provider": provider,
         "status": status,
     }
@@ -245,6 +261,7 @@ def _build_text_documents(text_sources: pd.DataFrame) -> pd.DataFrame:
             ch for ch in unicodedata.normalize("NFD", normalized_text) if unicodedata.category(ch) != "Mn"
         )
         document_id = f"doc:{video_id}:{entity_type}:{entity_id}"
+        languages = sorted(set(str(value) for value in group["language"].dropna() if str(value)))
         grouped_rows.append({
             "doc_id": document_id,
             "document_id": document_id,
@@ -255,7 +272,7 @@ def _build_text_documents(text_sources: pd.DataFrame) -> pd.DataFrame:
             "level": entity_type,
             "normalized_text": normalized_text,
             "normalized_no_diacritics": normalized_no_diacritics,
-            "language": group["language"].dropna().iloc[0] if not group["language"].dropna().empty else "vi",
+            "language": languages[0] if len(languages) == 1 else ("mul" if languages else "und"),
             "text": normalized_text,
         })
     return pd.DataFrame(grouped_rows)

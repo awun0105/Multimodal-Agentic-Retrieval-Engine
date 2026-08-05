@@ -22,9 +22,9 @@ SQLite Harness database.
 | Story | Contract | Unit | Integration | E2E | Platform | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | MVP-0 | Canonical docs and accepted decisions define the repository contract | no | no | no | no | implemented | `docs/onboarding/doc-conflicts.md`, `docs/decisions/` |
-| MVP-0.5 | App-ready Data Contract defines organizer input, canonical IDs and refs, SQLite/FTS5/FAISS boundaries, and validation rules | no | no | no | no | implemented | `docs/architecture/data-contracts.md`, `docs/architecture/system1-ingestion.md` |
-| MVP-0.6 | System 1 builds app-ready seed artifacts from official videos and available support inputs | yes | yes | no | no | partial | Debug/mock CLI integration is covered in `system1/tests/test_smoke.py`; production provider depth remains incomplete. |
-| MVP-1 | System 1 builds validated runtime SQLite/FTS5/FAISS artifacts for System 2 | yes | yes | no | no | partial | The debug/mock path builds and validates `app.sqlite`, FTS5, visual index, vector map, and smoke report; production-scale/provider proof remains open. |
+| MVP-0.5 | App-ready Data Contract defines video-plus-optional-metadata input, canonical IDs/refs, bilingual evidence, SQLite/FTS5, separate SigLIP/BEiT3 FAISS boundaries, and validation rules | yes | yes | no | no | implemented | `docs/architecture/data-contracts.md`, `docs/architecture/system1-notebook01-production-pipeline.md`, and focused schema tests in `system1/tests/test_table_schema_validation.py` |
+| MVP-0.6 | System 1 builds app-ready seed artifacts from official videos and optional metadata while generating its own derived evidence | yes | yes | no | no | partial | Debug/mock CLI integration and the bilingual caption/summary schema are covered in `system1/tests/test_smoke.py`; production TransNet/faster-whisper/Gemini providers remain incomplete. |
+| MVP-1 | System 1 builds validated runtime SQLite/FTS5/FAISS artifacts for System 2 | yes | yes | no | no | partial | The debug/mock path builds and validates `app.sqlite`, FTS5, one legacy debug visual index, vector map, and smoke report. The accepted production SigLIP/BEiT3 dual-index path remains unimplemented. |
 | MVP-2 | Backend API vertical slice reads System 1 app-ready artifacts and returns keyframe-first payloads | no | no | no | no | planned | backend scaffold only |
 | MVP-3 | One React/Vite SPA provides keyframe-first query and inspection workflow | no | no | no | no | planned | frontend scaffold only |
 | MVP-4 | FAISS visual retrieval returns ranked keyframe results through FastAPI | no | no | no | no | planned | future System 2 work |
@@ -33,9 +33,9 @@ SQLite Harness database.
 | MVP-7 | Query Session workspace and candidate basket support team use | no | no | no | no | planned | future System 2 work |
 | MVP-8 | Submission helper supports editable drafts, history, and a configurable organizer API adapter | no | no | no | no | planned | future System 2 work |
 | MVP-9 | Agent v0 uses the same retrieval/evidence APIs and result model | no | no | no | no | planned | future System 2 work |
-| SYS1-001 | Vision embedding notebook pipeline produces shard-safe visual embeddings | no | no | no | no | planned | production feature workflow remains planned |
-| SYS1-002 | OCR and metadata notebook pipeline produces shard-safe outputs | no | no | no | no | planned | production feature workflow remains planned |
-| SYS1-003 | Audio transcription notebook pipeline produces ASR time-range outputs | no | no | no | no | planned | production provider remains unfinished |
+| SYS1-001 | Vision embedding notebook pipeline produces shard-safe separate SigLIP and BEiT3 embeddings | no | no | no | no | planned | production dual-index feature workflow remains planned |
+| SYS1-002 | Gemini OCR and optional metadata normalization produce shard-safe outputs | no | no | no | no | planned | production feature workflow remains planned |
+| SYS1-003 | Notebook 01 faster-whisper large-v3 produces ASR time/frame-range outputs with auto language and VAD | no | no | no | no | planned | production provider remains unfinished |
 | SYS1-004 | Aggregation produces validated SQLite, FTS5, FAISS, vector mapping, and capability artifacts | yes | yes | no | no | partial | Debug/mock merge, build, validate, and smoke path is covered in `system1/tests/test_smoke.py`. |
 | SYS1-HR-001 | Notebook 00 Drive shadow, archive standardization, and raw upload hardening | yes | yes | no | yes | implemented | `docs/stories/system1/SYS1-HR-001-production-safe-notebook00/validation.md` |
 | SYS2-001 | FastAPI runtime scaffold exposes core retrieval endpoints | no | no | no | no | planned | backend scaffold only |

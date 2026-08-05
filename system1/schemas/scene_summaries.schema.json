@@ -5,7 +5,14 @@
   "required": [
     "scene_id",
     "video_id",
-    "summary"
+    "summary_vi",
+    "summary_en",
+    "provider",
+    "model_name",
+    "model_version",
+    "prompt_version",
+    "schema_version",
+    "status"
   ],
   "properties": {
     "scene_id": {
@@ -17,14 +24,13 @@
         "null"
       ]
     },
-    "summary": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
+    "summary_vi": {
+      "type": ["string"],
+      "minLength": 1
+    },
+    "summary_en": {
+      "type": ["string"],
+      "minLength": 1
     },
     "video_id": {
       "type": [
@@ -34,6 +40,27 @@
         "boolean",
         "null"
       ]
+    },
+    "provider": {
+      "type": ["string"]
+    },
+    "model_name": {
+      "type": ["string"]
+    },
+    "model_version": {
+      "type": ["string"]
+    },
+    "prompt_version": {
+      "type": ["string"]
+    },
+    "schema_version": {
+      "type": ["string"]
+    },
+    "confidence": {
+      "type": ["number", "null"]
+    },
+    "status": {
+      "type": ["string"]
     }
   },
   "additionalProperties": true

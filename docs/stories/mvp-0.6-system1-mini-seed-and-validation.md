@@ -12,8 +12,7 @@ normal
 
 Create the smallest executable System 1 slice that proves the app-ready data
 contract can be built from real organizer-style inputs: official raw `.mp4`
-videos plus available metadata/support artifacts mapped by `video_id` and
-`frame_id` where applicable.
+videos plus optional metadata mapped by `video_id`.
 
 This story does not build the full competition pipeline. It creates a tiny
 seed path that proves the repo can discover inputs, assign stable IDs, generate
@@ -32,22 +31,21 @@ emit a validation report that System 2 can trust.
 
 ### Ticket 1 — Tiny Seed Dataset Layout
 
-Goal: define a tiny seed input layout using 1-2 raw videos plus available
-metadata/support artifacts.
+Goal: define a tiny seed input layout using 1-2 raw videos plus optional
+metadata.
 
 Scope:
 
 - Choose or document the fixture location.
 - Keep raw media out of the repo unless intentionally tiny.
-- Record expected folder names for raw videos, metadata, and support artifacts.
+- Record expected folder names for raw videos and metadata.
 
 Acceptance criteria:
 
-- Raw video, metadata, and support artifact roots are configurable.
+- Raw video and metadata roots are configurable.
 - Each video fixture uses the filename stem as `video_id`.
-- Duplicate video stems and support artifacts that cannot map to known
-  `video_id` / `frame_id` are treated as validation errors or excluded with
-  warnings according to the app-ready contract.
+- Duplicate video stems fail validation; unmatched metadata is reported without
+  removing the video.
 
 ### Ticket 2 — Pairing And Manifest Builder
 
@@ -103,7 +101,8 @@ Scope:
 Acceptance criteria:
 
 - Keyframe extraction in MVP stable mode depends on raw video + shots + keyframe config, not scene heuristics.
-- If shot detection is unavailable for the seed path, a fallback full-video shot is emitted with degraded status.
+- Debug/mock fixtures may emit an explicitly non-production fallback shot;
+  production TransNet V2 failures fail the video.
 - `keyframe_ref` and `thumbnail_ref` resolve through the media store.
 
 ### Ticket 5 — Minimal App-ready SQLite And Vector Map Fixture
@@ -144,10 +143,10 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 - A tiny official-source seed dataset path exists or is documented as an operator-provided input.
-- System 1 mini can build app-ready seed artifacts from raw video, metadata, and support artifact roots.
+- System 1 mini can build app-ready seed artifacts from raw video and optional metadata roots.
 - Generated `app.sqlite` contains canonical IDs, logical refs, minimal FTS5/text evidence, `vector_map`, and `feature_availability`.
-- Validation report proves video identity, optional support-artifact mapping,
-  refs, frame metadata, vector map, and SQLite path safety.
+- Validation report proves video identity, refs, frame metadata, vector map, and
+  SQLite path safety.
 - The story leaves full dataset ingestion, advanced OCR/ASR/caption quality, and full FAISS scale to later stories.
 
 ## Design Notes

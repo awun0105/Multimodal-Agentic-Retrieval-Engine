@@ -33,9 +33,10 @@ Batch 1 includes:
 
 The official dataset includes videos as the base media source. Keyframes,
 objects, CLIP features, and metadata are support artifacts for solution
-building. System 1 may import them as evidence after validating mapping and
-provenance, and may also generate better or additional app-ready artifacts from
-the videos when that improves retrieval.
+building. Project policy is stricter than organizer availability: per ADR 0015,
+System 1 does not import organizer keyframes, objects, CLIP features,
+map-keyframes, or media-info. It consumes official videos and optional metadata
+and regenerates all derived app-ready evidence.
 
 Metadata is useful evidence when present. Missing metadata must not exclude a
 video from the app-ready dataset if the video identity and frame mapping are

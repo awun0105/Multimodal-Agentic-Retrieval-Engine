@@ -5,10 +5,16 @@
   "required": [
     "scene_id",
     "video_id",
+    "start_shot_id",
+    "end_shot_id",
     "start_frame",
     "end_frame",
     "start_sec",
-    "end_sec"
+    "end_sec",
+    "shot_count",
+    "grouping_method",
+    "grouping_version",
+    "status"
   ],
   "properties": {
     "scene_id": {

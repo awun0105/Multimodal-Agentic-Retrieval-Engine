@@ -11,7 +11,7 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 
 - SQLite runtime DB
 - FTS5 tables
-- FAISS index
+- separate SigLIP and BEiT3 FAISS indexes
 - `vector_map`
 - `feature_availability`
 - `release_capabilities`
@@ -37,7 +37,7 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 - write `vector_map`
 - write `feature_availability`
 - write `release_capabilities`
-- write FAISS index + `index_version.json`
+- write `siglip.faiss`, `beit3.faiss`, and shared `index_version.json`
 
 ### C. Full validation
 
@@ -55,14 +55,14 @@ Merge các output trung gian của System 1 thành bộ app-ready artifacts chí
 2. Merge modality outputs into canonical tables
 3. Write runtime SQLite artifacts
 4. Build FTS5 tables
-5. Build FAISS index and manifest
+5. Build both FAISS indexes and their shared manifest
 6. Write vector_map
 7. Write feature availability and release capability tables
 8. Emit full validation report
 
 ## Done Criteria
 
-1. Có bộ app-ready artifacts hoàn chỉnh từ official videos và metadata/support artifacts hữu ích đã validate.
+1. Có bộ app-ready artifacts hoàn chỉnh do System 1 sinh từ official videos và optional metadata.
 2. Validation report pass.
 3. Team có thể trỏ System 2 vào artifact thật.
 4. Không cần mock dataset để bắt đầu backend/UI nữa.

@@ -6,21 +6,19 @@ Canonical for offline preprocessing. System 1 produces the app-ready contract in
 
 ## Responsibility
 
-System 1 is required because organizer input is not app-ready runtime data. For
-the preliminary Batch 1 profile, the official videos are the base media source
-and the organizer also provides support artifacts such as keyframes, objects,
-CLIP features, media-info, map-keyframes, and metadata when available. System 1
-converts official videos, useful validated support artifacts, and
-project-generated signals into app-ready artifacts. System 2 reads only SQLite,
-FTS5 tables, FAISS indexes, and logical media refs produced by this system.
+System 1 is required because organizer input is not app-ready runtime data. The
+organizer provides videos, optional metadata, and baseline support artifacts,
+but the accepted project policy consumes only the videos and metadata. System 1
+regenerates every derived retrieval signal under one mapping/provenance
+contract. System 2 reads only SQLite, FTS5 tables, FAISS indexes, and logical
+media refs produced by this system.
 
 ```text
-official videos + useful validated organizer support artifacts
+official videos + optional metadata
   -> dataset registration
-  -> video identity and support-artifact mapping
+  -> video identity and decoded frame timeline
   -> media discovery
   -> optional metadata normalization
-  -> support artifact import with provenance
   -> structure artifact per video
   -> feature artifact per video
   -> merge structural + feature artifacts
@@ -36,31 +34,38 @@ official videos + useful validated organizer support artifacts
 | Stage | Required Output | Notes |
 | --- | --- | --- |
 | Dataset registration | `datasets` row and build manifest | Assign stable `dataset_id`, source version, build time, and source roots. |
-| Dataset mapping | input manifest | Use the raw video filename stem as `video_id`; fail on duplicate video stems; record missing metadata as optional evidence absence; exclude or warn on support artifacts that cannot map to a known video/frame. |
+| Dataset mapping | input manifest | Use the raw video filename stem as `video_id`; fail on duplicate video stems; record missing metadata as optional evidence absence. |
 | Media discovery | `videos`, discovered media manifest | Discover videos from configurable roots; do not hardcode personal paths or filename regexes. |
 | Metadata normalization | normalized staging tables | Preserve raw metadata when present; normalize title, author/channel, duration, publish date, keywords, description, watch URL, and thumbnail URL. Missing metadata must not remove the video. |
-| Support artifact import | organizer keyframe/object/CLIP staging tables | Import organizer keyframes, map-keyframes, media-info, object JSON, and CLIP ViT-B/32 features only after validating `video_id`, `frame_id`, vector count/order, and provenance. |
 | Video probing | probed media facts | Probe fps, duration, dimensions, codec/container facts; last-year evidence suggests 25 fps, but actual fps must be persisted per video. |
 | Timeline mapping | `frame_timeline` staging rows or equivalent mapping proof | Persist enough timing metadata to map timestamps to frame ids safely, especially for VFR or unreliable FPS metadata. |
-| Shot detection | `shots` rows | Production Phase01 standardizes on TransNet V2 as the shot-boundary provider. Package code may keep a provider interface for testability, but production notebooks should not expose multiple shot-detection modes. |
-| Keyframe extraction | `keyframes` rows and media refs | Generate one or more keyframes per shot, such as early/middle/late, and mark one representative keyframe per shot for shot captioning. Use `keyframe_id = "{video_id}:{frame_id}"`; role is metadata, not part of the ID. Prefer decoded `frame_timeline` rows for `frame_id`/timestamp mapping, with FPS math only as a marked fallback; store logical refs only. |
+| Shot detection | `shots` rows | Production Phase01 uses TransNet V2 only. A successful no-cut result is one valid full-video shot; model/inference failure after bounded retry fails the video instead of invoking a silent fallback. |
+| Keyframe extraction | `keyframes` rows and media refs | Target early/middle/late frames near 20/50/80 percent of each shot and select middle as representative unless deterministic decode/blur/black-frame checks choose early then late. Use decoded original `frame_id` and `keyframe_id = "{video_id}:{frame_id}"`; short shots emit each distinct decodable frame once rather than duplicate IDs. |
 | Thumbnail generation | `thumbnail_ref` per keyframe | Generate missing thumbnails under `${AIC_DATA_ROOT}/processed/media/thumbnails/`. |
-| Shot captioning | `shot_captions` rows | Phase01 creates exactly one canonical caption per shot from that shot's representative keyframe. All frames/keyframes in the shot inherit this caption by joining through `shot_id`; do not create per-keyframe captions as the canonical scene input. |
-| Scene construction | `scenes` rows | Scenes enrich inspection/runtime context and use consecutive shots, shot captions, ASR/transcript rows, metadata, and timeline continuity. Scene boundary must snap to shot boundary. |
-| OCR import/generation | `ocr`, `text_documents` | Preserve confidence and optional boxes when available; global text search is built later from `text_documents`. |
-| ASR import/generation | `asr_segments`, `text_documents` | ASR is required in production Phase01. It is time-range evidence on `video_id`; canonical links are shot/scene transcript links. Test/mock profiles may emit schema-valid placeholders, but production runs should fail or mark the video failed/degraded when ASR cannot be produced. |
-| Feature extraction | `embeddings_meta`, `ocr`, `objects`, `text_sources`, FAISS inputs | Phase02 extracts non-caption features only: visual embeddings, OCR, object/concept detections, and their text-source rows. It does not create canonical shot captions or enriched scene summaries. |
-| Object/concept import | `objects`, `text_documents` | Preserve label, score, optional box, source, and model/version. |
-| Embedding import/generation | FAISS index + `vector_map` | FAISS rows must resolve through SQLite before returning results. |
+| Shot captioning | `shot_captions` rows | Gemini returns strict `caption_vi`/`caption_en` JSON for exactly one canonical row per shot from the representative keyframe. Requests are cached, retried, rate-limited, resumable, and versioned; persistent production failure fails the video. |
+| Scene construction | `scenes` rows | Production Phase01 uses `docs/architecture/system1-scene-grouping.md`. Gemini judges only adjacent-shot boundaries from ordered visual/bilingual-caption/ASR/timeline evidence; package code owns the deterministic partition and production failure is explicit. |
+| OCR generation | `ocr`, `text_documents` | Notebook 02 runs Gemini OCR on project-generated keyframes and preserves confidence/boxes when returned. |
+| ASR generation | `asr_segments`, `text_documents` | Notebook 01 uses faster-whisper large-v3 with automatic language and VAD. `no_audio`/`no_speech` produce empty schema-valid tables; extraction/inference failure after bounded retry fails the video. |
+| Feature extraction | `embeddings_meta`, `ocr`, `objects`, `text_sources`, FAISS inputs | Phase02 runs Gemini OCR, configured object detection, and project-generated SigLIP/BEiT3 embeddings. It does not create canonical captions or scene summaries. |
+| Object/concept generation | `objects`, `text_documents` | Generate on project keyframes and preserve label, score, optional box, source, and exact model/version. |
+| Embedding generation | separate SigLIP and BEiT3 FAISS indexes + shared `vector_map` | Use separate `index_name` values/files and resolve every row through SQLite before returning results. |
 | Validation | validation report and failure status | App-ready build is usable only when required checks pass. |
 
 Notebook 01 / phase01 workers should reuse phase00 probe facts from
 `tables/videos.parquet`, `raw_mapping/media_store_manifest.parquet`, and
-`frame_timeline/{video_id}.parquet` when available. Phase01 may verify or stage
+`frame_timeline/{video_id}.parquet`. Phase01 may verify or stage
 the current video when needed, but it should not re-probe every video or copy
-the full raw dataset into worker runtime storage. When a decoded timeline is
-missing, the structure artifact should carry a degraded/warning status rather
-than silently deriving exact frame ids in notebook code.
+the full raw dataset into worker runtime storage. A missing decoded timeline
+fails that production video rather than silently deriving exact frame IDs in
+notebook code. Explicit estimated/degraded mapping remains debug/test-only.
+
+Scene grouping runs only after shots, representative/optional early/late
+keyframes, canonical shot captions, ASR segments, and shot-transcript links
+exist. It writes `scenes.parquet`, backfills `shots.scene_id` and
+`keyframes.scene_id`, then builds scene-transcript links and bilingual scene
+summaries. OCR, objects, and embeddings remain Phase02 outputs and are not
+canonical scene-grouping inputs. The complete Phase01 production contract is
+`docs/architecture/system1-notebook01-production-pipeline.md`.
 
 ## CLI Contract
 
@@ -71,10 +76,6 @@ aic-prepare build \
   --dataset-id aic2026 \
   --raw-video-dir ${AIC_DATA_ROOT}/raw/videos \
   --metadata-dir ${AIC_DATA_ROOT}/raw/organizer_metadata \
-  --organizer-keyframes-dir ${AIC_DATA_ROOT}/raw/organizer_keyframes \
-  --organizer-objects-dir ${AIC_DATA_ROOT}/raw/organizer_objects \
-  --organizer-clip-features-dir ${AIC_DATA_ROOT}/raw/organizer_clip_features \
-  --organizer-maps-dir ${AIC_DATA_ROOT}/raw/organizer_maps \
   --data-root ${AIC_DATA_ROOT} \
   --runtime-root ${AIC_RUNTIME_ROOT} \
   --report ${AIC_DATA_ROOT}/staging/reports/aic2026-validation.json
@@ -84,8 +85,8 @@ CLI rules:
 
 - Accept input roots and output roots as config or flags.
 - Treat the raw video stem as canonical `video_id` after uniqueness validation.
-- Treat organizer support artifact roots as optional inputs that must validate
-  before they become app-ready evidence.
+- Do not accept organizer keyframe/object/CLIP/map/media-info roots as
+  production evidence inputs.
 - Do not derive `video_id` from `watch_url`, YouTube ID, title, or channel metadata.
 - Treat `video_ref` as the canonical logical raw-video reference.
 - Treat `keyframe_ref` and `thumbnail_ref` as canonical logical refs for derived images.
@@ -106,7 +107,9 @@ ${AIC_DATA_ROOT}/staging/frame_timeline/{video_id}.parquet
 ${AIC_DATA_ROOT}/staging/staging.duckdb
 ${AIC_DATA_ROOT}/staging/reports/{dataset_id}-validation.json
 ${AIC_RUNTIME_ROOT}/db/app.sqlite
-${AIC_RUNTIME_ROOT}/indexes/visual.faiss
+${AIC_RUNTIME_ROOT}/indexes/siglip.faiss
+${AIC_RUNTIME_ROOT}/indexes/beit3.faiss
+${AIC_RUNTIME_ROOT}/indexes/vector_map.parquet
 ${AIC_RUNTIME_ROOT}/indexes/index_version.json
 ```
 
@@ -138,9 +141,10 @@ The inventory carries:
 - `frame_count`
 - `file_size_bytes`
 
-`frame_count` should come from `ffprobe -count_packets` / `nb_read_packets`
-when available. Header `nb_frames` and duration/FPS math are fallbacks, with
-math estimates marked degraded because frame IDs may drift.
+For Phase00 inventory, `frame_count` may come from `ffprobe -count_packets` /
+`nb_read_packets`; header `nb_frames` and duration/FPS math remain diagnostic
+fallbacks. They do not replace the decoded frame timeline required by
+production Notebook 01.
 
 Canonical HF ingest consumes that inventory by default and does not download
 `raw_videos/*.mp4` solely for media probing unless
@@ -156,16 +160,11 @@ AIC26_release
 ```
 
 `AIC26_raw` is the canonical raw dataset repo. It contains only standardized
-raw videos, mirrored organizer support artifacts when used, metadata when
-available, and raw-level import/inventory manifests:
+raw videos, metadata when available, and raw-level import/inventory manifests:
 
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
-AIC26_raw/canonical_raw_vXXX/organizer_keyframes/
-AIC26_raw/canonical_raw_vXXX/organizer_objects/
-AIC26_raw/canonical_raw_vXXX/organizer_clip_features/
 AIC26_raw/canonical_raw_vXXX/organizer_metadata/
-AIC26_raw/canonical_raw_vXXX/organizer_maps/
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -266,12 +265,14 @@ System 1 must prove:
 - Metadata JSON files, when present, match exactly one raw video by filename
   stem. Missing metadata is recorded as optional evidence absence and must not
   exclude a valid video.
-- Organizer support artifacts imported into the release resolve to known
-  `video_id` / `frame_id` values, or are excluded with a validation warning.
+- Organizer keyframe, object, CLIP, map-keyframes, and media-info artifacts are
+  not imported into the release.
 - Every video has probed fps; non-25 fps is reported against the planning/default expected value until current-year FPS is confirmed.
 - Every `keyframe_id` matches `"{video_id}:{frame_id}"`.
 - Every `video_ref`, `keyframe_ref`, and `thumbnail_ref` resolves through `MediaStorePort`.
-- `frame_id` uses decoded original frame index when available; fallback `timestamp * fps` mapping must be marked as estimated/degraded when it is the only available method.
+- Production `frame_id` always uses the decoded original frame index; estimated
+  `timestamp * fps` mapping is debug-only and cannot pass production release
+  validation.
 - Runtime SQLite includes `vector_map`, `feature_availability`, and enough logical refs for System 2 inspection flows.
 - Every keyframe has a thumbnail ref.
 - Every FAISS vector has a `vector_map` row.

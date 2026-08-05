@@ -5,7 +5,8 @@
   "required": [
     "document_id",
     "entity_id",
-    "normalized_text"
+    "normalized_text",
+    "language"
   ],
   "properties": {
     "document_id": {

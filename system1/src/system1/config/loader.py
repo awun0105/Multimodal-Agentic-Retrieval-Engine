@@ -15,13 +15,12 @@ class ProviderPlan:
     ocr: str
     embedding: str
     object_detection: str
-    image_caption: str
     shot_caption: str
     scene_summary: str
 
     @property
     def mode(self) -> str:
-        values = {self.asr, self.ocr, self.embedding, self.object_detection, self.image_caption, self.shot_caption, self.scene_summary}
+        values = {self.asr, self.ocr, self.embedding, self.object_detection, self.shot_caption, self.scene_summary}
         return "mock" if values == {"mock"} else "mixed"
 
 
@@ -50,7 +49,6 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             ocr="paddleocr",
             embedding="openclip",
             object_detection="yolo",
-            image_caption="blip",
             shot_caption="vlm",
             scene_summary="llm",
         )
@@ -60,7 +58,6 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             ocr=provider_defaults.get("ocr", "mock"),
             embedding=provider_defaults.get("embedding", "mock"),
             object_detection=provider_defaults.get("object_detection", "mock"),
-            image_caption=provider_defaults.get("image_caption", "mock"),
             shot_caption="rule_based",
             scene_summary="rule_based",
         )
@@ -70,7 +67,6 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             ocr=provider_defaults.get("ocr", "mock"),
             embedding=provider_defaults.get("embedding", "mock"),
             object_detection=provider_defaults.get("object_detection", "mock"),
-            image_caption=provider_defaults.get("image_caption", "mock"),
             shot_caption="vlm",
             scene_summary="llm",
         )
@@ -80,4 +76,4 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
 
 
 def _provider_keys() -> tuple[str, ...]:
-    return ("asr", "ocr", "embedding", "object_detection", "image_caption", "shot_caption", "scene_summary")
+    return ("asr", "ocr", "embedding", "object_detection", "shot_caption", "scene_summary")

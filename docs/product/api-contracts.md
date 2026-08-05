@@ -76,7 +76,8 @@ Keyframe payload:
   "keyframe_url": "/api/media/keyframe/L01_V028%3A25300",
   "video_url": "/api/media/video/L01_V028",
   "evidence_summary": {
-    "caption": "...",
+    "shot_caption": {"vi": "...", "en": "..."},
+    "scene_summary": {"vi": "...", "en": "..."},
     "ocr": ["..."],
     "asr": ["..."],
     "objects": ["person", "car"],
@@ -167,7 +168,7 @@ Response:
         "metadata": 0.15
       },
       "evidence": [
-        {"type": "caption", "text": "...", "score": 0.72, "source": "text_documents"},
+        {"type": "shot_caption", "language": "vi", "text": "...", "score": 0.72, "source": "text_documents"},
         {"type": "object", "text": "bus", "score": 0.66, "source": "text_documents"}
       ],
       "warnings": []

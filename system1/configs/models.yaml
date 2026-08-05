@@ -3,7 +3,6 @@ providers:
   ocr: mock
   embedding: mock
   object_detection: mock
-  image_caption: mock
   shot_caption: mock
   scene_summary: mock
 
@@ -22,8 +21,5 @@ real_adapters:
     enabled: false
     dependency: optional
   yolo:
-    enabled: false
-    dependency: optional
-  blip:
     enabled: false
     dependency: optional
