@@ -1,31 +1,33 @@
-# Bảng Nhận Xét & So Sánh 5 Pipeline OCR trên GPU
+# Bảng Nhận Xét & So Sánh Các Pipeline OCR trên GPU
 
-Dưới đây là bảng đánh giá chi tiết về tốc độ (Latency), độ chính xác nhận diện tiếng Việt và khả năng ứng dụng thực tế của từng mô hình sau khi chạy thực nghiệm trên GPU **NVIDIA GeForce RTX 4060 Laptop**.
+Dưới đây là bảng đánh giá chi tiết về tốc độ (Latency), độ chính xác nhận diện tiếng Việt (CER/WER) và khả năng ứng dụng thực tế của từng mô hình sau khi chạy thực nghiệm trên GPU **NVIDIA GeForce RTX 4060 Laptop**.
 
 ---
 
 ## 1. Bảng So Sánh Tổng Quan
 
-| Pipeline | Thời gian trung bình / ảnh (s) | Chất lượng Tiếng Việt | Ưu điểm | Nhược điểm | Đánh giá chung |
+| Pipeline | Thời gian trung bình (s) | Chất lượng Tiếng Việt | Ưu điểm | Nhược điểm | Đánh giá chung |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **EasyOCR** | 0.0605s | **Xuất sắc (9.5/10)** | - Nhận diện dấu Tiếng Việt rất chuẩn.<br>- Xử lý nhanh nhờ tối ưu hóa trên GPU. | - Đôi lúc nhận diện sai các ký tự rất nhỏ. | **Khuyên dùng** cho các ứng dụng thực tế cần độ chính xác cao về Tiếng Việt. |
-| **PaddleOCR Only** | **0.0386s** | Khá (7.5/10) | - Tốc độ nhanh nhất.<br>- Nhận diện biên chữ (detector) cực kỳ chính xác. | - Thường xuyên bỏ sót dấu hoặc viết sai dấu Tiếng Việt. | **Phù hợp nhất** khi cần xử lý thời gian thực (Real-time) và không quá khắt khe về dấu câu. |
-| **PaddleOCR + VietOCR** | 0.1222s | Tệ (2.0/10) | - Tách hộp chữ tốt bằng Paddle. | - Bị lỗi phân bổ trọng số checkpoint địa phương (`vgg_seq2seq`) dẫn đến sinh chuỗi lặp vô nghĩa (`001000000100`). | **Cần thay thế/huấn luyện lại** checkpoint VietOCR để hoạt động bình thường. |
+| **Vintern-1B-v3_5 (Mới)** | 0.6933s | **Xuất sắc (9.8/10)** | - **Độ chính xác Word Error Rate (WER) cao nhất (0.34)**.<br>- Hiểu ngữ cảnh câu, giữ dấu câu chuẩn xác.<br>- Xử lý đa dòng và chữ nghiêng/mờ cực tốt. | - Thời gian xử lý chậm hơn các mô hình truyền thống (0.69s). | **Khuyên dùng nhiều nhất** cho các tác vụ cần độ chính xác cao về ngữ nghĩa và đọc hiểu văn bản phức tạp. |
+| **EasyOCR** | 0.0605s | **Rất tốt (8.5/10)** | - Nhận diện dấu Tiếng Việt rất chuẩn.<br>- Tốc độ rất nhanh trên GPU (0.06s). | - Bị lỗi nếu hộp chữ quá nhỏ hoặc mờ. | **Khuyên dùng** cho ứng dụng thực tế cần cân bằng giữa tốc độ và chất lượng tiếng Việt cơ bản. |
+| **PaddleOCR Only** | **0.0386s** | Khá (7.0/10) | - Tốc độ nhanh nhất.<br>- Nhận diện biên chữ (detector) cực kỳ chính xác. | - Hay làm mất hoặc sai dấu tiếng Việt do thiếu bộ từ điển chuẩn. | **Phù hợp nhất** khi cần xử lý thời gian thực (Real-time) và không quá khắt khe về chính tả dấu câu. |
+| **PaddleOCR + VietOCR** | 0.1222s | Tệ (2.0/10) | - Phân vùng chữ tốt bằng Paddle. | - Phiên bản VietOCR (`vgg_seq2seq`) bị lỗi lặp chuỗi vô nghĩa (`001000000100`). | **Cần nâng cấp** lên VietOCR ResNet-Transformer hoặc thay thế hoàn toàn. |
 | **PaddleOCR + TrOCR** | 0.1781s | Rất tệ (1.5/10) | - Nhận diện chữ tiếng Anh tốt. | - Model gốc `trocr-base-printed` chỉ hỗ trợ Tiếng Anh nên không thể nhận diện Tiếng Việt. | **Không khuyên dùng** cho dữ liệu tiếng Việt trừ phi fine-tune lại TrOCR. |
-| **Florence-2** | 2.5993s | Rất tệ (1.0/10) | - Có thể cấu trúc hóa dữ liệu đầu ra tốt (dạng JSON/Bounding Box). | - Thời gian xử lý quá lâu.<br>- Checkpoint gốc tiếng Anh bị ảo giác (hallucination) nghiêm trọng khi gặp Tiếng Việt. | **Không phù hợp** cho bài toán OCR Tiếng Việt thông thường. |
+| **Qwen2-VL-2B-Instruct (Mới)** | 1.2546s | Tệ (3.0/10) | - Nhận diện đa ngôn ngữ tốt. | - Gặp lỗi tự chối phản hồi (refusal responses) bằng tiếng Việt.<br>- Độ trễ khá lớn (1.25s). | **Không khuyên dùng** cho tác vụ trích xuất văn bản tiếng Việt thuần túy. |
+| **Florence-2** | 2.5993s | Rất tệ (1.0/10) | - Xuất ra cấu trúc JSON hoặc Bounding Box tốt. | - Tốc độ rất chậm.<br>- Bị lỗi ảo giác (hallucination) lặp từ vô hạn khi gặp Tiếng Việt. | **Không phù hợp** cho bài toán OCR Tiếng Việt. |
 
 ---
 
 ## 2. Nhận Xét Chi Tiết & Khuyến Nghị
 
-### 🥇 Top 1: EasyOCR (Độ chính xác cao nhất)
-- **Độ chính xác Tiếng Việt:** Vượt trội so với các pipeline còn lại. Nhờ model nhận diện được tối ưu hóa cho tiếng Việt, EasyOCR khôi phục hầu như hoàn hảo các từ tiếng Việt phức tạp như `HẠ TẤNG KỸ THUẬT SỜ XẬY DỰNG TPHCM`.
-- **Tốc độ:** Với trung bình **0.0605 giây/ảnh**, EasyOCR cực kỳ tối ưu khi chạy trên GPU.
+### 🥇 Top 1 Về Chất Lượng: Vintern-1B-v3_5 (SOTA VLM)
+- **Độ chính xác Tiếng Việt:** Vượt trội hoàn toàn so với các OCR truyền thống nhờ kiến trúc Vision-Language Model. Tỉ lệ lỗi từ (WER) chỉ **0.34**, giảm **~43%** số từ bị sai so với PaddleOCR. Vintern nhận diện chính xác các đại lượng số, ký tự đặc biệt, viết hoa, và xuống dòng tự nhiên mà không bị mất ngữ nghĩa.
+- **Tốc độ:** Với trung bình **0.6933 giây/ảnh** trên GPU RTX 4060, Vintern cực kỳ lý tưởng để xử lý các tài liệu quét, keyframe chứa văn bản dài hoặc biển hiệu quảng cáo phức tạp.
 
-### ⚡ Top 2: PaddleOCR Only (Tốc độ nhanh nhất)
-- **Tốc độ:** Đạt hiệu năng ấn tượng **0.0386 giây/ảnh**, nhanh gấp 1.5 lần so với EasyOCR.
-- **Độ chính xác Tiếng Việt:** Detector PP-OCRv5 tìm vùng chữ rất nhạy, nhưng mô hình recognition mặc định bị thiếu hụt bộ từ điển tiếng Việt chuẩn nên hay làm mất dấu (ví dụ: `Ông Đ TN LONG PH GIM ĐC...`).
+### ⚡ Top 1 Về Tốc Độ: PaddleOCR Only
+- **Tốc độ:** Đạt hiệu năng ấn tượng **0.0386 giây/ảnh**, nhanh gấp 18 lần so với VLM.
+- **Ứng dụng:** Thích hợp nhất cho các bài toán nhận diện thời gian thực (Real-time) từ luồng Camera/Video trực tiếp.
 
-### ⚠️ Các Pipeline khác
-- **PaddleOCR + VietOCR:** Gặp lỗi tương thích với phiên bản Pillow 10+ (đã được sửa bằng patch `Image.ANTIALIAS`) nhưng chất lượng nhận diện của checkpoint `vgg_seq2seq` đi kèm bị suy hao nghiêm trọng (chỉ ra chuỗi số vô nghĩa).
-- **TrOCR & Florence-2:** Hoàn toàn không phù hợp cho tiếng Việt nếu không được tinh chỉnh (fine-tune) lại trên tập dữ liệu tiếng Việt. Florence-2 cũng có độ trễ rất lớn (2.6s) không phù hợp cho các luồng xử lý tốc độ cao.
+### ⚠️ Lưu ý về các mô hình lớn đa ngôn ngữ (Qwen2-VL, Florence-2)
+- Các dòng VLM đa ngôn ngữ lớn như **Qwen2-VL** hoặc **Florence-2** không được tối ưu hóa riêng cho bộ ngữ âm tiếng Việt, dẫn đến hiện tượng từ chối trích xuất (refusal) hoặc rơi vào vòng lặp vô hạn (hallucination). Không nên áp dụng trực tiếp các mô hình này trong môi trường sản phẩm (production) trừ khi có sự huấn luyện bổ sung (fine-tuning).
+
