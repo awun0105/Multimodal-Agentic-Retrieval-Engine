@@ -422,6 +422,9 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "organizer_metadata_present" in joined
             assert "probe_status" in joined
             assert "organizer_metadata_files" in joined
+            assert "legacy_progress_path" in joined
+            assert "current_latest_records" in joined
+            assert "stream_standardize_upload_progress_{raw_import_id}" in joined
 
 
 def test_canonical_inventory_match_rejects_metadata_drift():
@@ -1503,6 +1506,10 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
     assert not any(scratch_root.glob("stream_pair_*"))
     progress_records = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
     assert [record["status"] for record in progress_records] == ["pass"] * len(video_ids)
+    assert {record["raw_repo_id"] for record in progress_records} == {"org/repo"}
+    assert {record["raw_import_id"] for record in progress_records} == {
+        "canonical_dataset_v001"
+    }
     raw_pair_batches = [
         batch
         for batch in commit_batches
@@ -1516,6 +1523,58 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
             f"canonical_dataset_v001/metadata/{video_id}.json",
         )
     ]]
+
+
+def test_stream_progress_reader_filters_scope_and_keeps_latest_status(tmp_path):
+    progress_path = tmp_path / "stream_progress.jsonl"
+    records = [
+        {
+            "video_id": "A",
+            "raw_repo_id": "org/repo",
+            "raw_import_id": "canonical_raw_old",
+            "status": "failed",
+        },
+        {
+            "video_id": "A",
+            "status": "failed",
+            "inventory": {
+                "canonical_repo_id": "org/repo",
+                "canonical_prefix": "canonical_raw_v001",
+            },
+        },
+        {
+            "video_id": "A",
+            "raw_repo_id": "other/repo",
+            "raw_import_id": "canonical_raw_v001",
+            "status": "pass",
+        },
+        {
+            "video_id": "A",
+            "raw_repo_id": "org/repo",
+            "raw_import_id": "canonical_raw_v001",
+            "status": "pass",
+        },
+        {
+            "video_id": "B",
+            "raw_repo_id": "org/repo",
+            "raw_import_id": "canonical_raw_v001",
+            "status": "failed",
+        },
+    ]
+    progress_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    latest = source_importer_module._read_stream_upload_progress(
+        progress_path,
+        repo_id="org/repo",
+        raw_import_id="canonical_raw_v001",
+    )
+
+    assert set(latest) == {"A", "B"}
+    assert latest["A"]["status"] == "pass"
+    assert latest["B"]["status"] == "failed"
 
 
 def test_upload_standardized_raw_rate_limit_helpers_parse_retry_after():

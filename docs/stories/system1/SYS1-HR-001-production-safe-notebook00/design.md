@@ -75,7 +75,11 @@ tests share the same behavior.
 
 - Fails non-zero when pair scan, extraction, probe, or upload records errors.
 - Supports `--allow-partial` for manual recovery.
-- Uses `--resume` by default and appends pair progress to JSONL.
+- Uses `--resume` by default and appends pair progress to JSONL. Progress is
+  scoped by canonical HF repo plus `raw_import_id`; resume and notebook gates
+  use only the latest record per video. Notebook 00B/00C use a prefix-specific
+  progress filename and migrate matching latest records from the legacy shared
+  file when needed.
 - Uses `--overwrite` only for explicit remote replacement.
 - Rejects Google Drive paths as `--scratch-dir`.
 - Reuses `RAW_UPLOAD_BATCH_SIZE` and batched HF commits instead of committing

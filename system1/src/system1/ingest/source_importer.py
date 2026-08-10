@@ -2131,7 +2131,15 @@ def stream_standardize_upload_raw_to_hf(
         prefix="",
     )
     existing_files = {path.as_posix() for path in store.list_files("")}
-    progress_records = _read_stream_upload_progress(resolved_progress_path) if resume else {}
+    progress_records = (
+        _read_stream_upload_progress(
+            resolved_progress_path,
+            repo_id=repo_id,
+            raw_import_id=normalized_import_id,
+        )
+        if resume
+        else {}
+    )
     _validate_existing_raw_prefix_schema(
         store,
         existing_files=existing_files,
@@ -2259,6 +2267,8 @@ def stream_standardize_upload_raw_to_hf(
                 resolved_progress_path,
                 {
                     "video_id": pair.video_id,
+                    "raw_repo_id": repo_id,
+                    "raw_import_id": normalized_import_id,
                     "status": "failed",
                     "error": message,
                     "finished_at": _utc_now_iso(),
@@ -2468,7 +2478,12 @@ def _build_stream_pairing_plan(
     )
 
 
-def _read_stream_upload_progress(progress_path: Path | None) -> dict[str, dict[str, Any]]:
+def _read_stream_upload_progress(
+    progress_path: Path | None,
+    *,
+    repo_id: str,
+    raw_import_id: str,
+) -> dict[str, dict[str, Any]]:
     if progress_path is None or not progress_path.exists():
         return {}
     records: dict[str, dict[str, Any]] = {}
@@ -2476,10 +2491,30 @@ def _read_stream_upload_progress(progress_path: Path | None) -> dict[str, dict[s
         if not line.strip():
             continue
         payload = json.loads(line)
+        if not _stream_progress_matches_scope(
+            payload,
+            repo_id=repo_id,
+            raw_import_id=raw_import_id,
+        ):
+            continue
         video_id = payload.get("video_id")
         if video_id:
             records[str(video_id)] = payload
     return records
+
+
+def _stream_progress_matches_scope(
+    payload: dict[str, Any],
+    *,
+    repo_id: str,
+    raw_import_id: str,
+) -> bool:
+    inventory = payload.get("inventory")
+    if not isinstance(inventory, dict):
+        inventory = {}
+    record_repo_id = payload.get("raw_repo_id") or inventory.get("canonical_repo_id")
+    record_import_id = payload.get("raw_import_id") or inventory.get("canonical_prefix")
+    return record_repo_id == repo_id and record_import_id == raw_import_id
 
 
 def _prepare_stream_pair(
@@ -2506,6 +2541,11 @@ def _prepare_stream_pair(
         resume
         and not overwrite
         and progress_record
+        and _stream_progress_matches_scope(
+            progress_record,
+            repo_id=repo_id,
+            raw_import_id=raw_import_id,
+        )
         and progress_record.get("status") == "pass"
         and video_remote_path in existing_files
         and metadata_remote_path in existing_files
@@ -2624,6 +2664,8 @@ def _append_stream_pair_progress(progress_path: Path | None, record: dict[str, A
     metadata_item = record["metadata_item"]
     payload = {
         "video_id": record["video_id"],
+        "raw_repo_id": record["raw_repo_id"],
+        "raw_import_id": record["raw_import_id"],
         "status": status,
         "video_remote_path": video_item.remote_path,
         "metadata_remote_path": metadata_item.remote_path,

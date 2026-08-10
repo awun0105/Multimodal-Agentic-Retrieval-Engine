@@ -48,6 +48,9 @@ gates. Production decoded-timeline staging and live HF rehearsal remain pending.
   18 passed.
 - Real-file smoke: `L21_V001`, `L21_V002`, and `L21_V003` each produced valid
   schema 1.0 metadata with `probe_status=pass` on the first attempt.
+- Mixed-history progress tests verify repo/prefix isolation and latest-status
+  semantics, while Notebook 00B/00C checks require prefix-specific progress
+  files and legacy checkpoint migration.
 
 - `uv run pytest tests/test_smoke.py -q`: 37 passed.
 - `uv run pytest`: 103 passed.
