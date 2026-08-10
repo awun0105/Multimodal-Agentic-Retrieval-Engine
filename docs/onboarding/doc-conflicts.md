@@ -80,10 +80,12 @@ not move into Notebook 01 cells.
 - ADR 0016 requires one project-owned canonical metadata JSON for every video,
   whether organizer metadata exists or not.
 
-Resolved at the contract level. Notebook 00B/00C package code must preserve the
-original organizer JSON when present, probe every video with `ffprobe`, generate
-and validate the same canonical schema for every video, and retain the
-pre-generation missing/unmatched audits. Unknown organizer scalar values remain
-`null`, `keywords` remains an empty list, and organizer values must not be
-fabricated. Implementation and executable proof are still pending, so this
-resolution must not be read as current code readiness.
+Resolved at the contract level. Notebook 00B/00C package code must read
+organizer JSON when present, retain its source reference/checksum when
+available, probe every video with `ffprobe`, generate and validate the same
+canonical schema for every video, and retain the pre-generation
+missing/unmatched audits. The HF raw prefix does not contain a duplicate
+organizer metadata tree. Unknown organizer scalar values remain `null`,
+`keywords` remains an empty list, and organizer values must not be fabricated.
+Implementation and executable proof are still pending, so this resolution must
+not be read as current code readiness.

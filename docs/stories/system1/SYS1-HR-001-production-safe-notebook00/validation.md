@@ -37,7 +37,7 @@ system1/.venv/bin/system1 --help
 
 The entries below are historical proof for the existing streaming,
 disk-safety, audit, and inventory behavior. They do not prove the ADR 0016
-canonical metadata schema, organizer-source preservation, provenance
+canonical metadata schema, organizer-source reference/checksum, provenance
 propagation, or production decoded-timeline staging; those checks remain
 pending implementation.
 

@@ -37,7 +37,7 @@ official videos + optional organizer metadata
 | Dataset registration | `datasets` row and build manifest | Assign stable `dataset_id`, source version, build time, and source roots. |
 | Dataset mapping | input manifest | Use the raw video filename stem as `video_id`; fail on duplicate video stems; record missing organizer metadata before canonical metadata generation. |
 | Media discovery | `videos`, discovered media manifest | Discover videos from configurable roots; do not hardcode personal paths or filename regexes. |
-| Metadata normalization | `metadata/{video_id}.json` and normalized staging fields | Create one versioned canonical JSON per video. Preserve original organizer JSON when present; normalize the ten observed organizer fields; use null/empty values when absent; attach `ffprobe` media facts and provenance. Missing organizer metadata must not remove the video. |
+| Metadata normalization | `metadata/{video_id}.json` and normalized staging fields | Create one versioned canonical JSON per video. Normalize the ten observed organizer fields, retain source reference/checksum when available, use null/empty values when absent, and attach `ffprobe` media facts and provenance. Do not upload a duplicate organizer metadata tree. Missing organizer metadata must not remove the video. |
 | Video probing | probed media facts | Probe fps, duration, dimensions, codec/container facts; last-year evidence suggests 25 fps, but actual fps must be persisted per video. |
 | Timeline mapping | `frame_timeline` staging rows or equivalent mapping proof | Persist enough timing metadata to map timestamps to frame ids safely, especially for VFR or unreliable FPS metadata. |
 | Shot detection | `shots` rows | Production Phase01 uses TransNet V2 only. A successful no-cut result is one valid full-video shot; model/inference failure after bounded retry fails the video instead of invoking a silent fallback. |
@@ -103,7 +103,6 @@ CLI rules:
 ```text
 ${AIC_DATA_ROOT}/raw/videos/{video_id}.mp4
 ${AIC_DATA_ROOT}/raw/metadata/{video_id}.json
-${AIC_DATA_ROOT}/raw/organizer_metadata/{video_id}.json  # when provided
 ${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg
 ${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp
 ${AIC_DATA_ROOT}/staging/frame_timeline/{video_id}.parquet
@@ -138,7 +137,6 @@ The inventory carries:
 - `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path` for the required canonical JSON
-- nullable `canonical_organizer_metadata_path`
 - `organizer_metadata_present`
 - `metadata_generated`
 - `duration_sec`
@@ -170,13 +168,12 @@ AIC26_release
 ```
 
 `AIC26_raw` is the canonical raw dataset repo. It contains only standardized
-raw videos, one canonical metadata JSON per video, original organizer metadata
-when available, and raw-level import/inventory manifests:
+raw videos, one canonical metadata JSON per video, and raw-level
+import/inventory manifests:
 
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
 AIC26_raw/canonical_raw_vXXX/metadata/
-AIC26_raw/canonical_raw_vXXX/organizer_metadata/
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -275,8 +272,9 @@ System 1 must prove:
 - Every raw video has a unique canonical `video_id` derived from its filename
   stem.
 - Every raw video has one schema-valid `metadata/{video_id}.json`.
-- Original organizer JSON, when present, matches exactly one video, is
-  preserved, and sets `organizer_metadata_present=true`.
+- Organizer JSON, when present in source storage, matches exactly one video,
+  sets `organizer_metadata_present=true`, and contributes a source
+  reference/checksum when available without being copied to a second HF tree.
 - Missing organizer metadata is audited before canonical generation; its
   canonical organizer fields are null/empty and it remains a valid video.
 - Canonical metadata and inventory provenance/probe fields agree.

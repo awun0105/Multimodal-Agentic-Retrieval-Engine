@@ -24,10 +24,11 @@ to `AIC26_release`. Notebook 00C uses the same HF raw ingest/release sync shape
 from a local downloaded zip folder without Google Drive.
 
 The streaming workflow must create one schema-valid canonical metadata JSON for
-every video. Organizer metadata is optional input evidence and is preserved when
-present; missing organizer fields remain null/empty while `ffprobe` supplies
-technical media facts. The pre-generation missing-organizer audit and metadata
-provenance flags survive raw upload and Phase00 ingest.
+every video. Organizer metadata is optional input evidence; its source
+reference/checksum is retained when available, but its JSON is not copied into
+a second HF tree. Missing organizer fields remain null/empty while `ffprobe`
+supplies technical media facts. The pre-generation missing-organizer audit and
+metadata provenance flags survive raw upload and Phase00 ingest.
 
 ## Affected Users
 

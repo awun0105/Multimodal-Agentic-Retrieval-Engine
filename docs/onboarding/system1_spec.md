@@ -1693,7 +1693,6 @@ include_faiss: true
 ```text
 raw_videos/
 metadata/
-organizer_metadata/  # optional preserved source JSON
 ```
 
 ## Steps
@@ -1706,8 +1705,8 @@ organizer_metadata/  # optional preserved source JSON
 5. Record missing/unmatched organizer metadata before canonical generation.
 6. Run ffprobe for duration, FPS, dimensions, packet/frame count, and VFR facts.
 7. Create and validate one versioned `metadata/{video_id}.json` for every video.
-8. Preserve original organizer JSON when present; use null/empty canonical
-   organizer fields when absent.
+8. Record the organizer source reference/checksum when available; do not upload
+   a duplicate organizer JSON tree. Use null/empty organizer fields when absent.
 9. Create canonical_video_inventory.parquet from the same normalized records.
 10. Create videos.parquet.
 11. Stage/decode one production video at a time to create frame_timeline/{video_id}.parquet, then clean the bounded stage.

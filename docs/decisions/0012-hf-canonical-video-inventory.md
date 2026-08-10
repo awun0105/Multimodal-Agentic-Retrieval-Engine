@@ -34,7 +34,6 @@ metadata. The inventory includes:
 - `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path`
-- `canonical_organizer_metadata_path`
 - `organizer_metadata_present`
 - `metadata_generated`
 - `duration_sec`

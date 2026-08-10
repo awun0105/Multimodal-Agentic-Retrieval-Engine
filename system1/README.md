@@ -40,7 +40,7 @@ Primary shared storage uses exactly two Hugging Face Dataset repos:
 ```text
 AIC26_raw
   canonical raw dataset repo: raw_videos/, required canonical metadata/,
-  optional original organizer_metadata/, raw-level manifests and audits
+  raw-level manifests and audits; no duplicate organizer_metadata/ tree
   canonical_raw_vXXX/manifests/missing_metadata.json
   canonical_raw_vXXX/manifests/unmatched_metadata.json
 

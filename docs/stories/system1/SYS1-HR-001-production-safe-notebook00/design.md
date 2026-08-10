@@ -85,8 +85,8 @@ tests share the same behavior.
   `--cleanup-every-gb`.
 - Creates and validates `metadata/{video_id}.json` for every video using ADR
   0016; it never fabricates organizer title/channel/URL values.
-- Preserves original organizer JSON when present and records its absence before
-  canonical generation.
+- Records organizer source reference/checksum when available and its absence
+  before canonical generation; it does not upload a duplicate organizer JSON.
 
 ## Data Model
 

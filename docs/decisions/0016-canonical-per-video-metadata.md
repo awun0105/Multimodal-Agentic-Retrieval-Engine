@@ -27,12 +27,12 @@ required for every canonical raw video. Before upload, Notebook 00B/00C package
 code must:
 
 1. derive `video_id` from the video filename stem;
-2. preserve the original organizer JSON when it exists;
+2. read organizer JSON when it exists and record its source reference and
+   checksum when available;
 3. probe the video with `ffprobe`;
 4. create `metadata/{video_id}.json` using one versioned canonical schema;
 5. validate the canonical JSON and inventory projection; and
-6. upload the video, canonical metadata, original organizer metadata when
-   present, and raw audit manifests.
+6. upload the video, canonical metadata, and raw audit manifests.
 
 The canonical JSON always contains:
 
@@ -62,7 +62,8 @@ The canonical JSON always contains:
     "is_vfr": false
   },
   "provenance": {
-    "organizer_metadata_source": "organizer_metadata/L21_V001.json",
+    "organizer_metadata_source_ref": "source-archive.zip::metadata/L21_V001.json",
+    "organizer_metadata_sha256": "8b7f6e5d4c3b2a190817263544332211ffeeddccbbaa99887766554433221100",
     "technical_metadata_source": "ffprobe",
     "metadata_generated": false
   }
@@ -72,8 +73,11 @@ The canonical JSON always contains:
 All organizer fields are present in every canonical JSON. Unknown scalar
 values use JSON `null`; `keywords` uses an empty array. The package must not use
 `video_id` as a fabricated title or use a ZIP/source path as `watch_url`.
-`publish_date` is normalized to ISO `YYYY-MM-DD`. The original organizer JSON
-is preserved separately so normalization never destroys source evidence.
+`publish_date` is normalized to ISO `YYYY-MM-DD`. The canonical HF raw prefix
+does not copy the organizer JSON into a second metadata tree. The original
+archive/file remains in operator-retained source storage; provenance keeps its
+source reference and checksum when available. Both provenance values are
+`null` when no organizer metadata exists.
 
 Organizer `length` and probed `media.duration_sec` remain separate because the
 organizer value is integer seconds while `ffprobe` may provide a more precise
@@ -122,8 +126,11 @@ Positive:
 
 Tradeoffs:
 
-- Raw storage includes a small canonical JSON for every video and preserves
-  organizer JSON separately when present.
+- Raw storage includes only one small canonical JSON per video, without a
+  duplicate `organizer_metadata/` tree.
+- Exact re-normalization still depends on retaining the original organizer
+  archive/file in source storage; the canonical record keeps its reference and
+  checksum when available.
 - Upload, HF ingest, schemas, tests, and notebook validation gates must migrate
   together.
 - Existing raw prefixes remain historical snapshots and are not silently

@@ -103,7 +103,8 @@ Required project-owned raw output:
 - `metadata/{video_id}.json` for every video, normalized from the ten observed
   organizer fields plus `ffprobe` media facts and provenance according to ADR
   0016
-- preserved original organizer JSON when present
+- organizer source archive/member reference and checksum when available; no
+  duplicate organizer metadata tree in the HF raw prefix
 - pre-generation missing/unmatched organizer metadata audit manifests
 
 Explicitly unused organizer support material:

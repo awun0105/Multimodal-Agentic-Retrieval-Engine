@@ -103,8 +103,9 @@ Out of scope:
 - [x] Accept the video-plus-optional-metadata source policy and production
   Notebook 01/02 provider contract in ADR 0015.
 - [x] Accept canonical per-video metadata for Notebook 00B/00C in ADR 0016:
-  preserve optional organizer JSON, normalize a required canonical JSON with
-  `ffprobe` facts and provenance, and retain the pre-generation missing audit.
+  normalize a required canonical JSON with `ffprobe` facts and provenance,
+  retain source reference/checksum when available, avoid a duplicate organizer
+  metadata tree, and retain the pre-generation missing audit.
 - [x] Migrate canonical caption/summary schemas and debug compatibility rows to
   one bilingual row per shot/scene; retain and validate both transcript-link
   tables; retire `image_captions`.
@@ -147,8 +148,9 @@ Out of scope:
 - 2026-08-10: Notebook 00B/00C are the primary large-dataset ingestion paths.
   Organizer metadata remains optional input, but each raw video receives one
   schema-valid canonical metadata JSON. Missing organizer values are
-  null/empty, `ffprobe` supplies technical facts, source JSON is preserved, and
-  missing-organizer audit state survives generation. See ADR 0016.
+  null/empty, `ffprobe` supplies technical facts, provenance points to source
+  storage without duplicating organizer JSON on HF, and missing-organizer audit
+  state survives generation. See ADR 0016.
 
 Promote lasting product or architecture decisions into `docs/decisions/`.
 
