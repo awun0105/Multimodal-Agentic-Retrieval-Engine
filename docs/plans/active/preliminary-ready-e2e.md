@@ -109,9 +109,10 @@ Out of scope:
 - [x] Migrate canonical caption/summary schemas and debug compatibility rows to
   one bilingual row per shot/scene; retain and validate both transcript-link
   tables; retire `image_captions`.
-- [ ] Implement ADR 0016 in the package paths used by Notebook 00B/00C, update
-  notebook validation gates, propagate metadata provenance through Phase00,
-  and build production decoded timelines with bounded per-video staging.
+- [x] Implement ADR 0016 in both raw upload package paths used by Notebook
+  00B/00C, update notebook validation gates, and propagate metadata provenance
+  through canonical HF ingest and Phase00.
+- [ ] Build production decoded timelines with bounded per-video staging.
 - [ ] Implement and validate Notebook 01 production structure providers and
   multimodal scene grouping.
 - [ ] Build a competition release containing app-ready SQLite, FTS, separate
@@ -160,15 +161,19 @@ Promote lasting product or architecture decisions into `docs/decisions/`.
   caption/summary contract, and targeted searches for stale organizer-import,
   single-index, hard metadata-pairing, and canonical `temporal_search.parquet`
   requirements.
-- Integration or end-to-end proof: later System 1 seed release and System 2
+- Integration or end-to-end proof: canonical metadata has deterministic local
+  uploader/HF-ingest tests and a three-video real-file probe smoke; live HF
+  upload remains for the operator run. Later System 1 seed release and System 2
   fixture search/export rehearsal for TKIS, Q&A, and TRAKE.
 - Repository-required checks: markdown/link sanity and focused code tests when
   implementation begins.
 
 ## Result
 
-The decision/docs alignment increments are complete. Existing schema and smoke
-suites cover the earlier debug path, not the ADR 0016 canonical metadata
-contract. The overall plan remains active because Notebook 00B/00C metadata and
-timeline implementation, production Notebook 01 providers, Notebook 02
-dual-index pipeline, final release, and System 2 runtime are not complete.
+The decision/docs alignment and ADR 0016 package implementation are complete.
+Automated tests cover canonical generation, both upload paths, inventory
+agreement, HF ingest, provenance propagation, and Notebook 00B/00C gates; three
+local sample videos also pass real `ffprobe`. The overall plan remains active
+because the live HF `canonical_raw_v009` run, production decoded timeline,
+Notebook 01 providers, Notebook 02 dual-index pipeline, final release, and
+System 2 runtime are not complete.

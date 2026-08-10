@@ -59,7 +59,9 @@ The canonical JSON always contains:
     "frame_count": 31543,
     "width": 1920,
     "height": 1080,
-    "is_vfr": false
+    "is_vfr": false,
+    "probe_status": "pass",
+    "probe_attempts": 1
   },
   "provenance": {
     "organizer_metadata_source_ref": "source-archive.zip::metadata/L21_V001.json",
@@ -78,6 +80,13 @@ does not copy the organizer JSON into a second metadata tree. The original
 archive/file remains in operator-retained source storage; provenance keeps its
 source reference and checksum when available. Both provenance values are
 `null` when no organizer metadata exists.
+
+The package makes at most three `ffprobe` attempts per video, with 0.5-second
+and 1-second delays before the second and third attempts. A complete result is
+`probe_status="pass"`. If all retries are exhausted, canonical generation still
+continues with unavailable technical fields set to `null` and
+`probe_status="partial"` or `"failed"`; `probe_attempts` records the attempts.
+This keeps the video ingestible while making degraded probe evidence explicit.
 
 Organizer `length` and probed `media.duration_sec` remain separate because the
 organizer value is integer seconds while `ffprobe` may provide a more precise
@@ -138,9 +147,9 @@ Tradeoffs:
 
 ## Follow-Up
 
-- Implement the canonical metadata builder and schema in package code used by
-  `stream-standardize-upload-raw`.
-- Propagate metadata provenance through HF ingest and Phase00 tables.
-- Update Notebook 00B/00C validation cells without moving business logic into
-  the notebooks.
+- The canonical builder is implemented in both raw upload paths, and canonical
+  HF ingest validates the JSON against its inventory projection.
+- Metadata provenance is propagated through HF ingest and Phase00 tables.
+- Notebook 00B/00C validation cells enforce schema version 1.0 without moving
+  business logic into the notebooks.
 - Implement bounded Phase00 decoded-timeline staging for production runs.

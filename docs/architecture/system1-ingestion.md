@@ -137,6 +137,7 @@ The inventory carries:
 - `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path` for the required canonical JSON
+- `metadata_schema_version`
 - `organizer_metadata_present`
 - `metadata_generated`
 - `duration_sec`
@@ -146,6 +147,8 @@ The inventory carries:
 - `height`
 - `is_vfr`
 - `file_size_bytes`
+- `probe_status`
+- `probe_attempts`
 
 For Phase00 inventory, `frame_count` may come from `ffprobe -count_packets` /
 `nb_read_packets`; header `nb_frames` and duration/FPS math remain diagnostic
@@ -157,6 +160,11 @@ Canonical HF ingest consumes that inventory by default and does not download
 stage one video at a time to produce its decoded frame timeline, then clean the
 bounded staging directory. Inventory facts alone do not satisfy the Notebook 01
 exact-frame contract.
+
+Raw upload retries `ffprobe` at most three times. After exhausted retries,
+unknown technical values remain nullable and the inventory/canonical JSON carry
+matching `probe_status` and `probe_attempts`; HF ingest rejects any drift
+between the two records.
 
 ## Hugging Face Shared Storage Contract
 

@@ -34,10 +34,10 @@ SQLite Harness database.
 | MVP-8 | Submission helper supports editable drafts, history, and a configurable organizer API adapter | no | no | no | no | planned | future System 2 work |
 | MVP-9 | Agent v0 uses the same retrieval/evidence APIs and result model | no | no | no | no | planned | future System 2 work |
 | SYS1-001 | Vision embedding notebook pipeline produces shard-safe separate SigLIP and BEiT3 embeddings | no | no | no | no | planned | production dual-index feature workflow remains planned |
-| SYS1-002 | Gemini OCR and canonical per-video metadata evidence produce shard-safe outputs | no | no | no | no | planned | ADR 0016 metadata implementation and production feature workflow remain planned |
+| SYS1-002 | Gemini OCR and canonical per-video metadata evidence produce shard-safe outputs | partial | yes | no | yes | partial | Canonical per-video metadata generation and validation are covered locally; Gemini OCR and production feature output remain planned. |
 | SYS1-003 | Notebook 01 faster-whisper large-v3 produces ASR time/frame-range outputs with auto language and VAD | no | no | no | no | planned | production provider remains unfinished |
 | SYS1-004 | Aggregation produces validated SQLite, FTS5, FAISS, vector mapping, and capability artifacts | yes | yes | no | no | partial | Debug/mock merge, build, validate, and smoke path is covered in `system1/tests/test_smoke.py`. |
-| SYS1-HR-001 | Notebook 00B/00C streaming raw upload, canonical per-video metadata, Phase00 ingest, and storage safety | partial | yes | no | yes | changed | Existing streaming/disk-safety proof remains valid. ADR 0016 metadata normalization, provenance propagation, validation gates, and production decoded-timeline staging remain unimplemented. |
+| SYS1-HR-001 | Notebook 00B/00C streaming raw upload, canonical per-video metadata, Phase00 ingest, and storage safety | partial | yes | no | yes | partial | Streaming/disk safety and ADR 0016 metadata normalization, provenance propagation, inventory agreement, and notebook gates are locally covered. Live HF rehearsal and production decoded-timeline staging remain pending. |
 | SYS2-001 | FastAPI runtime scaffold exposes core retrieval endpoints | no | no | no | no | planned | backend scaffold only |
 | SYS2-002 | React/Vite runtime scaffold supports Query Session workflow | no | no | no | no | planned | frontend scaffold only |
 | SYS2-003 | FAISS runtime adapter queries vector index and resolves SQLite mappings | no | no | no | no | planned | no runtime adapter implementation |

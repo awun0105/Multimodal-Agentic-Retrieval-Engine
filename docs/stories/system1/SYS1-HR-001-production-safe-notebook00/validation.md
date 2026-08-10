@@ -35,11 +35,19 @@ system1/.venv/bin/system1 --help
 
 ## Acceptance Evidence
 
-The entries below are historical proof for the existing streaming,
-disk-safety, audit, and inventory behavior. They do not prove the ADR 0016
-canonical metadata schema, organizer-source reference/checksum, provenance
-propagation, or production decoded-timeline staging; those checks remain
-pending implementation.
+The historical entries below prove the earlier streaming, disk-safety, audit,
+and inventory behavior. Current focused tests additionally prove ADR 0016
+canonical generation, organizer-source reference/checksum, missing-organizer
+semantics, inventory agreement, provenance propagation, and Notebook 00B/00C
+gates. Production decoded-timeline staging and live HF rehearsal remain pending.
+
+- `python -m pytest tests/test_canonical_metadata.py tests/test_smoke.py -k
+  "canonical_metadata or canonical_inventory_match or
+  notebooks_are_operator_ready or upload_standardized_raw_to_hf or
+  stream_standardize_upload_raw_to_hf or ingest_from_canonical_hf_manifest"`:
+  18 passed.
+- Real-file smoke: `L21_V001`, `L21_V002`, and `L21_V003` each produced valid
+  schema 1.0 metadata with `probe_status=pass` on the first attempt.
 
 - `uv run pytest tests/test_smoke.py -q`: 37 passed.
 - `uv run pytest`: 103 passed.

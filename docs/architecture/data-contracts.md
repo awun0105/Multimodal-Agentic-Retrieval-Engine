@@ -271,6 +271,7 @@ in local scratch. It must contain one row per canonical video with:
 - `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path`, always present for a valid canonical video
+- `metadata_schema_version`
 - `organizer_metadata_present`
 - `metadata_generated`
 - `duration_sec`
@@ -280,6 +281,8 @@ in local scratch. It must contain one row per canonical video with:
 - `height`
 - `is_vfr`
 - `file_size_bytes`
+- `probe_status`
+- `probe_attempts`
 
 The inventory is a batch-friendly projection of the same canonical metadata
 record. Validation requires their shared identifiers, provenance flags, and
@@ -291,6 +294,12 @@ file size. Frame count should be produced from actual packet counting
 only to repeat inventory probing. Production Phase00 may stage one video at a
 time to build the separate decoded frame timeline required by Notebook 01 and
 must clean each bounded stage afterward.
+
+The raw uploader makes at most three probe attempts with bounded retry delays.
+If probing remains incomplete, unavailable technical facts are `null` and
+`probe_status` is `partial` or `failed`; this is accepted as explicit degraded
+evidence rather than silently fabricated data. Canonical JSON and inventory
+must agree on the status, attempt count, and every projected probe field.
 
 ## Data Categories
 
