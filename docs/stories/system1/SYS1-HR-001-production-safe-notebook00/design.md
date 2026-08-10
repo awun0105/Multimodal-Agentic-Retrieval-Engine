@@ -20,9 +20,10 @@ Notebook 00A preserves the older Colab/Drive path:
 6. Required `system1 sync-phase00-ingestion` to the configured Hugging Face Dataset repo.
 
 Notebook 00B/00C are the current large-dataset streaming paths. They stream raw
-video/metadata pairs to `AIC26_raw`, then run canonical HF raw ingest to produce
-the phase00 release tables, raw mapping, frame timeline manifest, batch files,
-and reports.
+video plus optional organizer-metadata pairs, create one canonical metadata JSON
+per video, and upload them to `AIC26_raw`. Canonical HF raw ingest then produces
+the phase00 release tables, raw mapping, decoded frame timeline artifacts,
+batch files, and reports.
 
 Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
 
@@ -31,10 +32,13 @@ Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
 2. `system1 stream-standardize-upload-raw` scans zip members globally, builds
    video/metadata pairs by `video_id`, extracts pair batches bounded by
    `RAW_UPLOAD_BATCH_SIZE` files and scratch bytes into local scratch, probes
-   those local files, uploads the batch to `AIC26_raw` with the existing batched
-   HF commit helper, records per-pair progress, and deletes the batch scratch
-   directories before moving on.
-3. Canonical HF ingest reads the raw repo manifests and inventory.
+   each video, merges organizer fields when present, creates and validates
+   canonical metadata, uploads the batch to `AIC26_raw` with the existing
+   batched HF commit helper, records per-pair progress, and deletes the batch
+   scratch directories before moving on.
+3. Canonical HF ingest reads the raw repo manifests, canonical metadata, and
+   inventory. A production run stages one video at a time when needed to build
+   its decoded frame timeline and cleans the bounded stage afterward.
 4. Batch assignment and required `system1 sync-phase00-ingestion` stay the same.
 
 The streaming variant does not materialize full `raw_videos/` and `metadata/`
@@ -79,12 +83,17 @@ tests share the same behavior.
 - Reuses the same disk-safe option family as `standardize-archives`:
   `--min-free-gb`, `--drive-sync-sleep-seconds`, `--cleanup-every-files`, and
   `--cleanup-every-gb`.
+- Creates and validates `metadata/{video_id}.json` for every video using ADR
+  0016; it never fabricates organizer title/channel/URL values.
+- Preserves original organizer JSON when present and records its absence before
+  canonical generation.
 
 ## Data Model
 
 No database schema change.
 
-Reports remain JSON files:
+Reports remain JSON files, and canonical per-video metadata becomes a versioned
+JSON contract:
 
 - `drive_shadow_report.json`
 - `standardize_archives_report.json`
@@ -92,7 +101,8 @@ Reports remain JSON files:
 - `unmatched_metadata.json`
 
 `missing_metadata.json` and `unmatched_metadata.json` are produced by the
-standardized raw-video/metadata pairing audit. They are raw-level audit
+raw-video/original-organizer-metadata pairing audit before canonical metadata
+generation. They are raw-level audit
 manifests in `AIC26_raw/canonical_raw_vXXX/manifests/`. The release repo may
 also snapshot them under
 `AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
@@ -102,10 +112,12 @@ manifests rather than re-scan or download raw videos solely for pairing audit.
 `upload-standardized-raw` also writes
 `manifests/canonical_video_inventory.parquet` beside the canonical file
 manifest. The inventory carries `video_id`, canonical video/metadata paths,
-duration, detected fps, frame count, and video size. Canonical Hugging Face
-ingest must use this small inventory by default and must not download
-`raw_videos/*.mp4` for probing unless the operator explicitly enables the
-legacy fallback with `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1`.
+organizer-presence/generated flags, duration, dimensions, detected fps, frame
+count, VFR state, and video size. It is a projection of canonical metadata and
+must validate against it. Canonical Hugging Face ingest must use this small
+inventory by default and must not download `raw_videos/*.mp4` only to repeat
+probing. Bounded per-video staging for production decoded timelines is required
+separately and is cleaned after each video.
 
 `stream-standardize-upload-raw` writes the same canonical raw manifests and
 inventory while each video is present in local scratch.

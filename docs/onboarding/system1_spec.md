@@ -11,8 +11,8 @@
 ```text
 System 1 = Data Preparation / Preprocessing / Index Factory
 
-Official videos + optional metadata
-→ metadata normalization when available
+Official videos + optional organizer metadata
+→ ffprobe + canonical metadata JSON for every video
 → batch assignment
 → TransNet V2 shot detection
 → keyframes near 20%/50%/80% of each shot
@@ -1693,26 +1693,37 @@ include_faiss: true
 ```text
 raw_videos/
 metadata/
+organizer_metadata/  # optional preserved source JSON
 ```
 
 ## Steps
 
 ```text
-1. Scan raw_videos.
-2. Scan metadata JSON.
+1. Scan raw videos.
+2. Scan optional organizer metadata JSON.
 3. Extract video_id from filenames.
-4. Match video_id between video and metadata.
-5. Read metadata JSON.
-6. Run ffprobe packet/frame probe for duration, FPS, resolution, decoded frame timeline, and VFR detection.
-7. Normalize metadata fields.
-8. Create videos.parquet.
-9. Create frame_timeline/{video_id}.parquet.
-10. Create manifests/frame_timeline_manifest.parquet.
-11. Create media_store_manifest.parquet.
-12. Create master_manifest.parquet.
-13. Create dataset_report.json.
-14. Create ingestion_errors.jsonl.
+4. Match video_id between video and organizer metadata when present.
+5. Record missing/unmatched organizer metadata before canonical generation.
+6. Run ffprobe for duration, FPS, dimensions, packet/frame count, and VFR facts.
+7. Create and validate one versioned `metadata/{video_id}.json` for every video.
+8. Preserve original organizer JSON when present; use null/empty canonical
+   organizer fields when absent.
+9. Create canonical_video_inventory.parquet from the same normalized records.
+10. Create videos.parquet.
+11. Stage/decode one production video at a time to create frame_timeline/{video_id}.parquet, then clean the bounded stage.
+12. Create manifests/frame_timeline_manifest.parquet.
+13. Create media_store_manifest.parquet with organizer-presence/generated provenance flags.
+14. Create master_manifest.parquet.
+15. Create dataset_report.json.
+16. Create ingestion_errors.jsonl.
 ```
+
+Canonical metadata keeps the observed organizer fields `author`, `channel_id`,
+`channel_url`, `description`, `keywords`, `length`, `publish_date`,
+`thumbnail_url`, `title`, and `watch_url`. It adds `schema_version`, `video_id`,
+`organizer_metadata_present`, `media`, and `provenance`. Unknown scalars are
+JSON `null`; unknown keywords are `[]`. Organizer `length` is not overwritten by
+the more precise `media.duration_sec` from ffprobe. See ADR 0016.
 
 ## Output
 
@@ -3813,7 +3824,7 @@ A distributed multimedia dataset factory.
 It converts:
 
 ```text
-official videos + optional metadata
+official videos + optional organizer metadata
 ```
 
 into:

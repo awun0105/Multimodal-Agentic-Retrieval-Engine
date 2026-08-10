@@ -35,12 +35,18 @@ The official dataset includes videos as the base media source. Keyframes,
 objects, CLIP features, and metadata are support artifacts for solution
 building. Project policy is stricter than organizer availability: per ADR 0015,
 System 1 does not import organizer keyframes, objects, CLIP features,
-map-keyframes, or media-info. It consumes official videos and optional metadata
-and regenerates all derived app-ready evidence.
+map-keyframes, or media-info. It consumes official videos and optional organizer
+metadata and regenerates all derived app-ready evidence.
 
 Metadata is useful evidence when present. Missing metadata must not exclude a
 video from the app-ready dataset if the video identity and frame mapping are
 valid.
+
+Project storage normalizes this optional evidence into one canonical metadata
+JSON per video. Missing organizer fields remain null/empty and are marked with
+`organizer_metadata_present=false`; they are not fabricated. Technical media
+facts come from `ffprobe`. This is project policy from ADR 0016, not a claim
+that the organizer supplies metadata for every video.
 
 ## 3. Structural Unknowns
 

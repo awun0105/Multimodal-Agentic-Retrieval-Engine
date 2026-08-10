@@ -6,6 +6,12 @@ Date: 2026-06-27
 
 Accepted
 
+Amended by ADR 0016 on 2026-08-10: canonical metadata now exists for every
+video, the inventory carries metadata provenance and additional media facts,
+and bounded video staging is allowed when required to build the separate
+production decoded frame timeline. The prohibition below remains specific to
+downloading videos only to repeat inventory probing.
+
 ## Context
 
 The raw canonical Hugging Face Dataset stores large source videos. HF canonical
@@ -28,13 +34,21 @@ metadata. The inventory includes:
 - `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path`
+- `canonical_organizer_metadata_path`
+- `organizer_metadata_present`
+- `metadata_generated`
 - `duration_sec`
 - `fps`
 - `frame_count`
+- `width`
+- `height`
+- `is_vfr`
 - `file_size_bytes`
 
-By default, HF canonical ingest must not download `raw_videos/*.mp4` for
-probing. The legacy download/probe fallback is allowed only when
+By default, HF canonical ingest must not download `raw_videos/*.mp4` only for
+probing. Production Phase00 may stage one video at a time to build the decoded
+frame timeline required by Notebook 01 and must clean the bounded stage. The
+legacy inventory download/probe fallback is allowed only when
 `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
 
 ## Alternatives Considered
@@ -67,5 +81,5 @@ Tradeoffs:
 
 ## Follow-Up
 
-- Consider including width and height in a future inventory version if
-  downstream workflows need those fields without video download.
+- Implement and validate the ADR 0016 inventory additions together with the
+  canonical metadata builder and Phase00 provenance propagation.

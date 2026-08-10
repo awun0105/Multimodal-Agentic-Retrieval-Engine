@@ -13,9 +13,10 @@ Canonical requirement summary for the current planning phase. This file separate
 | Ranking limit | Each query may submit at most 100 answers; scoring averages best `R@k` over `k = {1, 5, 20, 50, 100}`. | Official preliminary info. |
 | TRAKE precision | TRAKE first retrieves one video, then aligns one semantic keyframe per event; answer intervals are usually very short. | Official preliminary info. |
 | Dataset input | Organizer Batch 1 provides videos plus support artifacts: keyframes, object JSON, CLIP features, map-keyframes/media-info, and YouTube metadata where available. | Official preliminary info and `batch1-downloads.csv`. |
-| Project preprocessing source policy | System 1 consumes official videos and optional metadata only; it deliberately does not import organizer keyframes, objects, CLIP, map-keyframes, or media-info and regenerates all derived evidence. | Accepted ADR 0015. |
+| Project preprocessing source policy | System 1 consumes official videos and optional organizer metadata only; it deliberately does not import organizer keyframes, objects, CLIP, map-keyframes, or media-info and regenerates all derived evidence. | Accepted ADR 0015. |
 | Video format | Raw videos are `.mp4`. | Official preliminary info examples and download package names. |
 | Metadata pairing | Metadata may be missing for some videos and is optional retrieval evidence, not a condition for including a valid video. | Official preliminary info. |
+| Canonical metadata policy | Regardless of organizer metadata availability, System 1 creates one versioned canonical metadata JSON per video from normalized organizer fields, null/empty missing values, `ffprobe` facts, and explicit provenance. | Human-confirmed project decision; ADR 0016. |
 | Canonical `video_id` | Use the raw video filename stem as canonical `video_id`; do not derive it from `watch_url` or YouTube ID. | Human-confirmed decision. |
 | Organizer support artifacts | The organizer provides keyframes, object detections, CLIP ViT-B/32 features, map-keyframes, and media-info as baseline/support material, but this project does not consume them in System 1. | Official preliminary info plus accepted ADR 0015. |
 | System 1 role | System 1 must generate and validate app-ready retrieval artifacts before System 2 depends on them. | Derived from dataset input constraints. |

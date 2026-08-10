@@ -35,6 +35,12 @@ system1/.venv/bin/system1 --help
 
 ## Acceptance Evidence
 
+The entries below are historical proof for the existing streaming,
+disk-safety, audit, and inventory behavior. They do not prove the ADR 0016
+canonical metadata schema, organizer-source preservation, provenance
+propagation, or production decoded-timeline staging; those checks remain
+pending implementation.
+
 - `uv run pytest tests/test_smoke.py -q`: 37 passed.
 - `uv run pytest`: 103 passed.
 - `jq empty system1/notebooks/00_master_ingestion_and_assignment.ipynb`: passed.

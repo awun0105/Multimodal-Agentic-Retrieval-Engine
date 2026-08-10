@@ -20,8 +20,10 @@ Notebook 02 handoff.
 
 ## Decision
 
-System 1 uses official videos and optional metadata only. It regenerates all
-derived retrieval evidence.
+System 1 uses official videos and optional organizer metadata only. It
+regenerates all derived retrieval evidence. ADR 0016 further requires one
+project-owned canonical metadata JSON per video without claiming that the
+organizer supplied metadata for every video.
 
 Production Notebook 01 uses TransNet V2, three target keyframes per normal shot
 at approximately 20/50/80 percent, faster-whisper large-v3 with automatic

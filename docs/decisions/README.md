@@ -11,6 +11,10 @@ documents here as real choices are accepted, then index them in this file.
 
 ## Recent Accepted Decisions
 
+- `0016-canonical-per-video-metadata.md`: organizer metadata remains optional,
+  but Notebook 00B/00C create one schema-valid canonical metadata JSON per
+  video from organizer fields plus `ffprobe` facts while preserving provenance
+  and the pre-generation missing-metadata audit.
 - `0014-multimodal-context-window-scene-grouping.md`: Phase01 scene boundaries
   are judged in overlapping multimodal context/focus windows while deterministic
   package code owns the final partition, IDs, ranges, validation, and explicit

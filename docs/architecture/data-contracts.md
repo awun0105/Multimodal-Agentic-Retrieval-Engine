@@ -24,9 +24,9 @@ System 1 converts raw organizer inputs into app-ready artifacts. System 2 reads 
 | DuckDB | Offline preprocessing, staging, analytics, validation |
 
 Organizer-provided files are not acceptable by themselves for runtime search,
-state, or FAISS result resolution. System 1 converts the official videos and
-optional metadata into app-ready data and regenerates all derived retrieval
-evidence.
+state, or FAISS result resolution. System 1 converts official videos and
+optional organizer metadata into app-ready data, creates canonical metadata for
+every video, and regenerates all derived retrieval evidence.
 
 ## Organizer Input Contract
 
@@ -49,8 +49,8 @@ the canonical `video_id` for this project. It does not depend on `watch_url`,
 YouTube ID, or any online identifier.
 
 The project input policy is narrower: System 1 consumes only the official videos
-and metadata where available. It does not import organizer keyframes, object
-JSON, CLIP features, media-info, or map-keyframes. System 1 regenerates
+and organizer metadata where available. It does not import organizer keyframes,
+object JSON, CLIP features, media-info, or map-keyframes. System 1 regenerates
 keyframes, objects, embeddings, timing mappings, captions, OCR, ASR, and scene
 evidence under one project-owned provenance and frame-ID contract. It also owns
 runtime SQLite, FTS5, FAISS, vector mapping, validation, and release packaging.
@@ -62,7 +62,7 @@ The repo, large data, and hot runtime artifacts are separate.
 | Root | Purpose | Notes |
 | --- | --- | --- |
 | `${REPO_ROOT}` | Source code, docs, config, schemas, small fixtures | Do not store real competition media here. |
-| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos, optional metadata, and project-generated processed media live here. |
+| `${AIC_DATA_ROOT}` | External large-data root, usually HDD | Raw videos, canonical per-video metadata, optional original organizer metadata, and project-generated processed media live here. |
 | `${AIC_RUNTIME_ROOT}` | Runtime hot artifact root, preferably SSD | SQLite, FAISS, and runtime cache live here. |
 
 ## Physical Layout
@@ -81,6 +81,7 @@ ${REPO_ROOT}/
 ${AIC_DATA_ROOT}/
   raw/
     videos/
+    metadata/
     organizer_metadata/
   processed/
     media/
@@ -116,10 +117,12 @@ AIC26_release
 ```
 
 `AIC26_raw` is the canonical raw dataset repo. It stores standardized raw
-videos, metadata when available, and raw-level inventory/import manifests only:
+videos, one canonical metadata JSON per video, original organizer metadata when
+available, and raw-level inventory/import manifests only:
 
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
+AIC26_raw/canonical_raw_vXXX/metadata/
 AIC26_raw/canonical_raw_vXXX/organizer_metadata/
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
@@ -175,6 +178,50 @@ Legacy flat layout under
 outputs must use
 `canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}`.
 
+## Canonical Per-Video Metadata
+
+Organizer metadata is optional source evidence. Canonical project metadata is
+not optional: every canonical video has exactly one
+`metadata/{video_id}.json`, produced before raw upload by the package code used
+by Notebook 00B/00C.
+
+Observed organizer JSON fields are:
+
+- `author`
+- `channel_id`
+- `channel_url`
+- `description`
+- `keywords`
+- `length`
+- `publish_date`
+- `thumbnail_url`
+- `title`
+- `watch_url`
+
+The canonical JSON contains those fields for every video plus
+`schema_version`, `video_id`, `organizer_metadata_present`, a `media` object of
+`ffprobe` facts, and a `provenance` object. Unknown organizer scalar values are
+JSON `null`; unknown keywords are `[]`. `publish_date` uses ISO `YYYY-MM-DD`.
+The package must not fabricate title/channel/URL values when organizer metadata
+is absent.
+
+Organizer `length` remains the source value in integer seconds.
+`media.duration_sec` is the independent, normally more precise, `ffprobe`
+measurement. Original organizer JSON is preserved under
+`organizer_metadata/{video_id}.json` when present. See ADR 0016 for the complete
+shape and provenance rules.
+
+`missing_metadata.json` records organizer metadata absence before canonical
+JSON generation. The existence of `metadata/{video_id}.json` must therefore not
+clear the missing-organizer audit. Downstream ingestion propagates
+`organizer_metadata_present` and `metadata_generated`; it must not infer source
+presence only from canonical file existence.
+
+For backward compatibility, `metadata_generated=true` means organizer metadata
+was absent and its canonical organizer-field section had to be filled with
+null/empty values. It does not mean that only those videos receive canonical
+JSON: the canonical JSON itself is generated for every video.
+
 ## Canonical IDs
 
 | ID | Format | Example | Notes |
@@ -224,44 +271,54 @@ in local scratch. It must contain one row per canonical video with:
 - `canonical_revision`
 - `canonical_prefix`
 - `canonical_video_path`
-- `canonical_metadata_path` when metadata exists, otherwise null with
-  `metadata_missing` recorded in raw audit manifests
+- `canonical_metadata_path`, always present for a valid canonical video
+- `canonical_organizer_metadata_path`, nullable when organizer metadata is absent
+- `organizer_metadata_present`
+- `metadata_generated`
 - `duration_sec`
 - `fps`
 - `frame_count`
+- `width`
+- `height`
+- `is_vfr`
 - `file_size_bytes`
 
-HF canonical ingest uses this inventory for duration, FPS, frame count, and
+The inventory is a batch-friendly projection of the same canonical metadata
+record. Validation requires their shared identifiers, provenance flags, and
+probe facts to agree. HF canonical ingest uses this inventory for efficient
+discovery and may reuse duration, FPS, frame count, dimensions, VFR status, and
 file size. Frame count should be produced from actual packet counting
 (`ffprobe -count_packets` / `nb_read_packets`) when possible; header
-`nb_frames` and duration/FPS math are fallbacks. It must not download
-`raw_videos/*.mp4` only to probe media unless a debug/operator fallback
-explicitly enables that behavior.
+`nb_frames` and duration/FPS math are fallbacks. It must not download videos
+only to repeat inventory probing. Production Phase00 may stage one video at a
+time to build the separate decoded frame timeline required by Notebook 01 and
+must clean each bounded stage afterward.
 
 ## Data Categories
 
 The app-ready contract covers these categories:
 
 1. Raw videos
-2. Optional video metadata JSON matched by stem when available
-3. Project-generated keyframes
-4. Thumbnails
-5. Keyframe metadata
-6. Captions
-7. OCR text and optional boxes
-8. ASR transcript segments
-9. Object/concept detections
-10. Scene/shot inspection context
-11. SigLIP and BEiT3 image embeddings
-12. Separate SigLIP and BEiT3 FAISS indexes
-13. Vector mapping
-14. Feature availability
-15. Query sessions
-16. Query clues
-17. Search runs/results
-18. Candidates
-19. Agent runs/steps
-20. Validation reports/manifests
+2. Canonical video metadata JSON, one per raw video
+3. Optional original organizer metadata JSON matched by stem when available
+4. Project-generated keyframes
+5. Thumbnails
+6. Keyframe metadata
+7. Captions
+8. OCR text and optional boxes
+9. ASR transcript segments
+10. Object/concept detections
+11. Scene/shot inspection context
+12. SigLIP and BEiT3 image embeddings
+13. Separate SigLIP and BEiT3 FAISS indexes
+14. Vector mapping
+15. Feature availability
+16. Query sessions
+17. Query clues
+18. Search runs/results
+19. Candidates
+20. Agent runs/steps
+21. Validation reports/manifests
 
 ## Runtime SQLite Schema
 
@@ -378,10 +435,14 @@ Required checks:
 
 - Every raw video has a unique canonical `video_id` derived from its filename
   stem.
-- Metadata JSON files, when present, match exactly one raw video by filename
-  stem.
-- Missing metadata is recorded as optional evidence absence and must not exclude
-  a valid video from the app-ready dataset.
+- Every raw video has exactly one schema-valid canonical metadata JSON with the
+  same filename stem.
+- Original organizer metadata, when present, matches exactly one raw video by
+  filename stem and is preserved separately.
+- Missing organizer metadata is recorded before canonical generation and must
+  not exclude a valid video from the app-ready dataset.
+- Canonical metadata and `canonical_video_inventory.parquet` agree on video ID,
+  provenance flags, and probed media facts.
 - No organizer keyframe, object, CLIP, map-keyframes, or media-info artifact is
   imported into the app-ready release.
 - No duplicate `video_id`.

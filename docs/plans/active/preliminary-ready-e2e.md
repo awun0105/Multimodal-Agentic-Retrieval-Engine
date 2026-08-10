@@ -102,9 +102,15 @@ Out of scope:
   design, canonical schema mappings, validation, caching, and failure behavior.
 - [x] Accept the video-plus-optional-metadata source policy and production
   Notebook 01/02 provider contract in ADR 0015.
+- [x] Accept canonical per-video metadata for Notebook 00B/00C in ADR 0016:
+  preserve optional organizer JSON, normalize a required canonical JSON with
+  `ffprobe` facts and provenance, and retain the pre-generation missing audit.
 - [x] Migrate canonical caption/summary schemas and debug compatibility rows to
   one bilingual row per shot/scene; retain and validate both transcript-link
   tables; retire `image_captions`.
+- [ ] Implement ADR 0016 in the package paths used by Notebook 00B/00C, update
+  notebook validation gates, propagate metadata provenance through Phase00,
+  and build production decoded timelines with bounded per-video staging.
 - [ ] Implement and validate Notebook 01 production structure providers and
   multimodal scene grouping.
 - [ ] Build a competition release containing app-ready SQLite, FTS, separate
@@ -138,6 +144,11 @@ Out of scope:
   faster-whisper large-v3, Gemini bilingual captions/grouping/summaries, and
   explicit failure after bounded retry. Notebook 02 generates Gemini OCR,
   configured objects, and separate SigLIP/BEiT3 indexes. See ADR 0015.
+- 2026-08-10: Notebook 00B/00C are the primary large-dataset ingestion paths.
+  Organizer metadata remains optional input, but each raw video receives one
+  schema-valid canonical metadata JSON. Missing organizer values are
+  null/empty, `ffprobe` supplies technical facts, source JSON is preserved, and
+  missing-organizer audit state survives generation. See ADR 0016.
 
 Promote lasting product or architecture decisions into `docs/decisions/`.
 
@@ -154,7 +165,8 @@ Promote lasting product or architecture decisions into `docs/decisions/`.
 
 ## Result
 
-The decision/docs/schema alignment increment is complete and covered by the
-System 1 schema and smoke suites. The overall plan remains active because the
-production Notebook 01 providers, Notebook 02 dual-index pipeline, final
-release, and System 2 runtime are not implemented yet.
+The decision/docs alignment increments are complete. Existing schema and smoke
+suites cover the earlier debug path, not the ADR 0016 canonical metadata
+contract. The overall plan remains active because Notebook 00B/00C metadata and
+timeline implementation, production Notebook 01 providers, Notebook 02
+dual-index pipeline, final release, and System 2 runtime are not complete.

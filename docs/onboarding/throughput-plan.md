@@ -559,7 +559,10 @@ Tổng thời gian bị kéo dài.
 
 ### 11.2. Cách làm đúng
 
-Master ingestion notebook cần scan metadata của video bằng `ffprobe` hoặc công cụ tương đương.
+Package code được Notebook 00B/00C gọi cần probe từng video bằng `ffprobe` khi
+video đang nằm trong bounded local scratch. Nó đồng thời tạo một canonical
+metadata JSON theo ADR 0016; không đặt business logic này trực tiếp trong
+notebook.
 
 Mỗi video nên có thông tin:
 
@@ -579,6 +582,13 @@ frame_timeline_ref
 file_size_bytes
 has_audio
 ```
+
+Mỗi canonical metadata JSON cũng giữ các field organizer đã quan sát:
+`author`, `channel_id`, `channel_url`, `description`, `keywords`, `length`,
+`publish_date`, `thumbnail_url`, `title`, và `watch_url`. Organizer metadata
+thiếu thì scalar dùng `null`, `keywords` dùng `[]`, và
+`organizer_metadata_present=false`. Inventory là projection của cùng record,
+không phải một cách diễn giải metadata độc lập.
 
 `frame_count` should come from `ffprobe -count_packets` / `nb_read_packets`
 when available. Header `nb_frames` is only a fallback, and `duration_sec *

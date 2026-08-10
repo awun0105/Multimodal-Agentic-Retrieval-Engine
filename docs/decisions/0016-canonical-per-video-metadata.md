@@ -1,0 +1,139 @@
+# ADR 0016: Canonical Metadata For Every Video
+
+Date: 2026-08-10
+
+## Status
+
+Accepted
+
+## Context
+
+The organizer provides YouTube metadata for some videos. The observed metadata
+shape contains `author`, `channel_id`, `channel_url`, `description`, `keywords`,
+`length`, `publish_date`, `thumbnail_url`, `title`, and `watch_url`. Other videos
+may have no organizer metadata at all.
+
+Notebook 00B and Notebook 00C are the current large-dataset ingestion paths.
+Both already have each video in bounded local scratch before raw upload, which
+is the correct point to probe media facts and construct one stable metadata
+contract. Requiring downstream stages to handle an absent metadata file would
+duplicate branching logic and can make a generated placeholder look like
+organizer-provided evidence.
+
+## Decision
+
+Organizer metadata remains optional evidence, but canonical project metadata is
+required for every canonical raw video. Before upload, Notebook 00B/00C package
+code must:
+
+1. derive `video_id` from the video filename stem;
+2. preserve the original organizer JSON when it exists;
+3. probe the video with `ffprobe`;
+4. create `metadata/{video_id}.json` using one versioned canonical schema;
+5. validate the canonical JSON and inventory projection; and
+6. upload the video, canonical metadata, original organizer metadata when
+   present, and raw audit manifests.
+
+The canonical JSON always contains:
+
+```json
+{
+  "schema_version": "1.0",
+  "video_id": "L21_V001",
+  "organizer_metadata_present": true,
+  "author": "60 Giay Official",
+  "channel_id": "UCRjzfa1E0gA50lvDQipbDMg",
+  "channel_url": "https://www.youtube.com/channel/...",
+  "description": "...",
+  "keywords": ["..."],
+  "length": 1262,
+  "publish_date": "2024-08-01",
+  "thumbnail_url": "https://i.ytimg.com/...",
+  "title": "...",
+  "watch_url": "https://youtube.com/watch?v=...",
+  "media": {
+    "filename": "L21_V001.mp4",
+    "file_size_bytes": 130322332,
+    "duration_sec": 1261.726,
+    "fps": 25.0,
+    "frame_count": 31543,
+    "width": 1920,
+    "height": 1080,
+    "is_vfr": false
+  },
+  "provenance": {
+    "organizer_metadata_source": "organizer_metadata/L21_V001.json",
+    "technical_metadata_source": "ffprobe",
+    "metadata_generated": false
+  }
+}
+```
+
+All organizer fields are present in every canonical JSON. Unknown scalar
+values use JSON `null`; `keywords` uses an empty array. The package must not use
+`video_id` as a fabricated title or use a ZIP/source path as `watch_url`.
+`publish_date` is normalized to ISO `YYYY-MM-DD`. The original organizer JSON
+is preserved separately so normalization never destroys source evidence.
+
+Organizer `length` and probed `media.duration_sec` remain separate because the
+organizer value is integer seconds while `ffprobe` may provide a more precise
+duration. `canonical_video_inventory.parquet` is a batch-friendly projection of
+the same generated record, not an independent metadata interpretation. It has
+one row per video, an always-present `canonical_metadata_path`, and explicit
+`organizer_metadata_present` and `metadata_generated` columns.
+
+`missing_metadata.json` records which videos lacked organizer metadata before
+canonical metadata generation. Creating canonical JSON must not erase or
+recompute that audit as zero. `unmatched_metadata.json` continues to record
+organizer JSON with no matching video.
+
+For backward compatibility, `metadata_generated=true` means organizer metadata
+was absent and the canonical organizer-field section was filled with null/empty
+values. The canonical JSON is still generated for every video, including rows
+where `metadata_generated=false`.
+
+Decoded frame timelines remain separate Phase00 artifacts. Inventory probe
+facts do not satisfy the production exact-frame contract. Canonical HF ingest
+may stage one video at a time to build the decoded timeline and must clean the
+bounded stage afterward; this is distinct from downloading the full raw dataset
+or downloading videos only to repeat inventory probing.
+
+## Alternatives Considered
+
+1. Keep organizer metadata optional at the file level. Rejected because every
+   downstream stage would retain missing-file branches and inconsistent shapes.
+2. Generate the current minimal placeholder. Rejected because fabricated
+   `title` and `watch_url` values can be mistaken for organizer evidence.
+3. Store only probed inventory rows. Rejected because per-video metadata is the
+   stable handoff for structure and feature workers, while the inventory is for
+   efficient bulk discovery.
+4. Decode the complete frame timeline during raw upload. Rejected as a required
+   metadata operation because it makes raw upload unnecessarily expensive;
+   Phase00 owns decoded timeline production.
+
+## Consequences
+
+Positive:
+
+- Every worker receives one predictable metadata shape per video.
+- Organizer absence remains explicit and auditable.
+- Technical facts and organizer values retain distinct provenance.
+- Notebook 00B and 00C keep their bounded streaming behavior.
+
+Tradeoffs:
+
+- Raw storage includes a small canonical JSON for every video and preserves
+  organizer JSON separately when present.
+- Upload, HF ingest, schemas, tests, and notebook validation gates must migrate
+  together.
+- Existing raw prefixes remain historical snapshots and are not silently
+  rewritten.
+
+## Follow-Up
+
+- Implement the canonical metadata builder and schema in package code used by
+  `stream-standardize-upload-raw`.
+- Propagate metadata provenance through HF ingest and Phase00 tables.
+- Update Notebook 00B/00C validation cells without moving business logic into
+  the notebooks.
+- Implement bounded Phase00 decoded-timeline staging for production runs.

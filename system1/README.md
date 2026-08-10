@@ -10,7 +10,9 @@ input/
   metadata/*.json
 ```
 
-Video and metadata are paired by filename stem.
+Video and canonical metadata are paired by filename stem. Organizer metadata is
+optional source evidence, but the Notebook 00B/00C target creates one
+schema-valid canonical metadata JSON for every video before raw upload.
 
 ## Sample input requirement
 
@@ -24,7 +26,7 @@ input/
     *.json
 ```
 
-Each video and metadata file must share the same stem, for example:
+Each video and canonical metadata file must share the same stem, for example:
 
 ```text
 input/raw_videos/L21_V001.mp4
@@ -37,8 +39,8 @@ Primary shared storage uses exactly two Hugging Face Dataset repos:
 
 ```text
 AIC26_raw
-  canonical raw dataset repo: raw_videos/, metadata/, raw-level manifests,
-  raw-level missing/unmatched audit manifests
+  canonical raw dataset repo: raw_videos/, required canonical metadata/,
+  optional original organizer_metadata/, raw-level manifests and audits
   canonical_raw_vXXX/manifests/missing_metadata.json
   canonical_raw_vXXX/manifests/unmatched_metadata.json
 
@@ -71,8 +73,12 @@ Notebook 00 workflow for Colab/local source preparation:
 ```text
 organizer Google Drive folder
   -> drive-shadow into your Drive folder
-  -> 00A: standardize-archives into input/raw_videos + input/metadata, then upload canonical raw files to AIC26_raw
-  -> 00B: stream-standardize-upload-raw extracts one zip pair at a time into local scratch and uploads canonical raw files to AIC26_raw
+  -> 00A: older full-standardization compatibility path
+  -> 00B: Colab/Drive streaming path
+  -> 00C: local-machine streaming path
+  -> stream path extracts one video/organizer-metadata pair at a time,
+     probes the video, creates canonical metadata, validates it, and uploads
+     canonical raw files to AIC26_raw
   -> ingest from AIC26_raw
   -> assign-batches
   -> upload phase00 ingestion outputs to AIC26_release/phase00_ingestion
@@ -151,6 +157,14 @@ Both commands fail non-zero when item-level errors are recorded. Existing
 matching archive outputs are skipped on rerun; use `--overwrite` only when you
 intend to replace target files. Use `--allow-partial` only for manual recovery
 when ingest should proceed despite a partial input-prep report.
+
+Canonical metadata retains the ten observed organizer fields (`author`,
+`channel_id`, `channel_url`, `description`, `keywords`, `length`,
+`publish_date`, `thumbnail_url`, `title`, and `watch_url`) plus `video_id`,
+`organizer_metadata_present`, `media` probe facts, and `provenance`. Missing
+organizer scalar values are `null`, missing keywords are `[]`, and the package
+must not fabricate a title or URL. See ADR 0016 and
+`docs/architecture/data-contracts.md` for the full contract.
 
 Fallback, use an existing standardized input directory:
 
