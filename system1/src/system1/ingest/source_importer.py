@@ -12,12 +12,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import pandas as pd
 
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
+from system1.ingest.canonical_metadata import (
+    CANONICAL_METADATA_SCHEMA_VERSION,
+    build_canonical_metadata,
+    canonical_inventory_projection,
+    write_canonical_metadata,
+)
 from system1.media.probe import VideoProbe, probe_video
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".wav"}
@@ -1729,6 +1735,11 @@ def upload_standardized_raw_to_hf(
     )
 
     existing_files = {path.as_posix() for path in store.list_files("")}
+    _validate_existing_raw_prefix_schema(
+        store,
+        existing_files=existing_files,
+        raw_import_id=normalized_import_id,
+    )
     video_files = [
         path
         for path in sorted(raw_root.iterdir())
@@ -1760,13 +1771,22 @@ def upload_standardized_raw_to_hf(
         total_files = len(video_by_stem)
         for index, video_id in enumerate(sorted(video_by_stem), start=1):
             video_path = video_by_stem[video_id]
-            metadata_path = metadata_by_stem.get(video_id)
-            generated_metadata_path: Path | None = None
-            if metadata_path is None:
-                generated_metadata_path = temp_root / "generated_metadata" / f"{video_id}.json"
-                generated_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-                _write_minimal_metadata(generated_metadata_path, video_id, str(source_root))
-                metadata_path = generated_metadata_path
+            organizer_metadata_path = metadata_by_stem.get(video_id)
+            metadata_path = temp_root / "canonical_metadata" / f"{video_id}.json"
+            organizer_source_ref = (
+                organizer_metadata_path.relative_to(source_root).as_posix()
+                if organizer_metadata_path is not None
+                else None
+            )
+            canonical_result = build_canonical_metadata(
+                video_path,
+                video_id=video_id,
+                organizer_metadata_path=organizer_metadata_path,
+                organizer_source_ref=organizer_source_ref,
+                probe_fn=_probe_video_drivefs_safe,
+            )
+            write_canonical_metadata(metadata_path, canonical_result.payload)
+            inventory_projection = canonical_inventory_projection(canonical_result.payload)
 
             video_remote_path = _raw_upload_remote_path(normalized_import_id, "raw_videos", video_path.name)
             metadata_filename = f"{video_id}.json"
@@ -1800,7 +1820,10 @@ def upload_standardized_raw_to_hf(
                     "metadata_path": metadata_remote_path,
                     "video_size_bytes": video_item.size_bytes,
                     "metadata_size_bytes": metadata_item.size_bytes,
-                    "metadata_generated": generated_metadata_path is not None,
+                    "metadata_generated": canonical_result.metadata_generated,
+                    "organizer_metadata_present": canonical_result.organizer_metadata_present,
+                    "metadata_schema_version": CANONICAL_METADATA_SCHEMA_VERSION,
+                    "inventory": inventory_projection,
                     "raw_repo_id": repo_id,
                     "raw_import_id": normalized_import_id,
                     "video_item": video_item,
@@ -1860,6 +1883,8 @@ def upload_standardized_raw_to_hf(
                 "video_size_bytes": record["video_size_bytes"],
                 "metadata_size_bytes": record["metadata_size_bytes"],
                 "metadata_generated": record["metadata_generated"],
+                "organizer_metadata_present": record["organizer_metadata_present"],
+                "metadata_schema_version": record["metadata_schema_version"],
                 "raw_repo_id": record["raw_repo_id"],
                 "raw_import_id": record["raw_import_id"],
                 "video_upload_status": video_item.status,
@@ -1884,6 +1909,12 @@ def upload_standardized_raw_to_hf(
             "revision": revision,
             "video_count": len(video_by_stem),
             "metadata_count": len(manifest_rows),
+            "metadata_schema_version": CANONICAL_METADATA_SCHEMA_VERSION,
+            "organizer_metadata_present_count": sum(
+                1 for record in pair_records if record["organizer_metadata_present"]
+            ),
+            "metadata_generated_count": sum(1 for record in pair_records if record["metadata_generated"]),
+            "probe_status_counts": _probe_status_counts(pair_records),
             "uploaded_pair_count": len([row for row in manifest_rows if row["status"] == "pass"]),
             "error_count": len(errors),
             "errors": errors,
@@ -1919,10 +1950,18 @@ def upload_standardized_raw_to_hf(
                     "canonical_prefix",
                     "canonical_video_path",
                     "canonical_metadata_path",
+                    "metadata_schema_version",
+                    "organizer_metadata_present",
+                    "metadata_generated",
                     "duration_sec",
                     "fps",
                     "frame_count",
+                    "width",
+                    "height",
+                    "is_vfr",
                     "file_size_bytes",
+                    "probe_status",
+                    "probe_attempts",
                 ],
             )
             inventory_df.to_parquet(inventory_path, index=False)
@@ -2093,6 +2132,12 @@ def stream_standardize_upload_raw_to_hf(
     )
     existing_files = {path.as_posix() for path in store.list_files("")}
     progress_records = _read_stream_upload_progress(resolved_progress_path) if resume else {}
+    _validate_existing_raw_prefix_schema(
+        store,
+        existing_files=existing_files,
+        raw_import_id=normalized_import_id,
+        progress_records=progress_records,
+    )
     errors: list[dict[str, Any]] = []
     pair_records: list[dict[str, Any]] = []
 
@@ -2244,6 +2289,12 @@ def stream_standardize_upload_raw_to_hf(
         "zip_count": plan.zip_count,
         "video_count": len(pair_records),
         "metadata_count": len(pair_records),
+        "metadata_schema_version": CANONICAL_METADATA_SCHEMA_VERSION,
+        "organizer_metadata_present_count": sum(
+            1 for record in pair_records if record["organizer_metadata_present"]
+        ),
+        "metadata_generated_count": sum(1 for record in pair_records if record["metadata_generated"]),
+        "probe_status_counts": _probe_status_counts(pair_records),
         "uploaded_pair_count": len([row for row in manifest_rows if row["status"] == "pass"]),
         "error_count": len(errors),
         "errors": errors,
@@ -2289,10 +2340,18 @@ def stream_standardize_upload_raw_to_hf(
                 "canonical_prefix",
                 "canonical_video_path",
                 "canonical_metadata_path",
+                "metadata_schema_version",
+                "organizer_metadata_present",
+                "metadata_generated",
                 "duration_sec",
                 "fps",
                 "frame_count",
+                "width",
+                "height",
+                "is_vfr",
                 "file_size_bytes",
+                "probe_status",
+                "probe_attempts",
             ],
         ).to_parquet(inventory_path, index=False)
         _write_stream_pairing_audit(
@@ -2451,6 +2510,8 @@ def _prepare_stream_pair(
         and video_remote_path in existing_files
         and metadata_remote_path in existing_files
         and isinstance(progress_record.get("inventory"), dict)
+        and progress_record["inventory"].get("metadata_schema_version")
+        == CANONICAL_METADATA_SCHEMA_VERSION
     ):
         video_item = _RawUploadItem("video", pair.video_id, Path(progress_record.get("local_video_path", pair.video.filename)), video_remote_path, index, total, int(progress_record.get("video_size_bytes") or pair.video.size_bytes), status="skipped_existing")
         metadata_item = _RawUploadItem("metadata", pair.video_id, Path(progress_record.get("local_metadata_path", metadata_filename)), metadata_remote_path, index, total, int(progress_record.get("metadata_size_bytes") or 0), status="skipped_existing")
@@ -2461,6 +2522,8 @@ def _prepare_stream_pair(
             "video_item": video_item,
             "metadata_item": metadata_item,
             "metadata_generated": bool(progress_record.get("metadata_generated")),
+            "organizer_metadata_present": bool(progress_record.get("organizer_metadata_present")),
+            "metadata_schema_version": CANONICAL_METADATA_SCHEMA_VERSION,
             "pair_root": None,
             "raw_repo_id": repo_id,
             "raw_import_id": raw_import_id,
@@ -2476,13 +2539,20 @@ def _prepare_stream_pair(
         video_path = pair_root / "raw_videos" / pair.video.filename
         metadata_path = pair_root / "metadata" / metadata_filename
         _extract_stream_member(pair.video, video_path)
-        metadata_generated = pair.metadata is None
-        if pair.metadata is None:
-            metadata_path.parent.mkdir(parents=True, exist_ok=True)
-            _write_minimal_metadata(metadata_path, pair.video_id, str(pair.video.zip_path))
-        else:
-            _extract_stream_member(pair.metadata, metadata_path)
-        probe = probe_video(video_path)
+        organizer_metadata_path = None
+        organizer_source_ref = None
+        if pair.metadata is not None:
+            organizer_metadata_path = pair_root / "source_metadata" / pair.metadata.filename
+            _extract_stream_member(pair.metadata, organizer_metadata_path)
+            organizer_source_ref = f"{pair.metadata.zip_path.name}::{pair.metadata.member_name}"
+        canonical_result = build_canonical_metadata(
+            video_path,
+            video_id=pair.video_id,
+            organizer_metadata_path=organizer_metadata_path,
+            organizer_source_ref=organizer_source_ref,
+            probe_fn=probe_video,
+        )
+        write_canonical_metadata(metadata_path, canonical_result.payload)
         video_item = _RawUploadItem("video", pair.video_id, video_path, video_remote_path, index, total, video_path.stat().st_size)
         metadata_item = _RawUploadItem("metadata", pair.video_id, metadata_path, metadata_remote_path, index, total, metadata_path.stat().st_size)
         pending = []
@@ -2505,10 +2575,7 @@ def _prepare_stream_pair(
             "canonical_prefix": raw_import_id,
             "canonical_video_path": video_remote_path,
             "canonical_metadata_path": metadata_remote_path,
-            "duration_sec": probe.duration_seconds,
-            "fps": probe.fps_detected,
-            "frame_count": probe.frame_count,
-            "file_size_bytes": video_item.size_bytes,
+            **canonical_inventory_projection(canonical_result.payload),
         }
         print(
             "[stream-standardize-upload-raw] "
@@ -2522,7 +2589,9 @@ def _prepare_stream_pair(
             "metadata_filename": metadata_filename,
             "video_item": video_item,
             "metadata_item": metadata_item,
-            "metadata_generated": metadata_generated,
+            "metadata_generated": canonical_result.metadata_generated,
+            "organizer_metadata_present": canonical_result.organizer_metadata_present,
+            "metadata_schema_version": CANONICAL_METADATA_SCHEMA_VERSION,
             "pair_root": pair_root,
             "raw_repo_id": repo_id,
             "raw_import_id": raw_import_id,
@@ -2563,6 +2632,8 @@ def _append_stream_pair_progress(progress_path: Path | None, record: dict[str, A
         "video_size_bytes": video_item.size_bytes,
         "metadata_size_bytes": metadata_item.size_bytes,
         "metadata_generated": record["metadata_generated"],
+        "organizer_metadata_present": record["organizer_metadata_present"],
+        "metadata_schema_version": record["metadata_schema_version"],
         "inventory": record["inventory"],
         "finished_at": _utc_now_iso(),
     }
@@ -2596,6 +2667,8 @@ def _stream_manifest_row(record: dict[str, Any]) -> dict[str, Any]:
         "video_size_bytes": video_item.size_bytes,
         "metadata_size_bytes": metadata_item.size_bytes,
         "metadata_generated": record["metadata_generated"],
+        "organizer_metadata_present": record["organizer_metadata_present"],
+        "metadata_schema_version": record["metadata_schema_version"],
         "raw_repo_id": record["raw_repo_id"],
         "raw_import_id": record["raw_import_id"],
         "video_upload_status": video_item.status,
@@ -2640,8 +2713,6 @@ def _raw_upload_inventory_row(
     repo_type: str,
     revision: str,
 ) -> dict[str, Any]:
-    video_item = record["video_item"]
-    probe = _probe_video_drivefs_safe(video_item.local_path)
     return {
         "video_id": record["video_id"],
         "video_filename": record["video_filename"],
@@ -2655,11 +2726,7 @@ def _raw_upload_inventory_row(
         "canonical_prefix": record["raw_import_id"],
         "canonical_video_path": record["video_path"],
         "canonical_metadata_path": record["metadata_path"],
-        "duration_sec": probe.duration_seconds,
-        "fps": probe.fps_detected,
-        "frame_count": probe.frame_count,
-        # Backward-compatible alias used by existing HF ingest readers.
-        "file_size_bytes": record["video_size_bytes"],
+        **record["inventory"],
     }
 
 
@@ -2709,6 +2776,59 @@ def _normalize_raw_import_id(raw_import_id: str) -> str:
     if any(part in {"", ".", ".."} for part in parts):
         raise ValueError(f"raw_import_id must be a relative repo prefix: {raw_import_id}")
     return "/".join(parts)
+
+
+def _validate_existing_raw_prefix_schema(
+    store: HuggingFaceDatasetArtifactStore,
+    *,
+    existing_files: set[str],
+    raw_import_id: str,
+    progress_records: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    prefix = f"{raw_import_id}/"
+    prefix_files = {path for path in existing_files if path.startswith(prefix)}
+    if not prefix_files:
+        return
+    report_remote_path = _raw_upload_remote_path(raw_import_id, "manifests", "canonical_import_report.json")
+    if report_remote_path in prefix_files:
+        with tempfile.TemporaryDirectory(prefix="system1_raw_schema_check_") as temp_dir:
+            report_path = store.download_file(report_remote_path, Path(temp_dir) / "canonical_import_report.json")
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"existing raw prefix has unreadable import report: {raw_import_id}") from exc
+        if report.get("metadata_schema_version") != CANONICAL_METADATA_SCHEMA_VERSION:
+            raise ValueError(
+                f"existing raw prefix {raw_import_id} does not use canonical metadata schema "
+                f"{CANONICAL_METADATA_SCHEMA_VERSION}; use a new raw_import_id"
+            )
+        return
+
+    metadata_paths = {
+        path for path in prefix_files if path.startswith(f"{raw_import_id}/metadata/") and path.endswith(".json")
+    }
+    progress = progress_records or {}
+    compatible_progress = bool(metadata_paths) and all(
+        isinstance(progress.get(Path(path).stem, {}).get("inventory"), dict)
+        and progress[Path(path).stem]["inventory"].get("metadata_schema_version")
+        == CANONICAL_METADATA_SCHEMA_VERSION
+        for path in metadata_paths
+    )
+    if compatible_progress:
+        return
+    raise ValueError(
+        f"existing raw prefix {raw_import_id} has files but no schema-{CANONICAL_METADATA_SCHEMA_VERSION} "
+        "import report/progress proof; use a new raw_import_id"
+    )
+
+
+def _probe_status_counts(records: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"pass": 0, "partial": 0, "failed": 0}
+    for record in records:
+        status = str(record["inventory"].get("probe_status"))
+        if status in counts:
+            counts[status] += 1
+    return counts
 
 
 def _raw_upload_remote_path(raw_import_id: str, *parts: str) -> str:

@@ -1,9 +1,9 @@
-import shutil
-import json
-import sqlite3
 import csv
 import hashlib
+import json
 import os
+import shutil
+import sqlite3
 import subprocess
 import sys
 import zipfile
@@ -11,16 +11,20 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
-from system1.commands import imports as imports_commands_module
-from system1.cli import app
 from system1.artifacts.package import validate_artifact_zip
+from system1.cli import app
+from system1.commands import imports as imports_commands_module
 from system1.config import REQUIRED_CONFIGS, load_configs, load_provider_plan
-from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs
+from system1.ingest import source_importer as source_importer_module
+from system1.ingest.discovery import (
+    discover_media_inputs_tolerant,
+    discover_paired_inputs,
+)
 from system1.ingest.source_importer import (
     DriveShadowResult,
     _hf_retry_sleep_seconds,
@@ -31,7 +35,6 @@ from system1.ingest.source_importer import (
     stream_standardize_upload_raw_to_hf,
     upload_standardized_raw_to_hf,
 )
-from system1.ingest import source_importer as source_importer_module
 from system1.media.probe import VideoProbe, VideoProbeWithTimeline
 from system1.validation.release_validator import validate_release
 
@@ -54,6 +57,93 @@ def local_phase_execution(monkeypatch):
         )
 
     monkeypatch.setattr("system1.ingest.pipeline.probe_video_with_timeline", fake_probe_with_timeline)
+
+
+def canonical_metadata_fixture(
+    video_id: str,
+    *,
+    filename: str | None = None,
+    title: str | None = "sample",
+    duration_sec: float | None = 12.5,
+    fps: float | None = 25.0,
+    frame_count: int | None = 313,
+    width: int | None = 640,
+    height: int | None = 360,
+    is_vfr: bool | None = False,
+    file_size_bytes: int = 1,
+) -> dict[str, object]:
+    probe_values = (duration_sec, fps, frame_count, width, height)
+    probe_status = (
+        "pass"
+        if all(value is not None for value in probe_values)
+        else "failed"
+        if all(value is None for value in probe_values)
+        else "partial"
+    )
+    return {
+        "schema_version": "1.0",
+        "video_id": video_id,
+        "organizer_metadata_present": True,
+        "author": None,
+        "channel_id": None,
+        "channel_url": None,
+        "description": None,
+        "keywords": [],
+        "length": None,
+        "publish_date": None,
+        "thumbnail_url": None,
+        "title": title,
+        "watch_url": None,
+        "media": {
+            "filename": filename or f"{video_id}.mp4",
+            "file_size_bytes": file_size_bytes,
+            "duration_sec": duration_sec,
+            "fps": fps,
+            "frame_count": frame_count,
+            "width": width,
+            "height": height,
+            "is_vfr": is_vfr,
+            "probe_status": probe_status,
+            "probe_attempts": 1,
+        },
+        "provenance": {
+            "organizer_metadata_source_ref": f"metadata.zip::metadata/{video_id}.json",
+            "organizer_metadata_sha256": "a" * 64,
+            "technical_metadata_source": "ffprobe",
+            "metadata_generated": False,
+        },
+    }
+
+
+def canonical_inventory_fixture(
+    video_id: str,
+    *,
+    video_path: str | None = None,
+    metadata_path: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload = metadata or canonical_metadata_fixture(video_id)
+    media = payload["media"]
+    provenance = payload["provenance"]
+    assert isinstance(media, dict)
+    assert isinstance(provenance, dict)
+    return {
+        "video_id": video_id,
+        "canonical_video_path": video_path or f"raw_videos/{video_id}.mp4",
+        "canonical_metadata_path": metadata_path or f"metadata/{video_id}.json",
+        "metadata_schema_version": payload["schema_version"],
+        "organizer_metadata_present": payload["organizer_metadata_present"],
+        "metadata_generated": provenance["metadata_generated"],
+        "duration_sec": media["duration_sec"],
+        "fps": media["fps"],
+        "frame_count": media["frame_count"],
+        "width": media["width"],
+        "height": media["height"],
+        "is_vfr": media["is_vfr"],
+        "file_size_bytes": media["file_size_bytes"],
+        "probe_status": media["probe_status"],
+        "probe_attempts": media["probe_attempts"],
+    }
 
 
 def invoke_app(command: list[str]):
@@ -325,6 +415,29 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         assert "run_cli" in joined
         for command in commands:
             assert command in joined
+        if path.name.startswith(("00B", "00C")):
+            assert "canonical_raw_v009" in joined
+            assert "system1-notebook01" in joined
+            assert "metadata_schema_version" in joined
+            assert "organizer_metadata_present" in joined
+            assert "probe_status" in joined
+            assert "organizer_metadata_files" in joined
+
+
+def test_canonical_inventory_match_rejects_metadata_drift():
+    from system1.ingest.pipeline import _validate_canonical_inventory_match
+
+    metadata = canonical_metadata_fixture("L21_V001")
+    inventory = canonical_inventory_fixture("L21_V001", metadata=metadata)
+    inventory["duration_sec"] = 999.0
+
+    with pytest.raises(ValueError, match="field=duration_sec"):
+        _validate_canonical_inventory_match(
+            metadata,
+            inventory,
+            video_remote_path="raw_videos/L21_V001.mp4",
+            metadata_remote_path="metadata/L21_V001.json",
+        )
 
 
 def test_stream_standardize_upload_raw_cli_passes_disk_safe_options(monkeypatch, tmp_path):
@@ -1071,6 +1184,11 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     commit_batches: list[list[str]] = []
 
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": [])
+    monkeypatch.setattr(
+        source_importer_module,
+        "probe_video",
+        lambda _path: VideoProbe(25.0, "test", 250, False, "test", 10.0, 640, 360, False),
+    )
 
     def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
         commit_batches.append([str(relative_path) for _source, relative_path in files])
@@ -1124,6 +1242,10 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     assert manifest_row["raw_import_id"] == "canonical_dataset_v001"
     assert manifest_row["video_path"] == "canonical_dataset_v001/raw_videos/L21_V001.mp4"
     assert manifest_row["video_upload_status"] == "uploaded"
+    canonical_metadata = json.loads(uploaded["canonical_dataset_v001/metadata/L21_V001.json"])
+    assert canonical_metadata["schema_version"] == "1.0"
+    assert canonical_metadata["organizer_metadata_present"] is True
+    assert canonical_metadata["title"] == "sample 1"
     assert set(inventory.columns) == {
         "video_id",
         "video_filename",
@@ -1137,10 +1259,18 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         "canonical_prefix",
         "canonical_video_path",
         "canonical_metadata_path",
+        "metadata_schema_version",
+        "organizer_metadata_present",
+        "metadata_generated",
         "duration_sec",
         "fps",
         "frame_count",
+        "width",
+        "height",
+        "is_vfr",
         "file_size_bytes",
+        "probe_status",
+        "probe_attempts",
     }
     sorted_inventory = inventory.sort_values("video_id")
     assert sorted_inventory["canonical_prefix"].tolist() == [
@@ -1166,7 +1296,7 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     assert "report_path=canonical_dataset_v001/manifests/canonical_import_report.json" in output
 
 
-def test_upload_standardized_raw_to_hf_skips_existing_raw_files(monkeypatch, tmp_path):
+def test_upload_standardized_raw_to_hf_rejects_existing_prefix_without_schema_proof(monkeypatch, tmp_path):
     source_root = tmp_path / "standardized"
     (source_root / "raw_videos").mkdir(parents=True)
     (source_root / "metadata").mkdir(parents=True)
@@ -1189,22 +1319,13 @@ def test_upload_standardized_raw_to_hf_skips_existing_raw_files(monkeypatch, tmp
 
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
 
-    result = upload_standardized_raw_to_hf(
-        source_root,
-        repo_id="org/repo",
-        raw_import_id="canonical_dataset_v001",
-    )
-
-    assert result.error_count == 0
-    assert "canonical_dataset_v001/raw_videos/A.mp4" not in uploaded
-    assert "canonical_dataset_v001/metadata/A.json" not in uploaded
-    assert "canonical_dataset_v001/raw_videos/B.mp4" in uploaded
-    assert "canonical_dataset_v001/metadata/B.json" in uploaded
-    assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
-    assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
-    assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
-    assert "canonical_dataset_v001/manifests/missing_metadata.json" in uploaded
-    assert "canonical_dataset_v001/manifests/unmatched_metadata.json" in uploaded
+    with pytest.raises(ValueError, match="use a new raw_import_id"):
+        upload_standardized_raw_to_hf(
+            source_root,
+            repo_id="org/repo",
+            raw_import_id="canonical_dataset_v001",
+        )
+    assert uploaded == []
 
 
 def test_upload_standardized_raw_to_hf_stages_drivefs_video_for_probe_and_upload(monkeypatch, tmp_path):
@@ -1361,7 +1482,14 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
     for video_id in video_ids:
         assert f"canonical_dataset_v001/raw_videos/{video_id}.mp4" in uploaded
         assert f"canonical_dataset_v001/metadata/{video_id}.json" in uploaded
-    assert json.loads(uploaded[f"canonical_dataset_v001/metadata/{video_ids[-1]}.json"])["metadata_missing"] is True
+    assert not any("/organizer_metadata/" in path for path in uploaded)
+    missing_canonical = json.loads(uploaded[f"canonical_dataset_v001/metadata/{video_ids[-1]}.json"])
+    assert missing_canonical["schema_version"] == "1.0"
+    assert missing_canonical["organizer_metadata_present"] is False
+    assert missing_canonical["title"] is None
+    assert missing_canonical["watch_url"] is None
+    assert missing_canonical["keywords"] == []
+    assert missing_canonical["provenance"]["metadata_generated"] is True
     assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
@@ -1898,7 +2026,14 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     (source_root / "raw_videos").mkdir(parents=True)
     (source_root / "metadata").mkdir(parents=True)
     (source_root / "raw_videos" / "L21_V001.mp4").write_bytes(b"not-a-real-video")
-    (source_root / "metadata" / "L21_V001.json").write_text('{"title":"sample"}\n', encoding="utf-8")
+    metadata_payload = canonical_metadata_fixture(
+        "L21_V001",
+        file_size_bytes=(source_root / "raw_videos" / "L21_V001.mp4").stat().st_size,
+    )
+    (source_root / "metadata" / "L21_V001.json").write_text(
+        json.dumps(metadata_payload) + "\n",
+        encoding="utf-8",
+    )
     manifest = {
         "video_id": "L21_V001",
         "video_filename": "L21_V001.mp4",
@@ -1919,19 +2054,10 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
         json.dumps({"kind": "unmatched_metadata", "count": 0, "unmatched_metadata": []}) + "\n",
         encoding="utf-8",
     )
-    pd.DataFrame(
-        [
-            {
-                "video_id": "L21_V001",
-                "canonical_video_path": "raw_videos/L21_V001.mp4",
-                "canonical_metadata_path": "metadata/L21_V001.json",
-                "duration_sec": 12.5,
-                "fps": 25.0,
-                "frame_count": 313,
-                "file_size_bytes": (source_root / "raw_videos" / "L21_V001.mp4").stat().st_size,
-            }
-        ]
-    ).to_parquet(source_root / "manifests" / "canonical_video_inventory.parquet", index=False)
+    pd.DataFrame([canonical_inventory_fixture("L21_V001", metadata=metadata_payload)]).to_parquet(
+        source_root / "manifests" / "canonical_video_inventory.parquet",
+        index=False,
+    )
     download_calls: list[str] = []
 
     class FakeHFStore:
@@ -2003,10 +2129,26 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
             "status": "pass",
         },
     ]
+    metadata_by_video_id = {
+        "L21_V001": canonical_metadata_fixture(
+            "L21_V001",
+            duration_sec=10.0,
+            fps=25.0,
+            frame_count=250,
+            file_size_bytes=len(b"not-a-real-video"),
+        ),
+        "L21_V002": canonical_metadata_fixture(
+            "L21_V002",
+            duration_sec=20.0,
+            fps=30.0,
+            frame_count=600,
+            file_size_bytes=len(b"not-a-real-video"),
+        ),
+    }
     for row in rows:
         (prefixed_root / "raw_videos" / row["video_filename"]).write_bytes(b"not-a-real-video")
         (prefixed_root / "metadata" / row["metadata_filename"]).write_text(
-            json.dumps({"title": row["video_id"]}) + "\n",
+            json.dumps(metadata_by_video_id[row["video_id"]]) + "\n",
             encoding="utf-8",
         )
     (prefixed_root / "manifests").mkdir()
@@ -2016,24 +2158,16 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
     )
     pd.DataFrame(
         [
-            {
-                "video_id": "L21_V001",
-                "canonical_video_path": f"{prefix}/raw_videos/L21_V001.mp4",
-                "canonical_metadata_path": f"{prefix}/metadata/L21_V001.json",
-                "duration_sec": 10.0,
-                "fps": 25.0,
-                "frame_count": 250,
-                "file_size_bytes": 1,
-            },
-            {
-                "video_id": "L21_V002",
-                "canonical_video_path": "raw_videos/L21_V002.mp4",
-                "canonical_metadata_path": "metadata/L21_V002.json",
-                "duration_sec": 20.0,
-                "fps": 30.0,
-                "frame_count": 600,
-                "file_size_bytes": 1,
-            },
+            canonical_inventory_fixture(
+                "L21_V001",
+                video_path=f"{prefix}/raw_videos/L21_V001.mp4",
+                metadata_path=f"{prefix}/metadata/L21_V001.json",
+                metadata=metadata_by_video_id["L21_V001"],
+            ),
+            canonical_inventory_fixture(
+                "L21_V002",
+                metadata=metadata_by_video_id["L21_V002"],
+            ),
         ]
     ).to_parquet(prefixed_root / "manifests" / "canonical_video_inventory.parquet", index=False)
     download_calls: list[str] = []
@@ -2086,6 +2220,10 @@ def test_ingest_from_canonical_hf_manifest_requires_inventory_unless_fallback_en
         "metadata_path": "metadata/L21_V001.json",
         "status": "pass",
     }
+    metadata_payload = canonical_metadata_fixture(
+        "L21_V001",
+        file_size_bytes=len(b"not-a-real-video"),
+    )
     download_calls: list[str] = []
 
     class FakeHFStore:
@@ -2099,8 +2237,10 @@ def test_ingest_from_canonical_hf_manifest_requires_inventory_unless_fallback_en
             target.parent.mkdir(parents=True, exist_ok=True)
             if str(relative_path).endswith("canonical_file_manifest.jsonl"):
                 target.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+            elif str(relative_path) == "metadata/L21_V001.json":
+                target.write_text(json.dumps(metadata_payload) + "\n", encoding="utf-8")
             elif str(relative_path).endswith(".json"):
-                target.write_text('{"title":"sample"}\n', encoding="utf-8")
+                target.write_text('{"count":0}\n', encoding="utf-8")
             else:
                 target.write_bytes(b"not-a-real-video")
             return target
@@ -2144,6 +2284,13 @@ def test_ingest_from_canonical_hf_manifest_cleans_staging_and_cache(monkeypatch,
         "metadata_path": "metadata/L21_V001.json",
         "status": "pass",
     }
+    metadata_payload = canonical_metadata_fixture(
+        "L21_V001",
+        duration_sec=1.0,
+        fps=25.0,
+        frame_count=25,
+        file_size_bytes=16,
+    )
     cache_dirs: list[Path] = []
     targets: list[Path] = []
 
@@ -2162,20 +2309,12 @@ def test_ingest_from_canonical_hf_manifest_cleans_staging_and_cache(monkeypatch,
                 target.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
             elif str(relative_path).endswith("canonical_video_inventory.parquet"):
                 pd.DataFrame(
-                    [
-                        {
-                            "video_id": "L21_V001",
-                            "canonical_video_path": "raw_videos/L21_V001.mp4",
-                            "canonical_metadata_path": "metadata/L21_V001.json",
-                            "duration_sec": 1.0,
-                            "fps": 25.0,
-                            "frame_count": 25,
-                            "file_size_bytes": 16,
-                        }
-                    ]
+                    [canonical_inventory_fixture("L21_V001", metadata=metadata_payload)]
                 ).to_parquet(target, index=False)
+            elif str(relative_path) == "metadata/L21_V001.json":
+                target.write_text(json.dumps(metadata_payload) + "\n", encoding="utf-8")
             elif str(relative_path).endswith(".json"):
-                target.write_text('{"title":"sample"}\n', encoding="utf-8")
+                target.write_text('{"count":0}\n', encoding="utf-8")
             else:
                 target.write_bytes(b"not-a-real-video")
             targets.append(target)
@@ -2212,6 +2351,13 @@ def test_ingest_from_canonical_hf_manifest_can_keep_staging_and_cache(monkeypatc
         "metadata_path": "metadata/L21_V001.json",
         "status": "pass",
     }
+    metadata_payload = canonical_metadata_fixture(
+        "L21_V001",
+        duration_sec=1.0,
+        fps=25.0,
+        frame_count=25,
+        file_size_bytes=16,
+    )
     cache_dirs: list[Path] = []
     targets: list[Path] = []
 
@@ -2230,20 +2376,12 @@ def test_ingest_from_canonical_hf_manifest_can_keep_staging_and_cache(monkeypatc
                 target.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
             elif str(relative_path).endswith("canonical_video_inventory.parquet"):
                 pd.DataFrame(
-                    [
-                        {
-                            "video_id": "L21_V001",
-                            "canonical_video_path": "raw_videos/L21_V001.mp4",
-                            "canonical_metadata_path": "metadata/L21_V001.json",
-                            "duration_sec": 1.0,
-                            "fps": 25.0,
-                            "frame_count": 25,
-                            "file_size_bytes": 16,
-                        }
-                    ]
+                    [canonical_inventory_fixture("L21_V001", metadata=metadata_payload)]
                 ).to_parquet(target, index=False)
+            elif str(relative_path) == "metadata/L21_V001.json":
+                target.write_text(json.dumps(metadata_payload) + "\n", encoding="utf-8")
             elif str(relative_path).endswith(".json"):
-                target.write_text('{"title":"sample"}\n', encoding="utf-8")
+                target.write_text('{"count":0}\n', encoding="utf-8")
             else:
                 target.write_bytes(b"not-a-real-video")
             targets.append(target)

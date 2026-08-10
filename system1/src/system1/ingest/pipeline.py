@@ -1,19 +1,29 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
-from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 import pandas as pd
 
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
-from system1.ingest.discovery import discover_media_inputs_tolerant, discover_paired_inputs, read_metadata
+from system1.ingest.canonical_metadata import (
+    CANONICAL_METADATA_SCHEMA_VERSION,
+    canonical_inventory_projection,
+    validate_canonical_metadata,
+)
+from system1.ingest.discovery import (
+    discover_media_inputs_tolerant,
+    discover_paired_inputs,
+    read_metadata,
+)
 from system1.media.probe import probe_video_with_timeline
 from system1.release.types import default_input_dir, release_root, write_json
 
@@ -358,6 +368,14 @@ def run_canonical_hf_ingestion(
                 store.download_file(metadata_remote_path, metadata_path, cache_dir=pair_cache_dir)
 
                 metadata = read_metadata(metadata_path)
+                validate_canonical_metadata(metadata, expected_video_id=video_id)
+                if inventory is not None:
+                    _validate_canonical_inventory_match(
+                        metadata,
+                        inventory,
+                        video_remote_path=video_remote_path,
+                        metadata_remote_path=metadata_remote_path,
+                    )
                 probe = None
                 timeline_record = _frame_timeline_unavailable_record(video_id, "canonical inventory reused without local raw video")
                 if inventory is None:
@@ -393,8 +411,8 @@ def run_canonical_hf_ingestion(
                     "fps_detected": fps_detected,
                     "fps_source": "canonical_video_inventory" if inventory is not None else probe.fps_source,
                     "duration_seconds": duration_seconds,
-                    "width": probe.width if probe is not None else None,
-                    "height": probe.height if probe is not None else None,
+                    "width": _inventory_int(inventory, "width") if inventory is not None else probe.width,
+                    "height": _inventory_int(inventory, "height") if inventory is not None else probe.height,
                     "frame_count": frame_count,
                     "frame_count_estimated": False if inventory is not None else probe.frame_count_estimated,
                     "frame_count_method": "canonical_video_inventory" if inventory is not None else probe.frame_count_method,
@@ -419,15 +437,25 @@ def run_canonical_hf_ingestion(
                     "canonical_prefix": prefix,
                     "canonical_video_path": video_remote_path,
                     "canonical_metadata_path": metadata_remote_path,
+                    "metadata_schema_version": metadata["schema_version"],
+                    "organizer_metadata_present": metadata["organizer_metadata_present"],
+                    "metadata_generated": metadata["provenance"]["metadata_generated"],
+                    "organizer_metadata_source_ref": metadata["provenance"]["organizer_metadata_source_ref"],
+                    "organizer_metadata_sha256": metadata["provenance"]["organizer_metadata_sha256"],
+                    "probe_status": metadata["media"]["probe_status"],
+                    "probe_attempts": metadata["media"]["probe_attempts"],
                 }
 
                 err_rec = None
-                if fps_detected is None or duration_seconds is None:
+                if metadata["media"]["probe_status"] != "pass":
                     err_rec = {
                         "video_id": video_id,
                         "level": "warning",
                         "kind": "probe_partial",
-                        "message": "canonical video inventory metadata incomplete; some fields unavailable",
+                        "message": (
+                            "canonical media probe status is "
+                            f"{metadata['media']['probe_status']}; some technical fields may be unavailable"
+                        ),
                     }
 
                 return v_row, m_row, err_rec, timeline_record
@@ -484,6 +512,19 @@ def run_canonical_hf_ingestion(
             "source_prefix": prefix,
             "max_workers": resolved_max_workers,
             "video_count": int(len(videos_df)),
+            "metadata_schema_version": CANONICAL_METADATA_SCHEMA_VERSION,
+            "organizer_metadata_present_count": int(
+                mapping_df.get("organizer_metadata_present", pd.Series(dtype=bool)).fillna(False).sum()
+            ),
+            "metadata_generated_count": int(
+                mapping_df.get("metadata_generated", pd.Series(dtype=bool)).fillna(False).sum()
+            ),
+            "probe_status_counts": {
+                status: int(
+                    (mapping_df.get("probe_status", pd.Series(dtype=str)) == status).sum()
+                )
+                for status in ("pass", "partial", "failed")
+            },
             "missing_metadata_count": int(missing_metadata_audit.get("count", 0)),
             "missing_metadata_manifest": "manifests/missing_metadata.json",
             "unmatched_metadata_count": int(unmatched_metadata_audit.get("count", 0)),
@@ -554,14 +595,31 @@ def _read_canonical_video_inventory(path: Path, prefix: str) -> dict[str, dict[s
         "video_id",
         "canonical_video_path",
         "canonical_metadata_path",
+        "metadata_schema_version",
+        "organizer_metadata_present",
+        "metadata_generated",
         "duration_sec",
         "fps",
         "frame_count",
+        "width",
+        "height",
+        "is_vfr",
         "file_size_bytes",
+        "probe_status",
+        "probe_attempts",
     }
     missing = sorted(required - set(inventory.columns))
     if missing:
         raise ValueError(f"canonical video inventory missing fields: {', '.join(missing)}")
+    schema_versions = {
+        str(value)
+        for value in inventory["metadata_schema_version"].dropna().unique().tolist()
+    }
+    if schema_versions != {CANONICAL_METADATA_SCHEMA_VERSION}:
+        raise ValueError(
+            "canonical video inventory metadata_schema_version must contain only "
+            f"{CANONICAL_METADATA_SCHEMA_VERSION!r}; found={sorted(schema_versions)}"
+        )
     rows: dict[str, dict[str, Any]] = {}
     for record in inventory.to_dict("records"):
         video_id = str(record["video_id"])
@@ -575,6 +633,44 @@ def _read_canonical_video_inventory(path: Path, prefix: str) -> dict[str, dict[s
     if not rows:
         raise ValueError("canonical video inventory is empty")
     return rows
+
+
+def _validate_canonical_inventory_match(
+    metadata: dict[str, Any],
+    inventory: dict[str, Any],
+    *,
+    video_remote_path: str,
+    metadata_remote_path: str,
+) -> None:
+    video_id = metadata["video_id"]
+    if inventory.get("canonical_video_path") != video_remote_path:
+        raise ValueError(f"canonical inventory video path mismatch for video_id={video_id}")
+    if inventory.get("canonical_metadata_path") != metadata_remote_path:
+        raise ValueError(f"canonical inventory metadata path mismatch for video_id={video_id}")
+    if Path(video_remote_path).name != metadata["media"]["filename"]:
+        raise ValueError(f"canonical metadata filename mismatch for video_id={video_id}")
+    projection = canonical_inventory_projection(metadata)
+    for key, expected in projection.items():
+        actual = _inventory_scalar(inventory.get(key))
+        if isinstance(expected, float) and isinstance(actual, (int, float)):
+            matches = math.isclose(float(expected), float(actual), rel_tol=1e-9, abs_tol=1e-9)
+        else:
+            matches = actual == expected
+        if not matches:
+            raise ValueError(
+                f"canonical inventory mismatch for video_id={video_id} field={key}: "
+                f"metadata={expected!r} inventory={actual!r}"
+            )
+
+
+def _inventory_scalar(value: Any) -> Any:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple, dict)) and pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        return value.item()
+    return value
 
 
 def _normalize_canonical_manifest_path(remote_path: str, prefix: str) -> str:
