@@ -14,6 +14,7 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import pytest
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from system1.artifacts.package import validate_artifact_zip
@@ -359,7 +360,7 @@ def test_system1_package_imports():
     assert system1 is not None
 
 
-def test_system1_module_entrypoint_exposes_drive_shadow_help():
+def test_system1_module_entrypoint_runs_drive_shadow_help():
     completed = subprocess.run(
         [sys.executable, "-m", "system1.cli", "drive-shadow", "--help"],
         text=True,
@@ -369,8 +370,91 @@ def test_system1_module_entrypoint_exposes_drive_shadow_help():
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "--source-folder-id" in completed.stdout
-    assert "--dest-folder-id" in completed.stdout
+
+
+def test_cli_contract_exposes_notebook_commands_without_rendering_help():
+    root_command = get_command(app)
+    required_options = {
+        "drive-shadow": {
+            "--source-folder-id",
+            "--dest-folder-id",
+            "--report-path",
+        },
+        "standardize-archives": {
+            "--source-dir",
+            "--target-dir",
+            "--temp-dir",
+            "--resume",
+            "--progress-path",
+            "--min-free-gb",
+            "--drive-sync-sleep-seconds",
+            "--cleanup-every-files",
+            "--cleanup-every-gb",
+        },
+        "stream-standardize-upload-raw": {
+            "--source-dir",
+            "--target-hf-repo-id",
+            "--raw-import-id",
+            "--scratch-dir",
+            "--progress-path",
+            "--resume",
+            "--no-overwrite",
+            "--min-free-gb",
+            "--drive-sync-sleep-seconds",
+            "--cleanup-every-files",
+            "--cleanup-every-gb",
+            "--frame-timeline-policy",
+        },
+        "ingest": {
+            "--mode",
+            "--output",
+            "--canonical-hf-repo-id",
+            "--canonical-hf-prefix",
+            "--canonical-staging-root",
+            "--max-workers",
+            "--frame-timeline-policy",
+            "--no-resume",
+        },
+        "assign-batches": {"--mode", "--num-batches", "--output", "--no-resume"},
+        "sync-phase00-ingestion": {"--output", "--hf-repo-id"},
+        "restore-phase00-ingestion": {
+            "--release-id",
+            "--hf-repo-id",
+            "--hf-prefix",
+            "--hf-repo-type",
+            "--hf-revision",
+            "--output",
+        },
+        "process-batch": {
+            "--batch-id",
+            "--worker-id",
+            "--mode",
+            "--providers",
+            "--require-frame-timeline",
+            "--output",
+            "--input",
+        },
+        "sync-structure-artifacts": {
+            "--release-id",
+            "--batch-id",
+            "--worker-id",
+            "--hf-repo-id",
+            "--output",
+        },
+    }
+
+    for command_name, expected in required_options.items():
+        assert command_name in root_command.commands
+        command = root_command.commands[command_name]
+        actual = {
+            option
+            for parameter in command.params
+            for option in (
+                *getattr(parameter, "opts", ()),
+                *getattr(parameter, "secondary_opts", ()),
+            )
+        }
+        assert expected <= actual, f"{command_name} missing {sorted(expected - actual)}"
 
 
 def test_config_loading_reads_required_files():
@@ -492,6 +576,12 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "current_latest_records" in joined
             assert "stream_standardize_upload_progress_{raw_import_id}" in joined
             assert "Path(config.stream_progress_path).name" in joined
+            assert "required_local_reports.append(Path(config.stream_progress_path)" in joined
+        if path.name.startswith(("00A", "00B", "00C", "01_")):
+            assert "package source preflight: OK" in joined
+            assert "help_result" not in joined
+            assert "missing_options" not in joined
+            assert 'run_cli([command, "--help"]' not in joined
 
 
 def test_canonical_inventory_match_rejects_metadata_drift():

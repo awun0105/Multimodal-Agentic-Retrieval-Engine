@@ -12,7 +12,7 @@ Do not require live Google Drive or Hugging Face credentials for CI-grade proof.
 | Unit | Archive standardization flattens `.mp4`, `.wav`, and `.json`; existing matching files are skipped on rerun; unsafe zip paths are rejected. |
 | Integration | CLI exits non-zero for partial Drive/archive results unless `--allow-partial` is provided. |
 | E2E | Not required for this hardening slice. |
-| Platform | Notebook JSON validates and command strings reference safer CLI options. |
+| Platform | Notebook JSON/code cells validate, package imports resolve to the synchronized repo, and CLI contracts are inspected structurally rather than through terminal-rendered help text. |
 | Performance | Rerun skips existing matching files without re-copying. |
 | Logs/Audit | JSON reports include skipped and failed item rows. |
 
@@ -47,7 +47,15 @@ compact HF ingest without MP4 download, stale local timeline/batch cleanup,
 scoped hash-based Phase00 reconciliation, and the Notebook 01 production gate.
 Only the live full-dataset HF rehearsal remains pending for this story.
 
-- `uv run pytest -q`: 182 passed on 2026-08-11.
+- `uv run pytest -q`: 183 passed on 2026-08-11.
+- Preflight regression slice: 4 passed; it checks the module entrypoint, the
+  structured CLI contract used by 00A/00B/00C/01, notebook source guards, and
+  the streaming disk-safe option binding.
+- Narrow-terminal reproduction with `COLUMNS=40`: CLI exit code remained `0`
+  while rendered help omitted the full `--frame-timeline-policy` spelling,
+  proving that rendered text is not a valid option-availability signal.
+- JSON validation and Python compilation passed for 75 code cells across
+  Notebooks 00A, 00B, 00C, and 01.
 - Focused timeline/raw/HF/sync/notebook suite: 95 passed on 2026-08-11.
 - Ruff `E9,F,I` checks passed for every changed Python file.
 - Notebook JSON, cleared output/execution state, and code-cell compilation

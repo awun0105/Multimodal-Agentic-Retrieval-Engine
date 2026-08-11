@@ -63,6 +63,14 @@ Notebook 00C is the local-machine variant of the same streaming flow:
 The safety gate belongs in the CLI commands so Notebook 00, shell users, and
 tests share the same behavior.
 
+Notebook preflight must not infer command or option availability by searching
+rendered `--help` text. Typer/Rich may shorten long option names when Colab or a
+local terminal is narrow, even though the option is valid. Notebook setup
+instead verifies that `system1` was imported from the just-synchronized repo,
+`run_cli` pins that repo's `src/` on `PYTHONPATH`, and the real command invocation
+is the runtime authority. Automated tests inspect the Click/Typer command graph
+directly for the options used by Notebooks 00A/00B/00C/01.
+
 ## Interface Contract
 
 `system1 drive-shadow`:
