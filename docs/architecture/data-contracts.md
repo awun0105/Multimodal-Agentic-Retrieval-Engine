@@ -122,6 +122,7 @@ manifests only:
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
 AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/frame_timeline/{video_id}.parquet
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -175,6 +176,10 @@ Legacy flat layout under
 `canonical_release_vXXX/{manifests,tables,raw_mapping}` is deprecated. New
 outputs must use
 `canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}`.
+
+`phase00_ingestion/reports/phase00_sync_manifest.json` is written last and is
+the remote completion marker. Sync reconciles only that exact release/Phase00
+prefix; it must not delete another release or an unrelated repo path.
 
 ## Canonical Per-Video Metadata
 
@@ -271,6 +276,10 @@ in local scratch. It must contain one row per canonical video with:
 - `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path`, always present for a valid canonical video
+- `canonical_frame_timeline_path`
+- `frame_timeline_status`
+- `frame_timeline_row_count`
+- `frame_timeline_size_bytes`
 - `metadata_schema_version`
 - `organizer_metadata_present`
 - `metadata_generated`
@@ -288,18 +297,22 @@ The inventory is a batch-friendly projection of the same canonical metadata
 record. Validation requires their shared identifiers, provenance flags, and
 probe facts to agree. HF canonical ingest uses this inventory for efficient
 discovery and may reuse duration, FPS, frame count, dimensions, VFR status, and
-file size. Frame count should be produced from actual packet counting
-(`ffprobe -count_packets` / `nb_read_packets`) when possible; header
-`nb_frames` and duration/FPS math are fallbacks. It must not download videos
-only to repeat inventory probing. Production Phase00 may stage one video at a
-time to build the separate decoded frame timeline required by Notebook 01 and
-must clean each bounded stage afterward.
+file size. A required decoded timeline supplies the authoritative frame count
+from its row count. Packet counting (`ffprobe -count_packets` /
+`nb_read_packets`), header `nb_frames`, and duration/FPS math are compatibility
+fallbacks. It must not download videos
+only to repeat inventory probing. Notebook 00B/00C build the decoded timeline
+while each video is already in bounded local scratch and upload the compact
+Parquet beside the video and canonical metadata. Production canonical HF ingest
+downloads and validates that Parquet instead of downloading the raw video to
+decode it a second time.
 
-The raw uploader makes at most three probe attempts with bounded retry delays.
-If probing remains incomplete, unavailable technical facts are `null` and
-`probe_status` is `partial` or `failed`; this is accepted as explicit degraded
-evidence rather than silently fabricated data. Canonical JSON and inventory
-must agree on the status, attempt count, and every projected probe field.
+The raw uploader makes at most three probe/timeline attempts with bounded retry
+delays. In production `frame_timeline_policy=required`, exhausted timeline
+attempts fail that video and therefore the run. Compatibility runs may use
+`if-available` or `disabled`; unavailable probe facts remain nullable and are
+never fabricated. Canonical JSON and inventory must agree on probe fields, and
+the inventory timeline row count must agree with the uploaded Parquet.
 
 ## Data Categories
 

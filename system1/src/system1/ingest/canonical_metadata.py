@@ -60,6 +60,8 @@ def build_canonical_metadata(
     organizer_metadata_path: Path | None = None,
     organizer_source_ref: str | None = None,
     probe_fn: Callable[[Path], VideoProbe] | None = None,
+    precomputed_probe: VideoProbe | None = None,
+    precomputed_probe_attempts: int = 1,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> CanonicalMetadataResult:
     organizer = _read_organizer_metadata(
@@ -67,11 +69,18 @@ def build_canonical_metadata(
         video_id=video_id,
         organizer_source_ref=organizer_source_ref,
     )
-    probe, probe_status, probe_attempts = probe_video_with_retry(
-        video_path,
-        probe_fn=probe_fn,
-        sleep_fn=sleep_fn,
-    )
+    if precomputed_probe is not None:
+        if precomputed_probe_attempts < 1:
+            raise CanonicalMetadataError("precomputed_probe_attempts must be >= 1")
+        probe = precomputed_probe
+        probe_status = canonical_probe_status(probe)
+        probe_attempts = precomputed_probe_attempts
+    else:
+        probe, probe_status, probe_attempts = probe_video_with_retry(
+            video_path,
+            probe_fn=probe_fn,
+            sleep_fn=sleep_fn,
+        )
     metadata_generated = not organizer["present"]
     payload: dict[str, Any] = {
         "schema_version": CANONICAL_METADATA_SCHEMA_VERSION,

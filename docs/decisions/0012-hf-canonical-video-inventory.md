@@ -8,9 +8,11 @@ Accepted
 
 Amended by ADR 0016 on 2026-08-10: canonical metadata now exists for every
 video, the inventory carries metadata provenance and additional media facts,
-and bounded video staging is allowed when required to build the separate
-production decoded frame timeline. The prohibition below remains specific to
-downloading videos only to repeat inventory probing.
+and bounded video staging is allowed during raw upload. Amended by ADR 0017 on
+2026-08-11: production timelines are built in that existing raw-upload scratch
+and canonical HF ingest reuses the compact Parquet. The prohibition below
+remains specific to downloading videos only to repeat inventory probing or
+timeline decoding.
 
 ## Context
 
@@ -34,6 +36,10 @@ metadata. The inventory includes:
 - `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path`
+- `canonical_frame_timeline_path`
+- `frame_timeline_status`
+- `frame_timeline_row_count`
+- `frame_timeline_size_bytes`
 - `organizer_metadata_present`
 - `metadata_generated`
 - `duration_sec`
@@ -45,9 +51,9 @@ metadata. The inventory includes:
 - `file_size_bytes`
 
 By default, HF canonical ingest must not download `raw_videos/*.mp4` only for
-probing. Production Phase00 may stage one video at a time to build the decoded
-frame timeline required by Notebook 01 and must clean the bounded stage. The
-legacy inventory download/probe fallback is allowed only when
+probing or timeline decoding. Production raw upload builds the timeline while
+the video is already in bounded scratch, and HF ingest validates the compact
+Parquet. The legacy inventory download/probe fallback is allowed only when
 `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
 
 ## Alternatives Considered

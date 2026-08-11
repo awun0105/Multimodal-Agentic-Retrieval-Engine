@@ -599,8 +599,9 @@ AIC26_release
 Do not use Team Drive as the primary shared storage contract and do not create
 a third Hugging Face repo for System 1 outputs.
 
-`AIC26_raw` is the canonical raw dataset repo. It contains only standardized
-raw videos, metadata, and raw-level inventory/import manifests:
+`AIC26_raw` is the canonical raw dataset repo. It contains standardized raw
+videos, one canonical metadata JSON and one decoded timeline per video, plus
+raw-level inventory/import manifests:
 
 ```text
 AIC26_raw/
@@ -612,6 +613,10 @@ AIC26_raw/
     ├── metadata/
     │   ├── L21_V001.json
     │   ├── L21_V002.json
+    │   └── ...
+    ├── frame_timeline/
+    │   ├── L21_V001.parquet
+    │   ├── L21_V002.parquet
     │   └── ...
     └── manifests/
         ├── canonical_file_manifest.jsonl
@@ -1707,14 +1712,17 @@ metadata/
 7. Create and validate one versioned `metadata/{video_id}.json` for every video.
 8. Record the organizer source reference/checksum when available; do not upload
    a duplicate organizer JSON tree. Use null/empty organizer fields when absent.
-9. Create canonical_video_inventory.parquet from the same normalized records.
-10. Create videos.parquet.
-11. Stage/decode one production video at a time to create frame_timeline/{video_id}.parquet, then clean the bounded stage.
-12. Create manifests/frame_timeline_manifest.parquet.
-13. Create media_store_manifest.parquet with organizer-presence/generated provenance flags.
-14. Create master_manifest.parquet.
-15. Create dataset_report.json.
-16. Create ingestion_errors.jsonl.
+9. Decode and validate `frame_timeline/{video_id}.parquet` while each video is
+   already in bounded raw-upload scratch; production fails the pair after
+   bounded retry if this cannot be created.
+10. Upload video, canonical metadata, and timeline to the same raw prefix.
+11. Create `canonical_video_inventory.parquet` with metadata and timeline facts.
+12. Canonical HF ingest downloads and validates the compact timeline Parquet,
+    not the raw video, then materializes the Phase00 copy.
+13. Create `videos.parquet` and `manifests/frame_timeline_manifest.parquet`.
+14. Create `media_store_manifest.parquet` with organizer provenance flags.
+15. Create batch manifests, dataset report, and ingestion errors.
+16. Reconcile the exact Phase00 HF prefix and upload its completion marker last.
 ```
 
 Canonical metadata keeps the observed organizer fields `author`, `channel_id`,
@@ -3385,6 +3393,11 @@ AIC26_raw/
     │   ├── L21_V002.json
     │   └── ...
     │
+    ├── frame_timeline/
+    │   ├── L21_V001.parquet
+    │   ├── L21_V002.parquet
+    │   └── ...
+    │
     └── manifests/
         ├── canonical_file_manifest.jsonl
         ├── canonical_import_report.json
@@ -3531,6 +3544,7 @@ Notebook 00 uploads canonical raw output to:
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
 AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/frame_timeline/{video_id}.parquet
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -3554,11 +3568,18 @@ AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/unmatched_metadat
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/drive_shadow_report.json
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/standardize_archives_report.json
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/standardize_progress.jsonl
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/phase00_sync_manifest.json
 ```
 
 `batch_manifest.csv` and `batch_*.txt` do not belong in `AIC26_raw` because
 they depend on a pipeline run: `num_batches`, worker strategy, execution
 profile, and release version.
+
+`phase00_sync_manifest.json` is the completion marker. The sync compares local
+SHA-256 and size with the previous complete manifest, skips unchanged files,
+retries bounded transient HF errors, reconciles stale files only inside the
+exact configured Phase00 prefix, and writes this marker after all other
+operations succeed.
 
 Notebook 01 reads:
 

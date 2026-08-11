@@ -21,9 +21,10 @@ Notebook 00A preserves the older Colab/Drive path:
 
 Notebook 00B/00C are the current large-dataset streaming paths. They stream raw
 video plus optional organizer-metadata pairs, create one canonical metadata JSON
-per video, and upload them to `AIC26_raw`. Canonical HF raw ingest then produces
-the phase00 release tables, raw mapping, decoded frame timeline artifacts,
-batch files, and reports.
+and one decoded frame timeline per video, and upload all three artifacts to
+`AIC26_raw`. Canonical HF raw ingest then validates and reuses the compact
+timeline Parquet without downloading the video again, and produces the phase00
+release tables, raw mapping, batch files, and reports.
 
 Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
 
@@ -33,13 +34,18 @@ Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
    video/metadata pairs by `video_id`, extracts pair batches bounded by
    `RAW_UPLOAD_BATCH_SIZE` files and scratch bytes into local scratch, probes
    each video, merges organizer fields when present, creates and validates
-   canonical metadata, uploads the batch to `AIC26_raw` with the existing
-   batched HF commit helper, records per-pair progress, and deletes the batch
-   scratch directories before moving on.
+   canonical metadata and decoded frame timeline, uploads the video, metadata,
+   and timeline batch to `AIC26_raw` with the existing batched HF commit helper,
+   records per-pair progress, and deletes the batch scratch directories before
+   moving on. Timeline probing uses one lightweight header query plus one
+   decoded-frame scan; it does not add a redundant full `-count_packets` scan.
 3. Canonical HF ingest reads the raw repo manifests, canonical metadata, and
-   inventory. A production run stages one video at a time when needed to build
-   its decoded frame timeline and cleans the bounded stage afterward.
-4. Batch assignment and required `system1 sync-phase00-ingestion` stay the same.
+   inventory, downloads each compact timeline Parquet, validates it, and copies
+   it into Phase00. It does not download raw video only to regenerate a timeline.
+4. Batch assignment atomically replaces the current batch plan and removes
+   stale `batch_*.txt` files.
+5. Required `system1 sync-phase00-ingestion` reconciles the exact configured
+   Phase00 prefix and writes its completion manifest last.
 
 The streaming variant does not materialize full `raw_videos/` and `metadata/`
 folders on Google Drive.
@@ -79,7 +85,8 @@ tests share the same behavior.
   scoped by canonical HF repo plus `raw_import_id`; resume and notebook gates
   use only the latest record per video. Notebook 00B/00C use a prefix-specific
   progress filename and migrate matching latest records from the legacy shared
-  file when needed.
+  file when needed. Phase00 snapshot, upload validation, and remote validation
+  reuse that exact configured filename rather than a second hard-coded name.
 - Uses `--overwrite` only for explicit remote replacement.
 - Rejects Google Drive paths as `--scratch-dir`.
 - Reuses `RAW_UPLOAD_BATCH_SIZE` and batched HF commits instead of committing
@@ -89,6 +96,9 @@ tests share the same behavior.
   `--cleanup-every-gb`.
 - Creates and validates `metadata/{video_id}.json` for every video using ADR
   0016; it never fabricates organizer title/channel/URL values.
+- `--frame-timeline-policy` supports `required`, `if-available`, and `disabled`.
+  Notebook 00B/00C use `required`; a video is not recorded as passed until its
+  timeline exists and validates.
 - Records organizer source reference/checksum when available and its absence
   before canonical generation; it does not upload a duplicate organizer JSON.
 
@@ -115,16 +125,18 @@ manifests rather than re-scan or download raw videos solely for pairing audit.
 
 `upload-standardized-raw` also writes
 `manifests/canonical_video_inventory.parquet` beside the canonical file
-manifest. The inventory carries `video_id`, canonical video/metadata paths,
-organizer-presence/generated flags, duration, dimensions, detected fps, frame
-count, VFR state, and video size. It is a projection of canonical metadata and
-must validate against it. Canonical Hugging Face ingest must use this small
-inventory by default and must not download `raw_videos/*.mp4` only to repeat
-probing. Bounded per-video staging for production decoded timelines is required
-separately and is cleaned after each video.
+manifest. The inventory carries `video_id`, canonical video/metadata/timeline
+paths, timeline status/row count/size, organizer-presence/generated flags,
+duration, dimensions, detected fps, frame count, VFR state, and video size. It
+is a projection of canonical metadata plus the decoded timeline result and must
+validate against both artifacts. Canonical Hugging Face ingest must use these
+small artifacts by default and must not download `raw_videos/*.mp4` only to
+repeat probing or timeline decoding.
 
 `stream-standardize-upload-raw` writes the same canonical raw manifests and
-inventory while each video is present in local scratch.
+inventory while each video is present in local scratch. Required resume treats
+an older pass row without a valid remote timeline as incomplete and backfills
+only the missing timeline when the video and metadata already exist.
 
 When standardized raw videos are mounted from Colab DriveFS under
 `/content/drive`, `upload-standardized-raw` stages each video read used for
@@ -137,8 +149,11 @@ Hugging Face cache.
 Phase00 release output is synced under
 `AIC26_release/canonical_release_vXXX/phase00_ingestion/` in the configured
 Hugging Face Dataset repo. The synced snapshot includes `tables/`,
-`raw_mapping/`, `frame_timeline/` when decoded timelines are available,
-`manifests/`, and `reports/`.
+`raw_mapping/`, required `frame_timeline/`, `manifests/`, and `reports/`.
+Synchronization compares SHA-256 plus size, skips unchanged files, uploads and
+deletes in bounded retryable commits, deletes stale files only under that exact
+Phase00 prefix, and uploads `reports/phase00_sync_manifest.json` last as the
+completion marker.
 
 ## UI / Platform Impact
 

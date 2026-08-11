@@ -41,6 +41,11 @@ def register(app: typer.Typer) -> None:
         raw_import_id: str = typer.Option(..., "--raw-import-id", help="Version prefix inside the raw HF Dataset repo."),
         target_hf_repo_type: str = typer.Option("dataset", "--target-hf-repo-type"),
         target_hf_revision: str = typer.Option("main", "--target-hf-revision"),
+        frame_timeline_policy: str = typer.Option(
+            "if-available",
+            "--frame-timeline-policy",
+            help="Decoded timeline policy: required, if-available, or disabled.",
+        ),
     ) -> None:
         """Upload standardized raw videos and metadata into a versioned HF Dataset prefix."""
         result = upload_standardized_raw_to_hf(
@@ -50,6 +55,7 @@ def register(app: typer.Typer) -> None:
             repo_type=target_hf_repo_type,
             revision=target_hf_revision,
             progress_path=None,
+            frame_timeline_policy=frame_timeline_policy,
         )
         typer.echo(
             "Uploaded standardized raw "
@@ -80,6 +86,11 @@ def register(app: typer.Typer) -> None:
         drive_sync_sleep_seconds: int = typer.Option(30, "--drive-sync-sleep-seconds", help="Seconds to sleep after sync when DriveFS cache leaves low free disk."),
         cleanup_every_files: int = typer.Option(RAW_UPLOAD_BATCH_SIZE, "--cleanup-every-files", help="Flush and cleanup stream scratch after this many extracted/upload files."),
         cleanup_every_gb: float = typer.Option(STREAM_UPLOAD_BATCH_MAX_GB, "--cleanup-every-gb", help="Flush and cleanup stream scratch after this many extracted/upload GB."),
+        frame_timeline_policy: str = typer.Option(
+            "if-available",
+            "--frame-timeline-policy",
+            help="Decoded timeline policy: required, if-available, or disabled.",
+        ),
         allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when some stream pairs fail."),
     ) -> None:
         """Stream zip media/metadata pairs through local scratch into canonical HF raw."""
@@ -99,6 +110,7 @@ def register(app: typer.Typer) -> None:
             drive_sync_sleep_seconds=drive_sync_sleep_seconds,
             cleanup_every_files=cleanup_every_files,
             cleanup_every_gb=cleanup_every_gb,
+            frame_timeline_policy=frame_timeline_policy,
         )
         typer.echo(
             "Stream uploaded standardized raw "
@@ -131,6 +143,11 @@ def register(app: typer.Typer) -> None:
         drive_sync_sleep_seconds: int = typer.Option(30, "--drive-sync-sleep-seconds"),
         cleanup_every_files: int = typer.Option(1, "--cleanup-every-files"),
         cleanup_every_gb: float = typer.Option(50.0, "--cleanup-every-gb"),
+        frame_timeline_policy: str = typer.Option(
+            "if-available",
+            "--frame-timeline-policy",
+            help="Decoded timeline policy: required, if-available, or disabled.",
+        ),
         allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when raw upload reports errors."),
     ) -> None:
         """Standardize a source in local temp and upload it as canonical HF raw."""
@@ -150,6 +167,7 @@ def register(app: typer.Typer) -> None:
             drive_sync_sleep_seconds=drive_sync_sleep_seconds,
             cleanup_every_files=cleanup_every_files,
             cleanup_every_gb=cleanup_every_gb,
+            frame_timeline_policy=frame_timeline_policy,
         )
         typer.echo(
             "Imported canonical raw "

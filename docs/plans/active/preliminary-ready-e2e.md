@@ -112,7 +112,8 @@ Out of scope:
 - [x] Implement ADR 0016 in both raw upload package paths used by Notebook
   00B/00C, update notebook validation gates, and propagate metadata provenance
   through canonical HF ingest and Phase00.
-- [ ] Build production decoded timelines with bounded per-video staging.
+- [x] Build production decoded timelines while each raw video is already in
+  bounded upload scratch, then reuse the compact timeline during HF ingest.
 - [ ] Implement and validate Notebook 01 production structure providers and
   multimodal scene grouping.
 - [ ] Build a competition release containing app-ready SQLite, FTS, separate
@@ -152,6 +153,9 @@ Out of scope:
   null/empty, `ffprobe` supplies technical facts, provenance points to source
   storage without duplicating organizer JSON on HF, and missing-organizer audit
   state survives generation. See ADR 0016.
+- 2026-08-11: Notebook 00B/00C require decoded timelines during raw streaming.
+  Canonical HF ingest validates the uploaded compact Parquet without a second
+  raw-video download; production Notebook 01 rejects missing timelines.
 
 Promote lasting product or architecture decisions into `docs/decisions/`.
 
@@ -174,6 +178,6 @@ The decision/docs alignment and ADR 0016 package implementation are complete.
 Automated tests cover canonical generation, both upload paths, inventory
 agreement, HF ingest, provenance propagation, and Notebook 00B/00C gates; three
 local sample videos also pass real `ffprobe`. The overall plan remains active
-because the live HF `canonical_raw_v009` run, production decoded timeline,
-Notebook 01 providers, Notebook 02 dual-index pipeline, final release, and
+because the live HF `canonical_raw_v009` run, Notebook 01 providers, Notebook
+02 dual-index pipeline, final release, and
 System 2 runtime are not complete.

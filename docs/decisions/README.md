@@ -11,6 +11,10 @@ documents here as real choices are accepted, then index them in this file.
 
 ## Recent Accepted Decisions
 
+- `0017-raw-upload-decoded-frame-timelines.md`: Notebook 00B/00C build required
+  decoded timelines while each video is already in bounded raw-upload scratch;
+  canonical HF ingest validates the compact Parquet without re-downloading the
+  MP4.
 - `0016-canonical-per-video-metadata.md`: organizer metadata remains optional,
   but Notebook 00B/00C create one schema-valid canonical metadata JSON per
   video from organizer fields plus `ffprobe` facts while preserving provenance

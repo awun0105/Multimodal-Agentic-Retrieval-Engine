@@ -29,6 +29,8 @@ uv run pytest
 jq empty system1/notebooks/00_master_ingestion_and_assignment.ipynb
 jq empty system1/notebooks/00A_master_ingestion_and_assignment.ipynb
 jq empty system1/notebooks/00B_master_ingestion_and_assignment.ipynb
+jq empty "system1/notebooks/00C_master_ingestion_and_assignment (local).ipynb"
+jq empty system1/notebooks/01_worker_structure_pipeline.ipynb
 git diff --check
 system1/.venv/bin/system1 --help
 ```
@@ -39,7 +41,18 @@ The historical entries below prove the earlier streaming, disk-safety, audit,
 and inventory behavior. Current focused tests additionally prove ADR 0016
 canonical generation, organizer-source reference/checksum, missing-organizer
 semantics, inventory agreement, provenance propagation, and Notebook 00B/00C
-gates. Production decoded-timeline staging and live HF rehearsal remain pending.
+gates. The 2026-08-11 implementation additionally proves required decoded
+timeline generation in bounded raw scratch, retry/validation, resume backfill,
+compact HF ingest without MP4 download, stale local timeline/batch cleanup,
+scoped hash-based Phase00 reconciliation, and the Notebook 01 production gate.
+Only the live full-dataset HF rehearsal remains pending for this story.
+
+- `uv run pytest -q`: 182 passed on 2026-08-11.
+- Focused timeline/raw/HF/sync/notebook suite: 95 passed on 2026-08-11.
+- Ruff `E9,F,I` checks passed for every changed Python file.
+- Notebook JSON, cleared output/execution state, and code-cell compilation
+  checks passed for 00B, 00C, and 01.
+- `git diff --check`: passed on 2026-08-11.
 
 - `python -m pytest tests/test_canonical_metadata.py tests/test_smoke.py -k
   "canonical_metadata or canonical_inventory_match or

@@ -115,19 +115,42 @@ def canonical_metadata_fixture(
     }
 
 
+def decoded_timeline_fixture(video_id: str) -> VideoProbeWithTimeline:
+    return VideoProbeWithTimeline(
+        probe=VideoProbe(
+            25.0,
+            "test_frame_timeline",
+            3,
+            False,
+            "decoded_frame_timeline",
+            0.12,
+            640,
+            360,
+            False,
+        ),
+        frame_timeline=[
+            {"video_id": video_id, "frame_id": 0, "pts_time": 0.0, "duration_time": 0.04},
+            {"video_id": video_id, "frame_id": 1, "pts_time": 0.04, "duration_time": 0.04},
+            {"video_id": video_id, "frame_id": 2, "pts_time": 0.08, "duration_time": 0.04},
+        ],
+    )
+
+
 def canonical_inventory_fixture(
     video_id: str,
     *,
     video_path: str | None = None,
     metadata_path: str | None = None,
     metadata: dict[str, object] | None = None,
+    timeline_path: str | None = None,
+    timeline_row_count: int = 0,
 ) -> dict[str, object]:
     payload = metadata or canonical_metadata_fixture(video_id)
     media = payload["media"]
     provenance = payload["provenance"]
     assert isinstance(media, dict)
     assert isinstance(provenance, dict)
-    return {
+    record = {
         "video_id": video_id,
         "canonical_video_path": video_path or f"raw_videos/{video_id}.mp4",
         "canonical_metadata_path": metadata_path or f"metadata/{video_id}.json",
@@ -144,6 +167,49 @@ def canonical_inventory_fixture(
         "probe_status": media["probe_status"],
         "probe_attempts": media["probe_attempts"],
     }
+    if timeline_path is not None:
+        record.update(
+            {
+                "canonical_frame_timeline_path": timeline_path,
+                "frame_timeline_status": "pass",
+                "frame_timeline_row_count": timeline_row_count,
+                "frame_timeline_size_bytes": 1,
+            }
+        )
+    return record
+
+
+def phase00_remote_fixture(
+    release_id: str,
+    files: dict[str, bytes],
+) -> dict[str, bytes]:
+    root = f"{release_id}/phase00_ingestion"
+    rows = []
+    for remote_path, content in sorted(files.items()):
+        relative_path = remote_path.removeprefix(f"{root}/")
+        rows.append(
+            {
+                "release_id": release_id,
+                "phase": "phase00_ingestion",
+                "relative_path": relative_path,
+                "remote_path": remote_path,
+                "size_bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "status": "uploaded",
+            }
+        )
+    payload = {
+        "release_id": release_id,
+        "phase": "phase00_ingestion",
+        "schema_version": "2.0",
+        "status": "complete",
+        "file_count": len(rows),
+        "files": rows,
+    }
+    files[f"{root}/reports/phase00_sync_manifest.json"] = (
+        json.dumps(payload, sort_keys=True) + "\n"
+    ).encode()
+    return files
 
 
 def invoke_app(command: list[str]):
@@ -425,6 +491,7 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "legacy_progress_path" in joined
             assert "current_latest_records" in joined
             assert "stream_standardize_upload_progress_{raw_import_id}" in joined
+            assert "Path(config.stream_progress_path).name" in joined
 
 
 def test_canonical_inventory_match_rejects_metadata_drift():
@@ -562,6 +629,13 @@ def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
     output_dir = tmp_path / "output"
     command = ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"]
     first = invoke_app(command)
+    stale_timeline = (
+        output_dir
+        / "competition_dataset_v001"
+        / "frame_timeline"
+        / "STALE_VIDEO.parquet"
+    )
+    stale_timeline.write_bytes(b"stale")
     second = invoke_app(command)
     assert first.exit_code == 0, first.stdout
     assert second.exit_code == 0, second.stdout
@@ -578,6 +652,7 @@ def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
     assert "has_frame_timeline" in videos.columns
     assert "frame_timeline_ref" in videos.columns
     assert videos["has_frame_timeline"].all()
+    assert not stale_timeline.exists()
     frame_timeline_manifest = pd.read_parquet(release_dir / "manifests" / "frame_timeline_manifest.parquet")
     assert frame_timeline_manifest["video_id"].tolist() == ["L21_V001", "L21_V002", "L21_V003"]
     assert frame_timeline_manifest["status"].eq("pass").all()
@@ -661,6 +736,30 @@ def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_
         "error_note",
     }
     assert not (release_dir / "db" / "app.sqlite").exists()
+
+
+def test_assign_batches_caps_empty_batches_and_removes_stale_batch_files(tmp_path):
+    output_dir = tmp_path / "output"
+    ingest = invoke_app(
+        ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"]
+    )
+    assert ingest.exit_code == 0, ingest.stdout
+    release_dir = output_dir / "competition_dataset_v001"
+
+    many = invoke_app(
+        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "10", "--output", str(output_dir)]
+    )
+    assert many.exit_code == 0, many.stdout
+    video_count = len(pd.read_parquet(release_dir / "tables" / "videos.parquet"))
+    assert len(list((release_dir / "manifests").glob("batch_*.txt"))) == video_count
+
+    fewer = invoke_app(
+        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)]
+    )
+    assert fewer.exit_code == 0, fewer.stdout
+    assert [path.name for path in (release_dir / "manifests").glob("batch_*.txt")] == [
+        "batch_000.txt"
+    ]
 
 def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_path):
     output_dir = tmp_path / "output"
@@ -872,6 +971,35 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "tables" / "embeddings_meta.parquet").exists()
     assert structure_manifest.stat().st_mtime_ns == structure_before
+
+
+def test_process_batch_can_require_phase00_frame_timeline(tmp_path):
+    output_dir = tmp_path / "output"
+    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    release_dir = output_dir / "competition_dataset_v001"
+    first_video_id = (release_dir / "manifests" / "batch_000.txt").read_text(encoding="utf-8").splitlines()[0]
+    (release_dir / "frame_timeline" / f"{first_video_id}.parquet").unlink()
+
+    result = invoke_app(
+        [
+            "process-batch",
+            "--batch-id",
+            "batch_000",
+            "--mode",
+            "debug_small_sample",
+            "--providers",
+            "mock",
+            "--output",
+            str(output_dir),
+            "--input",
+            "input",
+            "--require-frame-timeline",
+        ]
+    )
+
+    assert result.exit_code != 0
+    assert "decoded frame timeline is required" in str(result.exception)
 
 def test_feature_batch_missing_structure_artifact_fails_clearly(tmp_path):
     output_dir = tmp_path / "output"
@@ -1189,8 +1317,8 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": [])
     monkeypatch.setattr(
         source_importer_module,
-        "probe_video",
-        lambda _path: VideoProbe(25.0, "test", 250, False, "test", 10.0, 640, 360, False),
+        "probe_video_with_timeline",
+        lambda _path, *, video_id: decoded_timeline_fixture(video_id),
     )
 
     def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
@@ -1215,6 +1343,8 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
     assert "canonical_dataset_v001/raw_videos/L21_V002.mp4" in uploaded
     assert "canonical_dataset_v001/metadata/L21_V001.json" in uploaded
     assert "canonical_dataset_v001/metadata/L21_V002.json" in uploaded
+    assert "canonical_dataset_v001/frame_timeline/L21_V001.parquet" in uploaded
+    assert "canonical_dataset_v001/frame_timeline/L21_V002.parquet" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
@@ -1228,6 +1358,10 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         [
             "canonical_dataset_v001/metadata/L21_V001.json",
             "canonical_dataset_v001/metadata/L21_V002.json",
+        ],
+        [
+            "canonical_dataset_v001/frame_timeline/L21_V001.parquet",
+            "canonical_dataset_v001/frame_timeline/L21_V002.parquet",
         ],
         [
             "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl",
@@ -1255,6 +1389,7 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         "metadata_filename",
         "video_size_bytes",
         "metadata_size_bytes",
+        "frame_timeline_size_bytes",
         "canonical_backend",
         "canonical_repo_id",
         "canonical_repo_type",
@@ -1262,6 +1397,9 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         "canonical_prefix",
         "canonical_video_path",
         "canonical_metadata_path",
+        "canonical_frame_timeline_path",
+        "frame_timeline_status",
+        "frame_timeline_row_count",
         "metadata_schema_version",
         "organizer_metadata_present",
         "metadata_generated",
@@ -1285,6 +1423,12 @@ def test_upload_standardized_raw_to_hf_uploads_versioned_standard_layout(monkeyp
         "canonical_dataset_v001/raw_videos/L21_V001.mp4",
         "canonical_dataset_v001/raw_videos/L21_V002.mp4",
     ]
+    assert sorted_inventory["canonical_frame_timeline_path"].tolist() == [
+        "canonical_dataset_v001/frame_timeline/L21_V001.parquet",
+        "canonical_dataset_v001/frame_timeline/L21_V002.parquet",
+    ]
+    assert sorted_inventory["frame_timeline_status"].tolist() == ["pass", "pass"]
+    assert sorted_inventory["frame_timeline_row_count"].tolist() == [3, 3]
     assert missing_audit["missing_metadata"] == []
     assert unmatched_audit["unmatched_metadata"] == []
     assert "kind=video index=" not in output
@@ -1347,11 +1491,11 @@ def test_upload_standardized_raw_to_hf_stages_drivefs_video_for_probe_and_upload
     monkeypatch.setattr(source_importer_module, "_local_temp_parent", lambda: scratch_root)
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": [])
 
-    def fake_probe(path: Path):
+    def fake_probe(path: Path, *, video_id: str):
         staged_probe_paths.append(path)
         assert path != original_video
         assert scratch_root in path.parents
-        return VideoProbe(25.0, "test", 25, False, "test", 1.0, 640, 360, False)
+        return decoded_timeline_fixture(video_id)
 
     def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
         for source, relative_path in files:
@@ -1362,7 +1506,7 @@ def test_upload_standardized_raw_to_hf_stages_drivefs_video_for_probe_and_upload
                 assert source.exists()
         return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
 
-    monkeypatch.setattr(source_importer_module, "probe_video", fake_probe)
+    monkeypatch.setattr(source_importer_module, "probe_video_with_timeline", fake_probe)
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
 
     result = upload_standardized_raw_to_hf(
@@ -1456,10 +1600,10 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
 
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files", lambda self, prefix="": [])
 
-    def fake_probe(path: Path):
+    def fake_probe(path: Path, *, video_id: str):
         probed_paths.append(path)
         assert scratch_root in path.parents
-        return VideoProbe(30.0, "test", 300, False, "test", 10.0, 640, 360, False)
+        return decoded_timeline_fixture(video_id)
 
     def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
         commit_batches.append([str(relative_path) for _source, relative_path in files])
@@ -1469,7 +1613,7 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
                 assert scratch_root in source.parents
         return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
 
-    monkeypatch.setattr(source_importer_module, "probe_video", fake_probe)
+    monkeypatch.setattr(source_importer_module, "probe_video_with_timeline", fake_probe)
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
 
     result = stream_standardize_upload_raw_to_hf(
@@ -1478,6 +1622,7 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
         raw_import_id="canonical_dataset_v001",
         scratch_dir=scratch_root,
         progress_path=progress_path,
+        frame_timeline_policy="required",
     )
 
     assert result.error_count == 0
@@ -1485,6 +1630,7 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
     for video_id in video_ids:
         assert f"canonical_dataset_v001/raw_videos/{video_id}.mp4" in uploaded
         assert f"canonical_dataset_v001/metadata/{video_id}.json" in uploaded
+        assert f"canonical_dataset_v001/frame_timeline/{video_id}.parquet" in uploaded
     assert not any("/organizer_metadata/" in path for path in uploaded)
     missing_canonical = json.loads(uploaded[f"canonical_dataset_v001/metadata/{video_ids[-1]}.json"])
     assert missing_canonical["schema_version"] == "1.0"
@@ -1521,8 +1667,115 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
         for path in (
             f"canonical_dataset_v001/raw_videos/{video_id}.mp4",
             f"canonical_dataset_v001/metadata/{video_id}.json",
+            f"canonical_dataset_v001/frame_timeline/{video_id}.parquet",
         )
     ]]
+
+
+def test_stream_resume_backfills_timeline_without_reuploading_existing_pair(monkeypatch, tmp_path):
+    source_root = tmp_path / "raw_dataset"
+    archive_root = tmp_path / "archive"
+    source_root.mkdir()
+    archive_root.mkdir()
+    (archive_root / "A.mp4").write_bytes(b"video-a")
+    (archive_root / "A.json").write_text('{"title":"A"}\n', encoding="utf-8")
+    shutil.make_archive(str(source_root / "batch"), "zip", archive_root)
+    progress_path = tmp_path / "progress.jsonl"
+    progress_path.write_text(
+        json.dumps(
+            {
+                "video_id": "A",
+                "raw_repo_id": "org/repo",
+                "raw_import_id": "canonical_raw_v009",
+                "status": "pass",
+                "inventory": {
+                    "metadata_schema_version": "1.0",
+                    "canonical_repo_id": "org/repo",
+                    "canonical_prefix": "canonical_raw_v009",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    existing = [
+        Path("canonical_raw_v009/raw_videos/A.mp4"),
+        Path("canonical_raw_v009/metadata/A.json"),
+    ]
+    uploaded_batches: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files",
+        lambda self, prefix="": existing,
+    )
+    monkeypatch.setattr(
+        source_importer_module,
+        "probe_video_with_timeline",
+        lambda _path, *, video_id: decoded_timeline_fixture(video_id),
+    )
+
+    def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
+        uploaded_batches.append([str(relative_path) for _source, relative_path in files])
+        return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
+
+    monkeypatch.setattr(
+        "system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files",
+        fake_upload_files,
+    )
+
+    result = stream_standardize_upload_raw_to_hf(
+        source_root,
+        repo_id="org/repo",
+        raw_import_id="canonical_raw_v009",
+        scratch_dir=tmp_path / "scratch",
+        progress_path=progress_path,
+        frame_timeline_policy="required",
+    )
+
+    assert result.error_count == 0
+    pair_batches = [batch for batch in uploaded_batches if any("/frame_timeline/" in path for path in batch)]
+    assert pair_batches == [["canonical_raw_v009/frame_timeline/A.parquet"]]
+    assert not any(path.endswith(".mp4") for batch in uploaded_batches for path in batch)
+    assert not any("/metadata/A.json" in path for batch in uploaded_batches for path in batch)
+
+
+def test_stream_required_timeline_failure_is_reported_as_pair_error(monkeypatch, tmp_path):
+    source_root = tmp_path / "raw_dataset"
+    archive_root = tmp_path / "archive"
+    source_root.mkdir()
+    archive_root.mkdir()
+    (archive_root / "A.mp4").write_bytes(b"video-a")
+    shutil.make_archive(str(source_root / "batch"), "zip", archive_root)
+
+    monkeypatch.setattr(
+        "system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files",
+        lambda self, prefix="": [],
+    )
+    monkeypatch.setattr(
+        source_importer_module,
+        "probe_video_with_timeline",
+        lambda _path, *, video_id: VideoProbeWithTimeline(
+            VideoProbe(None, "failed", None, True, "unavailable", None, None, None, None),
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        "system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files",
+        lambda self, files, *, commit_message, num_threads=2: [
+            Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files
+        ],
+    )
+
+    result = stream_standardize_upload_raw_to_hf(
+        source_root,
+        repo_id="org/repo",
+        raw_import_id="canonical_raw_v009",
+        scratch_dir=tmp_path / "scratch",
+        frame_timeline_policy="required",
+    )
+
+    assert result.video_count == 0
+    assert result.error_count >= 1
 
 
 def test_stream_progress_reader_filters_scope_and_keeps_latest_status(tmp_path):
@@ -2162,6 +2415,83 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
     ]
 
 
+def test_ingest_from_canonical_hf_requires_and_reuses_uploaded_timeline(monkeypatch, tmp_path):
+    from system1.ingest.pipeline import run_ingestion
+
+    source_root = tmp_path / "canonical_repo"
+    (source_root / "metadata").mkdir(parents=True)
+    (source_root / "frame_timeline").mkdir(parents=True)
+    (source_root / "manifests").mkdir(parents=True)
+    metadata_payload = canonical_metadata_fixture("L21_V001")
+    (source_root / "metadata" / "L21_V001.json").write_text(
+        json.dumps(metadata_payload) + "\n",
+        encoding="utf-8",
+    )
+    timeline_path = source_root / "frame_timeline" / "L21_V001.parquet"
+    pd.DataFrame(decoded_timeline_fixture("L21_V001").frame_timeline).to_parquet(
+        timeline_path,
+        index=False,
+    )
+    manifest = {
+        "video_id": "L21_V001",
+        "video_filename": "L21_V001.mp4",
+        "metadata_filename": "L21_V001.json",
+        "video_path": "raw_videos/L21_V001.mp4",
+        "metadata_path": "metadata/L21_V001.json",
+        "frame_timeline_path": "frame_timeline/L21_V001.parquet",
+        "status": "pass",
+    }
+    (source_root / "manifests" / "canonical_file_manifest.jsonl").write_text(
+        json.dumps(manifest) + "\n",
+        encoding="utf-8",
+    )
+    pd.DataFrame(
+        [
+            canonical_inventory_fixture(
+                "L21_V001",
+                metadata=metadata_payload,
+                timeline_path="frame_timeline/L21_V001.parquet",
+                timeline_row_count=3,
+            )
+        ]
+    ).to_parquet(source_root / "manifests" / "canonical_video_inventory.parquet", index=False)
+    for audit_name in ("missing_metadata", "unmatched_metadata"):
+        (source_root / "manifests" / f"{audit_name}.json").write_text(
+            json.dumps({audit_name: [], "count": 0}) + "\n",
+            encoding="utf-8",
+        )
+    download_calls: list[str] = []
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def download_file(self, relative_path, target: Path, *, cache_dir=None):
+            download_calls.append(str(relative_path))
+            if str(relative_path).startswith("raw_videos/"):
+                raise AssertionError("required timeline ingest must not download raw video")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_root / str(relative_path), target)
+            return target
+
+    monkeypatch.setattr("system1.ingest.pipeline.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    report_path = run_ingestion(
+        tmp_path / "output",
+        mode="bronze_fast",
+        canonical_hf_repo_id="org/repo",
+        canonical_staging_root=tmp_path / "staging",
+        max_workers=1,
+        frame_timeline_policy="required",
+    )
+    release_dir = report_path.parent.parent
+    copied_timeline = release_dir / "frame_timeline" / "L21_V001.parquet"
+    assert copied_timeline.exists()
+    assert len(pd.read_parquet(copied_timeline)) == 3
+    assert "frame_timeline/L21_V001.parquet" in download_calls
+    assert "raw_videos/L21_V001.mp4" not in download_calls
+
+
 def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_path):
     from system1.ingest.pipeline import run_ingestion
 
@@ -2522,21 +2852,34 @@ def test_phase00_ingestion_sync_maps_legacy_release_layout(monkeypatch, tmp_path
     (release_dir / "manifests" / "ingestion_errors.jsonl").write_text("", encoding="utf-8")
     (release_dir / "manifests" / "missing_metadata.json").write_text('{"count": 0}\n', encoding="utf-8")
     (release_dir / "manifests" / "unmatched_metadata.json").write_text('{"count": 0}\n', encoding="utf-8")
+    (release_dir / "manifests" / "stream_standardize_upload_progress_canonical_raw_v003.jsonl").write_text(
+        '{"video_id": "L21_V001", "status": "pass"}\n',
+        encoding="utf-8",
+    )
     uploaded: dict[str, bytes] = {}
 
     class FakeHFStore:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def upload_file(self, source: Path, relative_path):
-            uploaded[str(relative_path)] = source.read_bytes()
+        def list_files(self, prefix=""):
+            return [Path(path) for path in uploaded if path.startswith(str(prefix))]
+
+        def sync_files(self, files, *, delete_paths=(), commit_message, num_threads=2):
+            for path in delete_paths:
+                uploaded.pop(str(path), None)
+            for source, relative_path in files:
+                uploaded[str(relative_path)] = source.read_bytes()
+            return [self.path(relative_path) for _source, relative_path in files]
+
+        def path(self, relative_path):
             return Path("hf:/org/repo") / str(relative_path)
 
     monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
 
     result = upload_phase00_ingestion_to_hf(release_dir, repo_id="org/repo")
 
-    assert result.file_count == 9
+    assert result.file_count == 10
     assert "canonical_release_v003/phase00_ingestion/tables/videos.parquet" in uploaded
     assert "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet" in uploaded
     assert "canonical_release_v003/phase00_ingestion/frame_timeline/L21_V001.parquet" in uploaded
@@ -2546,6 +2889,11 @@ def test_phase00_ingestion_sync_maps_legacy_release_layout(monkeypatch, tmp_path
     assert "canonical_release_v003/phase00_ingestion/reports/ingestion_errors.jsonl" in uploaded
     assert "canonical_release_v003/phase00_ingestion/reports/missing_metadata.json" in uploaded
     assert "canonical_release_v003/phase00_ingestion/reports/unmatched_metadata.json" in uploaded
+    assert (
+        "canonical_release_v003/phase00_ingestion/reports/"
+        "stream_standardize_upload_progress_canonical_raw_v003.jsonl"
+        in uploaded
+    )
     assert "canonical_release_v003/phase00_ingestion/reports/phase00_sync_manifest.json" in uploaded
     assert not any(path.startswith("releases/") for path in uploaded)
 
@@ -2553,14 +2901,14 @@ def test_phase00_ingestion_sync_maps_legacy_release_layout(monkeypatch, tmp_path
 def test_phase00_ingestion_restore_materializes_active_layout(monkeypatch, tmp_path):
     from system1.release.sync import download_phase00_ingestion_from_hf
 
-    uploaded = {
+    uploaded = phase00_remote_fixture("canonical_release_v003", {
         "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
         "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet": b"mapping",
         "canonical_release_v003/phase00_ingestion/frame_timeline/L21_V001.parquet": b"timeline",
         "canonical_release_v003/phase00_ingestion/manifests/batch_manifest.csv": b"batch_id\n",
         "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
         "canonical_release_v003/phase00_ingestion/reports/dataset_report.json": b'{"ok": true}\n',
-    }
+    })
 
     class FakeHFStore:
         def __init__(self, **kwargs):
@@ -2575,6 +2923,17 @@ def test_phase00_ingestion_restore_materializes_active_layout(monkeypatch, tmp_p
             return target
 
     monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    stale_release = tmp_path / "output" / "canonical_release_v003"
+    (stale_release / "frame_timeline").mkdir(parents=True)
+    (stale_release / "frame_timeline" / "STALE.parquet").write_bytes(b"stale")
+    (stale_release / "manifests").mkdir(parents=True)
+    (stale_release / "manifests" / "batch_999.txt").write_text(
+        "STALE\n",
+        encoding="utf-8",
+    )
+    (stale_release / "phase00_ingestion").mkdir(parents=True)
+    (stale_release / "phase00_ingestion" / "stale.bin").write_bytes(b"stale")
 
     result = download_phase00_ingestion_from_hf(
         tmp_path / "output",
@@ -2593,16 +2952,44 @@ def test_phase00_ingestion_restore_materializes_active_layout(monkeypatch, tmp_p
     assert (release_dir / "frame_timeline" / "L21_V001.parquet").read_bytes() == b"timeline"
     assert (release_dir / "manifests" / "batch_manifest.csv").read_text(encoding="utf-8") == "batch_id\n"
     assert (release_dir / "manifests" / "batch_000.txt").read_text(encoding="utf-8") == "L21_V001\n"
+    assert not (release_dir / "frame_timeline" / "STALE.parquet").exists()
+    assert not (release_dir / "manifests" / "batch_999.txt").exists()
+    assert not (release_dir / "phase00_ingestion" / "stale.bin").exists()
     assert not (release_dir / "reports" / "dataset_report.json").exists()
+
+
+def test_phase00_ingestion_restore_rejects_missing_completion_marker(
+    monkeypatch,
+    tmp_path,
+):
+    from system1.release.sync import download_phase00_ingestion_from_hf
+
+    remote_path = "canonical_release_v003/phase00_ingestion/tables/videos.parquet"
+
+    class FakeHFStore:
+        def __init__(self, **kwargs):
+            pass
+
+        def list_files(self, prefix=""):
+            return [Path(remote_path)]
+
+    monkeypatch.setattr("system1.release.sync.HuggingFaceDatasetArtifactStore", FakeHFStore)
+
+    with pytest.raises(FileNotFoundError, match="completion marker"):
+        download_phase00_ingestion_from_hf(
+            tmp_path / "output",
+            release_id="canonical_release_v003",
+            repo_id="org/repo",
+        )
 
 
 def test_phase00_ingestion_restore_no_overwrite_protects_active_layout(monkeypatch, tmp_path):
     from system1.release.sync import download_phase00_ingestion_from_hf
 
-    uploaded = {
+    uploaded = phase00_remote_fixture("canonical_release_v003", {
         "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
         "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
-    }
+    })
 
     class FakeHFStore:
         def __init__(self, **kwargs):
@@ -2634,11 +3021,11 @@ def test_phase00_ingestion_restore_no_overwrite_protects_active_layout(monkeypat
 
 
 def test_restore_phase00_ingestion_cli_unblocks_process_batch_manifest_check(monkeypatch, tmp_path):
-    uploaded = {
+    uploaded = phase00_remote_fixture("canonical_release_v003", {
         "canonical_release_v003/phase00_ingestion/tables/videos.parquet": b"videos",
         "canonical_release_v003/phase00_ingestion/raw_mapping/media_store_manifest.parquet": b"mapping",
         "canonical_release_v003/phase00_ingestion/manifests/batch_000.txt": b"L21_V001\n",
-    }
+    })
 
     class FakeHFStore:
         def __init__(self, **kwargs):

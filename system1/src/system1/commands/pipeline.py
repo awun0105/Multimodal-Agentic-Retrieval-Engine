@@ -4,6 +4,7 @@ from pathlib import Path
 
 import typer
 
+from system1.batch.writer import assign_batches as run_assign_batches
 from system1.commands.common import (
     EXPECTED_CHECKPOINT_ERRORS,
     checkpoint_error,
@@ -23,7 +24,6 @@ from system1.commands.common import (
     save_phase_checkpoint,
     try_restore_checkpoint,
 )
-from system1.batch.writer import assign_batches as run_assign_batches
 from system1.features.builder import process_feature_batch
 from system1.ingest.pipeline import run_ingestion
 from system1.release.merge import merge_worker_outputs
@@ -62,6 +62,11 @@ def register(app: typer.Typer) -> None:
         canonical_hf_repo_type: str = typer.Option("dataset", "--canonical-hf-repo-type"),
         canonical_hf_revision: str = typer.Option("main", "--canonical-hf-revision"),
         canonical_staging_root: Path | None = typer.Option(None, "--canonical-staging-root"),
+        frame_timeline_policy: str = typer.Option(
+            "if-available",
+            "--frame-timeline-policy",
+            help="Decoded timeline policy: required, if-available, or disabled.",
+        ),
         artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
         artifact_root: Path = typer.Option(default_artifact_root(), "--artifact-root"),
         hf_repo_id: str | None = typer.Option(default_hf_repo_id(), "--hf-repo-id"),
@@ -103,6 +108,7 @@ def register(app: typer.Typer) -> None:
             canonical_hf_repo_type=canonical_hf_repo_type,
             canonical_hf_revision=canonical_hf_revision,
             canonical_staging_root=canonical_staging_root,
+            frame_timeline_policy=frame_timeline_policy,
         )
         typer.echo(f"Ingested sample inputs: {report_path}")
 
@@ -148,6 +154,11 @@ def register(app: typer.Typer) -> None:
         worker_id: str = typer.Option("worker_000", "--worker-id"),
         mode: str = typer.Option("debug_small_sample", "--mode"),
         providers: str = typer.Option("mock", "--providers"),
+        require_frame_timeline: bool = typer.Option(
+            False,
+            "--require-frame-timeline/--allow-missing-frame-timeline",
+            help="Fail the batch if any video lacks a usable decoded frame timeline.",
+        ),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
         artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
@@ -181,7 +192,13 @@ def register(app: typer.Typer) -> None:
                 checkpoint_error(exc)
         require_supported_batch(batch_id, output)
         report_path = process_structure_batch(
-            output, input_dir=input_dir, batch_id=batch_id, worker_id=worker_id, mode=mode, providers=providers
+            output,
+            input_dir=input_dir,
+            batch_id=batch_id,
+            worker_id=worker_id,
+            mode=mode,
+            providers=providers,
+            require_frame_timeline=require_frame_timeline,
         )
         typer.echo(f"Processed {batch_id}: {release_dir(output)} ({report_path})")
         if sync:

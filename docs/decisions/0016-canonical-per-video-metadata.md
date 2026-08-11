@@ -6,6 +6,10 @@ Date: 2026-08-10
 
 Accepted
 
+Amended by ADR 0017 on 2026-08-11: the metadata schema remains 1.0, but the
+same bounded raw-upload pass now also produces a required separate decoded
+timeline for production.
+
 ## Context
 
 The organizer provides YouTube metadata for some videos. The observed metadata
@@ -105,11 +109,10 @@ was absent and the canonical organizer-field section was filled with null/empty
 values. The canonical JSON is still generated for every video, including rows
 where `metadata_generated=false`.
 
-Decoded frame timelines remain separate Phase00 artifacts. Inventory probe
-facts do not satisfy the production exact-frame contract. Canonical HF ingest
-may stage one video at a time to build the decoded timeline and must clean the
-bounded stage afterward; this is distinct from downloading the full raw dataset
-or downloading videos only to repeat inventory probing.
+Decoded frame timelines remain separate artifacts from metadata JSON. Inventory
+probe facts do not satisfy the production exact-frame contract. Per ADR 0017,
+raw upload builds the timeline while the video is already in bounded scratch;
+canonical HF ingest validates its compact Parquet without downloading the MP4.
 
 ## Alternatives Considered
 
@@ -120,9 +123,10 @@ or downloading videos only to repeat inventory probing.
 3. Store only probed inventory rows. Rejected because per-video metadata is the
    stable handoff for structure and feature workers, while the inventory is for
    efficient bulk discovery.
-4. Decode the complete frame timeline during raw upload. Rejected as a required
-   metadata operation because it makes raw upload unnecessarily expensive;
-   Phase00 owns decoded timeline production.
+4. Decode the complete frame timeline as part of metadata JSON construction.
+   Rejected because the contracts remain separate. ADR 0017 later requires a
+   separate timeline artifact during the same bounded raw-upload lifecycle to
+   avoid a second large-video transfer and scan.
 
 ## Consequences
 

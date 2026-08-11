@@ -137,6 +137,10 @@ The inventory carries:
 - `canonical_prefix`
 - `canonical_video_path`
 - `canonical_metadata_path` for the required canonical JSON
+- `canonical_frame_timeline_path`
+- `frame_timeline_status`
+- `frame_timeline_row_count`
+- `frame_timeline_size_bytes`
 - `metadata_schema_version`
 - `organizer_metadata_present`
 - `metadata_generated`
@@ -150,16 +154,17 @@ The inventory carries:
 - `probe_status`
 - `probe_attempts`
 
-For Phase00 inventory, `frame_count` may come from `ffprobe -count_packets` /
-`nb_read_packets`; header `nb_frames` and duration/FPS math remain diagnostic
-fallbacks. They do not replace the decoded frame timeline required by
-production Notebook 01.
+For production Phase00 inventory, `frame_count` comes from the required decoded
+timeline row count. `ffprobe -count_packets` / `nb_read_packets`, header
+`nb_frames`, and duration/FPS math remain compatibility diagnostics. They do not
+replace the decoded frame timeline required by production Notebook 01.
 
 Canonical HF ingest consumes that inventory by default and does not download
-`raw_videos/*.mp4` solely to repeat media probing. A production Phase00 run may
-stage one video at a time to produce its decoded frame timeline, then clean the
-bounded staging directory. Inventory facts alone do not satisfy the Notebook 01
-exact-frame contract.
+`raw_videos/*.mp4` solely to repeat media probing or timeline decoding.
+Notebook 00B/00C generate the decoded timeline while the video is already in
+bounded stream scratch. Production HF ingest downloads and validates the
+compact raw timeline Parquet and copies it into Phase00. Inventory facts without
+that matching Parquet do not satisfy the Notebook 01 exact-frame contract.
 
 Raw upload retries `ffprobe` at most three times. After exhausted retries,
 unknown technical values remain nullable and the inventory/canonical JSON carry
@@ -175,13 +180,14 @@ AIC26_raw
 AIC26_release
 ```
 
-`AIC26_raw` is the canonical raw dataset repo. It contains only standardized
-raw videos, one canonical metadata JSON per video, and raw-level
-import/inventory manifests:
+`AIC26_raw` is the canonical raw dataset repo. It contains standardized raw
+videos, one canonical metadata JSON and one decoded timeline per video, plus
+raw-level import/inventory manifests:
 
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
 AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/frame_timeline/{video_id}.parquet
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -257,9 +263,10 @@ scratch area. It is not the primary shared storage contract.
 Notebook 00B uses the streaming path for Colab free CPU runs: it scans zip
 members to build an official-source import plan, extracts bounded video and
 organizer-metadata pairs into local scratch, probes each local video, creates
-and validates its canonical metadata JSON, uploads each batch to `AIC26_raw`,
-records per-video progress, and cleans the scratch batch before moving on. It
-does not materialize a full standardized raw tree on Drive.
+and validates its canonical metadata JSON and decoded timeline Parquet, uploads
+each batch to `AIC26_raw`, records per-video progress, and cleans the scratch
+batch before moving on. It does not materialize a full standardized raw tree on
+Drive.
 
 The streaming path exposes the same disk-safe option family as archive
 standardization: `--min-free-gb`, `--drive-sync-sleep-seconds`,
@@ -271,6 +278,13 @@ Notebook 00C uses the same streaming path for local laptop/workstation runs.
 The source is a local downloaded zip folder, so the notebook skips Google Drive
 mount/remount and `drive-shadow`, then continues with HF raw upload, canonical
 HF ingest, batch assignment, and `phase00_ingestion` sync.
+
+Phase00 sync is an exact-prefix reconciliation. It compares SHA-256 plus size
+against the previous complete manifest, skips unchanged files, batches add and
+delete operations with bounded transient retries, deletes stale files only
+inside `<release_id>/phase00_ingestion/`, and uploads
+`reports/phase00_sync_manifest.json` last. A missing completion marker means the
+remote snapshot must not be treated as complete.
 
 ## Validation Gate
 

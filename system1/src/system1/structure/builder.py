@@ -8,15 +8,19 @@ from typing import Any
 
 import pandas as pd
 
+from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.artifacts.package import write_artifact_zip
 from system1.artifacts.reports import utc_now, write_worker_report
-from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.config import ProviderPlan, load_provider_plan
 from system1.features.providers import MockTextProvider, RealProviderUnavailable
 from system1.ingest.discovery import read_metadata
 from system1.keyframes.extractor import extract_keyframe_and_thumbnail
 from system1.release.types import config_dir, release_root
-from system1.structure.providers import TimelineAwareFallbackProvider, TimelineContext, TimelineFrame
+from system1.structure.providers import (
+    TimelineAwareFallbackProvider,
+    TimelineContext,
+    TimelineFrame,
+)
 from system1.text.builder import metadata_text
 
 STRUCTURE_PARQUET_FILES = (
@@ -39,6 +43,7 @@ def process_structure_batch(
     mode: str = "debug_small_sample",
     providers: str = "mock",
     worker_id: str = "worker_000",
+    require_frame_timeline: bool = False,
 ) -> Path:
     started_at = utc_now()
     release_dir = release_root(output_dir)
@@ -95,6 +100,7 @@ def process_structure_batch(
                 provider_plan=provider_plan,
                 batch_id=batch_id,
                 worker_id=worker_id,
+                require_frame_timeline=require_frame_timeline,
             )
             errors.extend(video_errors)
             _write_batch_debug_copy(batch_debug_dir / f"{video_id}.json", video_id=video_id, tables=video_tables)
@@ -145,6 +151,7 @@ def _write_video_structure_artifact(
     provider_plan: ProviderPlan,
     batch_id: str,
     worker_id: str,
+    require_frame_timeline: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     video_id = str(video["video_id"])
     errors: list[dict[str, Any]] = []
@@ -155,6 +162,11 @@ def _write_video_structure_artifact(
     normalized_text = metadata_text(video_id, metadata)
     text_provider = _text_provider_for_plan(provider_plan)
     timeline, timeline_errors = _load_timeline_context(release_dir, video)
+    if require_frame_timeline and not timeline.available:
+        details = timeline_errors[0]["message"] if timeline_errors else "timeline is empty"
+        raise ValueError(
+            f"decoded frame timeline is required for production video_id={video_id}: {details}"
+        )
     errors.extend(timeline_errors)
     structure_provider = TimelineAwareFallbackProvider()
     frame_count = _int_or_none(video.get("frame_count"))
