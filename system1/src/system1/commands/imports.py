@@ -91,6 +91,11 @@ def register(app: typer.Typer) -> None:
             "--frame-timeline-policy",
             help="Decoded timeline policy: required, if-available, or disabled.",
         ),
+        timeline_workers: str = typer.Option(
+            "auto",
+            "--timeline-workers",
+            help="Decoded timeline workers: auto, 1, or 2. Auto is capped at 2 for Colab safety.",
+        ),
         allow_partial: bool = typer.Option(False, "--allow-partial", help="Return success even when some stream pairs fail."),
     ) -> None:
         """Stream zip media/metadata pairs through local scratch into canonical HF raw."""
@@ -111,6 +116,7 @@ def register(app: typer.Typer) -> None:
             cleanup_every_files=cleanup_every_files,
             cleanup_every_gb=cleanup_every_gb,
             frame_timeline_policy=frame_timeline_policy,
+            timeline_workers=timeline_workers,
         )
         typer.echo(
             "Stream uploaded standardized raw "

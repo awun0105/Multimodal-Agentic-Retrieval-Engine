@@ -114,6 +114,9 @@ Out of scope:
   through canonical HF ingest and Phase00.
 - [x] Build production decoded timelines while each raw video is already in
   bounded upload scratch, then reuse the compact timeline during HF ingest.
+- [x] Bound timeline memory with chunked atomic Parquet writes and add a
+  Colab-safe `auto|1|2` worker setting while keeping extraction, progress, and
+  HF commits coordinator-owned.
 - [ ] Implement and validate Notebook 01 production structure providers and
   multimodal scene grouping.
 - [ ] Build a competition release containing app-ready SQLite, FTS, separate
@@ -156,6 +159,10 @@ Out of scope:
 - 2026-08-11: Notebook 00B/00C require decoded timelines during raw streaming.
   Canonical HF ingest validates the uploaded compact Parquet without a second
   raw-video download; production Notebook 01 rejects missing timelines.
+- 2026-08-12: Timeline creation streams into one atomic Parquet per video and
+  uses at most two external `ffprobe` workers. Raw remains authoritative;
+  Phase00 release contains the validated worker snapshot. Upload and progress
+  remain single-coordinator operations.
 
 Promote lasting product or architecture decisions into `docs/decisions/`.
 
@@ -177,7 +184,9 @@ Promote lasting product or architecture decisions into `docs/decisions/`.
 The decision/docs alignment and ADR 0016 package implementation are complete.
 Automated tests cover canonical generation, both upload paths, inventory
 agreement, HF ingest, provenance propagation, and Notebook 00B/00C gates; three
-local sample videos also pass real `ffprobe`. The overall plan remains active
+local sample videos also pass real `ffprobe`. A real 31,720-frame comparison
+also proves the streamed timeline is row-identical to the former in-memory
+writer. The overall plan remains active
 because the live HF `canonical_raw_v009` run, Notebook 01 providers, Notebook
 02 dual-index pipeline, final release, and
 System 2 runtime are not complete.

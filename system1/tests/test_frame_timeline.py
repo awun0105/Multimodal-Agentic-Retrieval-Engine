@@ -4,11 +4,12 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
 from system1.media.probe import VideoProbe, VideoProbeWithTimeline
 from system1.media.timeline import (
     FrameTimelineError,
+    build_frame_timeline_file_with_retry,
     build_frame_timeline_with_retry,
+    resolve_timeline_workers,
     validate_frame_timeline_file,
     validate_frame_timeline_rows,
     write_frame_timeline,
@@ -93,3 +94,85 @@ def test_frame_timeline_parquet_round_trip(tmp_path: Path) -> None:
         "pts_time",
         "duration_time",
     ]
+
+
+def test_streamed_frame_timeline_writes_one_atomic_file_in_small_chunks(tmp_path: Path) -> None:
+    target = tmp_path / "frame_timeline" / "A.parquet"
+    result = build_frame_timeline_file_with_retry(
+        tmp_path / "A.mp4",
+        target,
+        video_id="A",
+        policy="required",
+        chunk_rows=1,
+        row_iter_fn=lambda _path, *, video_id: iter(_rows(video_id)),
+        header_probe_fn=lambda _path: _probe(),
+        sleep_fn=lambda _delay: None,
+    )
+
+    assert result.status == "pass"
+    assert result.path == target
+    assert result.row_count == 2
+    assert result.probe.frame_count == 2
+    assert result.probe.frame_count_method == "decoded_frame_timeline"
+    assert validate_frame_timeline_file(target, expected_video_id="A") == 2
+    assert not target.with_suffix(".parquet.partial").exists()
+
+
+def test_streamed_frame_timeline_failure_removes_partial_file(tmp_path: Path) -> None:
+    target = tmp_path / "A.parquet"
+
+    with pytest.raises(FrameTimelineError, match="after 3 attempts"):
+        build_frame_timeline_file_with_retry(
+            tmp_path / "A.mp4",
+            target,
+            video_id="A",
+            policy="required",
+            row_iter_fn=lambda _path, *, video_id: iter(
+                [
+                    {
+                        "video_id": video_id,
+                        "frame_id": 1,
+                        "pts_time": 0.0,
+                        "duration_time": 0.04,
+                    }
+                ]
+            ),
+            header_probe_fn=lambda _path: _probe(),
+            sleep_fn=lambda _delay: None,
+        )
+
+    assert not target.exists()
+    assert not target.with_suffix(".parquet.partial").exists()
+
+
+def test_optional_streamed_frame_timeline_returns_unavailable_without_partial(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "A.parquet"
+
+    result = build_frame_timeline_file_with_retry(
+        tmp_path / "A.mp4",
+        target,
+        video_id="A",
+        policy="if-available",
+        row_iter_fn=lambda _path, *, video_id: iter(()),
+        header_probe_fn=lambda _path: _probe(),
+        sleep_fn=lambda _delay: None,
+    )
+
+    assert result.status == "unavailable"
+    assert result.path is None
+    assert result.row_count == 0
+    assert result.attempts == 3
+    assert not target.exists()
+    assert not target.with_suffix(".parquet.partial").exists()
+
+
+def test_timeline_worker_resolution_is_colab_safe(monkeypatch) -> None:
+    monkeypatch.setattr("system1.media.timeline.os.sched_getaffinity", lambda _pid: {0, 1, 2, 3})
+
+    assert resolve_timeline_workers("auto") == 2
+    assert resolve_timeline_workers("1") == 1
+    assert resolve_timeline_workers(2) == 2
+    with pytest.raises(FrameTimelineError, match="auto, 1, or 2"):
+        resolve_timeline_workers("4")

@@ -37,6 +37,24 @@ Timeline probing performs one lightweight stream-header query and one decoded
 frame scan. Because decoded rows supply the authoritative frame count, it avoids
 a redundant full `ffprobe -count_packets` scan.
 
+The package streams decoded rows into one Parquet file per video in bounded
+8,192-row chunks. It writes a `.partial` file, validates row IDs, timestamps,
+schema, and row count while building it, then atomically renames the completed
+file. Chunking is an internal memory bound; it does not split a video's public
+timeline contract.
+
+Notebook 00B/00C expose `timeline_workers=auto`. The package resolves this to
+one or two workers from the available CPU count and never exceeds two concurrent
+`ffprobe` processes. The coordinator alone extracts zip members, writes progress,
+cleans scratch, and performs batched HF commits. A worker group finishes before
+upload starts, so there are no concurrent HF commits or upload/probe contention.
+Operators can force `1` for constrained runtimes or `2` after a small pilot.
+
+The authoritative timeline lives under
+`AIC26_raw/<raw_import_id>/frame_timeline/`. Canonical ingest copies the validated
+artifact into `AIC26_release/<release_id>/phase00_ingestion/frame_timeline/` as a
+Phase00 worker snapshot; it does not regenerate the timeline.
+
 ## Alternatives Considered
 
 1. Decode timelines during canonical HF ingest. Rejected because it downloads
@@ -55,6 +73,8 @@ Positive:
   frame mapping in the same bounded scratch lifecycle.
 - Canonical HF ingest transfers only small metadata/timeline artifacts.
 - Notebook 01 can fail early and clearly when exact mapping is unavailable.
+- Streaming Parquet bounds Python memory, while the two-worker cap improves
+  Colab throughput without parallel HF commits.
 
 Tradeoffs:
 
@@ -62,11 +82,16 @@ Tradeoffs:
 - Existing raw prefixes without timelines must be backfilled or replaced with a
   new versioned prefix before production ingest.
 - The raw repo contains an additional Parquet file per video.
+- Two simultaneous scans can compete for CPU or local disk on a constrained
+  runtime; `timeline_workers=1` remains the deterministic fallback.
 
 ## Validation
 
 - Unit tests cover retry, schema, contiguous frame IDs, monotonic PTS, and file
   validation.
 - Integration tests cover both raw upload paths, required resume backfill,
-  canonical HF ingest without MP4 download, and Notebook 01 enforcement.
+  bounded worker concurrency, upload/probe separation, canonical HF ingest
+  without MP4 download, and Notebook 01 enforcement.
+- A real sample timeline produced 31,720 rows identical to the previous
+  in-memory implementation while reducing peak process RSS.
 - A live full-dataset HF rehearsal remains an operator validation step.

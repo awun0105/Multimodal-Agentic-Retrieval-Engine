@@ -6,6 +6,8 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -14,9 +16,6 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import pytest
-from typer.main import get_command
-from typer.testing import CliRunner
-
 from system1.artifacts.package import validate_artifact_zip
 from system1.cli import app
 from system1.commands import imports as imports_commands_module
@@ -37,7 +36,13 @@ from system1.ingest.source_importer import (
     upload_standardized_raw_to_hf,
 )
 from system1.media.probe import VideoProbe, VideoProbeWithTimeline
+from system1.media.timeline import (
+    FrameTimelineError,
+    FrameTimelineFileBuildResult,
+)
 from system1.validation.release_validator import validate_release
+from typer.main import get_command
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -135,6 +140,27 @@ def decoded_timeline_fixture(video_id: str) -> VideoProbeWithTimeline:
             {"video_id": video_id, "frame_id": 2, "pts_time": 0.08, "duration_time": 0.04},
         ],
     )
+
+
+def timeline_file_builder_fixture(probe_fn):
+    def build(video_path, target_path, *, video_id, policy, **_kwargs):
+        if policy == "disabled":
+            candidate = probe_fn(video_path, video_id=video_id)
+            return FrameTimelineFileBuildResult(candidate.probe, None, 0, 1, "disabled")
+        candidate = probe_fn(video_path, video_id=video_id)
+        if not candidate.frame_timeline:
+            raise FrameTimelineError(f"decoded frame timeline is empty for video_id={video_id}")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(candidate.frame_timeline).to_parquet(target_path, index=False)
+        return FrameTimelineFileBuildResult(
+            candidate.probe,
+            target_path,
+            len(candidate.frame_timeline),
+            1,
+            "pass",
+        )
+
+    return build
 
 
 def canonical_inventory_fixture(
@@ -404,6 +430,7 @@ def test_cli_contract_exposes_notebook_commands_without_rendering_help():
             "--cleanup-every-files",
             "--cleanup-every-gb",
             "--frame-timeline-policy",
+            "--timeline-workers",
         },
         "ingest": {
             "--mode",
@@ -516,6 +543,7 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             "--drive-sync-sleep-seconds",
             "--cleanup-every-files",
             "--cleanup-every-gb",
+            "--timeline-workers",
             "ingest",
             "assign-batches",
             "sync-phase00-ingestion",
@@ -528,6 +556,7 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             "--drive-sync-sleep-seconds",
             "--cleanup-every-files",
             "--cleanup-every-gb",
+            "--timeline-workers",
             "ingest",
             "assign-batches",
             "sync-phase00-ingestion",
@@ -637,6 +666,8 @@ def test_stream_standardize_upload_raw_cli_passes_disk_safe_options(monkeypatch,
             "13",
             "--cleanup-every-gb",
             "14",
+            "--timeline-workers",
+            "1",
         ],
     )
 
@@ -645,6 +676,7 @@ def test_stream_standardize_upload_raw_cli_passes_disk_safe_options(monkeypatch,
     assert captured["kwargs"]["drive_sync_sleep_seconds"] == 12
     assert captured["kwargs"]["cleanup_every_files"] == 13
     assert captured["kwargs"]["cleanup_every_gb"] == 14
+    assert captured["kwargs"]["timeline_workers"] == "1"
 
 
 def test_input_discovery_pairs_real_subset():
@@ -1596,7 +1628,11 @@ def test_upload_standardized_raw_to_hf_stages_drivefs_video_for_probe_and_upload
                 assert source.exists()
         return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
 
-    monkeypatch.setattr(source_importer_module, "probe_video_with_timeline", fake_probe)
+    monkeypatch.setattr(
+        source_importer_module,
+        "probe_video_with_timeline",
+        fake_probe,
+    )
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
 
     result = upload_standardized_raw_to_hf(
@@ -1703,7 +1739,11 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
                 assert scratch_root in source.parents
         return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
 
-    monkeypatch.setattr(source_importer_module, "probe_video_with_timeline", fake_probe)
+    monkeypatch.setattr(
+        source_importer_module,
+        "build_frame_timeline_file_with_retry",
+        timeline_file_builder_fixture(fake_probe),
+    )
     monkeypatch.setattr("system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files", fake_upload_files)
 
     result = stream_standardize_upload_raw_to_hf(
@@ -1732,6 +1772,13 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
     assert "canonical_dataset_v001/manifests/canonical_file_manifest.jsonl" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_import_report.json" in uploaded
     assert "canonical_dataset_v001/manifests/canonical_video_inventory.parquet" in uploaded
+    import_report = json.loads(
+        uploaded["canonical_dataset_v001/manifests/canonical_import_report.json"].decode()
+    )
+    assert import_report["timeline_workers_requested"] == "auto"
+    assert import_report["timeline_workers_resolved"] in {1, 2}
+    assert import_report["timings"]["timeline_sec_total"] >= 0
+    assert import_report["timings"]["pair_processing_wall_sec"] >= 0
     missing_audit = json.loads(uploaded["canonical_dataset_v001/manifests/missing_metadata.json"].decode())
     unmatched_audit = json.loads(uploaded["canonical_dataset_v001/manifests/unmatched_metadata.json"].decode())
     assert missing_audit["missing_metadata"] == [video_ids[-1]]
@@ -1742,6 +1789,7 @@ def test_stream_standardize_upload_raw_pairs_split_video_and_metadata_zips(monke
     assert not any(scratch_root.glob("stream_pair_*"))
     progress_records = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
     assert [record["status"] for record in progress_records] == ["pass"] * len(video_ids)
+    assert all("timeline_sec" in record["timings"] for record in progress_records)
     assert {record["raw_repo_id"] for record in progress_records} == {"org/repo"}
     assert {record["raw_import_id"] for record in progress_records} == {
         "canonical_dataset_v001"
@@ -1800,8 +1848,10 @@ def test_stream_resume_backfills_timeline_without_reuploading_existing_pair(monk
     )
     monkeypatch.setattr(
         source_importer_module,
-        "probe_video_with_timeline",
-        lambda _path, *, video_id: decoded_timeline_fixture(video_id),
+        "build_frame_timeline_file_with_retry",
+        timeline_file_builder_fixture(
+            lambda _path, *, video_id: decoded_timeline_fixture(video_id)
+        ),
     )
 
     def fake_upload_files(self, files, *, commit_message: str, num_threads: int = 2):
@@ -1829,6 +1879,75 @@ def test_stream_resume_backfills_timeline_without_reuploading_existing_pair(monk
     assert not any("/metadata/A.json" in path for batch in uploaded_batches for path in batch)
 
 
+def test_stream_timeline_workers_are_bounded_and_finish_before_upload(monkeypatch, tmp_path):
+    source_root = tmp_path / "raw_dataset"
+    archive_root = tmp_path / "archive"
+    source_root.mkdir()
+    archive_root.mkdir()
+    for video_id in ("A", "B"):
+        (archive_root / f"{video_id}.mp4").write_bytes(f"video-{video_id}".encode())
+    shutil.make_archive(str(source_root / "batch"), "zip", archive_root)
+
+    state_lock = threading.Lock()
+    active_workers = 0
+    max_active_workers = 0
+    upload_active_counts: list[int] = []
+
+    def fake_builder(video_path, target_path, *, video_id, policy, **_kwargs):
+        nonlocal active_workers, max_active_workers
+        with state_lock:
+            active_workers += 1
+            max_active_workers = max(max_active_workers, active_workers)
+        try:
+            time.sleep(0.05)
+            candidate = decoded_timeline_fixture(video_id)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(candidate.frame_timeline).to_parquet(target_path, index=False)
+            return FrameTimelineFileBuildResult(
+                candidate.probe,
+                target_path,
+                len(candidate.frame_timeline),
+                1,
+                "pass",
+            )
+        finally:
+            with state_lock:
+                active_workers -= 1
+
+    def fake_upload_files(self, files, *, commit_message, num_threads=2):
+        with state_lock:
+            upload_active_counts.append(active_workers)
+        return [Path("hf:/org/repo") / str(relative_path) for _source, relative_path in files]
+
+    monkeypatch.setattr(
+        "system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.list_files",
+        lambda self, prefix="": [],
+    )
+    monkeypatch.setattr(
+        source_importer_module,
+        "build_frame_timeline_file_with_retry",
+        fake_builder,
+    )
+    monkeypatch.setattr(
+        "system1.ingest.source_importer.HuggingFaceDatasetArtifactStore.upload_files",
+        fake_upload_files,
+    )
+
+    result = stream_standardize_upload_raw_to_hf(
+        source_root,
+        repo_id="org/repo",
+        raw_import_id="canonical_raw_v009",
+        scratch_dir=tmp_path / "scratch",
+        frame_timeline_policy="required",
+        timeline_workers=2,
+    )
+
+    assert result.error_count == 0
+    assert max_active_workers == 2
+    assert upload_active_counts
+    assert set(upload_active_counts) == {0}
+
+
 def test_stream_required_timeline_failure_is_reported_as_pair_error(monkeypatch, tmp_path):
     source_root = tmp_path / "raw_dataset"
     archive_root = tmp_path / "archive"
@@ -1843,10 +1962,12 @@ def test_stream_required_timeline_failure_is_reported_as_pair_error(monkeypatch,
     )
     monkeypatch.setattr(
         source_importer_module,
-        "probe_video_with_timeline",
-        lambda _path, *, video_id: VideoProbeWithTimeline(
-            VideoProbe(None, "failed", None, True, "unavailable", None, None, None, None),
-            [],
+        "build_frame_timeline_file_with_retry",
+        timeline_file_builder_fixture(
+            lambda _path, *, video_id: VideoProbeWithTimeline(
+                VideoProbe(None, "failed", None, True, "unavailable", None, None, None, None),
+                [],
+            )
         ),
     )
     monkeypatch.setattr(

@@ -47,6 +47,18 @@ compact HF ingest without MP4 download, stale local timeline/batch cleanup,
 scoped hash-based Phase00 reconciliation, and the Notebook 01 production gate.
 Only the live full-dataset HF rehearsal remains pending for this story.
 
+- `python -m pytest -q`: 188 passed on 2026-08-12 after adding streaming
+  Parquet and bounded timeline-worker coverage.
+- Real-file equivalence on `L21_V002`: both implementations produced the same
+  31,720 rows and probe values. Streaming peak RSS was 115,652 KB versus
+  132,852 KB for the former in-memory path; elapsed time was approximately 52
+  seconds for each single-worker scan.
+- Real two-worker smoke on `L21_V001` and `L21_V003`: 37,849 and 29,946 rows
+  passed concurrently in 78.04 seconds with 122,060 KB peak RSS. This validates
+  local concurrency mechanics; Colab throughput still depends on runtime CPU
+  and disk allocation.
+- Notebook 00B/00C JSON and IPython-transformed compilation passed for 40 code
+  cells; Ruff `E9,F,I` passed for all changed Python files.
 - `uv run pytest -q`: 183 passed on 2026-08-11.
 - Preflight regression slice: 4 passed; it checks the module entrypoint, the
   structured CLI contract used by 00A/00B/00C/01, notebook source guards, and

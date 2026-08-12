@@ -39,6 +39,9 @@ Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
    records per-pair progress, and deletes the batch scratch directories before
    moving on. Timeline probing uses one lightweight header query plus one
    decoded-frame scan; it does not add a redundant full `-count_packets` scan.
+   Decoded rows are written to one atomic Parquet per video in 8,192-row memory
+   chunks. `timeline_workers=auto` resolves to at most two `ffprobe` workers;
+   extraction is sequential and HF upload/progress remain coordinator-owned.
 3. Canonical HF ingest reads the raw repo manifests, canonical metadata, and
    inventory, downloads each compact timeline Parquet, validates it, and copies
    it into Phase00. It does not download raw video only to regenerate a timeline.
@@ -107,6 +110,9 @@ directly for the options used by Notebooks 00A/00B/00C/01.
 - `--frame-timeline-policy` supports `required`, `if-available`, and `disabled`.
   Notebook 00B/00C use `required`; a video is not recorded as passed until its
   timeline exists and validates.
+- `--timeline-workers` supports `auto`, `1`, and `2`. Notebook 00B/00C use
+  `auto`; the package caps the resolved value at two. A worker group completes
+  before batched upload, so HF commits and progress writes remain serialized.
 - Records organizer source reference/checksum when available and its absence
   before canonical generation; it does not upload a duplicate organizer JSON.
 
