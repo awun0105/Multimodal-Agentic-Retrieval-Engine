@@ -258,18 +258,15 @@ def run_cli_sequence(commands: list[list[str]]) -> None:
 def phase_based_commands(
     output_dir: Path,
     *,
-    mode: str = "debug_small_sample",
     providers: str = "mock",
 ) -> list[list[str]]:
     return [
-        ["ingest", "--mode", mode, "--output", str(output_dir), "--input", "input"],
-        ["assign-batches", "--mode", mode, "--num-batches", "1", "--output", str(output_dir)],
+        ["ingest", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
         [
             "process-batch",
             "--batch-id",
             "batch_000",
-            "--mode",
-            mode,
             "--providers",
             providers,
             "--output",
@@ -281,8 +278,6 @@ def phase_based_commands(
             "feature-batch",
             "--batch-id",
             "batch_000",
-            "--mode",
-            mode,
             "--providers",
             providers,
             "--output",
@@ -290,27 +285,26 @@ def phase_based_commands(
             "--input",
             "input",
         ],
-        ["merge", "--mode", mode, "--output", str(output_dir)],
-        ["build-index", "--mode", mode, "--output", str(output_dir)],
-        ["build-db", "--mode", mode, "--output", str(output_dir)],
-        ["validate", "--mode", mode, "--output", str(output_dir)],
+        ["merge", "--output", str(output_dir)],
+        ["build-index", "--output", str(output_dir)],
+        ["build-db", "--output", str(output_dir)],
+        ["validate", "--output", str(output_dir)],
     ]
 
 
 def run_phase_based_release(
     tmp_path: Path,
     *,
-    mode: str = "debug_small_sample",
     providers: str = "mock",
     package: bool = False,
 ) -> Path:
     output_dir = tmp_path / "output"
-    run_cli_sequence(phase_based_commands(output_dir, mode=mode, providers=providers))
+    run_cli_sequence(phase_based_commands(output_dir, providers=providers))
     release_dir = output_dir / "competition_dataset_v001"
     smoke = invoke_app(["smoke-test", "--release", str(release_dir)])
     assert smoke.exit_code == 0, smoke.stdout
     if package:
-        packaged = invoke_app(["release", "--mode", mode, "--output", str(output_dir)])
+        packaged = invoke_app(["release", "--output", str(output_dir)])
         assert packaged.exit_code == 0, packaged.stdout
     return release_dir
 
@@ -368,10 +362,10 @@ def remove_zip_member(zip_path: Path, member_name: str) -> None:
 
 def prepare_structure_and_feature_artifacts(output_dir: Path) -> Path:
     commands = [
-        ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"],
-        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["ingest", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
+        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["feature-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
         result = invoke_app(command)
@@ -433,7 +427,6 @@ def test_cli_contract_exposes_notebook_commands_without_rendering_help():
             "--timeline-workers",
         },
         "ingest": {
-            "--mode",
             "--output",
             "--canonical-hf-repo-id",
             "--canonical-hf-prefix",
@@ -442,7 +435,7 @@ def test_cli_contract_exposes_notebook_commands_without_rendering_help():
             "--frame-timeline-policy",
             "--no-resume",
         },
-        "assign-batches": {"--mode", "--num-batches", "--output", "--no-resume"},
+        "assign-batches": {"--num-batches", "--output", "--no-resume"},
         "sync-phase00-ingestion": {"--output", "--hf-repo-id"},
         "restore-phase00-ingestion": {
             "--release-id",
@@ -455,7 +448,6 @@ def test_cli_contract_exposes_notebook_commands_without_rendering_help():
         "process-batch": {
             "--batch-id",
             "--worker-id",
-            "--mode",
             "--providers",
             "--require-frame-timeline",
             "--output",
@@ -482,6 +474,7 @@ def test_cli_contract_exposes_notebook_commands_without_rendering_help():
             )
         }
         assert expected <= actual, f"{command_name} missing {sorted(expected - actual)}"
+        assert "--mode" not in actual, f"{command_name} still exposes a retired execution selector"
 
 
 def test_config_loading_reads_required_files():
@@ -586,11 +579,11 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         assert "AIC_DATA_ROOT" in joined
         assert "AIC_RUNTIME_ROOT" in joined
         assert "AIC_ARTIFACT_ROOT" in joined
-        assert "package_mode" in joined or "execution_mode" in joined
+        assert "--mode" not in joined
         if not path.name.startswith("00"):
             assert "worker_id" in joined
             assert "batch_id" in joined
-            assert "provider_mode" in joined
+            assert "providers" in joined
         assert "run_cli" in joined
         for command in commands:
             assert command in joined
@@ -702,8 +695,24 @@ def test_tolerant_input_discovery_reports_missing_and_unmatched_metadata(tmp_pat
     assert discovered["unmatched_metadata"] == [str(source / "metadata" / "C.json")]
 
 
-def test_debug_release_generates_valid_release(tmp_path):
+def test_single_workflow_generates_valid_release(tmp_path):
     release_dir = run_phase_based_release(tmp_path)
+    dataset_report = json.loads(
+        (release_dir / "manifests" / "dataset_report.json").read_text(encoding="utf-8")
+    )
+    structure_manifest = json.loads(
+        (release_dir / "artifacts" / "structure" / "L21_V001" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    feature_manifest = json.loads(
+        (release_dir / "artifacts" / "features" / "L21_V001" / "feature_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "mode" not in dataset_report
+    assert "mode" not in structure_manifest
+    assert "mode" not in feature_manifest
     sqlite_path = release_dir / "db" / "app.sqlite"
     with sqlite3.connect(sqlite_path) as connection:
         row = connection.execute("SELECT document_id FROM text_documents_fts WHERE text_documents_fts MATCH ? LIMIT 1", ("L21",)).fetchone()
@@ -717,8 +726,8 @@ def test_debug_release_generates_valid_release(tmp_path):
     assert report["schema_validation"]["status"] == "pass"
 
 
-def test_bronze_fast_generates_real_media_files(tmp_path):
-    release_dir = run_phase_based_release(tmp_path, mode="bronze_fast")
+def test_single_workflow_generates_runtime_media_files(tmp_path):
+    release_dir = run_phase_based_release(tmp_path)
     result = validate_release(release_dir)
     assert result.passed
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
@@ -729,12 +738,12 @@ def test_bronze_fast_generates_real_media_files(tmp_path):
     assert (release_dir / "db" / "staging.duckdb").exists()
 
 
-def test_cli_debug_pipeline_end_to_end(tmp_path):
+def test_cli_structure_phase_stops_before_feature_merge(tmp_path):
     output_dir = tmp_path / "output"
     commands = [
-        ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"],
-        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["ingest", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
+        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
         result = invoke_app(command)
@@ -749,7 +758,7 @@ def test_cli_debug_pipeline_end_to_end(tmp_path):
 
 def test_ingest_creates_only_ingestion_artifacts_and_is_idempotent(tmp_path):
     output_dir = tmp_path / "output"
-    command = ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"]
+    command = ["ingest", "--output", str(output_dir), "--input", "input"]
     first = invoke_app(command)
     stale_timeline = (
         output_dir
@@ -802,8 +811,6 @@ def test_local_ingest_video_primary_tolerates_missing_and_unmatched_metadata(tmp
         app,
         [
             "ingest",
-            "--mode",
-            "debug_small_sample",
             "--output",
             str(output_dir),
             "--source-uri",
@@ -837,8 +844,8 @@ def test_local_ingest_video_primary_tolerates_missing_and_unmatched_metadata(tmp
 
 def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_path):
     output_dir = tmp_path / "output"
-    ingest = invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    assigned = invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
+    ingest = invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    assigned = invoke_app(["assign-batches", "--num-batches", "2", "--output", str(output_dir)])
     assert ingest.exit_code == 0, ingest.stdout
     assert assigned.exit_code == 0, assigned.stdout
     release_dir = output_dir / "competition_dataset_v001"
@@ -863,20 +870,20 @@ def test_assign_batches_reads_ingested_videos_and_supports_multiple_batches(tmp_
 def test_assign_batches_caps_empty_batches_and_removes_stale_batch_files(tmp_path):
     output_dir = tmp_path / "output"
     ingest = invoke_app(
-        ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"]
+        ["ingest", "--output", str(output_dir), "--input", "input"]
     )
     assert ingest.exit_code == 0, ingest.stdout
     release_dir = output_dir / "competition_dataset_v001"
 
     many = invoke_app(
-        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "10", "--output", str(output_dir)]
+        ["assign-batches", "--num-batches", "10", "--output", str(output_dir)]
     )
     assert many.exit_code == 0, many.stdout
     video_count = len(pd.read_parquet(release_dir / "tables" / "videos.parquet"))
     assert len(list((release_dir / "manifests").glob("batch_*.txt"))) == video_count
 
     fewer = invoke_app(
-        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)]
+        ["assign-batches", "--num-batches", "1", "--output", str(output_dir)]
     )
     assert fewer.exit_code == 0, fewer.stdout
     assert [path.name for path in (release_dir / "manifests").glob("batch_*.txt")] == [
@@ -885,11 +892,11 @@ def test_assign_batches_caps_empty_batches_and_removes_stale_batch_files(tmp_pat
 
 def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_path):
     output_dir = tmp_path / "output"
-    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
     release_dir = output_dir / "competition_dataset_v001"
     videos_before = (release_dir / "tables" / "videos.parquet").stat().st_mtime_ns
-    result = invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = release_dir / "artifacts" / "structure" / "L21_V001"
     assert artifact_dir.exists()
@@ -1017,10 +1024,10 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
 
 def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
     output_dir = tmp_path / "output"
-    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
     with patch("subprocess.run", side_effect=__import__("subprocess").CalledProcessError(1, "ffmpeg")):
-        result = invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+        result = invoke_app(["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = output_dir / "competition_dataset_v001" / "artifacts" / "structure" / "L21_V001"
     jpg = next((artifact_dir / "keyframes").glob("*.jpg"))
@@ -1031,19 +1038,19 @@ def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
 
 def test_process_batch_missing_batch_file_fails_clearly(tmp_path):
     output_dir = tmp_path / "output"
-    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    result = invoke_app(["process-batch", "--batch-id", "batch_999", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["process-batch", "--batch-id", "batch_999", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
 
 def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
     output_dir = tmp_path / "output"
-    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
-    invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     release_dir = output_dir / "competition_dataset_v001"
     structure_manifest = release_dir / "artifacts" / "structure" / "L21_V001" / "manifest.json"
     structure_before = structure_manifest.stat().st_mtime_ns
-    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = release_dir / "artifacts" / "features" / "L21_V001"
     assert artifact_dir.exists()
@@ -1097,8 +1104,8 @@ def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
 
 def test_process_batch_can_require_phase00_frame_timeline(tmp_path):
     output_dir = tmp_path / "output"
-    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
     release_dir = output_dir / "competition_dataset_v001"
     first_video_id = (release_dir / "manifests" / "batch_000.txt").read_text(encoding="utf-8").splitlines()[0]
     (release_dir / "frame_timeline" / f"{first_video_id}.parquet").unlink()
@@ -1108,8 +1115,6 @@ def test_process_batch_can_require_phase00_frame_timeline(tmp_path):
             "process-batch",
             "--batch-id",
             "batch_000",
-            "--mode",
-            "debug_small_sample",
             "--providers",
             "mock",
             "--output",
@@ -1125,18 +1130,18 @@ def test_process_batch_can_require_phase00_frame_timeline(tmp_path):
 
 def test_feature_batch_missing_structure_artifact_fails_clearly(tmp_path):
     output_dir = tmp_path / "output"
-    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
-    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
 
 
 def test_worker_reports_include_phase_batch_worker_and_do_not_overwrite(tmp_path):
     output_dir = tmp_path / "output"
-    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "2", "--output", str(output_dir)])
-    first = invoke_app(["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_a", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
-    second = invoke_app(["process-batch", "--batch-id", "batch_001", "--worker-id", "worker_b", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--num-batches", "2", "--output", str(output_dir)])
+    first = invoke_app(["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_a", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    second = invoke_app(["process-batch", "--batch-id", "batch_001", "--worker-id", "worker_b", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     assert first.exit_code == 0, first.stdout
     assert second.exit_code == 0, second.stdout
     release_dir = output_dir / "competition_dataset_v001"
@@ -1158,13 +1163,13 @@ def test_worker_reports_include_phase_batch_worker_and_do_not_overwrite(tmp_path
 
 def test_feature_batch_restores_structure_from_zip_when_folder_missing(tmp_path):
     output_dir = tmp_path / "output"
-    invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
-    invoke_app(["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)])
-    invoke_app(["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
+    invoke_app(["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
     release_dir = output_dir / "competition_dataset_v001"
     shutil.rmtree(release_dir / "artifacts" / "structure" / "L21_V001")
 
-    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["feature-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
 
     assert result.exit_code == 0, result.stdout
     extracted = release_dir / "staging" / "extracted_artifacts" / "structure" / "L21_V001"
@@ -1175,11 +1180,11 @@ def test_feature_batch_restores_structure_from_zip_when_folder_missing(tmp_path)
 def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     output_dir = tmp_path / "output"
     commands = [
-        ["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"],
-        ["assign-batches", "--mode", "debug_small_sample", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["feature-batch", "--batch-id", "batch_000", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
-        ["merge", "--mode", "debug_small_sample", "--output", str(output_dir)],
+        ["ingest", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
+        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["feature-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["merge", "--output", str(output_dir)],
     ]
     for command in commands:
         result = invoke_app(command)
@@ -1192,9 +1197,9 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     assert not (release_dir / "db" / "app.sqlite").exists()
     assert not (release_dir / "indexes" / "visual.faiss").exists()
 
-    index = invoke_app(["build-index", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    db = invoke_app(["build-db", "--mode", "debug_small_sample", "--output", str(output_dir)])
-    validate = invoke_app(["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    index = invoke_app(["build-index", "--output", str(output_dir)])
+    db = invoke_app(["build-db", "--output", str(output_dir)])
+    validate = invoke_app(["validate", "--output", str(output_dir)])
     smoke = invoke_app(["smoke-test", "--release", str(release_dir)])
     assert index.exit_code == 0, index.stdout
     assert db.exit_code == 0, db.stdout
@@ -1225,7 +1230,7 @@ def test_merge_reads_zip_artifacts_when_extracted_folders_missing(tmp_path):
     shutil.rmtree(release_dir / "artifacts" / "structure" / "L21_V001")
     shutil.rmtree(release_dir / "artifacts" / "features" / "L21_V001")
 
-    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    result = invoke_app(["merge", "--output", str(output_dir)])
 
     assert result.exit_code == 0, result.stdout
     assert (release_dir / "staging" / "extracted_artifacts" / "merge" / "structure" / "L21_V001" / "shots.parquet").exists()
@@ -1245,7 +1250,7 @@ def test_merge_fails_on_artifact_zip_checksum_mismatch(tmp_path):
         return payload
 
     rewrite_zip_json_member(structure_zip, "L21_V001/checksums.json", corrupt_first_checksum)
-    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    result = invoke_app(["merge", "--output", str(output_dir)])
 
     assert result.exit_code != 0
     assert result.exception is not None
@@ -1259,7 +1264,7 @@ def test_merge_fails_on_artifact_zip_missing_package_metadata(tmp_path, member_n
     structure_zip = release_dir / "artifacts" / "structure" / "L21_V001_structure.zip"
     remove_zip_member(structure_zip, member_name)
 
-    result = invoke_app(["merge", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    result = invoke_app(["merge", "--output", str(output_dir)])
 
     assert result.exit_code != 0
     assert result.exception is not None
@@ -1268,16 +1273,16 @@ def test_merge_fails_on_artifact_zip_missing_package_metadata(tmp_path, member_n
 
 def test_validate_fails_before_runtime_artifacts(tmp_path):
     output_dir = tmp_path / "output"
-    result = invoke_app(["ingest", "--mode", "debug_small_sample", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
-    validate = invoke_app(["validate", "--mode", "debug_small_sample", "--output", str(output_dir)])
+    validate = invoke_app(["validate", "--output", str(output_dir)])
     assert validate.exit_code != 0
 
 def test_build_mini_seed_command_is_removed_from_main_cli(tmp_path):
     output_dir = tmp_path / "output"
     result = runner.invoke(
         app,
-        ["build-mini-seed", "--mode", "debug_small_sample", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["build-mini-seed", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     )
     assert result.exit_code != 0
 
@@ -1286,31 +1291,31 @@ def test_build_mini_seed_command_is_removed_from_main_cli(tmp_path):
     assert (output_dir / "competition_dataset_v001.zip").exists()
 
 
-def test_cli_bronze_pipeline_end_to_end(tmp_path):
+def test_cli_single_workflow_structure_commands_succeed(tmp_path):
     output_dir = tmp_path / "output"
     commands = [
-        ["ingest", "--mode", "bronze_fast", "--output", str(output_dir), "--input", "input"],
-        ["assign-batches", "--mode", "bronze_fast", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--mode", "bronze_fast", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["ingest", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
+        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
         result = invoke_app(command)
         assert result.exit_code == 0, result.stdout
 
 
-def test_silver_balanced_outputs_asr_ocr_contracts(tmp_path):
-    release_dir = run_phase_based_release(tmp_path, mode="silver_balanced")
+def test_mock_provider_outputs_asr_ocr_contracts_as_degraded(tmp_path):
+    release_dir = run_phase_based_release(tmp_path)
     result = validate_release(release_dir)
     assert result.passed
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
-    assert report["capabilities"]["asr"] == "pass"
-    assert report["capabilities"]["ocr"] == "pass"
+    assert report["capabilities"]["asr"] == "degraded"
+    assert report["capabilities"]["ocr"] == "degraded"
     assert (release_dir / "tables" / "asr_segments.parquet").exists()
     assert (release_dir / "tables" / "ocr.parquet").exists()
 
 
-def test_real_provider_mode_fails_gracefully_with_degraded_asr_ocr(tmp_path):
-    release_dir = run_phase_based_release(tmp_path, mode="silver_balanced", providers="real")
+def test_unavailable_real_providers_remain_degraded(tmp_path):
+    release_dir = run_phase_based_release(tmp_path, providers="real")
     result = validate_release(release_dir)
     assert result.passed
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
@@ -1320,10 +1325,10 @@ def test_real_provider_mode_fails_gracefully_with_degraded_asr_ocr(tmp_path):
     assert report["release_usable"] is True
 
 
-def test_gold_full_outputs_enrichment_and_phase_artifacts(tmp_path):
-    release_dir = run_phase_based_release(tmp_path, mode="gold_full")
+def test_single_workflow_outputs_enrichment_and_phase_artifacts(tmp_path):
+    release_dir = run_phase_based_release(tmp_path)
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
-    assert report["capabilities"]["enrichment_overall"] == "pass"
+    assert report["capabilities"]["enrichment_overall"] == "degraded"
     assert not (release_dir / "manifests" / "checkpoint_manifest.json").exists()
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
     assert list((release_dir / "artifacts" / "features").glob("*_features.zip"))
@@ -1331,12 +1336,12 @@ def test_gold_full_outputs_enrichment_and_phase_artifacts(tmp_path):
         assert (release_dir / "tables" / f"{name}.parquet").exists()
 
 
-def test_cli_gold_pipeline_end_to_end(tmp_path):
+def test_cli_single_workflow_writes_structure_artifacts(tmp_path):
     output_dir = tmp_path / "output"
     commands = [
-        ["ingest", "--mode", "gold_full", "--output", str(output_dir), "--input", "input"],
-        ["assign-batches", "--mode", "gold_full", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--mode", "gold_full", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["ingest", "--output", str(output_dir), "--input", "input"],
+        ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
+        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
         result = invoke_app(command)
@@ -1346,7 +1351,7 @@ def test_cli_gold_pipeline_end_to_end(tmp_path):
     assert not (release_dir / "artifacts" / "features").exists()
 
 
-def test_provider_plan_supports_named_modes():
+def test_provider_plan_supports_named_profiles():
     plan = load_provider_plan(Path("configs"), "real")
     assert plan.asr == "whisper"
     assert plan.ocr == "paddleocr"
@@ -1357,7 +1362,7 @@ def test_provider_plan_supports_named_modes():
 
 
 def test_worker_artifacts_and_runtime_reports_exist(tmp_path):
-    release_dir = run_phase_based_release(tmp_path, mode="gold_full")
+    release_dir = run_phase_based_release(tmp_path)
     assert (release_dir / "manifests" / "worker_reports" / "structure_batch_000_worker_000.json").exists()
     assert (release_dir / "manifests" / "worker_reports" / "features_batch_000_worker_000.json").exists()
     assert list((release_dir / "artifacts" / "structure").glob("*_structure.zip"))
@@ -1365,7 +1370,7 @@ def test_worker_artifacts_and_runtime_reports_exist(tmp_path):
 
 
 def test_selective_provider_change_keeps_phase_contracts(tmp_path):
-    release_dir = run_phase_based_release(tmp_path, mode="gold_full", providers="real")
+    release_dir = run_phase_based_release(tmp_path, providers="real")
     report = json.loads((release_dir / "manifests" / "validation_report.json").read_text(encoding="utf-8"))
     assert report["capabilities"]["asr"] == "degraded"
     assert report["capabilities"]["ocr"] == "degraded"
@@ -2598,7 +2603,6 @@ def test_ingest_from_canonical_hf_manifest(monkeypatch, tmp_path):
 
     report_path = run_ingestion(
         tmp_path / "output",
-        mode="debug_small_sample",
         canonical_hf_repo_id="org/repo",
         canonical_hf_prefix="",
         canonical_staging_root=tmp_path / "staging",
@@ -2689,7 +2693,6 @@ def test_ingest_from_canonical_hf_requires_and_reuses_uploaded_timeline(monkeypa
 
     report_path = run_ingestion(
         tmp_path / "output",
-        mode="bronze_fast",
         canonical_hf_repo_id="org/repo",
         canonical_staging_root=tmp_path / "staging",
         max_workers=1,
@@ -2813,7 +2816,6 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
 
     report_path = run_ingestion(
         tmp_path / "output",
-        mode="debug_small_sample",
         canonical_hf_repo_id="org/repo",
         canonical_hf_prefix=prefix,
         canonical_staging_root=tmp_path / "staging",
@@ -2883,7 +2885,6 @@ def test_ingest_from_canonical_hf_manifest_requires_inventory_unless_fallback_en
     with pytest.raises(FileNotFoundError, match="canonical_video_inventory.parquet"):
         run_ingestion(
             tmp_path / "output_fail",
-            mode="debug_small_sample",
             canonical_hf_repo_id="org/repo",
             canonical_staging_root=tmp_path / "staging_fail",
             max_workers=1,
@@ -2894,7 +2895,6 @@ def test_ingest_from_canonical_hf_manifest_requires_inventory_unless_fallback_en
     monkeypatch.setenv("AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE", "1")
     report_path = run_ingestion(
         tmp_path / "output_fallback",
-        mode="debug_small_sample",
         canonical_hf_repo_id="org/repo",
         canonical_staging_root=tmp_path / "staging_fallback",
         max_workers=1,
@@ -2957,7 +2957,6 @@ def test_ingest_from_canonical_hf_manifest_cleans_staging_and_cache(monkeypatch,
 
     report_path = run_ingestion(
         tmp_path / "output",
-        mode="debug_small_sample",
         canonical_hf_repo_id="org/repo",
         canonical_staging_root=staging_root,
         max_workers=1,
@@ -3024,7 +3023,6 @@ def test_ingest_from_canonical_hf_manifest_can_keep_staging_and_cache(monkeypatc
 
     report_path = run_ingestion(
         tmp_path / "output",
-        mode="debug_small_sample",
         canonical_hf_repo_id="org/repo",
         canonical_staging_root=staging_root,
         max_workers=1,

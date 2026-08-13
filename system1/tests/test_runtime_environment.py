@@ -121,7 +121,7 @@ def test_release_id_affects_release_dir_and_phase_outputs(tmp_path, monkeypatch)
 
     assert release_dir(output_dir) == output_dir / release_id
 
-    report_path = run_ingestion(output_dir, input_dir=input_dir, mode="debug_small_sample")
+    report_path = run_ingestion(output_dir, input_dir=input_dir)
     assert report_path.parent.parent.name == release_id
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["release_id"] == release_id
@@ -129,11 +129,11 @@ def test_release_id_affects_release_dir_and_phase_outputs(tmp_path, monkeypatch)
     batch_manifest_path = assign_batches(output_dir, num_batches=1)
     assert batch_manifest_path.parent.parent.name == release_id
 
-    structure_report = process_structure_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", mode="debug_small_sample", providers="mock")
+    structure_report = process_structure_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", providers="mock")
     assert structure_report.parent.name == "worker_reports"
     assert structure_report.parents[2].name == release_id
 
-    feature_report = process_feature_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", mode="debug_small_sample", providers="mock")
+    feature_report = process_feature_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", providers="mock")
     assert feature_report.parent.name == "worker_reports"
     assert feature_report.parents[2].name == release_id
 
@@ -144,10 +144,10 @@ def test_merge_dataset_manifest_release_id_matches_folder(tmp_path, monkeypatch)
     output_dir = tmp_path / "output"
     input_dir = Path("input")
 
-    run_ingestion(output_dir, input_dir=input_dir, mode="debug_small_sample")
+    run_ingestion(output_dir, input_dir=input_dir)
     assign_batches(output_dir, num_batches=1)
-    process_structure_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", mode="debug_small_sample", providers="mock")
-    process_feature_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", mode="debug_small_sample", providers="mock")
+    process_structure_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", providers="mock")
+    process_feature_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", providers="mock")
 
     from system1.release.merge import merge_worker_outputs
     merge_report = merge_worker_outputs(output_dir / release_id)

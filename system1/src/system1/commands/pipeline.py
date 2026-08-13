@@ -19,7 +19,6 @@ from system1.commands.common import (
     default_output,
     release_dir,
     require_supported_batch,
-    require_supported_mode,
     require_supported_providers,
     save_phase_checkpoint,
     try_restore_checkpoint,
@@ -33,7 +32,6 @@ from system1.structure.builder import process_structure_batch
 def register(app: typer.Typer) -> None:
     @app.command("ingest")
     def ingest(
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
         source_uri: str | None = typer.Option(
@@ -77,7 +75,6 @@ def register(app: typer.Typer) -> None:
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
         """Normalize sample inputs into release tables."""
-        require_supported_mode(mode)
         if source_uri is not None and canonical_hf_repo_id:
             raise typer.BadParameter(
                 "pass only one source: --source-uri for local standardized input "
@@ -99,7 +96,6 @@ def register(app: typer.Typer) -> None:
             output,
             input_dir=input_dir,
             source_uri=source_uri,
-            mode=mode,
             max_workers=max_workers,
             pairing_policy=normalized_pairing_policy,
             quarantine_unmatched_metadata=quarantine_unmatched_metadata,
@@ -114,7 +110,6 @@ def register(app: typer.Typer) -> None:
 
     @app.command("assign-batches")
     def assign_batches(
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         num_batches: int = typer.Option(1, "--num-batches"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
@@ -126,8 +121,7 @@ def register(app: typer.Typer) -> None:
         resume: bool = typer.Option(default_cli_resume(), "--resume/--no-resume"),
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
-        """Create deterministic debug batch manifests."""
-        require_supported_mode(mode)
+        """Create deterministic batch manifests."""
         try:
             batch_path = run_assign_batches(output, num_batches=num_batches)
         except (FileNotFoundError, ValueError) as exc:
@@ -152,7 +146,6 @@ def register(app: typer.Typer) -> None:
     def process_batch(
         batch_id: str = typer.Option(..., "--batch-id"),
         worker_id: str = typer.Option("worker_000", "--worker-id"),
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         providers: str = typer.Option("mock", "--providers"),
         require_frame_timeline: bool = typer.Option(
             False,
@@ -171,7 +164,6 @@ def register(app: typer.Typer) -> None:
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
         """Build phase01 structure artifacts for one assigned batch."""
-        require_supported_mode(mode)
         require_supported_providers(providers)
         if resume:
             try:
@@ -196,7 +188,6 @@ def register(app: typer.Typer) -> None:
             input_dir=input_dir,
             batch_id=batch_id,
             worker_id=worker_id,
-            mode=mode,
             providers=providers,
             require_frame_timeline=require_frame_timeline,
         )
@@ -222,7 +213,6 @@ def register(app: typer.Typer) -> None:
     def feature_batch(
         batch_id: str = typer.Option(..., "--batch-id"),
         worker_id: str = typer.Option("worker_000", "--worker-id"),
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         providers: str = typer.Option("mock", "--providers"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
@@ -236,7 +226,6 @@ def register(app: typer.Typer) -> None:
         sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
     ) -> None:
         """Build mock OCR, object, caption, and embedding artifacts."""
-        require_supported_mode(mode)
         require_supported_providers(providers)
         if resume:
             try:
@@ -257,7 +246,11 @@ def register(app: typer.Typer) -> None:
                 checkpoint_error(exc)
         require_supported_batch(batch_id, output)
         report_path = process_feature_batch(
-            output, input_dir=input_dir, batch_id=batch_id, worker_id=worker_id, mode=mode, providers=providers
+            output,
+            input_dir=input_dir,
+            batch_id=batch_id,
+            worker_id=worker_id,
+            providers=providers,
         )
         typer.echo(f"Featured {batch_id}: {release_dir(output)} ({report_path})")
         if sync:
@@ -279,11 +272,9 @@ def register(app: typer.Typer) -> None:
 
     @app.command("merge")
     def merge(
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
     ) -> None:
-        """Merge structural and feature artifacts for debug release."""
-        require_supported_mode(mode)
+        """Merge structural and feature artifacts for the release."""
         # Phase03 checkpoint remains manual via checkpoint-save after final release artifacts exist.
         report_path = merge_worker_outputs(release_dir(output))
-        typer.echo(f"Merged debug artifacts: {report_path}")
+        typer.echo(f"Merged artifacts: {report_path}")

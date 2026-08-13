@@ -1296,10 +1296,9 @@ Ví dụ ứng dụng:
 
 # 18. Production release profile
 
-Production notebooks should run the full end-to-end contract instead of asking
-operators to choose bronze/silver/gold execution modes. Lightweight/mock
-profiles may remain package-internal for CI and development, but they are not
-the user-facing production workflow.
+Production notebooks run one full end-to-end contract. Provider selection is
+explicit; mock providers remain available for CI and development and must be
+reported as non-production.
 
 The production release includes:
 

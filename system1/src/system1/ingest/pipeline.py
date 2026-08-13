@@ -42,7 +42,6 @@ def run_ingestion(
     *,
     input_dir: Path | str | None = None,
     source_uri: Path | str | None = None,
-    mode: str = "debug_small_sample",
     max_workers: int | None = None,
     pairing_policy: str = "video-primary",
     quarantine_unmatched_metadata: bool = False,
@@ -62,7 +61,6 @@ def run_ingestion(
     if canonical_hf_repo_id:
         return run_canonical_hf_ingestion(
             output_dir,
-            mode=mode,
             repo_id=canonical_hf_repo_id,
             prefix=canonical_hf_prefix,
             repo_type=canonical_hf_repo_type,
@@ -260,7 +258,6 @@ def run_ingestion(
         report_path,
         {
             "release_id": release_dir.name,
-            "mode": mode,
             "source_backend": "local",
             "source_root": str(source_root),
             "max_workers": resolved_max_workers,
@@ -294,7 +291,6 @@ def run_ingestion(
 def run_canonical_hf_ingestion(
     output_dir: Path | str,
     *,
-    mode: str,
     repo_id: str,
     prefix: str = "",
     repo_type: str = "dataset",
@@ -629,7 +625,6 @@ def run_canonical_hf_ingestion(
         report_path,
         {
             "release_id": release_dir.name,
-            "mode": mode,
             "source_backend": "hf_dataset",
             "source_repo_id": repo_id,
             "source_prefix": prefix,

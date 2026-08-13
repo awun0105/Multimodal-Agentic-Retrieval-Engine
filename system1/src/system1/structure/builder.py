@@ -40,7 +40,6 @@ def process_structure_batch(
     *,
     input_dir: Path | str | None = None,
     batch_id: str,
-    mode: str = "debug_small_sample",
     providers: str = "mock",
     worker_id: str = "worker_000",
     require_frame_timeline: bool = False,
@@ -95,7 +94,6 @@ def process_structure_batch(
                 video=video,
                 mapping=mapping,
                 input_dir=input_dir,
-                mode=mode,
                 providers=providers,
                 provider_plan=provider_plan,
                 batch_id=batch_id,
@@ -146,7 +144,6 @@ def _write_video_structure_artifact(
     video: dict[str, Any],
     mapping: dict[str, Any],
     input_dir: Path | str | None,
-    mode: str,
     providers: str,
     provider_plan: ProviderPlan,
     batch_id: str,
@@ -355,7 +352,6 @@ def _write_video_structure_artifact(
             "counts": {name.replace(".parquet", ""): 1 for name in STRUCTURE_PARQUET_FILES},
             "provider": providers,
             "provider_plan": provider_plan.__dict__,
-            "mode": mode,
             "batch_id": batch_id,
             "worker_id": worker_id,
             "created_at": "1970-01-01T00:00:00Z" if providers == "mock" else "runtime",
@@ -486,7 +482,7 @@ def _read_metadata_or_empty(path: Path | None, errors: list[dict[str, Any]], vid
 
 
 def _text_provider_for_plan(provider_plan: ProviderPlan) -> MockTextProvider | RealProviderUnavailable:
-    if provider_plan.mode == "mock":
+    if provider_plan.uses_only_mock_providers:
         return MockTextProvider()
     return RealProviderUnavailable("mixed_real_unavailable")
 

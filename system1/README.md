@@ -110,12 +110,10 @@ system1 stream-standardize-upload-raw \
   --progress-path /content/drive/MyDrive/AIC2026/stream_standardize_upload_progress.jsonl
 
 system1 ingest \
-  --mode debug_small_sample \
   --input input \
   --output output
 
 system1 assign-batches \
-  --mode debug_small_sample \
   --num-batches 1 \
   --output output
 
@@ -195,12 +193,9 @@ uv sync
 
 ## Main phase-based pipeline
 
-Run this exact order for the current MVP mock pipeline:
-
-The `--mode debug_small_sample` flags below are current CLI/test compatibility
-for the mock pipeline. Production notebooks should run the full production
-profile and should not expose bronze/silver/gold execution-mode choices to
-operators.
+Run this exact order for the current MVP mock pipeline. System 1 exposes one
+workflow; `--providers mock` selects test adapters but does not select a lower
+or higher quality tier. Mock capability results remain non-production.
 
 Verified clean mock E2E sequence:
 
@@ -208,19 +203,16 @@ Verified clean mock E2E sequence:
 rm -rf output/competition_dataset_v001
 
 system1 ingest \
-  --mode debug_small_sample \
   --input input \
   --output output
 
 system1 assign-batches \
-  --mode debug_small_sample \
   --num-batches 1 \
   --output output
 
 system1 process-batch \
   --worker-id worker_clean \
   --batch-id batch_000 \
-  --mode debug_small_sample \
   --providers mock \
   --input input \
   --output output
@@ -228,32 +220,27 @@ system1 process-batch \
 system1 feature-batch \
   --worker-id worker_clean \
   --batch-id batch_000 \
-  --mode debug_small_sample \
   --providers mock \
   --input input \
   --output output
 
 system1 merge \
-  --mode debug_small_sample \
   --output output
 
 system1 build-index \
-  --mode debug_small_sample \
   --output output
 
 system1 build-db \
-  --mode debug_small_sample \
   --output output
 
 system1 validate \
-  --mode debug_small_sample \
   --output output
 
 system1 smoke-test \
   --release output/competition_dataset_v001
 ```
 
-Expected debug/mock E2E result:
+Expected mock E2E result:
 
 - `validation_report.json` status: `pass`
 - `smoke_test_report.json` status: `pass`

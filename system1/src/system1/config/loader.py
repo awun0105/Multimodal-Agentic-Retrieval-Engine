@@ -19,9 +19,9 @@ class ProviderPlan:
     scene_summary: str
 
     @property
-    def mode(self) -> str:
+    def uses_only_mock_providers(self) -> bool:
         values = {self.asr, self.ocr, self.embedding, self.object_detection, self.shot_caption, self.scene_summary}
-        return "mock" if values == {"mock"} else "mixed"
+        return values == {"mock"}
 
 
 def load_configs(config_dir: Path | str) -> dict[str, dict[str, Any]]:
@@ -38,12 +38,12 @@ def load_configs(config_dir: Path | str) -> dict[str, dict[str, Any]]:
     return configs
 
 
-def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPlan:
+def load_provider_plan(config_dir: Path | str, provider_profile: str) -> ProviderPlan:
     configs = load_configs(config_dir)
     provider_defaults = configs["models"].get("providers", {})
-    if provider_mode == "mock":
+    if provider_profile == "mock":
         return ProviderPlan(**{key: "mock" for key in _provider_keys()})
-    if provider_mode == "real":
+    if provider_profile == "real":
         return ProviderPlan(
             asr="whisper",
             ocr="paddleocr",
@@ -52,7 +52,7 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             shot_caption="vlm",
             scene_summary="llm",
         )
-    if provider_mode == "rule_based":
+    if provider_profile == "rule_based":
         return ProviderPlan(
             asr=provider_defaults.get("asr", "mock"),
             ocr=provider_defaults.get("ocr", "mock"),
@@ -61,7 +61,7 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             shot_caption="rule_based",
             scene_summary="rule_based",
         )
-    if provider_mode == "vlm":
+    if provider_profile == "vlm":
         return ProviderPlan(
             asr=provider_defaults.get("asr", "mock"),
             ocr=provider_defaults.get("ocr", "mock"),
@@ -70,9 +70,9 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             shot_caption="vlm",
             scene_summary="llm",
         )
-    if provider_mode == "config":
+    if provider_profile == "config":
         return ProviderPlan(**{key: str(provider_defaults.get(key, "mock")) for key in _provider_keys()})
-    raise ValueError(f"unsupported provider mode: {provider_mode}")
+    raise ValueError(f"unsupported provider profile: {provider_profile}")
 
 
 def _provider_keys() -> tuple[str, ...]:

@@ -5,7 +5,7 @@ import zipfile
 
 import typer
 
-from system1.commands.common import default_output, release_dir, require_supported_mode
+from system1.commands.common import default_output, release_dir
 from system1.db.sqlite_builder import build_app_sqlite
 from system1.indexes.builder import build_visual_index
 from system1.release.phase_artifacts import (
@@ -26,11 +26,9 @@ from system1.validation.release_validator import validate_release
 def register(app: typer.Typer) -> None:
     @app.command("build-db")
     def build_db(
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
     ) -> None:
-        """Report app.sqlite path for the generated debug release."""
-        require_supported_mode(mode)
+        """Build app.sqlite for the generated release."""
         try:
             sqlite_path = build_app_sqlite(release_dir(output))
         except (FileNotFoundError, NotImplementedError, ValueError) as exc:
@@ -39,11 +37,9 @@ def register(app: typer.Typer) -> None:
 
     @app.command("build-index")
     def build_index(
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
     ) -> None:
-        """Report visual mock index path for the generated debug release."""
-        require_supported_mode(mode)
+        """Build the visual index for the generated release."""
         try:
             index_path = build_visual_index(release_dir(output))
         except (FileNotFoundError, NotImplementedError, ValueError) as exc:
@@ -53,11 +49,9 @@ def register(app: typer.Typer) -> None:
 
     @app.command("validate")
     def validate(
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
     ) -> None:
-        """Validate the debug release."""
-        require_supported_mode(mode)
+        """Validate the generated release."""
         result = validate_release(release_dir(output))
         if not result.passed:
             raise typer.Exit(1)
@@ -71,11 +65,9 @@ def register(app: typer.Typer) -> None:
 
     @app.command("release")
     def release(
-        mode: str = typer.Option("debug_small_sample", "--mode"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
     ) -> None:
-        """Zip the generated debug release."""
-        require_supported_mode(mode)
+        """Zip the generated release."""
         archive_path = package_release(release_dir(output))
         typer.echo(f"Packaged release: {archive_path}")
 
