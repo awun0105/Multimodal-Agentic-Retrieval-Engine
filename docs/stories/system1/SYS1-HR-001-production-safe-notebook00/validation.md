@@ -47,8 +47,13 @@ compact HF ingest without MP4 download, stale local timeline/batch cleanup,
 scoped hash-based Phase00 reconciliation, and the Notebook 01 production gate.
 Only the live full-dataset HF rehearsal remains pending for this story.
 
-- `python -m pytest -q`: 188 passed on 2026-08-12 after adding streaming
-  Parquet and bounded timeline-worker coverage.
+- 2026-08-13 regression: Phase00 `media_store_manifest.parquet` now preserves
+  `canonical_frame_timeline_path`. Focused tests cover both prefixed and
+  prefix-relative raw paths, required timeline download/reuse, and the complete
+  canonical path-column set enforced by Notebook 00B/00C step 15.
+- `python -m pytest -q`: 188 passed on 2026-08-13 after adding streaming
+  Parquet, bounded timeline-worker coverage, and the Phase00 canonical timeline
+  path regression fix.
 - Real-file equivalence on `L21_V002`: both implementations produced the same
   31,720 rows and probe values. Streaming peak RSS was 115,652 KB versus
   132,852 KB for the former in-memory path; elapsed time was approximately 52

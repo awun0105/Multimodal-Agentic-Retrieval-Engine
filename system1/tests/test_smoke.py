@@ -2697,8 +2697,23 @@ def test_ingest_from_canonical_hf_requires_and_reuses_uploaded_timeline(monkeypa
     )
     release_dir = report_path.parent.parent
     copied_timeline = release_dir / "frame_timeline" / "L21_V001.parquet"
+    mapping = pd.read_parquet(
+        release_dir / "raw_mapping" / "media_store_manifest.parquet"
+    )
     assert copied_timeline.exists()
     assert len(pd.read_parquet(copied_timeline)) == 3
+    assert {
+        "canonical_backend",
+        "canonical_repo_id",
+        "canonical_repo_type",
+        "canonical_prefix",
+        "canonical_video_path",
+        "canonical_metadata_path",
+        "canonical_frame_timeline_path",
+    }.issubset(mapping.columns)
+    assert mapping.loc[0, "canonical_frame_timeline_path"] == (
+        "frame_timeline/L21_V001.parquet"
+    )
     assert "frame_timeline/L21_V001.parquet" in download_calls
     assert "raw_videos/L21_V001.mp4" not in download_calls
 
@@ -2711,6 +2726,7 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
     prefixed_root = source_root / prefix
     (prefixed_root / "raw_videos").mkdir(parents=True)
     (prefixed_root / "metadata").mkdir(parents=True)
+    (prefixed_root / "frame_timeline").mkdir(parents=True)
     rows = [
         {
             "video_id": "L21_V001",
@@ -2718,6 +2734,7 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
             "metadata_filename": "L21_V001.json",
             "video_path": f"{prefix}/raw_videos/L21_V001.mp4",
             "metadata_path": f"{prefix}/metadata/L21_V001.json",
+            "frame_timeline_path": f"{prefix}/frame_timeline/L21_V001.parquet",
             "status": "pass",
         },
         {
@@ -2726,6 +2743,7 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
             "metadata_filename": "L21_V002.json",
             "video_path": "raw_videos/L21_V002.mp4",
             "metadata_path": "metadata/L21_V002.json",
+            "frame_timeline_path": "frame_timeline/L21_V002.parquet",
             "status": "pass",
         },
     ]
@@ -2751,6 +2769,10 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
             json.dumps(metadata_by_video_id[row["video_id"]]) + "\n",
             encoding="utf-8",
         )
+        pd.DataFrame(decoded_timeline_fixture(row["video_id"]).frame_timeline).to_parquet(
+            prefixed_root / "frame_timeline" / f"{row['video_id']}.parquet",
+            index=False,
+        )
     (prefixed_root / "manifests").mkdir()
     (prefixed_root / "manifests" / "canonical_file_manifest.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows),
@@ -2763,10 +2785,14 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
                 video_path=f"{prefix}/raw_videos/L21_V001.mp4",
                 metadata_path=f"{prefix}/metadata/L21_V001.json",
                 metadata=metadata_by_video_id["L21_V001"],
+                timeline_path=f"{prefix}/frame_timeline/L21_V001.parquet",
+                timeline_row_count=3,
             ),
             canonical_inventory_fixture(
                 "L21_V002",
                 metadata=metadata_by_video_id["L21_V002"],
+                timeline_path="frame_timeline/L21_V002.parquet",
+                timeline_row_count=3,
             ),
         ]
     ).to_parquet(prefixed_root / "manifests" / "canonical_video_inventory.parquet", index=False)
@@ -2792,6 +2818,7 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
         canonical_hf_prefix=prefix,
         canonical_staging_root=tmp_path / "staging",
         max_workers=1,
+        frame_timeline_policy="required",
     )
     release_dir = report_path.parent.parent
     mapping = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet").sort_values("video_id")
@@ -2802,10 +2829,16 @@ def test_ingest_from_canonical_hf_manifest_strips_store_prefix(monkeypatch, tmp_
         "manifests/missing_metadata.json",
         "manifests/unmatched_metadata.json",
         "metadata/L21_V001.json",
+        "frame_timeline/L21_V001.parquet",
         "metadata/L21_V002.json",
+        "frame_timeline/L21_V002.parquet",
     ]
     assert mapping["canonical_video_path"].tolist() == ["raw_videos/L21_V001.mp4", "raw_videos/L21_V002.mp4"]
     assert mapping["canonical_metadata_path"].tolist() == ["metadata/L21_V001.json", "metadata/L21_V002.json"]
+    assert mapping["canonical_frame_timeline_path"].tolist() == [
+        "frame_timeline/L21_V001.parquet",
+        "frame_timeline/L21_V002.parquet",
+    ]
 
 
 def test_ingest_from_canonical_hf_manifest_requires_inventory_unless_fallback_enabled(monkeypatch, tmp_path):

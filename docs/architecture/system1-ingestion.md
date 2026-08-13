@@ -237,6 +237,11 @@ AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_*.txt
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/
 ```
 
+The Phase00 `media_store_manifest.parquet` retains normalized canonical video,
+metadata, and frame-timeline paths plus the canonical raw prefix. This keeps
+the raw provenance complete while `frame_timeline_manifest.parquet` separately
+records Phase00 timeline availability and row counts.
+
 `missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
 manifests in `AIC26_raw`. The release repo may also snapshot them under
 `phase00_ingestion/reports/` for a particular release run. Their authoritative

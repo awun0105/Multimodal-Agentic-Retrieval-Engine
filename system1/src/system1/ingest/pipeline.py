@@ -555,6 +555,7 @@ def run_canonical_hf_ingestion(
                     "canonical_prefix": prefix,
                     "canonical_video_path": video_remote_path,
                     "canonical_metadata_path": metadata_remote_path,
+                    "canonical_frame_timeline_path": timeline_remote_path,
                     "metadata_schema_version": metadata["schema_version"],
                     "organizer_metadata_present": metadata["organizer_metadata_present"],
                     "metadata_generated": metadata["provenance"]["metadata_generated"],

@@ -147,6 +147,11 @@ validate against both artifacts. Canonical Hugging Face ingest must use these
 small artifacts by default and must not download `raw_videos/*.mp4` only to
 repeat probing or timeline decoding.
 
+Phase00 `raw_mapping/media_store_manifest.parquet` preserves the normalized
+`canonical_video_path`, `canonical_metadata_path`, and
+`canonical_frame_timeline_path` from that raw inventory together with
+`canonical_prefix`; Notebook 00 remote validation requires all three paths.
+
 `stream-standardize-upload-raw` writes the same canonical raw manifests and
 inventory while each video is present in local scratch. Required resume treats
 an older pass row without a valid remote timeline as incomplete and backfills
