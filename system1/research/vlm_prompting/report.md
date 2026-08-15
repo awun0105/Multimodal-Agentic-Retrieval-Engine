@@ -131,7 +131,7 @@ Tầng 3 chỉ chạy được trên Linux/Kaggle (vLLM không cài được tr�
 
 ## 6. Lượng tử hóa 4-bit (yêu cầu bắt buộc, mục 17 đề bài)
 
-Cấu hình trong `vlm/model_loader.py`:
+Cấu hình cuối cùng trong `vlm/model_loader.py`:
 
 ```python
 BitsAndBytesConfig(
@@ -139,14 +139,36 @@ BitsAndBytesConfig(
     bnb_4bit_quant_type="nf4",
     bnb_4bit_compute_dtype=torch.float16,
     bnb_4bit_use_double_quant=True,
-    llm_int8_skip_modules=["visual", "vision_tower", "vision_model"],
 )
 ```
 
-**Dòng cuối là quan trọng nhất.** Nó bảo bộ nén *đừng đụng vào phần "mắt"* của
-model. Nén cả vision tower xuống 4-bit làm **rơi ~10% điểm BLEU** trong khi chỉ
-tiết kiệm được rất ít bộ nhớ (vision tower chỉ ~300M tham số so với hàng tỷ của
-phần ngôn ngữ).
+### Phát hiện thực nghiệm: không giữ được vision tower ở FP16
+
+Nghiên cứu khuyến nghị chừa vision tower khỏi việc nén (giữ FP16), vì nén cả
+phần "mắt" làm rơi ~10% điểm BLEU trong khi tiết kiệm rất ít bộ nhớ. Tôi đã cài
+đặt đúng như vậy bằng `llm_int8_skip_modules=["visual","vision_tower","vision_model"]`.
+
+**Chạy thật trên Kaggle T4 thì hỏng:**
+
+```
+AssertionError: FP4 quantization state not initialized.
+Please call .cuda() or .to(device) on the LinearFP4 layer first.
+```
+
+Đã thử ba cấu hình trên cùng một ảnh để cô lập nguyên nhân:
+
+| Cấu hình | Kết quả | VRAM |
+|---|---|---|
+| **A. 4-bit thuần, không skip** | ✅ Chạy được, caption đúng | **5,96 GB** |
+| B. 4-bit + skip vision tower | ❌ Lỗi FP4 như trên | — |
+| C. FP16 không nén | Chạy được nhưng tốn gấp đôi | ~7,5 GB |
+
+→ **Chọn A.** Đánh đổi: vision tower cũng bị nén 4-bit, chất lượng mô tả có thể
+giảm nhẹ so với khuyến nghị lý thuyết.
+
+Đây là ví dụ cho thấy khuyến nghị từ tài liệu không phải lúc nào cũng chạy được
+trên môi trường thật — phải đo mới biết. Nếu bản bitsandbytes sau sửa được lỗi
+này thì nên bật lại `llm_int8_skip_modules`.
 
 Chọn NF4 (bitsandbytes) thay vì AWQ vì AWQ chưa có bản dựng sẵn cho mọi model
 trong danh sách. Nghiên cứu khuyến nghị AWQ khi chạy vLLM — sẽ cân nhắc ở bước sau.

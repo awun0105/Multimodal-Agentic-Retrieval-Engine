@@ -25,11 +25,21 @@ def _tao_quant_config(spec: ModelSpec):
     """
     Cấu hình lượng tử hóa 4-bit (yêu cầu bắt buộc của đề bài, mục 17).
 
-    Vision tower giữ nguyên FP16 — nén cả phần "mắt" xuống 4-bit làm chất lượng
-    mô tả rơi rõ rệt trong khi tiết kiệm rất ít bộ nhớ.
+    KHÔNG dùng `llm_int8_skip_modules` để chừa vision tower. Nghiên cứu khuyến
+    nghị giữ vision tower ở FP16, nhưng đo thật trên Kaggle T4 (transformers
+    4.x + bitsandbytes 0.4x) cho thấy tham số đó làm model chết ngay lúc chạy:
 
-    `llm_int8_skip_modules` nghe như chỉ dành cho 8-bit, nhưng bitsandbytes dùng
-    chung tham số này cho cả 4-bit — đây là tên gọi lịch sử, không phải nhầm.
+        AssertionError: FP4 quantization state not initialized.
+        Please call .cuda() or .to(device) on the LinearFP4 layer first.
+
+    Đã thử ba cấu hình trên cùng một ảnh:
+        A. 4-bit thuần, không skip  -> CHẠY, VRAM 5.96GB, caption đúng
+        B. 4-bit + skip visual      -> LỖI FP4 như trên
+        C. FP16 không nén           -> chạy nhưng tốn VRAM gấp đôi
+
+    Nên chọn A. Đánh đổi: vision tower cũng bị nén 4-bit, chất lượng mô tả có
+    thể giảm nhẹ so với khuyến nghị. Ghi nhận trong report.md để cân nhắc lại
+    khi bitsandbytes sửa lỗi này.
     """
     import torch
     from transformers import BitsAndBytesConfig
@@ -39,7 +49,6 @@ def _tao_quant_config(spec: ModelSpec):
         bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.float16,
         bnb_4bit_use_double_quant=True,
-        llm_int8_skip_modules=list(spec.skip_quant_modules),
     )
 
 

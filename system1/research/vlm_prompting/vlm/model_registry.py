@@ -10,7 +10,7 @@ Con số thật phải đo bằng benchmark ở Phase 04 — đừng tin bảng 
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -22,8 +22,6 @@ class ModelSpec:
     loader: str  # "qwen2vl" | "qwen25vl" | "auto_causal"
     ghi_chu: str = ""
     trust_remote_code: bool = False
-    # Không lượng tử hóa các module này — vision tower ở 4-bit làm rơi ~10% chất lượng.
-    skip_quant_modules: tuple[str, ...] = field(default=("visual", "vision_tower", "vision_model"))
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
