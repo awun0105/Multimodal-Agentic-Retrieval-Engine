@@ -12,3 +12,6 @@ results/*.tmp
 __pycache__/
 *.pyc
 .venv/
+
+# Ket qua chay thu (moi may mot khac)
+results/vlm_comparison_results.json
