@@ -313,11 +313,14 @@ Việt) trước khi chốt — đó là lý do `vintern-1b` nằm trong danh s�
 
 ## 9. Trạng thái
 
-- [x] Phase 01 — nền móng, chạy được 1 ảnh
-- [ ] Phase 02 — đa model + ép JSON bằng constrained decoding
-- [ ] Phase 03 — bộ ảnh mẫu + khung đo benchmark
-- [ ] Phase 04 — chạy 100+ ảnh, cổng kiểm tiếng Việt
-- [ ] Phase 05 — đóng gói provider cắm vào system1
-- [ ] Phase 06 — báo cáo + PR
+- [x] Phase 01 — nền móng, `generate_json()` chạy được 1 ảnh
+- [x] Phase 02 — 5 model + 3 backend (vLLM / transformers / mock)
+- [x] Phase 03 — chuẩn bị ảnh + khung đo 6 chỉ số + checkpoint
+- [ ] Phase 04 — **chạy 100+ ảnh trên GPU thật** ← đang chờ
+- [x] Phase 05 — provider cắm vào system1
+- [x] Phase 06 — `report.md` (số benchmark chờ điền)
+
+Toàn bộ code đã xong và kiểm thử ở chế độ mock. Việc còn lại là chạy trên GPU
+thật (Kaggle) để có số đo, rồi điền vào `report.md`.
 
 Kế hoạch đầy đủ: `plans/260815-2205-vlm-prompting-part3/`
