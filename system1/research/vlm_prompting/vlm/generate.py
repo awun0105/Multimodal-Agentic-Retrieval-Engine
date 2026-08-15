@@ -20,12 +20,9 @@ from typing import Any
 
 from .json_utils import parse_json_safe
 from .model_loader import VlmKhongSanSang, load_model, xoa_cache_model
-from .model_registry import MODEL_MAC_DINH, ModelSpec
-from .prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT, build_messages
+from .model_registry import MODEL_MAC_DINH
+from .prompts import PROMPT_VERSION
 from .schema import SCHEMA_VERSION, KeyframeMetadata
-
-MAX_NEW_TOKENS = 320
-TEMPERATURE = 0.3
 
 __all__ = [
     "generate_json",
@@ -56,45 +53,12 @@ def load_image(image: Any):
     raise TypeError(f"Kiểu ảnh không hỗ trợ: {type(image)!r}")
 
 
-def _sinh_text_tho(model, processor, spec: ModelSpec, pil_image) -> str:
-    """Chạy model, trả về chuỗi text thô chưa parse."""
-    import torch
-
-    messages = build_messages(pil_image)
-
-    try:
-        text_prompt = processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-    except Exception:
-        # Model không có chat template (thường gặp ở loader auto_causal).
-        text_prompt = f"{SYSTEM_PROMPT}\n\n{USER_PROMPT}"
-
-    inputs = processor(text=[text_prompt], images=[pil_image], return_tensors="pt")
-    inputs = {k: v.to(model.device) if hasattr(v, "to") else v for k, v in inputs.items()}
-
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=TEMPERATURE > 0,
-            temperature=TEMPERATURE,
-            repetition_penalty=1.05,
-        )
-
-    # Cắt bỏ phần prompt, chỉ giữ phần model sinh mới.
-    input_ids = inputs.get("input_ids")
-    if input_ids is not None:
-        output_ids = output_ids[:, input_ids.shape[1] :]
-
-    return processor.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-
-
 def generate_json(
     image: Any,
     model_key: str = MODEL_MAC_DINH,
     *,
     dung_4bit: bool = True,
+    backend: str = "auto",
     debug: bool = False,
 ) -> dict:
     """
@@ -104,32 +68,38 @@ def generate_json(
         image: đường dẫn ảnh, bytes, hoặc PIL.Image.
         model_key: khóa model trong MODEL_REGISTRY.
         dung_4bit: bật lượng tử hóa 4-bit (tự tắt khi máy không có GPU).
+        backend: "auto" (tự dò vllm → transformers → mock) | "vllm" |
+            "transformers" | "mock".
         debug: in output thô của model để soi lỗi.
 
     Trả về dict gồm các trường của KeyframeMetadata, cộng metadata kỹ thuật
     (`_model`, `_latency_sec`, `_vram_peak_gb`...). Các trường bắt đầu bằng "_"
     là thông tin phụ trợ cho benchmark, không thuộc hợp đồng JSON của đề bài.
 
-    Ném VlmKhongSanSang nếu không nạp được model, JsonParseError nếu model trả
-    về thứ không cứu được thành JSON.
+    Ném VlmKhongSanSang nếu ép backend cụ thể mà nạp lỗi (chế độ "auto" không
+    bao giờ ném — cùng lắm rơi về mock), JsonParseError nếu model trả về thứ
+    không cứu được thành JSON.
     """
+    from .adapters import get_adapter
+
     pil_image = load_image(image)
-    model, processor, spec = load_model(model_key, dung_4bit=dung_4bit)
+    adapter = get_adapter(model_key, backend=backend, dung_4bit=dung_4bit)
 
     bat_dau = time.perf_counter()
-    text_tho = _sinh_text_tho(model, processor, spec, pil_image)
+    text_tho = adapter.infer(pil_image)
     latency = time.perf_counter() - bat_dau
 
     if debug:
-        print(f"[DEBUG] model={spec.hf_id}")
+        print(f"[DEBUG] model={adapter.model_name} backend={adapter.backend_name}")
         print(f"[DEBUG] output thô ({len(text_tho)} ký tự):\n{text_tho}\n")
 
     du_lieu = parse_json_safe(text_tho)
     metadata = KeyframeMetadata(**du_lieu)
 
     ket_qua = metadata.model_dump()
-    ket_qua["_model"] = spec.hf_id
-    ket_qua["_model_key"] = spec.key
+    ket_qua["_model"] = adapter.model_name
+    ket_qua["_model_key"] = model_key
+    ket_qua["_backend"] = adapter.backend_name
     ket_qua["_latency_sec"] = round(latency, 3)
     ket_qua["_prompt_version"] = PROMPT_VERSION
     ket_qua["_schema_version"] = SCHEMA_VERSION
