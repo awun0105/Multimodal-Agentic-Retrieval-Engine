@@ -1,0 +1,28 @@
+# Phần 3 — VLM & Prompting
+#
+# LƯU Ý QUAN TRỌNG: cần Python 3.10-3.12. Python 3.13/3.14 chưa được PyTorch
+# và bitsandbytes hỗ trợ — cài sẽ lỗi.
+#
+# Cài trên máy có GPU NVIDIA:
+#     pip install -r requirements.txt
+#
+# Trên Kaggle/Colab: torch đã có sẵn, chỉ cần cài phần còn lại:
+#     pip install -q transformers accelerate bitsandbytes qwen-vl-utils pydantic
+
+torch>=2.4.0
+torchvision>=0.19.0
+
+transformers>=4.49.0
+accelerate>=0.34.0
+bitsandbytes>=0.44.0          # lượng tử hóa 4-bit; trên Windows cần bản >=0.44
+qwen-vl-utils>=0.0.8          # tiện ích xử lý ảnh cho họ Qwen-VL
+
+pydantic>=2.7.0
+pillow>=10.0.0
+
+tqdm>=4.66.0                  # thanh tiến độ khi chạy hàng loạt
+
+# Tùy chọn — chỉ cần khi dùng vLLM để chạy nhanh hàng loạt (Phase 02+).
+# Không cài được trên Windows, chỉ chạy Linux/Kaggle/Colab.
+# vllm>=0.8.0
+# xgrammar>=0.1.11
