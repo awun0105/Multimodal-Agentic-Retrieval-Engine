@@ -57,9 +57,9 @@ Năm model đầu đã cài đặt sẵn trong `vlm/model_registry.py`, đổi b
 
 | Mô hình | Latency | VRAM | Điểm benchmark | Ưu điểm | Nhược điểm | Kết luận |
 |---|---|---|---|---|---|---|
-| **Vintern-1B-v3.5** | **0,69 s/ảnh** ¹ | CHỜ ĐO | WER 0,34 (OCR) ¹ | Tiếng Việt tốt nhất trong nhóm; nhẹ nhất (1,5GB) chạy được cả GPU 4GB | Chỉ 1B tham số — mô tả cảnh phức tạp có thể sơ sài | Mốc đối chứng bắt buộc cho cổng kiểm tiếng Việt |
-| **Qwen2.5-VL-3B** | **9,65 s/ảnh** ⁴ | **6,12 GB** ⁴ | MMBench ~80 ² | JSON hợp lệ ngay lần đầu; tiếng Việt tự nhiên; đọc được chữ trong ảnh | **Chậm** — 9,65s/ảnh trên T4 | Ứng viên mặc định, nhưng cần đổi sang vLLM nếu chạy quy mô lớn |
-| **Qwen2-VL-2B** | **1,25 s/ảnh** ¹ | CHỜ ĐO | — | Nhẹ, đa ngôn ngữ | **Từng từ chối trả lời tiếng Việt** ¹ | Rủi ro — cần kiểm chứng kỹ |
+| **Qwen2-VL-2B** | **8,51 s/ảnh** ⁴ | **1,84 GB** ⁴ | **JSON hợp lệ 93,5%** ⁴ | Model DUY NHẤT chạy trọn 92 ảnh không sập; VRAM thấp nhất | 6/92 ảnh lỗi; caption ngắn (18,5 từ) | ✅ **CHỌN** — đường an toàn duy nhất hiện tại |
+| **Qwen2.5-VL-3B** | 10,61 s/ảnh ⁴ | 4,22 GB ⁴ | **JSON hợp lệ 4,3%** ⁴ | Chạy 1 ảnh lẻ cho caption tốt nhất, chi tiết nhất | **Sập sau 4 ảnh** — CUDA device-side assert | ❌ Chưa dùng được, cần sửa lỗi trước |
+| **Vintern-1B-v3.5** | 0,69 s/ảnh ¹ | (chưa đo được) | (chưa đo được) | Tiếng Việt tốt nhất theo đo của Phần 2; nhẹ nhất | **Adapter rơi về mock** — chưa chạy được model thật | ❌ Cần adapter riêng cho InternVL |
 | **Qwen2.5-VL-7B** | CHỜ ĐO | CHỜ ĐO | MMBench 82,6 ² | Chất lượng cao nhất nhóm <7B | Cần ≥12GB VRAM | Chỉ khả thi trên Kaggle P100/T4 |
 | **MiniCPM-V-4.0** | CHỜ ĐO | CHỜ ĐO | MMBench ~78–80 ² | Chỉ 3GB VRAM | Không fine-tune tiếng Việt | Đường lui khi GPU yếu |
 
@@ -223,7 +223,71 @@ hơn như Vintern-1B.
 
 ### 7.2. Benchmark đầy đủ 3 model
 
-**ĐANG CHẠY.** Lệnh thực tế trên Kaggle:
+**ĐÃ CHẠY XONG.** 92 keyframe thật × 3 model, Kaggle Tesla T4.
+
+### Kết quả thô
+
+| Model | JSON hợp lệ | Latency TB | P95 | VRAM đỉnh | Caption TB | Dùng được? |
+|---|---|---|---|---|---|---|
+| Vintern-1B-v3.5 | 100% (92/92) | **0,0 s** | 0,0 s | **0,0 GB** | 31 từ | ❌ **KHÔNG** — xem dưới |
+| **Qwen2-VL-2B** | **93,5%** (86/92) | 8,51 s | 13,43 s | 1,84 GB | 18,5 từ | ✅ **CÓ** |
+| Qwen2.5-VL-3B | 4,3% (4/92) | 10,61 s | 13,61 s | 4,22 GB | 22,8 từ | ❌ **KHÔNG** — xem dưới |
+
+### ⚠️ Hai trong ba kết quả KHÔNG dùng được
+
+**1. Vintern-1B: số 100% là giả.**
+
+Latency 0,0 giây và VRAM 0,0 GB là bất khả thi với một model thật. Nghĩa là
+adapter đã **rơi về `MockAdapter`** — trả JSON giả hợp lệ thay vì chạy model.
+Cơ chế degrade hoạt động đúng như thiết kế (không crash cả mẻ), nhưng con số
+sinh ra **không phải kết quả model**.
+
+Nguyên nhân nhiều khả năng: Vintern-1B dùng `trust_remote_code=True` với
+kiến trúc InternVL, cần gọi qua `model.chat()` riêng chứ không phải
+`model.generate()` chuẩn của transformers.
+
+→ **Không được dùng con số 100% này.** Phải viết adapter riêng cho InternVL
+rồi đo lại. Đây là bài học: chỉ số "tỷ lệ JSON hợp lệ" một mình không đủ tin —
+phải kiểm tra chéo với latency và VRAM.
+
+**2. Qwen2.5-VL-3B: sập giữa chừng.**
+
+Chạy một ảnh lẻ thì tốt (mục 7.1: 9,65 s, caption đúng). Nhưng chạy liên tiếp
+thì sập sau 4 ảnh:
+
+```
+AcceleratorError: CUDA error: device-side assert triggered
+```
+
+Lỗi lặp lại ở 88/92 ảnh còn lại. Dấu hiệu điển hình của tràn chỉ số trong
+kernel khi xử lý ảnh có kích thước khác nhau — keyframe thật không đồng đều
+kích thước, khác với ảnh test đơn lẻ.
+
+→ Cần thử `CUDA_LAUNCH_BLOCKING=1` để lấy vị trí lỗi thật, hoặc ép chuẩn hóa
+kích thước ảnh đầu vào (`max_pixels`) trước khi kết luận model này không dùng được.
+
+### Model DUY NHẤT có số liệu tin cậy: Qwen2-VL-2B
+
+| Chỉ số | Giá trị |
+|---|---|
+| Tỷ lệ JSON hợp lệ | **93,5%** (86/92 ảnh) |
+| Độ tuân thủ prompt | 93,5% |
+| Latency trung bình | 8,51 s/ảnh (P50 7,76 s, P95 13,43 s) |
+| VRAM đỉnh | 1,84 GB |
+| Độ chi tiết caption | 18,5 từ / 84,8 ký tự |
+| Số đối tượng TB | 1,71 |
+| Số màu sắc TB | 1,12 |
+
+Sáu ảnh thất bại, chia hai nhóm:
+- **4 ca** `JsonParseError` — model trả văn bản dài (760–1136 ký tự) không chứa JSON
+- **2 ca** `ValidationError` — JSON đúng cú pháp nhưng sai kiểu: một lần
+  `caption_chi_tiet` là mảng thay vì chuỗi, một lần thiếu hẳn trường này
+
+Nhóm thứ hai đáng chú ý: prompt và parser đều làm đúng việc, model vẫn sai
+schema. Đây chính xác là thứ mà constrained decoding (XGrammar) chặn được ở
+tầng sinh token — và là lý do nghiên cứu khuyến nghị nó.
+
+### Lệnh đã chạy
 
 ```bash
 # 92 keyframe thật, lấy rải đều từ Keyframes_L25.zip (kho 37.445 ảnh)
@@ -253,7 +317,38 @@ Vintern-1B chỉ 1 tỷ tham số — nhỏ nhất nhóm — nhưng vẫn tuân 
 
 ## 8. Mô hình được chọn cuối cùng
 
-**CHƯA CHỐT.** Việc chọn model bị chặn bởi một cổng kiểm bắt buộc.
+### **Qwen2-VL-2B-Instruct** — chọn theo dữ liệu thực đo
+
+**Lý do chọn:** đây là model **duy nhất trong ba** chạy trọn 92 ảnh mà không
+sập. Hai model kia đều hỏng theo cách riêng (mục 7.2). Chọn model chạy được
+93,5% hơn là model có tiềm năng cao hơn nhưng chưa chạy được.
+
+| Tiêu chí | Qwen2-VL-2B |
+|---|---|
+| Chạy hết 92 ảnh không sập | ✅ Duy nhất |
+| Tỷ lệ JSON hợp lệ | 93,5% |
+| VRAM | 1,84 GB — thấp nhất, chạy được cả GPU 4GB |
+| Latency | 8,51 s/ảnh |
+
+⚠️ **Đây là lựa chọn tạm thời, không phải kết luận cuối.** Ba lý do:
+
+1. **Chưa qua cổng kiểm tiếng Việt.** Vintern-1B (mốc đối chứng bắt buộc) chưa
+   chạy được nên chưa so được. Kế hoạch ban đầu yêu cầu so sánh này trước khi chốt.
+2. **Nghiên cứu cảnh báo về chính model này.** Thành viên Phần 2 ghi nhận
+   Qwen2-VL-2B **từng từ chối trả lời bằng tiếng Việt**. Chưa gặp trong 92 ảnh
+   vừa chạy, nhưng mẫu còn nhỏ.
+3. **Caption ngắn** — 18,5 từ, ngắn hơn Qwen2.5-VL-3B (22,8 từ). Đề bài yêu cầu
+   `caption_chi_tiet` "mô tả dài, đầy đủ ngữ cảnh".
+
+### Việc phải làm trước khi chốt hẳn
+
+| # | Việc | Vì sao |
+|---|---|---|
+| 1 | Viết adapter InternVL cho Vintern-1B | Mốc đối chứng tiếng Việt, không có thì cổng kiểm vô nghĩa |
+| 2 | Sửa lỗi CUDA assert của Qwen2.5-VL-3B | Model này cho caption chi tiết nhất khi chạy được |
+| 3 | Chấm tay 30 caption × 3 model, giấu tên model | Đo chất lượng tiếng Việt thật, không chỉ đếm JSON hợp lệ |
+
+### Cổng kiểm tiếng Việt (chưa chạy được)
 
 ### Cổng kiểm tiếng Việt
 
@@ -290,6 +385,9 @@ Nên quy trình chốt model là:
 | Kaggle Remote URL không nhập được file từ Google Drive | Link Drive trả về trang HTML cảnh báo quét virus, không trả file. Trình nhập của Kaggle không xử lý được trang này | Bỏ Remote URL. Đọc file bằng HTTP Range request ngay trong notebook |
 | File keyframe nặng 5.7GB, gần cạn đĩa Kaggle (~20GB) | Kho ảnh của cuộc thi rất lớn, trong khi benchmark chỉ cần 100 ảnh | `tai_anh_tu_zip_tren_mang.py` — đọc mục lục ở cuối file zip rồi chỉ tải đúng các đoạn byte chứa ảnh cần. Tải ~10MB thay vì 5.7GB |
 | Phiên Kaggle vẫn chạy CPU dù đã chọn GPU | Kaggle chỉ áp dụng lựa chọn accelerator **khi khởi động phiên**. Phiên đang chạy giữ nguyên cấu hình cũ | Dừng phiên (Run → Stop session) rồi chạy lại. Xác nhận bằng `torch.cuda.is_available()` |
+| `llm_int8_skip_modules` làm model chết khi chạy | Tham số này (giữ vision tower ở FP16) không tương thích với 4-bit trên bitsandbytes hiện tại → `FP4 quantization state not initialized` | Bỏ tham số, chấp nhận nén cả vision tower. Đã cô lập bằng 3 thí nghiệm A/B/C (mục 6) |
+| Vintern-1B cho latency 0,0s và VRAM 0,0GB | Adapter rơi về `MockAdapter` vì model dùng kiến trúc InternVL, cần gọi `model.chat()` thay vì `model.generate()` | **CHƯA SỬA.** Ghi rõ số này không dùng được thay vì báo cáo nhầm thành 100% |
+| Qwen2.5-VL-3B sập sau 4 ảnh | `CUDA error: device-side assert triggered` — nhiều khả năng tràn chỉ số khi ảnh có kích thước khác nhau | **CHƯA SỬA.** Cần chạy lại với `CUDA_LAUNCH_BLOCKING=1` hoặc ép `max_pixels` cố định |
 
 ---
 
@@ -326,11 +424,11 @@ system1/research/vlm_prompting/
 | Áp dụng lượng tử hóa 4-bit | ✅ NF4, giữ vision tower FP16 |
 | Prompt ép JSON, có `caption_chi_tiet` | ✅ prompt v1 + 3 tầng phòng thủ |
 | `caption_chi_tiet` mô tả dài, đủ ngữ cảnh | ✅ ép tối thiểu 25 ký tự, đo số từ |
-| Chạy thử ≥100 ảnh | ⏳ hạ tầng xong, chờ GPU |
-| Hàm `generate_json(image)` | ✅ `vlm/generate.py` |
-| `sample_results.json` | ⏳ chờ chạy thật |
-| Bảng benchmark 7 cột | ✅ mục 3 (số chờ điền) |
-| Pull Request | ⏳ chờ có số benchmark |
+| Chạy thử ≥100 ảnh | ⚠️ Chạy 92 ảnh thật (kho chỉ có 92 ảnh không trùng tên trong mẫu đã lấy) |
+| Hàm `generate_json(image)` | ✅ `vlm/generate.py` — đã chạy thật trên keyframe AIC |
+| `sample_results.json` | ✅ code đã có, sinh từ checkpoint |
+| Bảng benchmark 7 cột | ✅ mục 3, số thực đo |
+| Pull Request | ⏳ nên sửa 2 model hỏng trước khi mở PR |
 
 ---
 
