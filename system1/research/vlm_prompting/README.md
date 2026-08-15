@@ -70,17 +70,26 @@ model chỉ trả JSON, không nói thêm câu nào.
 
 ```
 vlm_prompting/
-├── vlm/                      ← code chính
-│   ├── schema.py             định nghĩa hình dạng JSON đầu ra
-│   ├── prompts.py            câu lệnh gửi cho model
-│   ├── json_utils.py         cứu JSON khi model trả về lỗi định dạng
-│   ├── model_registry.py     danh sách model + cấu hình từng model
-│   └── generate.py           hàm generate_json() — trái tim của phần này
+├── vlm/                          ← code chính
+│   ├── schema.py                 hình dạng JSON đầu ra + ép kiểu
+│   ├── prompts.py                câu lệnh gửi cho model
+│   ├── json_utils.py             cứu JSON khi model trả sai định dạng
+│   ├── model_registry.py         danh sách 5 model + cấu hình
+│   ├── model_loader.py           nạp model, lượng tử hóa 4-bit
+│   ├── adapters.py               3 backend: vLLM / transformers / mock
+│   ├── generate.py               generate_json() — trái tim của phần này
+│   └── provider.py               cắm vào hệ thống lõi system1
 ├── scripts/
-│   └── smoke_one_image.py    chạy thử trên 1 ảnh
-├── data/frames/              ảnh để test (không commit lên git)
-├── results/                  kết quả benchmark
-└── requirements.txt          danh sách thư viện cần cài
+│   ├── smoke_one_image.py        chạy thử 1 ảnh
+│   ├── prepare_sample_images.py  chuẩn bị ≥100 ảnh test
+│   ├── benchmark_runner.py       chạy benchmark, 2 chế độ DEBUG/MASS
+│   ├── metrics.py                tính 6 chỉ số đề bài
+│   ├── checkpoint_utils.py       lưu tiến độ, chống mất khi ngắt phiên
+│   └── kaggle_smoke.ipynb        notebook chạy trên Kaggle
+├── data/frames/                  ảnh test (không commit lên git)
+├── results/                      kết quả benchmark
+├── report.md                     báo cáo bàn giao
+└── requirements.txt              thư viện cần cài
 ```
 
 **Vì sao chia nhiều file thay vì một file to?** Mỗi file lo đúng một việc. Khi
