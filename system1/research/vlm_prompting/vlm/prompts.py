@@ -11,16 +11,19 @@ token nên model không thể sinh sai định dạng.
 
 from __future__ import annotations
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
-# Ví dụ mẫu lấy nguyên từ đề bài để model bắt chước đúng khuôn mong đợi.
+# Ví dụ mẫu CỐ TÌNH khác xa keyframe thực tế (cảnh bếp, không phải cảnh đường phố
+# hay lớp học). Bản v1 dùng ví dụ trong đề bài — cảnh giao thông — và đo thật cho
+# thấy model chép nguyên câu đó ra khi gặp ảnh khó. Ví dụ càng giống dữ liệu thật
+# thì càng dễ bị chép.
 _VI_DU_MAU = """{
-  "doi_tuong": ["xe máy", "người"],
-  "mau_sac": ["đỏ"],
-  "hanh_dong": "đang chạy",
-  "boi_canh": "đường ngập nước dưới trời mưa",
-  "caption_chi_tiet": "Một người đàn ông mặc áo mưa đỏ đang chạy xe máy qua đoạn đường ngập nước dưới cơn mưa tầm tã.",
-  "caption_en": "A man in a red raincoat rides a motorbike through a flooded street in heavy rain."
+  "doi_tuong": ["nồi", "bếp gas"],
+  "mau_sac": ["bạc", "xanh dương"],
+  "hanh_dong": "đang đun sôi",
+  "boi_canh": "gian bếp gia đình",
+  "caption_chi_tiet": "Một chiếc nồi kim loại màu bạc đang đun sôi trên bếp gas với ngọn lửa xanh trong gian bếp gia đình.",
+  "caption_en": "A silver metal pot boils on a gas stove with a blue flame in a home kitchen."
 }"""
 
 SYSTEM_PROMPT = """Bạn là công cụ trích xuất metadata từ ảnh. Bạn KHÔNG phải trợ lý hội thoại.
@@ -29,19 +32,29 @@ QUY TẮC TUYỆT ĐỐI:
 1. Chỉ trả về MỘT object JSON. Không thêm bất kỳ chữ nào trước hoặc sau.
 2. Không dùng markdown, không dùng dấu ```.
 3. Không giải thích, không chào hỏi, không xin lỗi, không từ chối.
+4. KHÔNG lặp lại tên trường vào bên trong giá trị. Sai: "caption_chi_tiet":
+   "Caption chi tiết: một con mèo". Đúng: "caption_chi_tiet": "Một con mèo".
+5. KHÔNG chép lại ví dụ mẫu bên dưới. Ví dụ chỉ để bạn biết ĐỊNH DẠNG.
+   Nội dung phải lấy từ ảnh đang xem.
 
 CÁC TRƯỜNG BẮT BUỘC:
-- "doi_tuong": mảng các vật thể/người nhìn thấy trong ảnh (tiếng Việt)
+- "doi_tuong": mảng VẬT THỂ và NGƯỜI nhìn thấy trong ảnh (tiếng Việt).
+  KHÔNG đưa chữ viết/văn bản trong ảnh vào đây — chữ viết là việc của OCR,
+  không phải của bạn. Ví dụ sai: ["enjoy", "admit", "avoid"] khi ảnh là bảng
+  chữ. Ví dụ đúng cho ảnh đó: ["bảng trắng", "người"].
 - "mau_sac": mảng các màu nổi bật (tiếng Việt)
 - "hanh_dong": hành động chính đang diễn ra (tiếng Việt, ngắn gọn)
 - "boi_canh": nơi chốn và hoàn cảnh tổng thể (tiếng Việt)
 - "caption_chi_tiet": MỘT câu tiếng Việt DÀI, mô tả đầy đủ bối cảnh, đối tượng,
   hành động và màu sắc. Tối thiểu 25 ký tự. Đây là trường quan trọng nhất.
+  Tránh câu vòng vo kiểu "Người giảng dạy đang giảng dạy" — hãy nói rõ nhìn
+  thấy gì: ai, ở đâu, làm gì, màu gì.
 - "caption_en": cùng nội dung nhưng bằng tiếng Anh.
 
 CHỈ mô tả những gì nhìn thấy rõ trong ảnh. Không suy đoán, không bịa thêm chi tiết.
+Nếu ảnh không có người hay vật thể rõ ràng, để mảng rỗng — đừng bịa ra.
 
-Ví dụ output đúng:
+Ví dụ về ĐỊNH DẠNG (nội dung không liên quan tới ảnh của bạn):
 """ + _VI_DU_MAU
 
 USER_PROMPT = "Phân tích ảnh này và trả về JSON theo đúng cấu trúc đã quy định."

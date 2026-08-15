@@ -12,11 +12,25 @@ Hai hợp đồng phải thỏa mãn cùng lúc:
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field, field_validator
 
 SCHEMA_VERSION = "v1"
 
 CAPTION_MIN_LENGTH = 25
+
+# Model hay lặp tên trường vào đầu giá trị: "Caption Chi tiết: Một người...".
+# Đo thật trên 92 keyframe cho thấy lỗi này xảy ra ngay ở ảnh đầu tiên.
+# Khớp mọi nhãn ngắn đứng trước dấu hai chấm ở đầu chuỗi. Không liệt kê từng
+# biến thể ("Caption Chi tiết", "Mô tả"...) vì dấu tiếng Việt có nhiều cách mã
+# hóa Unicode khác nhau — liệt kê kiểu đó sẽ sót.
+_NHAN_THUA = re.compile(r"^\s*[\w\s_]{1,25}[:：]\s+(?=\S)")
+
+
+def _bo_nhan_thua(v: str) -> str:
+    """Cắt nhãn tên trường nếu model lỡ ghi vào đầu giá trị."""
+    return _NHAN_THUA.sub("", v).strip()
 
 
 class KeyframeMetadata(BaseModel):
@@ -38,7 +52,7 @@ class KeyframeMetadata(BaseModel):
     @classmethod
     def caption_phai_du_dai(cls, v: str) -> str:
         # Model nhỏ hay trả lời cụt kiểu "một con mèo" — vô dụng cho tìm kiếm.
-        v = v.strip()
+        v = _bo_nhan_thua(v.strip())
         if len(v) < CAPTION_MIN_LENGTH:
             raise ValueError(
                 f"caption_chi_tiet quá ngắn ({len(v)} ký tự, cần >= {CAPTION_MIN_LENGTH}): {v!r}"

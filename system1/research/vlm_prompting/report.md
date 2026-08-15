@@ -5,10 +5,14 @@
 **Ngày:** 15/08/2026
 **Nhánh:** `research/vlm-prompting`
 
-> ⚠️ **TRẠNG THÁI: chưa có số benchmark thật.**
-> Toàn bộ hạ tầng code đã xong và kiểm thử với backend mock. Các ô số đo trong
-> báo cáo này ghi `CHỜ ĐO` — sẽ điền sau khi chạy trên GPU thật (Kaggle P100).
-> Số nào đã có nguồn thực đo đều ghi rõ nguồn.
+> **TRẠNG THÁI: đã có số thực đo, nhưng 2/3 model chưa chạy được.**
+>
+> Đã chạy 92 keyframe thật của AIC trên Kaggle Tesla T4. Kết quả:
+> - **Qwen2-VL-2B: 93,5% JSON hợp lệ** — model duy nhất chạy trọn 92 ảnh
+> - Qwen2.5-VL-3B: sập sau 4 ảnh (CUDA device-side assert)
+> - Vintern-1B: adapter rơi về mock, **số 100% trong log là giả**
+>
+> Chi tiết ở mục 7.2. Mọi số có ký hiệu ⁴ là tự đo; số khác ghi rõ nguồn.
 
 ---
 
@@ -286,6 +290,36 @@ Sáu ảnh thất bại, chia hai nhóm:
 Nhóm thứ hai đáng chú ý: prompt và parser đều làm đúng việc, model vẫn sai
 schema. Đây chính xác là thứ mà constrained decoding (XGrammar) chặn được ở
 tầng sinh token — và là lý do nghiên cứu khuyến nghị nó.
+
+### ⚠️ 93,5% JSON hợp lệ KHÔNG có nghĩa là 93,5% caption dùng được
+
+Đọc tay caption thật của Qwen2-VL-2B cho thấy vấn đề mà chỉ số "JSON hợp lệ"
+không bắt được. Năm ảnh đầu tiên:
+
+| Ảnh | `caption_chi_tiet` sinh ra | Đánh giá |
+|---|---|---|
+| `001.jpg` | *"Caption Chi tiết: Một người đàn ông mặc áo mưa đỏ đang chạy xe máy qua đoạn đường ngập nước dưới cơn mưa tầm tã."* | ❌ **Chép nguyên ví dụ trong prompt.** Đây là câu mẫu ở `prompts.py`, không phải nội dung ảnh. Còn lẫn cả nhãn "Caption Chi tiết:" |
+| `009.jpg` | *"Người giảng dạy đang giảng dạy tại Trung tâm học tập."* | ⚠️ Vòng vo, gần như không có thông tin |
+| `010.jpg` | *"Người giới thiệu đang trình bày trong phòng học với một màn hình hiển thị hình ảnh khoa học kỹ thuật."* | ✅ Dùng được |
+| `014.jpg` | `doi_tuong` = `["enjoy","admit","avoid","deny","fancy","keep","mind","spend","suggest","tolerate"]` | ❌ Model đọc chữ tiếng Anh trên bảng rồi nhét vào ô "đối tượng" |
+| `019.jpg` | *"Bà giảng dạy về phân tích một cấu trúc gen học."* | ⚠️ Tiếng Việt lủng củng, sai ngữ pháp |
+
+**Ước lượng thô: chỉ 1–2 trong 5 caption thật sự dùng được**, dù cả 5 đều là
+JSON hợp lệ 100%.
+
+Ba lỗi phải sửa ở prompt (`prompts.py`, sẽ thành `PROMPT_VERSION = "v2"`):
+
+1. **Model chép ví dụ few-shot.** Ví dụ mẫu đang dùng chính là câu trong đề bài;
+   khi model "bí" nó chép lại. Cách sửa: đổi ví dụ sang cảnh khác hẳn keyframe
+   thực tế, hoặc bỏ few-shot và chỉ mô tả schema.
+2. **Nhãn "Caption Chi tiết:" lọt vào giá trị.** Phải bỏ khi hậu xử lý, hoặc
+   siết prompt cấm lặp lại tên trường.
+3. **`doi_tuong` nhận chữ thay vì vật thể.** Prompt phải nói rõ: *"chỉ liệt kê
+   vật thể/người nhìn thấy, KHÔNG liệt kê chữ viết trong ảnh — chữ thuộc về OCR"*.
+
+Đây là bài học chính của lần benchmark này: **chỉ số tự động không thay thế được
+việc đọc bằng mắt**. Nếu chỉ nhìn con số 93,5% thì đã kết luận sai là pipeline
+đạt yêu cầu.
 
 ### Lệnh đã chạy
 
