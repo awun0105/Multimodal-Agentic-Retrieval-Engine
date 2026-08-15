@@ -266,8 +266,30 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
-    print(f"Đã lưu kết quả: {dich}")
+    print(f"Đã lưu bảng số: {dich}")
+
+    # sample_results.json — đề bài bắt buộc: JSON đầy đủ của từng ảnh, không
+    # phải chỉ bảng tổng kết. Lấy từ checkpoint vì ở đó có nguyên kết quả.
+    mau = _gom_sample_results(model_keys, args.out_dir)
+    if mau:
+        dich_mau = args.out_dir / "sample_results.json"
+        dich_mau.write_text(json.dumps(mau, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Đã lưu {len(mau)} kết quả mẫu: {dich_mau}")
+
     return 0
+
+
+def _gom_sample_results(model_keys: list[str], thu_muc: Path) -> list[dict]:
+    """Gom kết quả từng ảnh của mọi model từ checkpoint thành một danh sách."""
+    tat_ca: list[dict] = []
+    for model_key in model_keys:
+        checkpoint = load_checkpoint(thu_muc, model_key)
+        for ten_anh, muc in checkpoint.get("da_xong", {}).items():
+            ket_qua = muc.get("ket_qua")
+            if not ket_qua:
+                continue
+            tat_ca.append({"image": ten_anh, "model": model_key, **ket_qua})
+    return tat_ca
 
 
 if __name__ == "__main__":

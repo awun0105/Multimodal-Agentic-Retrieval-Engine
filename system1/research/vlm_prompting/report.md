@@ -223,15 +223,20 @@ hơn như Vintern-1B.
 
 ### 7.2. Benchmark đầy đủ 3 model
 
-**ĐANG CHẠY.** Lệnh:
+**ĐANG CHẠY.** Lệnh thực tế trên Kaggle:
 
 ```bash
-python scripts/prepare_sample_images.py --n 100
-python scripts/benchmark_runner.py --mode mass \
-    --models vintern-1b,qwen2vl-2b,qwen25vl-3b --stability
+# 92 keyframe thật, lấy rải đều từ Keyframes_L25.zip (kho 37.445 ảnh)
+python scripts/benchmark_runner.py --mode mass --n 100 \
+    --models vintern-1b,qwen2vl-2b,qwen25vl-3b \
+    --frames-dir /kaggle/working/data/frames \
+    --out-dir /kaggle/working/results
 ```
 
-Kết quả ghi vào `results/vlm_comparison_results.json` và `sample_results.json`.
+Kết quả ghi vào `results/vlm_comparison_results.json`.
+
+Ghi nhận sớm (10 ảnh đầu của Vintern-1B): **10/10 JSON hợp lệ**. Đáng chú ý vì
+Vintern-1B chỉ 1 tỷ tham số — nhỏ nhất nhóm — nhưng vẫn tuân thủ được định dạng.
 
 ### Sáu chỉ số đo (định nghĩa trong `scripts/metrics.py`)
 
