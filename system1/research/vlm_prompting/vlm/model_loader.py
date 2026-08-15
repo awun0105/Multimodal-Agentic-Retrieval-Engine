@@ -27,6 +27,9 @@ def _tao_quant_config(spec: ModelSpec):
 
     Vision tower giữ nguyên FP16 — nén cả phần "mắt" xuống 4-bit làm chất lượng
     mô tả rơi rõ rệt trong khi tiết kiệm rất ít bộ nhớ.
+
+    `llm_int8_skip_modules` nghe như chỉ dành cho 8-bit, nhưng bitsandbytes dùng
+    chung tham số này cho cả 4-bit — đây là tên gọi lịch sử, không phải nhầm.
     """
     import torch
     from transformers import BitsAndBytesConfig
@@ -38,6 +41,26 @@ def _tao_quant_config(spec: ModelSpec):
         bnb_4bit_use_double_quant=True,
         llm_int8_skip_modules=list(spec.skip_quant_modules),
     )
+
+
+def _dua_len_gpu(model) -> None:
+    """
+    Đảm bảo mọi tầng đã nằm trên GPU.
+
+    Với model 4-bit, nếu một tầng LinearFP4 còn ở CPU thì lúc chạy sẽ báo
+    "FP4 quantization state not initialized". Gọi .cuda() để khởi tạo nốt.
+    Model đã được device_map đặt đúng chỗ thì lệnh này không làm gì thêm.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        return
+    try:
+        model.cuda()
+    except (RuntimeError, ValueError, NotImplementedError):
+        # accelerate quản lý model đa thiết bị sẽ chặn .cuda() — khi đó model
+        # vốn đã ở đúng chỗ, bỏ qua là an toàn.
+        pass
 
 
 def _nap_theo_loader(spec: ModelSpec, kwargs: dict[str, Any]):
@@ -88,9 +111,11 @@ def load_model(model_key: str = MODEL_MAC_DINH, *, dung_4bit: bool = True):
         kwargs["trust_remote_code"] = True
     if quant_config is not None:
         kwargs["quantization_config"] = quant_config
-        kwargs["device_map"] = "auto"
-    elif co_gpu:
-        kwargs["device_map"] = "auto"
+    if co_gpu:
+        # Chỉ định thẳng cuda:0 thay vì "auto". Với một GPU, "auto" có thể để
+        # sót vài tầng ở CPU, và tầng FP4 nằm ở CPU sẽ lỗi khi chạy
+        # ("FP4 quantization state not initialized").
+        kwargs["device_map"] = {"": 0}
 
     try:
         model = _nap_theo_loader(spec, kwargs)
@@ -99,6 +124,9 @@ def load_model(model_key: str = MODEL_MAC_DINH, *, dung_4bit: bool = True):
         )
     except Exception as loi:
         raise VlmKhongSanSang(f"Không nạp được {spec.hf_id}: {loi}") from loi
+
+    if co_gpu and quant_config is None:
+        _dua_len_gpu(model)
 
     model.eval()
     _CACHE_MODEL[khoa_cache] = (model, processor, spec)
