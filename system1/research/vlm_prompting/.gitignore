@@ -1,0 +1,14 @@
+# Ảnh test - nặng, tải lại được, không commit
+data/frames/
+data/*.blob
+data/*.zip
+
+# Checkpoint - riêng của từng lần chạy trên từng máy
+results/checkpoint_*.json
+results/stability_*/
+results/*.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/

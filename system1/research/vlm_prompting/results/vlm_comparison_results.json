@@ -1,0 +1,30 @@
+{
+  "moi_truong": {
+    "python": "3.14.2",
+    "co_torch": false,
+    "co_gpu": false,
+    "ten_gpu": null,
+    "vram_gb": null
+  },
+  "so_anh": 20,
+  "ket_qua": {
+    "qwen25vl-3b": {
+      "model_key": "qwen25vl-3b",
+      "model_name": "Qwen/Qwen2.5-VL-3B-Instruct",
+      "backend": "mock",
+      "tong_so_anh": 20,
+      "so_anh_thanh_cong": 20,
+      "ty_le_json_hop_le": 1.0,
+      "ty_le_tuan_thu_prompt": 1.0,
+      "latency_trung_binh": 0.0,
+      "latency_p50": 0.0,
+      "latency_p95": 0.0,
+      "vram_dinh_gb": null,
+      "caption_ky_tu_trung_binh": 111.0,
+      "caption_tu_trung_binh": 21.0,
+      "doi_tuong_trung_binh": 1.0,
+      "mau_sac_trung_binh": 1.0,
+      "danh_sach_loi": []
+    }
+  }
+}
