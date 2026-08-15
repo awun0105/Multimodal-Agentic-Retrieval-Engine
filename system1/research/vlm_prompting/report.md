@@ -58,7 +58,7 @@ Năm model đầu đã cài đặt sẵn trong `vlm/model_registry.py`, đổi b
 | Mô hình | Latency | VRAM | Điểm benchmark | Ưu điểm | Nhược điểm | Kết luận |
 |---|---|---|---|---|---|---|
 | **Vintern-1B-v3.5** | **0,69 s/ảnh** ¹ | CHỜ ĐO | WER 0,34 (OCR) ¹ | Tiếng Việt tốt nhất trong nhóm; nhẹ nhất (1,5GB) chạy được cả GPU 4GB | Chỉ 1B tham số — mô tả cảnh phức tạp có thể sơ sài | Mốc đối chứng bắt buộc cho cổng kiểm tiếng Việt |
-| **Qwen2.5-VL-3B** | CHỜ ĐO | CHỜ ĐO | MMBench ~80 ² | Cân bằng chất lượng/tài nguyên; đa ngôn ngữ mạnh | Chưa có điểm caption tiếng Việt công khai | Ứng viên mặc định |
+| **Qwen2.5-VL-3B** | **9,65 s/ảnh** ⁴ | **6,12 GB** ⁴ | MMBench ~80 ² | JSON hợp lệ ngay lần đầu; tiếng Việt tự nhiên; đọc được chữ trong ảnh | **Chậm** — 9,65s/ảnh trên T4 | Ứng viên mặc định, nhưng cần đổi sang vLLM nếu chạy quy mô lớn |
 | **Qwen2-VL-2B** | **1,25 s/ảnh** ¹ | CHỜ ĐO | — | Nhẹ, đa ngôn ngữ | **Từng từ chối trả lời tiếng Việt** ¹ | Rủi ro — cần kiểm chứng kỹ |
 | **Qwen2.5-VL-7B** | CHỜ ĐO | CHỜ ĐO | MMBench 82,6 ² | Chất lượng cao nhất nhóm <7B | Cần ≥12GB VRAM | Chỉ khả thi trên Kaggle P100/T4 |
 | **MiniCPM-V-4.0** | CHỜ ĐO | CHỜ ĐO | MMBench ~78–80 ² | Chỉ 3GB VRAM | Không fine-tune tiếng Việt | Đường lui khi GPU yếu |
@@ -68,6 +68,9 @@ xem `system1/research/ocr_asr/ocr/ocr_evaluation_summary.md`. Đo trên tác v�
 không phải captioning — dùng làm tham chiếu về tốc độ và khả năng tiếng Việt.
 
 ² Điểm MMBench công bố, đo trên tiếng Anh. **Không suy ra được chất lượng tiếng Việt.**
+
+⁴ **Số tự đo**, trên Kaggle Tesla T4 14,6GB, 4-bit NF4, transformers backend,
+keyframe thật của AIC (`Keyframes_L25.zip`). Chi tiết ở mục 7.1.
 
 ---
 
@@ -177,7 +180,50 @@ trong danh sách. Nghiên cứu khuyến nghị AWQ khi chạy vLLM — sẽ câ
 
 ## 7. Kết quả benchmark
 
-**CHỜ CHẠY.** Chạy bằng:
+### 7.1. Chạy thử một ảnh (đã có kết quả thật)
+
+Ảnh: keyframe thật của AIC, lấy từ `Keyframes_L25.zip` (37.445 ảnh trong kho).
+Model: Qwen2.5-VL-3B-Instruct, 4-bit NF4, GPU Tesla T4.
+
+Output nguyên văn:
+
+```json
+{
+  "doi_tuong": [],
+  "mau_sac": ["xanh"],
+  "hanh_dong": "không có hành động",
+  "boi_canh": "mặt giấy trắng",
+  "caption_chi_tiet": "Một đoạn văn bản với chữ 'THANH NIÊN' được in trên một mặt giấy trắng.",
+  "caption_en": "A text with the word 'THANH NIEN' is printed on a white paper.",
+  "_model": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "_backend": "transformers-4bit",
+  "_latency_sec": 9.653,
+  "_vram_peak_gb": 6.122,
+  "_prompt_version": "v1",
+  "_schema_version": "v1"
+}
+```
+
+Nhận xét:
+
+| Điểm | Đánh giá |
+|---|---|
+| JSON hợp lệ ngay lần đầu | ✅ không cần tới tầng cứu hộ |
+| Tiếng Việt tự nhiên | ✅ *"Một đoạn văn bản với chữ 'THANH NIÊN'..."* |
+| Đọc được chữ trong ảnh | ✅ nhận ra "THANH NIÊN" — trùng khớp nội dung ảnh thật |
+| Đủ 6 trường bắt buộc | ✅ |
+| `doi_tuong` rỗng | Hợp lý — ảnh là logo, không có vật thể. Không phải lỗi |
+| **Latency 9,65 s/ảnh** | ⚠️ Chậm hơn nhiều so với ước tính của nghiên cứu (18–22 ảnh/giây trên RTX 4090). T4 yếu hơn 4090 đáng kể, cộng thêm transformers chậm hơn vLLM |
+| VRAM đỉnh 6,12 GB | Vừa với T4 14,6GB, còn dư nhiều |
+
+Hệ quả của latency 9,65s: chạy 1 triệu keyframe bằng cấu hình này mất khoảng
+**2.700 giờ GPU** — không khả thi. Muốn xử lý toàn bộ dữ liệu cuộc thi thì phải
+chuyển sang vLLM (nghiên cứu ước tính nhanh hơn 5–10 lần) hoặc dùng model nhẹ
+hơn như Vintern-1B.
+
+### 7.2. Benchmark đầy đủ 3 model
+
+**ĐANG CHẠY.** Lệnh:
 
 ```bash
 python scripts/prepare_sample_images.py --n 100
