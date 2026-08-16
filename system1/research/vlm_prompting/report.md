@@ -300,8 +300,12 @@ transformers: 5.0.0
 đổi tên lớp (`AutoModelForVision2Seq` → `AutoModelForImageTextToText`). Cùng một cơ chế
 đã giết Vintern-1B: thư viện lõi bị nâng ngoài ý muốn, model cũ không theo kịp.
 
-Cách xử lý đã áp dụng và chạy được: ghim `"transformers>=4.51,<5"`, và in
-`transformers.__version__` ngay sau bước cài để lần sau đọc log là biết ngay.
+Cách xử lý **thực sự đã áp dụng** trong notebook train: `try/except` đổi tên lớp —
+thử tên mới trước, không có thì lùi về tên cũ. Chạy được với cả hai bản.
+
+⚠️ **Chưa ghim phiên bản trong repo.** `requirements.txt` vẫn `transformers>=4.49.0`
+(không có cận trên) và `kaggle_smoke.ipynb` vẫn dùng `pip install -U`. Việc ghim
+`>=4.51,<5` là **khuyến nghị, chưa làm** — xem mục 11.
 
 **2. Qwen2.5-VL-3B: sập giữa chừng.**
 
@@ -370,7 +374,7 @@ Ba lỗi phải sửa ở prompt (`prompts.py`, đã thành `PROMPT_VERSION = "v
 2. **Nhãn "Caption Chi tiết:" lọt vào giá trị.** Phải bỏ khi hậu xử lý, hoặc
    siết prompt cấm lặp lại tên trường.
 3. **`doi_tuong` nhận chữ thay vì vật thể.** Prompt v2 đã thêm câu cấm nhưng **chưa đủ mạnh**
-   — mục 7.3 đo được 12,05% caption vẫn nhét chữ vào `doi_tuong` ở n=83.
+   — mục 7.3 đo được **30,12%** caption vẫn nhét chữ vào `doi_tuong` ở n=83.
 
 Đây là bài học chính của lần benchmark này: **chỉ số tự động không thay thế được
 việc đọc bằng mắt**. Nếu chỉ nhìn con số JSON hợp lệ thì đã kết luận sai là pipeline
@@ -388,24 +392,38 @@ Công cụ: `quality/danh_gia_chat_luong.py`. Báo cáo máy: `results/quality_r
 Caption dùng được: 83 (bỏ qua 92 — toàn bộ kết quả Vintern-1B, là mock)
 
 recall@1  : 0,988          Chép few-shot : 1,20%
-recall@5  : 1,000          Nhét chữ OCR  : 12,05%
-recall@10 : 1,000          Vòng vo (TTR) : 30,12%
+recall@5  : 1,000          Nhét chữ OCR  : 30,12%
+recall@10 : 1,000          Vòng vo (TTR) : 20,48%
 MRR       : 0,994
 ```
+
+> ⚠️ **Đính chính 16/08.** Bản đầu của mục này ghi *"Vòng vo 30,12% / Nhét OCR 12,05%"* —
+> **hai nhãn bị hoán đổi**. Số trên là kết quả chạy lại bằng bộ đo hiện hành (16/08 15:30).
+>
+> Nguyên nhân: `results/quality_report.json` sinh lúc 02:34, trước khi
+> `caption_ten_rieng.py` (10:57) và `caption_defect_checks.py` (10:46) được sửa. Bản mới
+> soi cả `doi_tuong`/`mau_sac`/`hanh_dong`/`boi_canh` chứ không chỉ `caption`, nên
+> `nhet_chu_ocr` siết lên và `vong_vo` nới xuống. Giá trị **12,05% không còn tồn tại**
+> ở bất kỳ chỉ số nào.
 
 Bộ đo **tự động loại bỏ** 92 mục mock thay vì âm thầm chấm điểm cho dữ liệu giả — đúng
 thiết kế: thà báo rõ "bỏ 92" còn hơn cho ra recall đẹp nhờ dữ liệu không có thật.
 
 **Ba phát hiện mới, chưa từng biết trước phiên đo này:**
 
-1. **Caption vòng vo là lỗi phổ biến nhất — 30,12%.** Gấp 2,5 lần lỗi nhét OCR. Trước đây
-   không ai biết vì chưa có công cụ đo tự động, chỉ đọc tay vài caption. Ví dụ thật:
+1. **Hai lỗi lớn nhất: nhét chữ OCR 30,12% (25/83) và vòng vo 20,48% (17/83).**
+   Trước đây không ai biết vì chưa có công cụ đo tự động, chỉ đọc tay vài caption.
+
+   Ví dụ vòng vo:
    - `055.jpg`: *"Một nhóm học sinh đang học cách **bơi lội** trong một lớp học **bơi lội**
      tại một trung tâm đào tạo **bơi lội**."*
    - `063.jpg`: *"Một đội **bóng rổ** đang chơi **bóng rổ** trên sân **bóng rổ** xanh."*
 
    Với retrieval, lặp từ không chỉ đọc xấu — nó làm caption **kém phân biệt**: caption
    "bóng rổ ×3" khớp với mọi ảnh bóng rổ khác trong kho, giảm độ chính xác tìm kiếm.
+
+   Lỗi nhét chữ OCR còn hại hơn: model đọc chữ trên biển hiệu rồi nhét vào `doi_tuong`
+   như thể đó là vật thể. Việc đọc chữ là của module OCR ở Phần 2 — caption không nên làm.
 
 2. **Prompt v2 vẫn bị chép ví dụ — giả thuyết cũ sai.** Prompt v2 đổi ví dụ mẫu sang cảnh
    bếp với lý do "càng khác keyframe thật càng khó bị chép". Caption `032.jpg` chứng minh
@@ -530,8 +548,8 @@ chưa chạy được.
    vừa chạy, nhưng mẫu còn nhỏ.
 3. **Caption ngắn** — 22,7 từ TB (prompt v2). Đề bài yêu cầu `caption_chi_tiet`
    "mô tả dài, đầy đủ ngữ cảnh".
-4. **Chất lượng nội dung còn nhiều lỗi (mục 7.3, n=83):** 30,12% caption vòng vo,
-   12,05% nhét chữ OCR vào `doi_tuong`, 2,5% lẫn chữ Hán. Chưa sửa xong lỗi nào
+4. **Chất lượng nội dung còn nhiều lỗi (mục 7.3, n=83):** 30,12% nhét chữ OCR vào
+   `doi_tuong`, 20,48% caption vòng vo, 2,41% lẫn chữ Hán. Chưa sửa xong lỗi nào
    trong ba lỗi này.
 
 ### Việc phải làm trước khi chốt hẳn
@@ -540,7 +558,7 @@ chưa chạy được.
 |---|---|---|
 | 1 | Ghim `transformers` bản cũ hơn cho Vintern-1B | Nguyên nhân gốc đã xác nhận (mục 7.2) là xung đột phiên bản, không phải thiếu adapter — hướng này rẻ hơn viết adapter InternVL riêng |
 | 2 | Sửa lỗi CUDA assert của Qwen2.5-VL-3B | Model này cho caption chi tiết nhất khi chạy được |
-| 3 | Giải quyết caption vòng vo (30,12%, mục 7.3) | Lỗi phổ biến nhất, làm caption kém phân biệt khi retrieval |
+| 3 | Giảm nhét chữ OCR (30,12%) rồi tới vòng vo (20,48%) — mục 7.3 | Hai lỗi lớn nhất. Nhét OCR lấn việc của module OCR; vòng vo làm caption kém phân biệt khi retrieval |
 | 4 | Chặn chép ví dụ + nhét OCR ở tầng validator | Prompt một mình không đủ (mục 7.3, phát hiện 2) |
 | 5 | Chấm tay 30 caption × 3 model, giấu tên model | Đo chất lượng tiếng Việt thật, không chỉ đếm JSON hợp lệ |
 
@@ -618,9 +636,9 @@ system1/research/vlm_prompting/
 | Áp dụng lượng tử hóa 4-bit | ✅ NF4, giữ vision tower FP16 |
 | Prompt ép JSON, có `caption_chi_tiet` | ✅ prompt v2 (hiện hành) + 3 tầng phòng thủ |
 | `caption_chi_tiet` mô tả dài, đủ ngữ cảnh | ✅ ép tối thiểu 25 ký tự, đo số từ |
-| Chạy thử ≥100 ảnh | ✅ **290 ảnh** — `results/checkpoint_haiku-teacher.json`. Riêng `sample_results.json` mới có 79 ảnh cho Qwen2-VL-2B, đang chạy bổ sung lên 355 |
+| Chạy thử ≥100 ảnh | ⚠️ **92 ảnh — thiếu 8**. Mỗi model chạy đủ 92; Qwen2-VL-2B thành công 79/92. Đang chuẩn bị chạy bổ sung lên 355 ảnh (`data/keyframes_aic/`) |
 | Hàm `generate_json(image)` | ✅ `vlm/generate.py` — đã chạy thật trên keyframe AIC |
-| `sample_results.json` | ⚠️ **175 mục nhưng chỉ 79 ảnh cho model được chọn** (92 mock Vintern + 79 Qwen2-VL-2B thật + 4 Qwen2.5-VL-3B thật). Đang chạy lại trên 355 ảnh |
+| `sample_results.json` | ✅ **175 mục = ca thành công của 3 model trên CÙNG 92 ảnh** (92 Vintern-mock + 79 Qwen2-VL-2B + 4 Qwen2.5-VL-3B). File chỉ lưu ca thành công; 13 ca lỗi của Qwen2-VL-2B nằm ở `checkpoint_qwen2vl-2b.json` |
 | Bảng benchmark 7 cột | ✅ mục 3, số thực đo (prompt v2) |
 | Pull Request | ✅ **Đã mở — [PR #29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29)**, base `system1-notebook01` theo tiền lệ PR #26 của Phần 2 |
 
@@ -628,20 +646,26 @@ system1/research/vlm_prompting/
 
 ## 11. Việc còn lại
 
-1. **Ghim `transformers` bản cũ hơn cho Vintern-1B**, chạy lại benchmark để có số thật
-   thay vì mock (mục 7.2)
-2. **Giải quyết caption vòng vo (30,12%)** — lỗi phổ biến nhất phát hiện được ở mục 7.3,
-   chưa có hướng sửa. Thử prompt v3 nhấn "không lặp từ", đo lại bằng công cụ hiện có
-3. **Chặn chép ví dụ + nhét OCR ở tầng validator**, không chỉ dựa vào prompt (mục 7.3)
-4. **Thêm phép kiểm ký tự ngoài tiếng Việt** — bắt lỗi chữ Hán lẫn vào (2,5% caption dính)
+Xếp theo mức độ ảnh hưởng, dựa trên số đo hiện hành (không phải cảm tính):
+
+1. **Chạy `sample_results.json` lên 355 ảnh** — hiện 92 ảnh, **thiếu 8 so với mốc 100
+   của đề bài**. Đây là việc duy nhất còn chặn tiêu chí bắt buộc. Notebook đã chuẩn bị.
+2. **Giảm lỗi nhét chữ OCR (30,12%, 25/83)** — lỗi phổ biến nhất theo bộ đo hiện tại.
+   Chặn ở tầng validator, không chỉ dựa vào prompt (mục 7.3).
+3. **Giảm caption vòng vo (20,48%, 17/83)** — lỗi phổ biến thứ hai. Thử prompt v3
+   nhấn "không lặp từ", đo lại bằng `quality/`.
+4. **Ghim `transformers` bản cũ hơn cho Vintern-1B**, chạy lại benchmark để có số thật
+   thay vì mock (mục 7.2). Đồng thời thêm cận trên vào `requirements.txt`.
 5. **Đo hiệu quả khử trùng lặp + batch inference trên tập lớn** — bắt buộc trước khi chạy
    toàn bộ dữ liệu cuộc thi (mục 7.4, cần giảm 30–40 lần thời gian)
 6. **Cổng kiểm tiếng Việt** — chấm tay 30 caption × 3 model, giấu tên model
-7. **Chạy `sample_results.json` lên 355 ảnh** — hiện chỉ 79 ảnh cho Qwen2-VL-2B.
-   Con số "92 ảnh" hay gặp trong báo cáo này là **cộng dồn cả 3 model**, không phải
-   số ảnh của model được chọn. Notebook benchmark đã chuẩn bị, chờ Kaggle rảnh GPU.
 
-**Đã xong 16/08:** mở PR — [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29).
+**Đã xong 16/08:**
+
+- **Phép kiểm ký tự ngoài tiếng Việt** — `quality/caption_ngon_ngu_la.py` đã có từ 02:22,
+  đang chạy trên cả 5 trường. Bắt được 2/83 (gốc) và 1/290 (agent thầy). Mục 7.3 chỗ nào
+  còn ghi "bộ kiểm không bắt được lỗi chữ Hán" là tàn dư lỗi thời.
+- **Mở PR** — [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29).
 Đề bài ghi nhánh `research-branch`, repo không có nhánh đó; tra lịch sử thấy PR #26 của
 Phần 2 đi từ `research-branch/ocr-asr` vào `system1-notebook01` và đã được gộp →
 `research-branch` là **tiền tố quy ước**, không phải nhánh có sẵn. Làm theo tiền lệ đó.
@@ -665,15 +689,23 @@ Kết luận ban đầu: **chưa nên train** — ngưỡng hòa vốn của fin
 > Qwen2-VL-2B bắt chước. Không tốn tiền API, và LoRA gỡ ra là về model gốc nên thử sai
 > không mất gì.
 >
-> | Chỉ số lỗi | Qwen2-VL-2B gốc (n=83) | Agent thầy (n=290) |
-> |---|---|---|
-> | Vòng vo | 30,12% | **2,07%** |
-> | Nhét chữ OCR | 12,05% | **1,72%** |
-> | Chép ví dụ mẫu | 1,20% | **0,00%** |
-> | Ngôn ngữ lạ | 2,41% | **0,34%** |
+> | Chỉ số lỗi | Qwen2-VL-2B gốc (n=83) | Agent thầy (n=290) | Mức giảm |
+> |---|---|---|---|
+> | **Nhét chữ OCR** | **30,12%** (25/83) | **1,72%** (5/290) | 17,5 lần |
+> | **Vòng vo** | **20,48%** (17/83) | **2,07%** (6/290) | 9,9 lần |
+> | Ngôn ngữ lạ | 2,41% (2/83) | 0,34% (1/290) | 7,1 lần |
+> | Chép ví dụ mẫu | 1,20% (1/83) | 0,00% (0/290) | về 0 |
+>
+> Cả hai cột đo bằng cùng bộ đo `quality/` bản 16/08 11:14, chạy lại ngày 16/08 15:30.
+>
+> ⚠️ **Hai cột không so cặp tuyệt đối:** n=83 vs n=290, và **tập ảnh khác nhau** (83 caption
+> từ 92 ảnh benchmark; 290 caption từ dải 002–595). Muốn so cặp chuẩn phải đo agent thầy
+> trên đúng 92 ảnh đó. Con số vẫn cho thấy xu hướng rõ, nhưng đừng đọc như thí nghiệm A/B.
 >
 > **Đây là phần mở rộng ngoài đề bài** — đề bài chỉ yêu cầu chọn model có sẵn + viết prompt
-> tốt + benchmark. Trạng thái: đang train trên Kaggle T4, chưa có adapter dùng được.
+> tốt + benchmark. 290 caption này do **agent Claude Haiku** sinh qua công cụ Agent, **không
+> phải** output của VLM 4-bit — nên **không dùng để tick yêu cầu "chạy thử ≥100 ảnh"** của đề bài.
+> Trạng thái: đang train trên Kaggle T4, chưa có adapter dùng được.
 > Dataset đã dựng: 261 train + 29 eval, 60 ảnh holdout giữ sạch để đo trước/sau.
 
 | Bước | Cách làm | Chi phí | Kết quả kỳ vọng |
@@ -700,11 +732,12 @@ thành số đo, hay số giả thành số thật.
 | Qwen2.5-VL-3B: 4,3% (cả hai lần chạy) | ✅ Đo thật (model sập giữa chừng — số thật của một thất bại) |
 | Vintern-1B: 100% / 0,0 s / 0,0 GB | ❌ **Số giả** — mock, model chưa từng nạp được |
 | recall@1 = 0,988 / recall@5 = 1,000 / MRR = 0,994 (n=83) | ✅ **Đo thật**, mục 7.3 |
-| Vòng vo 30,12% / Nhét OCR 12,05% / Chép few-shot 1,20% (n=83) | ✅ **Đo thật**, mục 7.3 |
+| Nhét OCR 30,12% / Vòng vo 20,48% / Chép few-shot 1,20% / Ngôn ngữ lạ 2,41% (n=83) | ✅ **Đo thật** bằng bộ đo hiện hành, chạy lại 16/08 15:30. Bản đầu ghi "Vòng vo 30,12% / Nhét OCR 12,05%" — hai nhãn bị hoán đổi, đã sửa |
 | Chữ Hán lẫn caption: 2/79 (2,5%) | ✅ Đo thật (đếm tay bằng regex) |
 | `sample_results.json`: 175 mục | ✅ **Đo thật** — file tồn tại, tải về từ Kaggle Version 1 |
-| "92 ảnh" nhắc nhiều lần trong báo cáo | ⚠️ **Là số ảnh cộng dồn cả 3 model.** Riêng Qwen2-VL-2B (model được chọn) chỉ **79 ảnh**. Đang chạy bổ sung lên 355 |
-| Chất lượng caption agent thầy (mục 12): vòng vo 2,07% / OCR 1,72% / few-shot 0% / ngôn ngữ lạ 0,34% | ✅ **Đo thật** trên 290 caption, cùng bộ đo `quality/` với cột Qwen2-VL-2B |
+| "92 ảnh" nhắc nhiều lần trong báo cáo | ✅ **Đo thật — 92 ảnh, MỖI model chạy đủ 92.** Không phải cộng dồn. Qwen2-VL-2B thành công 79/92 (85,9%); 13 ca lỗi nằm ở checkpoint. Xác nhận bằng 4 nguồn: hợp 3 tập ảnh = 92, cả 3 checkpoint đều 92 mục, `vlm_comparison_results.json` ghi `tong_so_anh: 92`, và kiến trúc `benchmark_runner.py` (danh sách ảnh dựng 1 lần, vòng ngoài là model) |
+| Chất lượng caption agent thầy (mục 12): vòng vo 2,07% / OCR 1,72% / few-shot 0% / ngôn ngữ lạ 0,34% | ✅ **Đo thật** trên 290 caption bằng bộ đo `quality/` bản 16/08 11:14 |
+| Cột "Qwen2-VL-2B gốc" trong bảng mục 12 | ⚠️ **Đo bằng bộ đo CŨ** (`quality_report.json`, 02:34) — trước khi `caption_ten_rieng.py` được thêm. Đã chạy lại bằng bộ đo hiện tại, số đúng ghi ở mục 12 |
 | So sánh chép ví dụ v1 (20%) vs v2 (1,2%) ở mục 7.3 | ⚠️ Cột v1 chỉ n=5 — tín hiệu định hướng, không so công bằng được với n=83 của v2 |
 | 8 file keyframe, tổng 19,27 GB (mục 7.4) | ✅ **Đo thật** — đọc header từ Drive của BTC ngày 16/08 |
 | ~127.000 keyframe (mục 7.4) | ⚠️ **Ước tính theo dung lượng** — L25 đếm thật (37.445 ảnh), 7 file kia suy từ 159 KB/ảnh |
