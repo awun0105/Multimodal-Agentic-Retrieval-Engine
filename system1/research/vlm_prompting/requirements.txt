@@ -22,6 +22,8 @@ pillow>=10.0.0
 
 tqdm>=4.66.0                  # thanh tiến độ khi chạy hàng loạt
 
+rank_bm25>=0.2.2              # self-retrieval recall (quality/) — thuần Python, chạy trên 3.14 CPU
+
 # Tùy chọn — chỉ cần khi dùng vLLM để chạy nhanh hàng loạt (Phase 02+).
 # Không cài được trên Windows, chỉ chạy Linux/Kaggle/Colab.
 # vllm>=0.8.0

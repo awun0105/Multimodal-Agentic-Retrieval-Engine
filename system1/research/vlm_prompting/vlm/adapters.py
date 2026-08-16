@@ -57,15 +57,48 @@ class TransformersAdapter(BaseVlmAdapter):
     dễ cài hơn nhiều — đây là lý do nó là mặc định.
     """
 
-    def __init__(self, spec: ModelSpec, *, dung_4bit: bool = True):
+    def __init__(
+        self,
+        spec: ModelSpec,
+        *,
+        dung_4bit: bool = True,
+        lora_model_path: str | None = None,
+    ):
         super().__init__(spec, dung_4bit=dung_4bit)
         from .model_loader import load_model
 
         self.model, self.processor, _ = load_model(spec.key, dung_4bit=dung_4bit)
 
+        self.lora_model_path = lora_model_path
+        if lora_model_path is not None:
+            self._gan_lora(lora_model_path)
+
+    def _gan_lora(self, lora_model_path: str) -> None:
+        """Gắn trọng số LoRA sau khi model gốc đã nạp xong.
+
+        Kiểm đường dẫn sớm: im lặng chạy tiếp với model gốc khi đường dẫn sai
+        sẽ tạo ra một bảng benchmark trông như đo model đã train nhưng thực ra
+        không phải — đúng loại lỗi số giả mà strict=True được sinh ra để chặn.
+        """
+        from pathlib import Path
+
+        thu_muc = Path(lora_model_path)
+        if not (thu_muc / "adapter_config.json").exists():
+            from .model_loader import VlmKhongSanSang
+
+            raise VlmKhongSanSang(
+                f"Không tìm thấy adapter_config.json trong lora_model_path={lora_model_path!r} "
+                "- kiểm tra lại đường dẫn LoRA."
+            )
+
+        from peft import PeftModel
+
+        self.model = PeftModel.from_pretrained(self.model, lora_model_path)
+
     @property
     def backend_name(self) -> str:
-        return "transformers-4bit" if self.dung_4bit else "transformers-fp16"
+        ten = "transformers-4bit" if self.dung_4bit else "transformers-fp16"
+        return f"{ten}+lora" if self.lora_model_path is not None else ten
 
     def infer(self, pil_image: Any) -> str:
         import torch
@@ -216,11 +249,33 @@ def _co_the_dung_transformers() -> bool:
         return False
 
 
+def _nap_nghiem_ngat(
+    lop_adapter,
+    spec,
+    dung_4bit: bool,
+    model_key: str,
+    ten: str,
+    strict: bool,
+    **them,
+):
+    """Khởi tạo adapter được chỉ định thẳng; strict=True đổi lỗi thành RuntimeError có ngữ cảnh."""
+    try:
+        return lop_adapter(spec, dung_4bit=dung_4bit, **them)
+    except Exception as loi:
+        if strict:
+            raise RuntimeError(
+                f"strict=True: {ten} khởi tạo lỗi cho model={model_key}: {loi}"
+            ) from loi
+        raise
+
+
 def get_adapter(
     model_key: str,
     *,
     backend: str = "auto",
     dung_4bit: bool = True,
+    strict: bool = False,
+    lora_model_path: str | None = None,
 ) -> BaseVlmAdapter:
     """
     Tạo adapter phù hợp.
@@ -231,33 +286,103 @@ def get_adapter(
         "transformers"  — ép dùng transformers, lỗi thì báo luôn
         "mock"          — ép dùng mock (để test luồng khi không có GPU)
 
-    Chế độ "auto" không bao giờ ném lỗi — cùng lắm rơi về mock.
+    strict: mặc định False — production vẫn fail-soft như cũ, một model
+        không tải được thì rơi về MockAdapter, không làm sập cả mẻ.
+        True — chỉ dùng khi benchmark: NÉM LỖI thay vì âm thầm rơi về mock,
+        kể cả khi backend="mock" (đo mock trong chế độ nghiêm ngặt là vô
+        nghĩa). Đây là lý do report cũ có số giả "Vintern-1B 100% JSON hợp
+        lệ, 0,0 giây" — model chưa từng chạy, mock trả JSON giả và benchmark
+        chấm điểm cho mock. strict=True chặn việc đó tái diễn.
+
+    lora_model_path: mặc định None — không đổi hành vi hiện có. Chỉ định thư
+        mục adapter LoRA (đã train qua PEFT) để gắn vào model transformers
+        SAU khi nạp xong. Chỉ backend="transformers" (hoặc auto rơi vào
+        transformers) hỗ trợ; truyền cùng backend="vllm"/"mock" sẽ NÉM LỖI —
+        im lặng bỏ qua sẽ khiến benchmark đo nhầm model gốc mà tưởng là model
+        đã train.
+
+    Chế độ "auto" không bao giờ ném lỗi khi strict=False — cùng lắm rơi về mock.
     """
     spec = lay_spec(model_key)
 
     if backend == "mock":
+        if lora_model_path is not None:
+            raise ValueError(
+                f"lora_model_path={lora_model_path!r} không dùng được với backend=mock: "
+                "mock không nạp model thật, gắn LoRA vô nghĩa."
+            )
+        if strict:
+            raise RuntimeError(
+                f"strict=True không cho phép backend=mock (model={model_key}): "
+                "đo mock không phải kết quả model thật."
+            )
         return MockAdapter(spec, ly_do="user selected backend=mock")
 
+    # Hai backend chỉ định thẳng vốn đã tự ném lỗi khi không khởi tạo được, nên
+    # strict=True hiện đúng ở đây. Bọc lại để bảo đảm đó là hợp đồng tường minh,
+    # không phải may mắn — nếu sau này adapter nào đó im lặng degrade, strict vẫn chặn.
     if backend == "vllm":
-        return VllmAdapter(spec, dung_4bit=dung_4bit)
+        if lora_model_path is not None:
+            raise ValueError(
+                f"lora_model_path={lora_model_path!r} không dùng được với backend=vllm: "
+                "VllmAdapter chưa hỗ trợ nạp LoRA."
+            )
+        return _nap_nghiem_ngat(VllmAdapter, spec, dung_4bit, model_key, "vLLM", strict)
 
     if backend == "transformers":
-        return TransformersAdapter(spec, dung_4bit=dung_4bit)
+        return _nap_nghiem_ngat(
+            TransformersAdapter,
+            spec,
+            dung_4bit,
+            model_key,
+            "transformers",
+            strict,
+            lora_model_path=lora_model_path,
+        )
 
     if backend != "auto":
         raise ValueError(f"backend không hợp lệ: {backend!r}")
 
     if _co_the_dung_vllm():
-        try:
-            return VllmAdapter(spec, dung_4bit=dung_4bit)
-        except Exception as loi:
-            logger.warning("vLLM present but init failed (%s), falling back to transformers", loi)
+        if lora_model_path is None:
+            try:
+                return VllmAdapter(spec, dung_4bit=dung_4bit)
+            except Exception as loi:
+                if strict:
+                    raise RuntimeError(
+                        f"strict=True: vLLM có mặt nhưng khởi tạo lỗi cho model={model_key}: {loi}"
+                    ) from loi
+                logger.warning(
+                    "vLLM present but init failed (%s), falling back to transformers", loi
+                )
+        else:
+            logger.warning(
+                "lora_model_path duoc truyen, bo qua vLLM (chua ho tro LoRA), "
+                "chuyen thang sang transformers"
+            )
 
     if _co_the_dung_transformers():
         try:
-            return TransformersAdapter(spec, dung_4bit=dung_4bit)
+            return TransformersAdapter(spec, dung_4bit=dung_4bit, lora_model_path=lora_model_path)
         except Exception as loi:
+            if strict:
+                raise RuntimeError(
+                    f"strict=True: transformers khởi tạo lỗi cho model={model_key}: {loi}"
+                ) from loi
             logger.warning("transformers init failed (%s), falling back to mock", loi)
             return MockAdapter(spec, ly_do=f"transformers init failed: {loi}")
+
+    if lora_model_path is not None:
+        raise RuntimeError(
+            f"lora_model_path={lora_model_path!r} được truyền nhưng không có backend nào "
+            f"hỗ trợ LoRA khả dụng cho model={model_key} (transformers/torch chưa cài hoặc "
+            "không có GPU). Rơi về mock sẽ đo nhầm model gốc, không phải model đã train."
+        )
+
+    if strict:
+        raise RuntimeError(
+            f"strict=True: không có GPU khả dụng, hoặc torch/transformers/vllm "
+            f"chưa cài, cho model={model_key}. Không rơi về mock trong chế độ nghiêm ngặt."
+        )
 
     return MockAdapter(spec, ly_do="no GPU available, or torch/transformers not installed")

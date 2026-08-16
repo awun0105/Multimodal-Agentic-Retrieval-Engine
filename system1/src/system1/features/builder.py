@@ -133,9 +133,37 @@ def _resolve_structure_artifact_dir(release_dir: Path, video_id: str) -> Path:
     )
 
 
+def _nap_vlm_provider():
+    # Tạm: research/ chưa cài được, torch chưa khai trong pyproject.toml.
+    import logging, sys
+    goc_vlm = Path(__file__).resolve().parents[3] / "research" / "vlm_prompting"
+    da_them = str(goc_vlm) not in sys.path
+    if da_them:
+        sys.path.insert(0, str(goc_vlm))
+    try:
+        from vlm.provider import tao_provider  # type: ignore[import-not-found]
+        return tao_provider("vlm")
+    except Exception as exc:  # noqa: BLE001 - thiếu torch/file rơi về đường lui
+        logging.getLogger(__name__).warning("vlm_unavailable: %s", exc)
+        return RealProviderUnavailable(f"vlm_unavailable: {exc}")
+    finally:
+        if da_them and str(goc_vlm) in sys.path:
+            sys.path.remove(str(goc_vlm))
+
+
 def providers_for_plan(plan: ProviderPlan):
     embedding_provider = MockEmbeddingProvider() if plan.embedding == "mock" else RealEmbeddingUnavailable(plan.embedding)
-    text_provider = MockTextProvider() if plan.uses_only_mock_providers else RealProviderUnavailable("mixed_real_unavailable")
+    # Chỉ profile "vlm" mới nạp VLM provider. Profile "real" cũng khai
+    # shot_caption="vlm" nhưng dùng paddleocr/yolo thật cho OCR + nhận diện vật
+    # thể — nạp VLM ở đó sẽ cướp mất hai provider đó. Phân biệt bằng ocr/
+    # object_detection: profile "vlm" để cả hai ở "mock".
+    chi_co_caption_la_vlm = (
+        plan.shot_caption == "vlm" and plan.ocr == "mock" and plan.object_detection == "mock"
+    )
+    if chi_co_caption_la_vlm:
+        text_provider = _nap_vlm_provider()
+    else:
+        text_provider = MockTextProvider() if plan.uses_only_mock_providers else RealProviderUnavailable("mixed_real_unavailable")
     return embedding_provider, text_provider
 
 

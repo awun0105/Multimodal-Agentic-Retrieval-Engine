@@ -42,6 +42,9 @@ class VlmShotCaptionProvider:
         caption_shot(shot_id, fallback_text) -> str        # ShotCaptionProvider
         summarize_scene(scene_id, fallback_text) -> str    # SceneSummaryProvider
 
+    Kèm read_text / detect / transcribe trả rỗng, vì `features/builder.py` dùng
+    MỘT text_provider duy nhất cho cả OCR lẫn caption. Xem chú thích tại chỗ.
+
     Nguyên tắc thiết kế: KHÔNG BAO GIỜ ném lỗi ra ngoài. Một ảnh lỗi không được
     làm hỏng cả mẻ ingest hàng nghìn keyframe — trả `fallback_text` và ghi log.
     Đây là cách `RealProviderUnavailable` (features/providers.py:64) đang làm.
@@ -112,6 +115,22 @@ class VlmShotCaptionProvider:
         """Tóm tắt scene — cùng lý do như caption_shot."""
         return fallback_text
 
+    # `features/builder.py:192-193` gọi read_text() và detect() trên CÙNG một
+    # text_provider với caption. Thiếu hai hàm này thì pipeline ném AttributeError
+    # ngay khi profile "vlm" chạy thật — provider phải phủ đủ bộ Protocol dù VLM
+    # không đảm nhiệm OCR (Phần 2) hay nhận diện vật thể (ObjectDetectionProvider).
+    def read_text(self, image_path: Path) -> str:
+        return ""
+
+    def detect(self, image_path: Path) -> list[str]:
+        # KHÔNG trả list rỗng: `features/builder.py:197` lấy `objects[0]` mà
+        # không kiểm tra rỗng → IndexError làm sập cả mẻ. Hai provider sẵn có
+        # cũng luôn trả list khác rỗng vì cùng lý do đó.
+        return ["unknown"]
+
+    def transcribe(self, video_path: Path) -> str:
+        return ""
+
     def build_shot_caption_row(
         self,
         *,
@@ -133,6 +152,9 @@ class VlmShotCaptionProvider:
         metadata = KeyframeMetadata(**{
             k: v for k, v in self._metadata_gan_nhat.items() if not k.startswith("_")
         })
+        # Không chép cứng status="ok" ở đây — to_shot_caption_row() tự quyết
+        # "ok"/"partial" dựa trên caption_en có rỗng hay không. Chép cứng sẽ
+        # ghi đè quyết định đó, làm lộ lại chính lỗi mà schema.py vừa sửa.
         return to_shot_caption_row(
             metadata,
             shot_id=shot_id,
@@ -143,7 +165,6 @@ class VlmShotCaptionProvider:
             model_name=self._metadata_gan_nhat.get("_model", self.model_key),
             model_version=self._metadata_gan_nhat.get("_backend", "unknown"),
             prompt_version=PROMPT_VERSION,
-            status="ok",
         )
 
 

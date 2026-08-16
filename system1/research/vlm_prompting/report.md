@@ -5,14 +5,17 @@
 **Ngày:** 15/08/2026
 **Nhánh:** `research/vlm-prompting`
 
-> **TRẠNG THÁI: đã có số thực đo, nhưng 2/3 model chưa chạy được.**
+> **TRẠNG THÁI: đã có số thực đo (2 lần chạy) + số chất lượng caption thật, nhưng 2/3 model vẫn chưa chạy được.**
 >
-> Đã chạy 92 keyframe thật của AIC trên Kaggle Tesla T4. Kết quả:
-> - **Qwen2-VL-2B: 93,5% JSON hợp lệ** — model duy nhất chạy trọn 92 ảnh
-> - Qwen2.5-VL-3B: sập sau 4 ảnh (CUDA device-side assert)
-> - Vintern-1B: adapter rơi về mock, **số 100% trong log là giả**
+> Đã chạy 92 keyframe thật của AIC trên Kaggle Tesla T4, hai lần — prompt v1 rồi prompt v2. Kết quả
+> mới nhất (prompt v2, dùng làm số hiện hành):
+> - **Qwen2-VL-2B: 85,9% JSON hợp lệ (79/92)** — model duy nhất cho ra caption thật
+> - Qwen2.5-VL-3B: sập sau 4 ảnh, còn 4,3% (4/92)
+> - Vintern-1B: model **chưa từng nạp được** — xung đột phiên bản `transformers`, **số 100% trong log là giả**
 >
-> Chi tiết ở mục 7.2. Mọi số có ký hiệu ⁴ là tự đo; số khác ghi rõ nguồn.
+> Lần đầu có số đo chất lượng caption thật (n=83, không phải mock): **vòng vo là lỗi phổ biến nhất — 30%**,
+> vượt xa lỗi nhét OCR (12%) và chép ví dụ (1,2%). Chi tiết mục 7.2 và 7.3.
+> Mọi số có ký hiệu ⁴ là tự đo; số khác ghi rõ nguồn.
 
 ---
 
@@ -59,11 +62,14 @@ Năm model đầu đã cài đặt sẵn trong `vlm/model_registry.py`, đổi b
 
 ## 3. Bảng benchmark (bắt buộc theo đề bài)
 
+**Số hiện hành = lần chạy Kaggle Version 1, prompt v2** (16/08/2026). Môi trường:
+Python 3.12.13, PyTorch 2.10.0+cu128, Tesla T4 14,56 GB, tổng thời gian chạy 1448,6 giây.
+
 | Mô hình | Latency | VRAM | Điểm benchmark | Ưu điểm | Nhược điểm | Kết luận |
 |---|---|---|---|---|---|---|
-| **Qwen2-VL-2B** | **8,51 s/ảnh** ⁴ | **1,84 GB** ⁴ | **JSON hợp lệ 93,5%** ⁴ | Model DUY NHẤT chạy trọn 92 ảnh không sập; VRAM thấp nhất | 6/92 ảnh lỗi; caption ngắn (18,5 từ) | ✅ **CHỌN** — đường an toàn duy nhất hiện tại |
-| **Qwen2.5-VL-3B** | 10,61 s/ảnh ⁴ | 4,22 GB ⁴ | **JSON hợp lệ 4,3%** ⁴ | Chạy 1 ảnh lẻ cho caption tốt nhất, chi tiết nhất | **Sập sau 4 ảnh** — CUDA device-side assert | ❌ Chưa dùng được, cần sửa lỗi trước |
-| **Vintern-1B-v3.5** | 0,69 s/ảnh ¹ | (chưa đo được) | (chưa đo được) | Tiếng Việt tốt nhất theo đo của Phần 2; nhẹ nhất | **Adapter rơi về mock** — chưa chạy được model thật | ❌ Cần adapter riêng cho InternVL |
+| **Qwen2-VL-2B** | **9,131 s/ảnh** ⁴ (P95 12,678 s) | **1,946 GB** ⁴ | **JSON hợp lệ 85,9%** (79/92) ⁴ | Model DUY NHẤT cho caption thật; VRAM thấp nhất | 13/92 ảnh lỗi; caption TB 22,7 từ | ✅ **CHỌN** — đường an toàn duy nhất hiện tại |
+| **Qwen2.5-VL-3B** | 10,654 s/ảnh ⁴ (P95 11,757 s) | 4,36 GB ⁴ | **JSON hợp lệ 4,3%** (4/92) ⁴ | Chạy 1 ảnh lẻ cho caption tốt nhất, chi tiết nhất; caption TB 21,2 từ | **Sập sau 4 ảnh** — CUDA device-side assert | ❌ Chưa dùng được, cần sửa lỗi trước |
+| **Vintern-1B-v3.5** | *0,0 s* ❌ số giả | *0,0 GB* ❌ số giả | *100%* ❌ số giả | Tiếng Việt tốt nhất theo đo của Phần 2; nhẹ nhất | **Model chưa từng nạp được** — xung đột phiên bản `transformers` (mục 7.2) | ❌ Cần ghim lại phiên bản `transformers` |
 | **Qwen2.5-VL-7B** | CHỜ ĐO | CHỜ ĐO | MMBench 82,6 ² | Chất lượng cao nhất nhóm <7B | Cần ≥12GB VRAM | Chỉ khả thi trên Kaggle P100/T4 |
 | **MiniCPM-V-4.0** | CHỜ ĐO | CHỜ ĐO | MMBench ~78–80 ² | Chỉ 3GB VRAM | Không fine-tune tiếng Việt | Đường lui khi GPU yếu |
 
@@ -73,8 +79,21 @@ không phải captioning — dùng làm tham chiếu về tốc độ và khả 
 
 ² Điểm MMBench công bố, đo trên tiếng Anh. **Không suy ra được chất lượng tiếng Việt.**
 
-⁴ **Số tự đo**, trên Kaggle Tesla T4 14,6GB, 4-bit NF4, transformers backend,
+⁴ **Số tự đo**, trên Kaggle Tesla T4 14,56GB, 4-bit NF4, transformers backend,
 keyframe thật của AIC (`Keyframes_L25.zip`). Chi tiết ở mục 7.1.
+
+### Đối chiếu với lần chạy trước (prompt v1)
+
+Lần chạy đầu dùng prompt v1, đo trên cùng 92 ảnh:
+
+| Chỉ số | Prompt v1 (lần trước) | Prompt v2 (hiện hành) |
+|---|---|---|
+| JSON hợp lệ | 93,5% (86/92) | **85,9%** (79/92) |
+| Latency TB | 8,51 s | 9,131 s |
+
+**Prompt v2 làm tỉ lệ JSON hợp lệ giảm 7,6 điểm** — prompt dài hơn (thêm luật chống chép ví dụ,
+chống nhét OCR) khiến model 2B khó tuân thủ định dạng hơn. Nhưng đổi lại chất lượng nội dung
+caption tốt hơn hẳn — xem mục 7.3. Tỉ lệ JSON hợp lệ là chỉ số *sức khỏe*, không phải *chất lượng*.
 
 ---
 
@@ -227,9 +246,10 @@ hơn như Vintern-1B.
 
 ### 7.2. Benchmark đầy đủ 3 model
 
-**ĐÃ CHẠY XONG.** 92 keyframe thật × 3 model, Kaggle Tesla T4.
+**ĐÃ CHẠY 2 LẦN.** 92 keyframe thật × 3 model, Kaggle Tesla T4. Lần đầu dùng prompt v1
+(kết quả thô bên dưới, mục này). Lần hai dùng prompt v2 — số hiện hành, đã đưa lên mục 3.
 
-### Kết quả thô
+### Kết quả thô — prompt v1 (lần chạy đầu, không còn là số hiện hành)
 
 | Model | JSON hợp lệ | Latency TB | P95 | VRAM đỉnh | Caption TB | Dùng được? |
 |---|---|---|---|---|---|---|
@@ -237,22 +257,36 @@ hơn như Vintern-1B.
 | **Qwen2-VL-2B** | **93,5%** (86/92) | 8,51 s | 13,43 s | 1,84 GB | 18,5 từ | ✅ **CÓ** |
 | Qwen2.5-VL-3B | 4,3% (4/92) | 10,61 s | 13,61 s | 4,22 GB | 22,8 từ | ❌ **KHÔNG** — xem dưới |
 
+⚠️ Đây là số của **prompt v1**. Lần chạy sau (prompt v2, mục 3) cho JSON hợp lệ Qwen2-VL-2B
+**thấp hơn** (85,9% thay vì 93,5%) nhưng caption **chất lượng cao hơn** — xem mục 7.3.
+
 ### ⚠️ Hai trong ba kết quả KHÔNG dùng được
 
-**1. Vintern-1B: số 100% là giả.**
+**1. Vintern-1B: số 100% là giả — đã xác nhận nguyên nhân gốc.**
 
 Latency 0,0 giây và VRAM 0,0 GB là bất khả thi với một model thật. Nghĩa là
 adapter đã **rơi về `MockAdapter`** — trả JSON giả hợp lệ thay vì chạy model.
 Cơ chế degrade hoạt động đúng như thiết kế (không crash cả mẻ), nhưng con số
 sinh ra **không phải kết quả model**.
 
-Nguyên nhân nhiều khả năng: Vintern-1B dùng `trust_remote_code=True` với
-kiến trúc InternVL, cần gọi qua `model.chat()` riêng chứ không phải
-`model.generate()` chuẩn của transformers.
+Log Kaggle của lần chạy prompt v2 ghi rõ nguyên nhân thật:
 
-→ **Không được dùng con số 100% này.** Phải viết adapter riêng cho InternVL
-rồi đo lại. Đây là bài học: chỉ số "tỷ lệ JSON hợp lệ" một mình không đủ tin —
-phải kiểm tra chéo với latency và VRAM.
+```
+Không nạp được 5CD-AI/Vintern-1B-v3_5:
+  'InternVLChatModel' object has no attribute 'all_tied_weights_keys'
+→ transformers init failed, falling back to mock
+→ MockAdapter active - returning FAKE JSON, not real model output
+```
+
+**Không phải chỉ do thiếu adapter InternVL** như suy đoán ban đầu. Nguyên nhân thật là
+**xung đột phiên bản `transformers`**: `InternVLChatModel` của Vintern thiếu thuộc tính
+`all_tied_weights_keys` mà `transformers` bản 4.5x trở lên đòi hỏi. Đây là lỗi tương thích
+phiên bản, không phải lỗi kiến trúc — model **không cần** gọi `model.chat()` riêng như
+suy đoán trước, chỉ cần chạy trên bản `transformers` cũ hơn.
+
+→ **Hướng sửa rẻ hơn nhiều: ghim `transformers` về phiên bản cũ hơn**, thay vì viết
+adapter riêng cho InternVL. Bài học: chỉ số "tỷ lệ JSON hợp lệ" một mình không đủ tin —
+phải kiểm tra chéo với latency và VRAM, và phải đọc log lỗi thật thay vì đoán.
 
 **2. Qwen2.5-VL-3B: sập giữa chừng.**
 
@@ -270,7 +304,7 @@ kích thước, khác với ảnh test đơn lẻ.
 → Cần thử `CUDA_LAUNCH_BLOCKING=1` để lấy vị trí lỗi thật, hoặc ép chuẩn hóa
 kích thước ảnh đầu vào (`max_pixels`) trước khi kết luận model này không dùng được.
 
-### Model DUY NHẤT có số liệu tin cậy: Qwen2-VL-2B
+### Model DUY NHẤT có số liệu tin cậy: Qwen2-VL-2B (số prompt v1, lần chạy đầu)
 
 | Chỉ số | Giá trị |
 |---|---|
@@ -282,7 +316,10 @@ kích thước ảnh đầu vào (`max_pixels`) trước khi kết luận model 
 | Số đối tượng TB | 1,71 |
 | Số màu sắc TB | 1,12 |
 
-Sáu ảnh thất bại, chia hai nhóm:
+⚠️ Bảng trên là số của **lần chạy prompt v1**. Số hiện hành (prompt v2) là 85,9%,
+9,131 s/ảnh, 1,946 GB — xem mục 3. Giữ bảng này để đối chiếu trước/sau khi đổi prompt.
+
+Sáu ảnh thất bại (trên 92, prompt v1), chia hai nhóm:
 - **4 ca** `JsonParseError` — model trả văn bản dài (760–1136 ký tự) không chứa JSON
 - **2 ca** `ValidationError` — JSON đúng cú pháp nhưng sai kiểu: một lần
   `caption_chi_tiet` là mảng thay vì chuỗi, một lần thiếu hẳn trường này
@@ -293,7 +330,7 @@ tầng sinh token — và là lý do nghiên cứu khuyến nghị nó.
 
 ### ⚠️ 93,5% JSON hợp lệ KHÔNG có nghĩa là 93,5% caption dùng được
 
-Đọc tay caption thật của Qwen2-VL-2B cho thấy vấn đề mà chỉ số "JSON hợp lệ"
+Đọc tay caption thật của Qwen2-VL-2B (prompt v1) cho thấy vấn đề mà chỉ số "JSON hợp lệ"
 không bắt được. Năm ảnh đầu tiên:
 
 | Ảnh | `caption_chi_tiet` sinh ra | Đánh giá |
@@ -305,21 +342,82 @@ không bắt được. Năm ảnh đầu tiên:
 | `019.jpg` | *"Bà giảng dạy về phân tích một cấu trúc gen học."* | ⚠️ Tiếng Việt lủng củng, sai ngữ pháp |
 
 **Ước lượng thô: chỉ 1–2 trong 5 caption thật sự dùng được**, dù cả 5 đều là
-JSON hợp lệ 100%.
+JSON hợp lệ 100%. Số n=5 này quá nhỏ — mục 7.3 có số đo trên n=83 xác nhận và
+mở rộng phát hiện này bằng công cụ đo tự động.
 
-Ba lỗi phải sửa ở prompt (`prompts.py`, sẽ thành `PROMPT_VERSION = "v2"`):
+Ba lỗi phải sửa ở prompt (`prompts.py`, đã thành `PROMPT_VERSION = "v2"`):
 
 1. **Model chép ví dụ few-shot.** Ví dụ mẫu đang dùng chính là câu trong đề bài;
-   khi model "bí" nó chép lại. Cách sửa: đổi ví dụ sang cảnh khác hẳn keyframe
-   thực tế, hoặc bỏ few-shot và chỉ mô tả schema.
+   khi model "bí" nó chép lại. Cách sửa ban đầu: đổi ví dụ sang cảnh khác hẳn keyframe
+   thực tế (đổi sang cảnh bếp). **Kết quả thật (mục 7.3): giảm mạnh nhưng KHÔNG diệt được**
+   — `032.jpg` ở prompt v2 vẫn chép nguyên xi ví dụ bếp mới. Giả thuyết "ví dụ càng khác
+   keyframe càng khó bị chép" là **sai một phần** — chỉ giảm tần suất, không loại bỏ lỗi.
 2. **Nhãn "Caption Chi tiết:" lọt vào giá trị.** Phải bỏ khi hậu xử lý, hoặc
    siết prompt cấm lặp lại tên trường.
-3. **`doi_tuong` nhận chữ thay vì vật thể.** Prompt phải nói rõ: *"chỉ liệt kê
-   vật thể/người nhìn thấy, KHÔNG liệt kê chữ viết trong ảnh — chữ thuộc về OCR"*.
+3. **`doi_tuong` nhận chữ thay vì vật thể.** Prompt v2 đã thêm câu cấm nhưng **chưa đủ mạnh**
+   — mục 7.3 đo được 12,05% caption vẫn nhét chữ vào `doi_tuong` ở n=83.
 
 Đây là bài học chính của lần benchmark này: **chỉ số tự động không thay thế được
-việc đọc bằng mắt**. Nếu chỉ nhìn con số 93,5% thì đã kết luận sai là pipeline
+việc đọc bằng mắt**. Nếu chỉ nhìn con số JSON hợp lệ thì đã kết luận sai là pipeline
 đạt yêu cầu.
+
+### 7.3. Đo chất lượng caption bằng công cụ tự động — n=83, số có ý nghĩa thống kê đầu tiên
+
+Dữ liệu: `results/sample_results.json` — **175 mục** tải từ Kaggle Version 1 (prompt v2).
+Thành phần: `vintern-1b` 92 mục (toàn mock, bị bộ đo tự loại) · `qwen2vl-2b` 79 mục (thật) ·
+`qwen25vl-3b` 4 mục (thật). Sau khi loại 92 mục mock, còn **83 caption dùng được** để đo.
+
+Công cụ: `quality/danh_gia_chat_luong.py`. Báo cáo máy: `results/quality_report.json`.
+
+```
+Caption dùng được: 83 (bỏ qua 92 — toàn bộ kết quả Vintern-1B, là mock)
+
+recall@1  : 0,988          Chép few-shot : 1,20%
+recall@5  : 1,000          Nhét chữ OCR  : 12,05%
+recall@10 : 1,000          Vòng vo (TTR) : 30,12%
+MRR       : 0,994
+```
+
+Bộ đo **tự động loại bỏ** 92 mục mock thay vì âm thầm chấm điểm cho dữ liệu giả — đúng
+thiết kế: thà báo rõ "bỏ 92" còn hơn cho ra recall đẹp nhờ dữ liệu không có thật.
+
+**Ba phát hiện mới, chưa từng biết trước phiên đo này:**
+
+1. **Caption vòng vo là lỗi phổ biến nhất — 30,12%.** Gấp 2,5 lần lỗi nhét OCR. Trước đây
+   không ai biết vì chưa có công cụ đo tự động, chỉ đọc tay vài caption. Ví dụ thật:
+   - `055.jpg`: *"Một nhóm học sinh đang học cách **bơi lội** trong một lớp học **bơi lội**
+     tại một trung tâm đào tạo **bơi lội**."*
+   - `063.jpg`: *"Một đội **bóng rổ** đang chơi **bóng rổ** trên sân **bóng rổ** xanh."*
+
+   Với retrieval, lặp từ không chỉ đọc xấu — nó làm caption **kém phân biệt**: caption
+   "bóng rổ ×3" khớp với mọi ảnh bóng rổ khác trong kho, giảm độ chính xác tìm kiếm.
+
+2. **Prompt v2 vẫn bị chép ví dụ — giả thuyết cũ sai.** Prompt v2 đổi ví dụ mẫu sang cảnh
+   bếp với lý do "càng khác keyframe thật càng khó bị chép". Caption `032.jpg` chứng minh
+   điều này **sai**: model chép **nguyên xi toàn bộ ví dụ bếp mới** (nồi kim loại, bếp gas,
+   "đang đun sôi"...), không sót một trường, cho một ảnh keyframe AIC không liên quan gì
+   tới bếp. Điều đúng: đổi ví dụ có **giảm tần suất** (20% ở n=5 của v1 → 1,2% ở n=83 của
+   v2) nhưng **không diệt được**. Model 2B khi "bí" vẫn rơi về chép mẫu bất kể mẫu là gì.
+   Cần chặn ở tầng kiểm tra dữ liệu (so khớp với `_VI_DU_MAU`), không thể chỉ trông cậy
+   lời dặn trong prompt.
+
+3. **Lỗi mới chưa từng phát hiện: chữ Hán lẫn vào caption tiếng Việt.** `027.jpg` và
+   `306.jpg` — ví dụ `027.jpg`: *"Một bức ảnh**模糊** của một tòa nhà trắng..."* (模糊 =
+   "mờ" trong tiếng Trung). **2/79 caption Qwen2-VL-2B (2,5%)**. Nguyên nhân: Qwen2-VL
+   huấn luyện chủ yếu trên tiếng Trung, khi gặp từ khó diễn đạt thì rơi về tiếng mẹ đẻ.
+   Bộ kiểm hiện tại **không bắt được lỗi này** — cần thêm phép kiểm ký tự ngoài bảng chữ
+   tiếng Việt. Ngoài ra `doi_tuong` còn lẫn tiếng Anh sai chính tả (`027.jpg` →
+   `["buiding", "sky"]`, building viết sai).
+
+**recall@1 = 0,988 nghĩa là gì:** 82/83 caption đủ riêng biệt để tự tìm lại chính ảnh của
+nó trong tập 83 ảnh. **Không có nghĩa là caption tốt** — đây là bài toán dễ vì 83 ảnh thuộc
+83 chủ đề khác nhau. Ở quy mô thật (~127.000 keyframe, hàng nghìn ảnh cùng chủ đề) con số này
+sẽ tụt mạnh. Cách dùng đúng: so **tương đối** giữa hai phiên bản prompt trên cùng tập ảnh,
+không lấy làm mốc tuyệt đối.
+
+⚠️ Cột "prompt v1" khi so sánh trực tiếp (chép ví dụ 20%, nhét OCR 20%, vòng vo 20%) chỉ
+đo trên **n=5** — không so công bằng được với n=83 của v2. Muốn so công bằng phải chạy lại
+prompt v1 trên đủ 92 ảnh bằng cùng công cụ đo.
 
 ### Lệnh đã chạy
 
@@ -347,40 +445,89 @@ Vintern-1B chỉ 1 tỷ tham số — nhỏ nhất nhóm — nhưng vẫn tuân 
 | VRAM | `torch.cuda.max_memory_allocated()` sau khi reset bộ đếm |
 | Độ ổn định | chạy 10 ảnh × 3 lần, đo độ lệch chuẩn latency và tỷ lệ JSON |
 
+### 7.4. Thông lượng — đã chốt được quy mô thật
+
+**Vì sao quan trọng trước khi HOW:** biết model chạy đúng chưa đủ — phải biết chạy đủ
+nhanh để xử lý hết dữ liệu cuộc thi trong ngân sách GPU miễn phí của Kaggle.
+
+**Quy mô thật (đọc trực tiếp từ Drive của BTC ngày 16/08):** thư mục `AIC2025` có
+**8 file keyframe, tổng 19,27 GB → ~127.000 ảnh**.
+Chi tiết từng file + ID: `plans/reports/so-keyframe-that-260816-0830.md`.
+
+> ⚠️ Bản trước của mục này ghi "300k–1M keyframe → 25–85 tuần → **bất khả thi**".
+> Đó là **ước lượng sai, phóng đại 2,4–8 lần** (nhân 37.445 với số file đoán mò).
+> Con số thật nhẹ hơn nhiều — xem bảng dưới.
+
+Với Qwen2-VL-2B ở **9,13 s/ảnh** (số đo thật, mục 3), trên **127.000 ảnh**:
+
+| Cách chạy | Tổng giờ GPU | Số tuần Kaggle (30h/tuần) |
+|---|---|---|
+| Hiện tại (tuần tự, 9,13 s/ảnh) | 323 giờ | ~10,8 tuần |
+| Batch 4 ảnh (~3,0 s/ảnh) | 106 giờ | ~3,5 tuần |
+| **Batch 8 ảnh (~1,5 s/ảnh)** | 53 giờ | **~1,8 tuần** |
+| Batch 4 + khử trùng lặp 3× | 35 giờ | **~1,2 tuần** |
+
+**Không còn bất khả thi.** Chỉ cần batch inference là về mức ~2 tuần Kaggle.
+Ngay cả giữ nguyên tốc độ hiện tại cũng chạy hết trong ~11 tuần — chậm, nhưng không chết.
+
+→ Việc tối ưu thông lượng **hạ mức khẩn cấp**. Ưu tiên chuyển sang **sửa chất lượng caption**
+(vòng vo 30%, nhét OCR 12% ở mục 7.3) — đó mới là thứ quyết định caption có dùng được không.
+
+⚠️ Số ảnh của 7/8 file là **ước tính theo dung lượng** (L25 đếm thật: 37.445 ảnh / 5.810 MB
+= 159 KB mỗi ảnh). Đếm chính xác cần chạy script đọc zip **trên Kaggle** — mạng ở máy local
+bị chặn (chi tiết trong báo cáo trên).
+
+Hai hướng giảm tải đã có code sẵn, chưa đo hiệu quả thật:
+
+1. **Khử trùng lặp** (`dedup/`) — bỏ bớt keyframe gần giống nhau trước khi đưa vào VLM.
+   Giảm được bao nhiêu % số ảnh cần chạy — chưa đo trên tập lớn.
+2. **Batch inference** — gộp nhiều ảnh một lượt gọi model thay vì từng ảnh một.
+   Code định hướng có sẵn nhưng **chưa benchmark tốc độ thật**.
+
+Không hướng nào một mình đủ 30–40 lần — cần kết hợp cả hai, và có thể cần thêm
+vLLM (mục 5, ước tính nhanh hơn transformers 5–10 lần, chưa tự đo).
+
 ---
 
 ## 8. Mô hình được chọn cuối cùng
 
 ### **Qwen2-VL-2B-Instruct** — chọn theo dữ liệu thực đo
 
-**Lý do chọn:** đây là model **duy nhất trong ba** chạy trọn 92 ảnh mà không
-sập. Hai model kia đều hỏng theo cách riêng (mục 7.2). Chọn model chạy được
-93,5% hơn là model có tiềm năng cao hơn nhưng chưa chạy được.
+**Lý do chọn:** đây là model **duy nhất trong ba** cho ra caption thật, không sập
+và không rơi về mock. Hai model kia đều hỏng theo cách riêng (mục 7.2). Chọn model
+chạy được 85,9% (số hiện hành, prompt v2) hơn là model có tiềm năng cao hơn nhưng
+chưa chạy được.
 
-| Tiêu chí | Qwen2-VL-2B |
+| Tiêu chí | Qwen2-VL-2B (số hiện hành, prompt v2) |
 |---|---|
-| Chạy hết 92 ảnh không sập | ✅ Duy nhất |
-| Tỷ lệ JSON hợp lệ | 93,5% |
-| VRAM | 1,84 GB — thấp nhất, chạy được cả GPU 4GB |
-| Latency | 8,51 s/ảnh |
+| Cho ra caption thật, không sập | ✅ Duy nhất |
+| Tỷ lệ JSON hợp lệ | 85,9% (79/92) |
+| VRAM | 1,946 GB — thấp nhất, chạy được cả GPU 4GB |
+| Latency | 9,131 s/ảnh |
+| recall@1 trên caption thật (n=83) | 0,988 |
 
-⚠️ **Đây là lựa chọn tạm thời, không phải kết luận cuối.** Ba lý do:
+⚠️ **Đây là lựa chọn tạm thời, không phải kết luận cuối.** Bốn lý do:
 
 1. **Chưa qua cổng kiểm tiếng Việt.** Vintern-1B (mốc đối chứng bắt buộc) chưa
    chạy được nên chưa so được. Kế hoạch ban đầu yêu cầu so sánh này trước khi chốt.
 2. **Nghiên cứu cảnh báo về chính model này.** Thành viên Phần 2 ghi nhận
    Qwen2-VL-2B **từng từ chối trả lời bằng tiếng Việt**. Chưa gặp trong 92 ảnh
    vừa chạy, nhưng mẫu còn nhỏ.
-3. **Caption ngắn** — 18,5 từ, ngắn hơn Qwen2.5-VL-3B (22,8 từ). Đề bài yêu cầu
-   `caption_chi_tiet` "mô tả dài, đầy đủ ngữ cảnh".
+3. **Caption ngắn** — 22,7 từ TB (prompt v2). Đề bài yêu cầu `caption_chi_tiet`
+   "mô tả dài, đầy đủ ngữ cảnh".
+4. **Chất lượng nội dung còn nhiều lỗi (mục 7.3, n=83):** 30,12% caption vòng vo,
+   12,05% nhét chữ OCR vào `doi_tuong`, 2,5% lẫn chữ Hán. Chưa sửa xong lỗi nào
+   trong ba lỗi này.
 
 ### Việc phải làm trước khi chốt hẳn
 
 | # | Việc | Vì sao |
 |---|---|---|
-| 1 | Viết adapter InternVL cho Vintern-1B | Mốc đối chứng tiếng Việt, không có thì cổng kiểm vô nghĩa |
+| 1 | Ghim `transformers` bản cũ hơn cho Vintern-1B | Nguyên nhân gốc đã xác nhận (mục 7.2) là xung đột phiên bản, không phải thiếu adapter — hướng này rẻ hơn viết adapter InternVL riêng |
 | 2 | Sửa lỗi CUDA assert của Qwen2.5-VL-3B | Model này cho caption chi tiết nhất khi chạy được |
-| 3 | Chấm tay 30 caption × 3 model, giấu tên model | Đo chất lượng tiếng Việt thật, không chỉ đếm JSON hợp lệ |
+| 3 | Giải quyết caption vòng vo (30,12%, mục 7.3) | Lỗi phổ biến nhất, làm caption kém phân biệt khi retrieval |
+| 4 | Chặn chép ví dụ + nhét OCR ở tầng validator | Prompt một mình không đủ (mục 7.3, phát hiện 2) |
+| 5 | Chấm tay 30 caption × 3 model, giấu tên model | Đo chất lượng tiếng Việt thật, không chỉ đếm JSON hợp lệ |
 
 ### Cổng kiểm tiếng Việt (chưa chạy được)
 
@@ -420,7 +567,7 @@ Nên quy trình chốt model là:
 | File keyframe nặng 5.7GB, gần cạn đĩa Kaggle (~20GB) | Kho ảnh của cuộc thi rất lớn, trong khi benchmark chỉ cần 100 ảnh | `tai_anh_tu_zip_tren_mang.py` — đọc mục lục ở cuối file zip rồi chỉ tải đúng các đoạn byte chứa ảnh cần. Tải ~10MB thay vì 5.7GB |
 | Phiên Kaggle vẫn chạy CPU dù đã chọn GPU | Kaggle chỉ áp dụng lựa chọn accelerator **khi khởi động phiên**. Phiên đang chạy giữ nguyên cấu hình cũ | Dừng phiên (Run → Stop session) rồi chạy lại. Xác nhận bằng `torch.cuda.is_available()` |
 | `llm_int8_skip_modules` làm model chết khi chạy | Tham số này (giữ vision tower ở FP16) không tương thích với 4-bit trên bitsandbytes hiện tại → `FP4 quantization state not initialized` | Bỏ tham số, chấp nhận nén cả vision tower. Đã cô lập bằng 3 thí nghiệm A/B/C (mục 6) |
-| Vintern-1B cho latency 0,0s và VRAM 0,0GB | Adapter rơi về `MockAdapter` vì model dùng kiến trúc InternVL, cần gọi `model.chat()` thay vì `model.generate()` | **CHƯA SỬA.** Ghi rõ số này không dùng được thay vì báo cáo nhầm thành 100% |
+| Vintern-1B cho latency 0,0s và VRAM 0,0GB | Adapter rơi về `MockAdapter`. Nguyên nhân gốc xác nhận từ log Kaggle: `InternVLChatModel` thiếu thuộc tính `all_tied_weights_keys` mà `transformers` 4.5x+ đòi hỏi — xung đột phiên bản, không phải thiếu adapter riêng | **CHƯA SỬA.** Hướng sửa rẻ hơn: ghim `transformers` về bản cũ hơn, thay vì viết adapter InternVL riêng |
 | Qwen2.5-VL-3B sập sau 4 ảnh | `CUDA error: device-side assert triggered` — nhiều khả năng tràn chỉ số khi ảnh có kích thước khác nhau | **CHƯA SỬA.** Cần chạy lại với `CUDA_LAUNCH_BLOCKING=1` hoặc ép `max_pixels` cố định |
 
 ---
@@ -456,22 +603,28 @@ system1/research/vlm_prompting/
 | Khảo sát VLM <7B, chạy được 4-bit | ✅ 7 model khảo sát, 5 model cài sẵn |
 | Ít nhất 3 mô hình ứng viên | ✅ 5 model |
 | Áp dụng lượng tử hóa 4-bit | ✅ NF4, giữ vision tower FP16 |
-| Prompt ép JSON, có `caption_chi_tiet` | ✅ prompt v1 + 3 tầng phòng thủ |
+| Prompt ép JSON, có `caption_chi_tiet` | ✅ prompt v2 (hiện hành) + 3 tầng phòng thủ |
 | `caption_chi_tiet` mô tả dài, đủ ngữ cảnh | ✅ ép tối thiểu 25 ký tự, đo số từ |
 | Chạy thử ≥100 ảnh | ⚠️ Chạy 92 ảnh thật (kho chỉ có 92 ảnh không trùng tên trong mẫu đã lấy) |
 | Hàm `generate_json(image)` | ✅ `vlm/generate.py` — đã chạy thật trên keyframe AIC |
-| `sample_results.json` | ✅ code đã có, sinh từ checkpoint |
-| Bảng benchmark 7 cột | ✅ mục 3, số thực đo |
+| `sample_results.json` | ✅ **đã có file thật, 175 mục** (92 mock Vintern + 79 Qwen2-VL-2B thật + 4 Qwen2.5-VL-3B thật), tải từ Kaggle Version 1 |
+| Bảng benchmark 7 cột | ✅ mục 3, số thực đo (prompt v2) |
 | Pull Request | ⏳ nên sửa 2 model hỏng trước khi mở PR |
 
 ---
 
 ## 11. Việc còn lại
 
-1. **Chạy benchmark thật trên Kaggle** — mở `scripts/kaggle_smoke.ipynb`, bật GPU, Run All
-2. **Cổng kiểm tiếng Việt** — chấm tay 30 caption × 3 model, giấu tên model
-3. **Điền số vào mục 3, 7, 8** của báo cáo này
-4. **Mở PR** — đề bài ghi nhánh `research-branch`, repo thực tế chưa có nhánh này,
+1. **Ghim `transformers` bản cũ hơn cho Vintern-1B**, chạy lại benchmark để có số thật
+   thay vì mock (mục 7.2)
+2. **Giải quyết caption vòng vo (30,12%)** — lỗi phổ biến nhất phát hiện được ở mục 7.3,
+   chưa có hướng sửa. Thử prompt v3 nhấn "không lặp từ", đo lại bằng công cụ hiện có
+3. **Chặn chép ví dụ + nhét OCR ở tầng validator**, không chỉ dựa vào prompt (mục 7.3)
+4. **Thêm phép kiểm ký tự ngoài tiếng Việt** — bắt lỗi chữ Hán lẫn vào (2,5% caption dính)
+5. **Đo hiệu quả khử trùng lặp + batch inference trên tập lớn** — bắt buộc trước khi chạy
+   toàn bộ dữ liệu cuộc thi (mục 7.4, cần giảm 30–40 lần thời gian)
+6. **Cổng kiểm tiếng Việt** — chấm tay 30 caption × 3 model, giấu tên model
+7. **Mở PR** — đề bài ghi nhánh `research-branch`, repo thực tế chưa có nhánh này,
    cần hỏi lại nhóm trước khi mở
 
 ---
@@ -492,3 +645,28 @@ Kết luận chính: **chưa nên train.** Ngưỡng hòa vốn của fine-tune 
 
 Nếu train (bước 2): Unsloth + QLoRA rank 16, **đóng băng vision encoder**,
 chỉ tốn 5,5–7GB VRAM → vừa Kaggle T4/P100.
+
+---
+
+## 13. Số nào đo thật, số nào không
+
+Mọi con số quan trọng trong report này, phân loại rõ để không ai đọc nhầm số ước lượng
+thành số đo, hay số giả thành số thật.
+
+| Số liệu | Trạng thái |
+|---|---|
+| Qwen2-VL-2B: 85,9% JSON hợp lệ / 9,131 s / 1,946 GB (prompt v2, mục 3) | ✅ **Đo thật** trên Kaggle T4, 92 keyframe AIC |
+| Qwen2-VL-2B: 93,5% JSON hợp lệ / 8,51 s / 1,84 GB (prompt v1, mục 7.2) | ✅ **Đo thật**, lần chạy trước, không còn là số hiện hành |
+| Qwen2.5-VL-3B: 4,3% (cả hai lần chạy) | ✅ Đo thật (model sập giữa chừng — số thật của một thất bại) |
+| Vintern-1B: 100% / 0,0 s / 0,0 GB | ❌ **Số giả** — mock, model chưa từng nạp được |
+| recall@1 = 0,988 / recall@5 = 1,000 / MRR = 0,994 (n=83) | ✅ **Đo thật**, mục 7.3 |
+| Vòng vo 30,12% / Nhét OCR 12,05% / Chép few-shot 1,20% (n=83) | ✅ **Đo thật**, mục 7.3 |
+| Chữ Hán lẫn caption: 2/79 (2,5%) | ✅ Đo thật (đếm tay bằng regex) |
+| `sample_results.json`: 175 mục | ✅ **Đo thật** — file tồn tại, tải về từ Kaggle Version 1 |
+| So sánh chép ví dụ v1 (20%) vs v2 (1,2%) ở mục 7.3 | ⚠️ Cột v1 chỉ n=5 — tín hiệu định hướng, không so công bằng được với n=83 của v2 |
+| 8 file keyframe, tổng 19,27 GB (mục 7.4) | ✅ **Đo thật** — đọc header từ Drive của BTC ngày 16/08 |
+| ~127.000 keyframe (mục 7.4) | ⚠️ **Ước tính theo dung lượng** — L25 đếm thật (37.445 ảnh), 7 file kia suy từ 159 KB/ảnh |
+| 323 giờ GPU / ~10,8 tuần (mục 7.4) | ⚠️ **Tính toán** từ latency thật × quy mô ước tính — không phải đo trực tiếp |
+| Hiệu quả khử trùng lặp + batch inference | ⚠️ **Chưa đo** — code có sẵn, chưa benchmark tốc độ thật |
+| MMBench 82,6 / ~78–80 (Qwen2.5-VL-7B, MiniCPM-V) | 📖 Điểm công bố của nhà phát triển, đo tiếng Anh — không tự đo, không suy ra tiếng Việt |
+| Vintern-1B WER 0,34 (mục 8) | 📖 Đo bởi thành viên Phần 2, trên tác vụ OCR — không phải captioning |

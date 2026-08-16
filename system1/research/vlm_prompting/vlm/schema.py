@@ -20,6 +20,11 @@ SCHEMA_VERSION = "v1"
 
 CAPTION_MIN_LENGTH = 25
 
+# Đánh dấu caption tiếng Anh thiếu. Không dùng chuỗi rỗng vì schema của nhóm
+# đòi minLength >= 1; không chép caption tiếng Việt sang vì đó là nói dối về
+# ngôn ngữ. Dấu hiệu này lọc được bằng một phép so sánh chuỗi.
+_THIEU_CAPTION_EN = "[missing-en]"
+
 # Model hay lặp tên trường vào đầu giá trị: "Caption Chi tiết: Một người...".
 # Đo thật trên 92 keyframe cho thấy lỗi này xảy ra ngay ở ảnh đầu tiên.
 # Khớp mọi nhãn ngắn đứng trước dấu hai chấm ở đầu chuỗi. Không liệt kê từng
@@ -101,7 +106,30 @@ def to_shot_caption_row(
     Tách riêng khỏi KeyframeMetadata vì hai thứ có vòng đời khác nhau: metadata
     là kết quả thuần của model, còn hàng shot_caption cần thêm thông tin định
     danh mà model không biết (shot_id, video_id, timestamp).
+
+    Về caption_en: TUYỆT ĐỐI không lấy caption_chi_tiet (tiếng Việt) nhét vào
+    ô này khi model không sinh được tiếng Anh. Dữ liệu sai (tiếng Việt bị gắn
+    nhãn language="en") tệ hơn dữ liệu thiếu (chuỗi rỗng) — thiếu thì tầng sau
+    biết mà bù, sai thì tin nhầm và làm nhiễm index tiếng Anh của cả nhóm.
+    Model không sinh được caption_en → để rỗng thật, đồng thời hạ status
+    xuống "partial" để tầng sau biết mà xử lý. `status="failed"` do caller
+    truyền vào (lỗi nặng hơn) không bị ghi đè.
     """
+    co_caption_en = bool(metadata.caption_en)
+    if status == "failed":
+        status_thuc = status
+    elif co_caption_en:
+        status_thuc = "ok"
+    else:
+        status_thuc = "partial"
+
+    # Schema của nhóm bắt caption_en minLength >= 1 (shot_captions.schema.json:34)
+    # nên KHÔNG được trả chuỗi rỗng — validator sẽ chặn cả mẻ. Dùng dấu hiệu
+    # tường minh thay vì chép caption tiếng Việt sang: vẫn không nói dối về
+    # ngôn ngữ, mà cũng không làm vỡ ràng buộc dữ liệu. Cặp đôi với
+    # status="partial" ở trên để tầng sau lọc ra được.
+    caption_en_ra = metadata.caption_en if co_caption_en else _THIEU_CAPTION_EN
+
     return {
         "shot_caption_id": f"{shot_id}:{prompt_version}",
         "shot_id": shot_id,
@@ -109,13 +137,13 @@ def to_shot_caption_row(
         "representative_keyframe_id": keyframe_id,
         "representative_timestamp_sec": timestamp_sec,
         "caption_vi": metadata.caption_chi_tiet,
-        "caption_en": metadata.caption_en or metadata.caption_chi_tiet,
+        "caption_en": caption_en_ra,
         "provider": provider,
         "model_name": model_name,
         "model_version": model_version,
         "prompt_version": prompt_version,
         "schema_version": SCHEMA_VERSION,
-        "status": status,
+        "status": status_thuc,
         "confidence": confidence,
         "vlm_metadata": {
             "doi_tuong": metadata.doi_tuong,
