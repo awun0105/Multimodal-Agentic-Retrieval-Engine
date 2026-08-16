@@ -25,6 +25,14 @@ from .prompts import SYSTEM_PROMPT, USER_PROMPT, build_messages
 logger = logging.getLogger(__name__)
 
 MAX_NEW_TOKENS = 320
+
+# Lay mau ngau nhien (do_sample) doc mot so tu phan phoi xac suat. O float16,
+# phan phoi cua model 3B tran so thanh nan va PyTorch bao:
+#   "probability tensor contains either inf, nan or element < 0"
+# -> Qwen2.5-VL-3B sap sau 4 anh, 88/92 ca loi cung mot thong bao.
+# Sinh JSON co cau truc thi lay chu xac suat cao nhat vua on dinh vua dung hon
+# lay mau. TEMPERATURE giu lai cho backend vLLM (no khong dung do_sample).
+DUNG_LAY_MAU = False
 TEMPERATURE = 0.3
 
 
@@ -117,13 +125,14 @@ class TransformersAdapter(BaseVlmAdapter):
         }
 
         with torch.no_grad():
-            output_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=MAX_NEW_TOKENS,
-                do_sample=TEMPERATURE > 0,
-                temperature=TEMPERATURE,
-                repetition_penalty=1.05,
-            )
+            tham_so_sinh: dict[str, Any] = {
+                "max_new_tokens": MAX_NEW_TOKENS,
+                "do_sample": DUNG_LAY_MAU,
+                "repetition_penalty": 1.05,
+            }
+            if DUNG_LAY_MAU:
+                tham_so_sinh["temperature"] = TEMPERATURE
+            output_ids = self.model.generate(**inputs, **tham_so_sinh)
 
         input_ids = inputs.get("input_ids")
         if input_ids is not None:
