@@ -39,6 +39,7 @@ from checkpoint_utils import (  # noqa: E402
 )
 from metrics import KetQuaMotAnh, danh_gia_mot_anh, do_on_dinh, tong_ket  # noqa: E402
 
+from vlm.adapters import get_adapter  # noqa: E402
 from vlm.generate import generate_json, reset_vram_counter, thong_tin_moi_truong  # noqa: E402
 from vlm.model_registry import MODEL_REGISTRY  # noqa: E402
 
@@ -176,6 +177,15 @@ def main() -> int:
         action="store_true",
         help="Chạy 10 ảnh 3 lần để đo độ ổn định (yêu cầu của đề bài)",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Fail-loud: ném lỗi nếu model không tải được thay vì âm thầm rơi "
+            "về mock. Chỉ dùng khi benchmark — tránh sinh số liệu giả từ mock. "
+            "Mặc định tắt để không đổi cách chạy hiện có."
+        ),
+    )
     args = parser.parse_args()
 
     moi_truong = thong_tin_moi_truong()
@@ -214,6 +224,21 @@ def main() -> int:
         print(f"=== {spec.ten_hien_thi} ({model_key}) ===")
         bat_dau = time.perf_counter()
 
+        # Dò adapter thật TRƯỚC khi chạy cả mẻ ảnh: với --strict, model không
+        # tải được phải hỏng ngay ở đây (fail-loud), không lặng lẽ rơi về mock
+        # rồi chấm điểm cho JSON giả — đây chính là nguồn gốc số liệu "ảo" cũ.
+        # backend_name lấy được ở đây cũng dùng để cảnh báo mock trong bảng.
+        # --strict phải hỏng to, nhưng chỉ hỏng ĐÚNG model này — không kéo theo
+        # các model đã chạy xong. Ném ra ngoài vòng lặp sẽ vứt cả kết quả của
+        # những model tải được, đúng thứ benchmark cần giữ nhất.
+        try:
+            adapter_dau_do = get_adapter(model_key, backend=args.backend, strict=args.strict)
+            backend_thuc_te = adapter_dau_do.backend_name
+        except Exception as loi_nap:  # noqa: BLE001 - báo rõ rồi sang model kế
+            print(f"  ✗ BỎ QUA {model_key}: {loi_nap}")
+            tong_hop[model_key] = {"loi": str(loi_nap), "backend": "khong-nap-duoc"}
+            continue
+
         try:
             ket_qua, _ = chay_mot_model(
                 model_key,
@@ -230,6 +255,12 @@ def main() -> int:
 
         tk = tong_ket(model_key, ket_qua, model_name=spec.hf_id, backend=args.backend)
         tong_hop[model_key] = tk.to_dict()
+
+        # Lưới an toàn thứ hai: --strict đã chặn phần lớn, nhưng nếu ai đó
+        # quên bật cờ, bảng số vẫn phải tự tố cáo là mock — không để số giả
+        # trông giống số thật.
+        if backend_thuc_te == "mock":
+            print("  ⚠️ SỐ LIỆU KHÔNG HỢP LỆ — adapter là mock, không phải model thật")
 
         print(f"\n  JSON hợp lệ   : {tk.ty_le_json_hop_le:.1%} "
               f"({tk.so_anh_thanh_cong}/{tk.tong_so_anh})")
