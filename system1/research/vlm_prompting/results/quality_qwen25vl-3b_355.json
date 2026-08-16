@@ -1,0 +1,129 @@
+{
+  "nguon": "D:\\aic-tmp\\tach-qwen25vl-3b.json",
+  "so_caption_dung_duoc": 342,
+  "so_bo_qua": 0,
+  "recall": {
+    "recall_tai_1": 0.9766,
+    "recall_tai_5": 1.0,
+    "recall_tai_10": 1.0,
+    "mrr": 0.9878
+  },
+  "ty_le_loi": {
+    "chep_few_shot": 0.0,
+    "nhet_chu_ocr": 0.3333,
+    "vong_vo": 0.1053,
+    "ngon_ngu_la": 0.0234
+  },
+  "top_te_nhat": [
+    {
+      "ten_anh": "012.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": true,
+      "ttr": 1.0,
+      "caption": "Giáo viên Hồng Nhung thông báo rằng nếu gặp lại明天, cô sẽ kể cho anh ta câu chuyện."
+    },
+    {
+      "ten_anh": "017.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7297,
+      "caption": "Thầy Võ Thanh Bình đang giảng dạy về sinh thái học với thông báo về môi trường trên cạn, môi trường đất, môi trường nước, môi trường sinh vật và phân loại trong gian hàng thông báo."
+    },
+    {
+      "ten_anh": "026.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7143,
+      "caption": "Giáo viên HỒNG NHUNG đang giảng dạy về các loại câu và câu hỏi trong tiếng Anh, với chủ đề 'Types of sentences & Reporting verbs'. Cô đang nói về cách sử dụng các loại câu và câu hỏi trong tiếng Anh."
+    },
+    {
+      "ten_anh": "156.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7273,
+      "caption": "Thầy Võ Thanh Bình đang giảng dạy trong một lớp học, với một số sách và đồ dùng giáo dục trên bàn, trong đó có một cuốn sách màu vàng và một cuốn sách màu đỏ, cùng với một cây xanh lá cây nhỏ."
+    },
+    {
+      "ten_anh": "189.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": true,
+      "ttr": 0.8947,
+      "caption": "Nhóm nghiên cứu đang thực hiện thí nghiệm hóa học với nhiều试管 chứa溶液 khác nhau trong phòng thí nghiệm."
+    },
+    {
+      "ten_anh": "267.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8684,
+      "caption": "Thầy Trần Ngọc Anh đang giảng dạy về chủ đề Địa lý Công nghiệp và Dịch vụ tại chương trình ôn thi THPT 2024, môn Địa lý CĐ6, với nội dung về Tổ chức lãnh thổ công nghiệp."
+    },
+    {
+      "ten_anh": "280.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8529,
+      "caption": "Thầy Võ Thanh Bình đang giảng dạy về hiệu số giữa kiểu gen đồng hợp tử trội và đồng hợp tử lặn, với thông tin về các thế hệ F1, F2, F3 và F4."
+    },
+    {
+      "ten_anh": "292.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": true,
+      "ttr": 0.9756,
+      "caption": "Thầy Võ Thanh Bình đang giảng dạy về một bệnh di truyền trong lớp học, với biểu đồ họa gia đình được圈起来 để chỉ bệnh do hai gen không alen nằm trên các NST thường, tương tác theo kiểu bổ sung."
+    },
+    {
+      "ten_anh": "321.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8462,
+      "caption": "Thầy NGUYỄN VIẾT ĐẶNG DU đang giải thích thông tin lịch sử trong phòng họp với màn hình máy tính và bảng thông tin lịch sử."
+    },
+    {
+      "ten_anh": "337.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8947,
+      "caption": "Thầy Trần Ngọc Anh đang giảng dạy về hoạt động phát triển kinh tế tại chương trình ôn thi THPT 2024, môn Địa lý C9, chuyên đề Địa lý các vùng kinh tế Việt Nam - Phần 3."
+    }
+  ]
+}

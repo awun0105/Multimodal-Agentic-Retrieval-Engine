@@ -1,0 +1,129 @@
+{
+  "nguon": "results\\sample_results.json",
+  "so_caption_dung_duoc": 617,
+  "so_bo_qua": 92,
+  "recall": {
+    "recall_tai_1": 0.9643,
+    "recall_tai_5": 1.0,
+    "recall_tai_10": 1.0,
+    "mrr": 0.981
+  },
+  "ty_le_loi": {
+    "chep_few_shot": 0.0081,
+    "nhet_chu_ocr": 0.3177,
+    "vong_vo": 0.1605,
+    "ngon_ngu_la": 0.0211
+  },
+  "top_te_nhat": [
+    {
+      "ten_anh": "098.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8571,
+      "caption": "Thầy Đỗ Đức Anh đang giảng dạy về bài văn nghị luận văn học với nội dung về vẻ đẹp độc đáo của sông Đà."
+    },
+    {
+      "ten_anh": "100.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": true,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9545,
+      "caption": "Trong không gian Oxyz, cho điểm I(1; -2; 3). Viết phương trình mặt cầu tâm I, cắt trục Ox tại hai điểm A và B sao cho AB = 2√3."
+    },
+    {
+      "ten_anh": "102.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8571,
+      "caption": "Thầy Đỗ Đức Anh đang giảng dạy về bài văn mẫu về vẻ đẹp độc đáo của sông Đà trong hai đoạn văn."
+    },
+    {
+      "ten_anh": "125.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8056,
+      "caption": "Một người đàn ông đang đọc sách trên bàn với nhiều cuốn sách màu cam và xanh trong một gian hàng sách."
+    },
+    {
+      "ten_anh": "127.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7273,
+      "caption": "Thầy Võ Thanh Bình đang giảng dạy về một đề tài khoa học, với thông tin về vi khuẩn E.coli và ADN được hiển thị trên bảng thông tin."
+    },
+    {
+      "ten_anh": "136.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7895,
+      "caption": "Giáo viên Hồng Nhung đang giảng dạy về ngữ pháp tiếng Pháp, đề cập đến việc không học tiếng Pháp trong thời gian học cấp hai nên không có cơ hội việc làm hiện tại."
+    },
+    {
+      "ten_anh": "220.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.6087,
+      "caption": "Thầy Đỗ Đức Anh đang trình bày về những điều cần thay đổi ở thanh niên Việt Nam hiện nay để trở thành công dân toàn cầu."
+    },
+    {
+      "ten_anh": "223.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7471,
+      "caption": "Trang web hóa học đang hiển thị công thức và giải thích về áp dụng 2 trong hóa học, bao gồm công thức và giải thích về quá trình điện phân dung dịch muối nitrat của kim loại M."
+    },
+    {
+      "ten_anh": "282.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8056,
+      "caption": "Thầy Đỗ Đức Anh đang giảng dạy trong một lớp học với nội dung về chương trình ôn thi THPT 2024 môn Ngữ Văn"
+    },
+    {
+      "ten_anh": "290.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.5122,
+      "caption": "Một hình vuông ABCD với các điểm P và Q nằm trên cạnh BC, P là điểm cực đại giao thoa gần B nhất và Q là điểm cực đại giao thoa gần C nhất."
+    }
+  ]
+}

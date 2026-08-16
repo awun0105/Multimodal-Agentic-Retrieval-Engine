@@ -1,0 +1,129 @@
+{
+  "nguon": "D:\\aic-tmp\\tach-qwen2vl-2b.json",
+  "so_caption_dung_duoc": 275,
+  "so_bo_qua": 0,
+  "recall": {
+    "recall_tai_1": 0.9491,
+    "recall_tai_5": 1.0,
+    "recall_tai_10": 1.0,
+    "mrr": 0.9724
+  },
+  "ty_le_loi": {
+    "chep_few_shot": 0.0182,
+    "nhet_chu_ocr": 0.2982,
+    "vong_vo": 0.2291,
+    "ngon_ngu_la": 0.0182
+  },
+  "top_te_nhat": [
+    {
+      "ten_anh": "100.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 4,
+      "chep_few_shot": true,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9545,
+      "caption": "Một chiếc nồi kim loại màu bạc đang đun sôi trên bếp gas với ngọn lửa xanh trong gian bếp gia đình."
+    },
+    {
+      "ten_anh": "098.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8571,
+      "caption": "Một nhóm đoàn viên đang làm việc tại khu vực làm việc của mình."
+    },
+    {
+      "ten_anh": "102.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8571,
+      "caption": "Một người giảng dạy đang giảng dạy tại Trường THPT Bùi Thị Xuân, TP.HCM."
+    },
+    {
+      "ten_anh": "125.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8056,
+      "caption": "Trợ giảng dạy tại Trường THPT Bùi Thị Xuân, TP.HCM đang giảng dạy môn Ngữ Văn cho học sinh lớp 12. Học sinh đang tập trung lắng nghe và học hỏi kiến thức từ giảng viên."
+    },
+    {
+      "ten_anh": "127.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7273,
+      "caption": "Một đoạn giảng dạy về phân tích hình ảnh và phân tích các biểu đồ liên quan đến phân tích hình ảnh."
+    },
+    {
+      "ten_anh": "136.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7895,
+      "caption": "Tôi không học Pháp tại trường trung học, vì vậy tôi không có cơ hội làm việc hiện tại."
+    },
+    {
+      "ten_anh": "220.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.6087,
+      "caption": "Một nhóm đoàn viên đang làm việc trên cây, một người đứng trên cây và một người đứng trên cây đang sản xuất."
+    },
+    {
+      "ten_anh": "223.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7471,
+      "caption": "Một bảng chữ viết mô tả một bài toán hóa học. Bài toán đề cập đến việc sử dụng muối nitrat của kim loại M trong điều kiện điện phân. Điều kiện điện phân được đặt là I = 2A và thời gian điện phân là 1 phút. Sau khi hoàn thành điều chỉnh điện phân, khối lượng catot tăng lên 9,75 gram. Giả sử hiệu suất điện phân đạt 100%, toàn bộ kim loại sinh ra sẽ bám kết với catot. Xác định kim loại M?"
+    },
+    {
+      "ten_anh": "282.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8056,
+      "caption": "Một người đàn ông đang giảng dạy tại Trường THPT Bùi Thị Xuân, TP.HCM. Ông đang hướng dẫn học sinh về môn ngữ văn. Ông đang đứng trước bàn và đang nói chuyện với học sinh."
+    },
+    {
+      "ten_anh": "290.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.5122,
+      "caption": "Trong hình vẽ, BC được chia thành 6 điểm cực đại và 7 điểm cực tiểu giao thoa, trong đó P là điểm cực đại giao thoa giữa BC và Q là điểm cực tiểu giao thoa giữa BC và Q."
+    }
+  ]
+}
