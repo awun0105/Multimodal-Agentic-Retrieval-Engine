@@ -41,9 +41,11 @@ from metrics import KetQuaMotAnh, danh_gia_mot_anh, do_on_dinh, tong_ket  # noqa
 
 from vlm.adapters import get_adapter  # noqa: E402
 from vlm.generate import generate_json, reset_vram_counter, thong_tin_moi_truong  # noqa: E402
+from vlm.model_loader import xoa_cache_model  # noqa: E402
 from vlm.model_registry import MODEL_REGISTRY  # noqa: E402
 
 DUOI_ANH = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+GIOI_HAN_RAW_TEXT = 2000
 
 
 def liet_ke_anh(thu_muc: Path) -> list[Path]:
@@ -88,6 +90,7 @@ def chay_mot_model(
         reset_vram_counter()
 
         text_tho = ""
+        raw = ""
         try:
             ket_qua = generate_json(
                 duong_dan, model_key=model_key, backend=backend, debug=che_do_debug
@@ -106,6 +109,11 @@ def chay_mot_model(
             "ket_qua": danh_gia.ket_qua,
             "loi": danh_gia.loi,
         }
+        # Không lưu nguyên văn output thì ca lỗi chỉ còn lại thông báo lỗi, muốn
+        # biết model đã sinh ra gì phải chạy lại GPU. Cắt trần để checkpoint
+        # không phình khi model sinh rác dài.
+        if raw:
+            checkpoint["da_xong"][ten]["raw_text"] = raw[:GIOI_HAN_RAW_TEXT]
 
         if che_do_debug:
             _in_chi_tiet(i, len(con_lai), danh_gia)
@@ -237,56 +245,63 @@ def main() -> int:
         except Exception as loi_nap:  # noqa: BLE001 - báo rõ rồi sang model kế
             print(f"  ✗ BỎ QUA {model_key}: {loi_nap}")
             tong_hop[model_key] = {"loi": str(loi_nap), "backend": "khong-nap-duoc"}
+            # Model có thể đã chiếm một phần VRAM trước khi ném lỗi.
+            xoa_cache_model()
             continue
 
+        # finally dọn VRAM: chạy nhiều model liên tiếp mà không trả bộ nhớ card
+        # thì model thứ ba là tràn -> kernel ERROR -> Kaggle xóa sạch kết quả.
         try:
-            ket_qua, _ = chay_mot_model(
-                model_key,
-                danh_sach_anh,
-                thu_muc_ket_qua=args.out_dir,
-                backend=args.backend,
-                che_do_debug=(args.mode == "debug"),
-                chu_ky_luu=args.checkpoint_every,
-                tiep_tuc=not args.restart,
-            )
-        except KeyboardInterrupt:
-            print("\n  Đã dừng theo yêu cầu. Tiến độ đã lưu, chạy lại sẽ tiếp tục.")
-            return 130
-
-        tk = tong_ket(model_key, ket_qua, model_name=spec.hf_id, backend=args.backend)
-        tong_hop[model_key] = tk.to_dict()
-
-        # Lưới an toàn thứ hai: --strict đã chặn phần lớn, nhưng nếu ai đó
-        # quên bật cờ, bảng số vẫn phải tự tố cáo là mock — không để số giả
-        # trông giống số thật.
-        if backend_thuc_te == "mock":
-            print("  ⚠️ SỐ LIỆU KHÔNG HỢP LỆ — adapter là mock, không phải model thật")
-
-        print(f"\n  JSON hợp lệ   : {tk.ty_le_json_hop_le:.1%} "
-              f"({tk.so_anh_thanh_cong}/{tk.tong_so_anh})")
-        print(f"  Tuân thủ prompt: {tk.ty_le_tuan_thu_prompt:.1%}")
-        print(f"  Latency TB    : {tk.latency_trung_binh}s "
-              f"(P50 {tk.latency_p50}s, P95 {tk.latency_p95}s)")
-        print(f"  VRAM đỉnh     : {tk.vram_dinh_gb or '—'} GB")
-        print(f"  Caption TB    : {tk.caption_tu_trung_binh} từ / "
-              f"{tk.caption_ky_tu_trung_binh} ký tự")
-        print(f"  Tổng thời gian: {time.perf_counter() - bat_dau:.1f}s\n")
-
-        if args.stability:
-            print("  Đang đo độ ổn định (10 ảnh × 3 lần)...")
-            cac_lan = []
-            for lan in range(3):
-                kq_lan, _ = chay_mot_model(
+            try:
+                ket_qua, _ = chay_mot_model(
                     model_key,
-                    danh_sach_anh[:10],
-                    thu_muc_ket_qua=args.out_dir / f"stability_{lan}",
+                    danh_sach_anh,
+                    thu_muc_ket_qua=args.out_dir,
                     backend=args.backend,
-                    che_do_debug=False,
-                    tiep_tuc=False,
+                    che_do_debug=(args.mode == "debug"),
+                    chu_ky_luu=args.checkpoint_every,
+                    tiep_tuc=not args.restart,
                 )
-                cac_lan.append(kq_lan)
-            tong_hop[model_key]["do_on_dinh"] = do_on_dinh(cac_lan)
-            print(f"  {tong_hop[model_key]['do_on_dinh']}\n")
+            except KeyboardInterrupt:
+                print("\n  Đã dừng theo yêu cầu. Tiến độ đã lưu, chạy lại sẽ tiếp tục.")
+                return 130
+
+            tk = tong_ket(model_key, ket_qua, model_name=spec.hf_id, backend=args.backend)
+            tong_hop[model_key] = tk.to_dict()
+
+            # Lưới an toàn thứ hai: --strict đã chặn phần lớn, nhưng nếu ai đó
+            # quên bật cờ, bảng số vẫn phải tự tố cáo là mock — không để số giả
+            # trông giống số thật.
+            if backend_thuc_te == "mock":
+                print("  ⚠️ SỐ LIỆU KHÔNG HỢP LỆ — adapter là mock, không phải model thật")
+
+            print(f"\n  JSON hợp lệ   : {tk.ty_le_json_hop_le:.1%} "
+                  f"({tk.so_anh_thanh_cong}/{tk.tong_so_anh})")
+            print(f"  Tuân thủ prompt: {tk.ty_le_tuan_thu_prompt:.1%}")
+            print(f"  Latency TB    : {tk.latency_trung_binh}s "
+                  f"(P50 {tk.latency_p50}s, P95 {tk.latency_p95}s)")
+            print(f"  VRAM đỉnh     : {tk.vram_dinh_gb or '—'} GB")
+            print(f"  Caption TB    : {tk.caption_tu_trung_binh} từ / "
+                  f"{tk.caption_ky_tu_trung_binh} ký tự")
+            print(f"  Tổng thời gian: {time.perf_counter() - bat_dau:.1f}s\n")
+
+            if args.stability:
+                print("  Đang đo độ ổn định (10 ảnh × 3 lần)...")
+                cac_lan = []
+                for lan in range(3):
+                    kq_lan, _ = chay_mot_model(
+                        model_key,
+                        danh_sach_anh[:10],
+                        thu_muc_ket_qua=args.out_dir / f"stability_{lan}",
+                        backend=args.backend,
+                        che_do_debug=False,
+                        tiep_tuc=False,
+                    )
+                    cac_lan.append(kq_lan)
+                tong_hop[model_key]["do_on_dinh"] = do_on_dinh(cac_lan)
+                print(f"  {tong_hop[model_key]['do_on_dinh']}\n")
+        finally:
+            xoa_cache_model()
 
     dich = args.out_dir / "vlm_comparison_results.json"
     dich.write_text(

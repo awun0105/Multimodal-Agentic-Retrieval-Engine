@@ -31,7 +31,8 @@ MAX_NEW_TOKENS = 320
 #   "probability tensor contains either inf, nan or element < 0"
 # -> Qwen2.5-VL-3B sap sau 4 anh, 88/92 ca loi cung mot thong bao.
 # Sinh JSON co cau truc thi lay chu xac suat cao nhat vua on dinh vua dung hon
-# lay mau. TEMPERATURE giu lai cho backend vLLM (no khong dung do_sample).
+# lay mau. TEMPERATURE chi dung khi DUNG_LAY_MAU bat. vLLM khong co tham so ten
+# do_sample, nhung temperature > 0 chinh la lay mau -> phai theo cung cong tac.
 DUNG_LAY_MAU = False
 TEMPERATURE = 0.3
 
@@ -162,6 +163,10 @@ class VllmAdapter(BaseVlmAdapter):
 
         from .schema import KeyframeMetadata
 
+        # CANH BAO: quantization="awq" can checkpoint da nen san (...-Instruct-AWQ).
+        # Registry dang luu ten ban goc -> nap ban goc roi khai la AWQ se loi.
+        # Muon bat duong nay phai doi hf_id sang ban AWQ VA kiem kernel co chay
+        # tren card dich khong (kernel AWQ can sm_80+, T4 la sm_75).
         self.llm = LLM(
             model=self.spec.hf_id,
             quantization="awq" if self.dung_4bit else None,
@@ -171,7 +176,7 @@ class VllmAdapter(BaseVlmAdapter):
         )
 
         tham_so: dict[str, Any] = {
-            "temperature": TEMPERATURE,
+            "temperature": TEMPERATURE if DUNG_LAY_MAU else 0,
             "max_tokens": MAX_NEW_TOKENS,
         }
         if self.ep_json:
