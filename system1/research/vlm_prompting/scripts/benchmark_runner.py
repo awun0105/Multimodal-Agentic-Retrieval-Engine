@@ -175,6 +175,16 @@ def main() -> int:
         "--backend", default="auto", choices=["auto", "vllm", "transformers", "mock"]
     )
     parser.add_argument("--frames-dir", type=Path, default=GOC / "data" / "frames")
+    parser.add_argument(
+        "--anh-list",
+        type=Path,
+        help=(
+            "File text, mỗi dòng một tên ảnh — chỉ chạy đúng những ảnh này. "
+            "Dùng để đo trên tập holdout: 290/355 ảnh benchmark có nhãn sẵn "
+            "(261 train + 29 eval), đo model đã nạp LoRA trên cả 355 ảnh sẽ ra "
+            "số đẹp giả. Tập sạch: data/holdout-65-anh-sach.txt"
+        ),
+    )
     parser.add_argument("--out-dir", type=Path, default=GOC / "results")
     parser.add_argument("--checkpoint-every", type=int, default=CHU_KY_LUU_MAC_DINH)
     parser.add_argument(
@@ -208,6 +218,18 @@ def main() -> int:
         print(f"\nKhông có ảnh nào trong {args.frames_dir}")
         print("Chạy trước: python scripts/prepare_sample_images.py")
         return 1
+
+    if args.anh_list:
+        muon = {
+            d.strip() for d in args.anh_list.read_text(encoding="utf-8").splitlines()
+            if d.strip()
+        }
+        truoc = len(danh_sach_anh)
+        danh_sach_anh = [p for p in danh_sach_anh if p.name in muon]
+        print(f"  Lọc theo {args.anh_list.name}: {truoc} → {len(danh_sach_anh)} ảnh")
+        if not danh_sach_anh:
+            print("Không ảnh nào khớp danh sách — kiểm lại tên file.")
+            return 1
 
     if args.mode == "debug":
         danh_sach_anh = danh_sach_anh[: (args.n or 3)]

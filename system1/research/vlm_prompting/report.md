@@ -836,7 +836,22 @@ Kết luận ban đầu: **chưa nên train** — ngưỡng hòa vốn của fin
 > tốt + benchmark. 290 caption này do **agent Claude Haiku** sinh qua công cụ Agent, **không
 > phải** output của VLM 4-bit — nên **không dùng để tick yêu cầu "chạy thử ≥100 ảnh"** của đề bài.
 > Trạng thái: đang train trên Kaggle T4, chưa có adapter dùng được.
-> Dataset đã dựng: 261 train + 29 eval, 60 ảnh holdout giữ sạch để đo trước/sau.
+> Dataset đã dựng: 261 train + 29 eval.
+>
+> ⚠️ **Cách ly dữ liệu — bắt buộc đọc trước khi đo model đã train.** Đếm lại trực tiếp
+> trên dataset Kaggle (17/08), đối chiếu từng tên file: **290 trong 355 ảnh benchmark có
+> nhãn sẵn** — 261 trong `train.jsonl`, 29 trong `eval.jsonl`. Đo model sau khi nạp LoRA
+> trên đúng 355 ảnh này sẽ cho điểm đẹp giả tạo, vì model đã thấy nhãn lúc train.
+>
+> Tập sạch thật sự chỉ còn **65 ảnh**, liệt kê ở `data/holdout-65-anh-sach.txt`.
+> Chạy bằng `--anh-list data/holdout-65-anh-sach.txt`.
+>
+> Con số "60 ảnh holdout" ở bản trước là ước lượng, không phải số đếm. 65 ảnh là ít cho
+> một phép đo tin cậy — muốn so trước/sau LoRA cho chắc thì phải lấy thêm keyframe ngoài
+> 355 ảnh này.
+>
+> Bảng benchmark mục 3 **không dính lỗi này**: mọi số đều đo trên model gốc chưa nạp LoRA,
+> và notebook chỉ trỏ vào thư mục `images/` nên không đọc `train.jsonl` / `eval.jsonl`.
 
 | Bước | Cách làm | Chi phí | Kết quả kỳ vọng |
 |---|---|---|---|
