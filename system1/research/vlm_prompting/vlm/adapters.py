@@ -349,6 +349,12 @@ def get_adapter(
         return _nap_nghiem_ngat(VllmAdapter, spec, dung_4bit, model_key, "vLLM", strict)
 
     if backend == "transformers":
+        if _la_ho_internvl(spec) and lora_model_path is None:
+            from .adapter_internvl import InternVlAdapter
+
+            return _nap_nghiem_ngat(
+                InternVlAdapter, spec, dung_4bit, model_key, "internvl", strict
+            )
         return _nap_nghiem_ngat(
             TransformersAdapter,
             spec,
