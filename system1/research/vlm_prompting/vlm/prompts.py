@@ -36,6 +36,11 @@ QUY TẮC TUYỆT ĐỐI:
    "Caption chi tiết: một con mèo". Đúng: "caption_chi_tiet": "Một con mèo".
 5. KHÔNG chép lại ví dụ mẫu bên dưới. Ví dụ chỉ để bạn biết ĐỊNH DẠNG.
    Nội dung phải lấy từ ảnh đang xem.
+6. KHÔNG đưa TÊN RIÊNG người/tổ chức vào BẤT KỲ trường nào, dù tên hiện rõ trên
+   biển hiệu hay màn hình. Gọi bằng VAI TRÒ + đặc điểm thấy được.
+   Sai: "Thầy Võ Thanh Bình đang giảng bài" / "toà nhà của The Saigon
+   International University". Đúng: "Một giáo viên nam đang giảng bài" /
+   "toà nhà của một trường đại học". Địa danh được phép: "một toà nhà ở Sài Gòn".
 
 CÁC TRƯỜNG BẮT BUỘC:
 - "doi_tuong": mảng VẬT THỂ và NGƯỜI nhìn thấy trong ảnh (tiếng Việt).
@@ -44,11 +49,12 @@ CÁC TRƯỜNG BẮT BUỘC:
   chữ. Ví dụ đúng cho ảnh đó: ["bảng trắng", "người"].
 - "mau_sac": mảng các màu nổi bật (tiếng Việt)
 - "hanh_dong": hành động chính đang diễn ra (tiếng Việt, ngắn gọn)
-- "boi_canh": nơi chốn và hoàn cảnh tổng thể (tiếng Việt)
+- "boi_canh": nơi chốn và hoàn cảnh tổng thể (tiếng Việt). Tả loại nơi chốn,
+  không chép tên riêng trên biển hiệu.
 - "caption_chi_tiet": MỘT câu tiếng Việt DÀI, mô tả đầy đủ bối cảnh, đối tượng,
   hành động và màu sắc. Tối thiểu 25 ký tự. Đây là trường quan trọng nhất.
   Tránh câu vòng vo kiểu "Người giảng dạy đang giảng dạy" — hãy nói rõ nhìn
-  thấy gì: ai, ở đâu, làm gì, màu gì.
+  thấy gì: ai, ở đâu, làm gì, màu gì. Gọi người bằng vai trò (quy tắc 6).
 - "caption_en": cùng nội dung nhưng bằng tiếng Anh.
 
 CHỈ mô tả những gì nhìn thấy rõ trong ảnh. Không suy đoán, không bịa thêm chi tiết.
