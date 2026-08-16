@@ -1,0 +1,129 @@
+{
+  "nguon": "results\\checkpoint_haiku-congchan-v2.json",
+  "so_caption_dung_duoc": 29,
+  "so_bo_qua": 1,
+  "recall": {
+    "recall_tai_1": 1.0,
+    "recall_tai_5": 1.0,
+    "recall_tai_10": 1.0,
+    "mrr": 1.0
+  },
+  "ty_le_loi": {
+    "chep_few_shot": 0.0,
+    "nhet_chu_ocr": 0.0,
+    "vong_vo": 0.0345,
+    "ngon_ngu_la": 0.0
+  },
+  "top_te_nhat": [
+    {
+      "ten_anh": "034.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7895,
+      "caption": "Một nữ nhân viên mặc áo trắng và một nam nhân viên mặc áo hồng nhạt đang ngồi tại bàn họp, xem xét các tài liệu và thảo luận trong một phòng họp với nội thất hiện đại."
+    },
+    {
+      "ten_anh": "004.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9062,
+      "caption": "Một màn hình xanh dương hiển thị tiêu đề bài học về hóa học với chữ vàng cam nổi bật và dòng chữ xanh đậm bên dưới, cùng thông tin giảng viên."
+    },
+    {
+      "ten_anh": "017.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9149,
+      "caption": "Một thầy giáo mặc áo tím đang giảng dạy tại laptop với một sơ đồ sinh thái hiển thị trên bảng, gồm các khái niệm về môi trường, nhân tố sinh thái và quy luật tác động, xung quanh là các hình ảnh thiên nhiên xanh tươi."
+    },
+    {
+      "ten_anh": "025.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9474,
+      "caption": "Một cô giáo mặc áo trắng ngồi tại laptop trong lớp học, phía sau là bảng kê chi tiết các khái niệm về pháp luật với quyền học tập, kèm bảng chữ cái và đồng hồ treo tường."
+    },
+    {
+      "ten_anh": "043.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9091,
+      "caption": "Một tòa nhà đại học lớn với khung cửa sổ kính xanh lục nhạt nằm phía sau, có con đường dẫn đến và cây xanh bao quanh trong khuôn viên trường đại học."
+    },
+    {
+      "ten_anh": "049.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9714,
+      "caption": "Một nhà thờ cổ với mái ngói đỏ gạch nằm giữa sân đất nện rộng, xung quanh là cây xanh tươi và dòng sông chảy quanh khuôn viên, có người dân tụ tập tại đó."
+    },
+    {
+      "ten_anh": "060.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9512,
+      "caption": "Năm người phụ nữ đứng trên sân khấu có rèm đỏ nổi bật đang nhận chứng chỉ, phía sau là màn hình chiếu hiển thị tiêu đề bài học và logo đại học, mỗi người mặc áo sắc sở khác nhau."
+    },
+    {
+      "ten_anh": "063.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.881,
+      "caption": "Nhiều học sinh nữ ngồi trên ghế xanh dương trong lớp học, với thầy giáo nam mặc áo sơ mi đỏ đang ghi viết công thức toán học trên bảng trắng, một số học sinh giơ tay để trả lời câu hỏi."
+    },
+    {
+      "ten_anh": "067.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.8182,
+      "caption": "Nhiều trẻ em mặc áo bơi đen và mũ bơi hồng, xanh đang tập luyện trong hồ bơi xanh dương, cầm theo dụng cụ hỗ trợ bơi lội màu vàng và xanh lá."
+    },
+    {
+      "ten_anh": "081.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9524,
+      "caption": "Một trang slide trắng với tiêu đề 'Kiến thức trong tầm' hiển thị khái niệm vật lý về truyền năng lượng ánh sáng, gồm các công thức khoa học, hình vẽ minh họa và phần chữ đỏ nhấn mạnh các điểm chính."
+    }
+  ]
+}

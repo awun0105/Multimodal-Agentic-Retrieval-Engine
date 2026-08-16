@@ -1,0 +1,129 @@
+{
+  "nguon": "results\\sample_results.json",
+  "so_caption_dung_duoc": 83,
+  "so_bo_qua": 92,
+  "recall": {
+    "recall_tai_1": 0.988,
+    "recall_tai_5": 1.0,
+    "recall_tai_10": 1.0,
+    "mrr": 0.994
+  },
+  "ty_le_loi": {
+    "chep_few_shot": 0.012,
+    "nhet_chu_ocr": 0.1205,
+    "vong_vo": 0.3012,
+    "ngon_ngu_la": 0.0241
+  },
+  "top_te_nhat": [
+    {
+      "ten_anh": "027.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": true,
+      "ttr": 0.8667,
+      "caption": "Một bức ảnh模糊 của một tòa nhà trắng và bầu trời xanh trong ngày trời."
+    },
+    {
+      "ten_anh": "311.jpg",
+      "so_loi": 2,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.75,
+      "caption": "Một đội bóng rổ đang tập luyện tại sân bóng rổ xanh lá cây xanh lá."
+    },
+    {
+      "ten_anh": "333.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 2,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8333,
+      "caption": "Một người phụ nữ đang phát biểu tại một sự kiện với một hoa tươi xanh dương và đỏ đặt lên bàn phát biểu."
+    },
+    {
+      "ten_anh": "014.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9375,
+      "caption": "Giáo viên Hồng Nhung đang giảng dạy trong một lớp học với bảng màu xanh lá cây và nhiều phụ kiện học tập."
+    },
+    {
+      "ten_anh": "019.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8947,
+      "caption": "Trợ lý đang giám sát học sinh trong một lớp học sinh tại Trường THPT chuyên Lê Hồng Phong."
+    },
+    {
+      "ten_anh": "032.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": true,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9545,
+      "caption": "Một chiếc nồi kim loại màu bạc đang đun sôi trên bếp gas với ngọn lửa xanh trong gian bếp gia đình."
+    },
+    {
+      "ten_anh": "055.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.6522,
+      "caption": "Một nhóm học sinh đang học cách bơi lội trong một lớp học bơi lội tại một trung tâm đào tạo bơi lội."
+    },
+    {
+      "ten_anh": "061.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.7083,
+      "caption": "Một người mặc áo sơ mi đỏ và một người mặc áo sơ mi vàng đang đặt bàn giao nhau tại một sự kiện."
+    },
+    {
+      "ten_anh": "063.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.6923,
+      "caption": "Một đội bóng rổ đang chơi bóng rổ trên sân bóng rổ xanh."
+    },
+    {
+      "ten_anh": "066.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8333,
+      "caption": "Một người phụ nữ đang phát biểu tại một sự kiện với một hoa tươi xanh dương và đỏ đặt lên bàn phát biểu."
+    }
+  ]
+}

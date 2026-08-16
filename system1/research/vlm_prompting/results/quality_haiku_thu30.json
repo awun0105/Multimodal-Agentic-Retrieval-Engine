@@ -1,0 +1,107 @@
+{
+  "nguon": "results\\checkpoint_haiku-thu30.json",
+  "so_caption_dung_duoc": 30,
+  "so_bo_qua": 0,
+  "recall": {
+    "recall_tai_1": 0.9667,
+    "recall_tai_5": 1.0,
+    "recall_tai_10": 1.0,
+    "mrr": 0.9833
+  },
+  "ty_le_loi": {
+    "chep_few_shot": 0.0,
+    "nhet_chu_ocr": 0.0333,
+    "vong_vo": 0.0,
+    "ngon_ngu_la": 0.0333
+  },
+  "top_te_nhat": [
+    {
+      "ten_anh": "001.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 1.0,
+      "caption": "Chữ 'THANHNIEN' in đậm màu xanh lam hiển thị trên nền xám nhạt, tạo hiệu ứng tiêu đề hoặc logo của một tổ chức báo chí."
+    },
+    {
+      "ten_anh": "047.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": true,
+      "ttr": 0.973,
+      "caption": "Hai người đang biểu diễn nhạc guitar ngồi trên ghế, được bao quanh bởi ánh sáng ấm áp màu cam vàng, tạo không khí thân mật và thoải mái trong phòng sáng với cây xanh phía sau."
+    },
+    {
+      "ten_anh": "037.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 2,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9444,
+      "caption": "Các quan chức ngồi quanh bàn hội thảo dài với cờ Việt Nam và Đức, hoa trắng trang trí, tham gia một cuộc họp báo hoặc hội thảo ngoại giao trong phòng gỗ nâu sang trọng."
+    },
+    {
+      "ten_anh": "005.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9524,
+      "caption": "Một người đàn ông mặc áo sơ mi trắng và cà vạt xanh, đeo kính mắt, ngồi tại bàn làm việc với laptop, được bao quanh bởi hiệu ứng công nghệ và bản đồ thế giới trên nền xanh lam tươi sáng."
+    },
+    {
+      "ten_anh": "006.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.913,
+      "caption": "Một nữ giáo viên mặc áo đen ngồi tại bàn học với máy tính bảng, trước bảng trắng lớn hiển thị tiêu đề 'CHUYÊN ĐỀ 6 - PHÁP LUẬT VÀ QUYỀN BÌNH ĐẲNG CỦA CÔNG DÂN' trong lớp học được trang trí bằng bảng chữ cái."
+    },
+    {
+      "ten_anh": "032.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9444,
+      "caption": "Các quan chức ngồi quanh bàn hội thảo dài với cờ Việt Nam và Đức, hoa trắng trang trí, tham gia một cuộc họp báo hoặc hội thảo ngoại giao trong phòng gỗ nâu sang trọng."
+    },
+    {
+      "ten_anh": "073.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9,
+      "caption": "Ảnh với nền mờ nhẹ nhàng sử dụng các tông màu ấm áp, tạo hiệu ứng chuyển cảnh hoặc kết nối giữa các cảnh trong một bộ phim hoặc video."
+    },
+    {
+      "ten_anh": "092.jpg",
+      "so_loi": 0,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9512,
+      "caption": "Một nam giáo viên mặc áo sơ mi trắng ngồi tại laptop Dell, trước bảng trắng lớn hiển thị vòng tròn biểu đồ màu cam, vàng, xanh lam, tham gia một buổi giảng dạy trực tuyến trong phòng studio hiện đại."
+    }
+  ]
+}

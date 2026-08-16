@@ -1,0 +1,129 @@
+{
+  "nguon": "results\\checkpoint_haiku-teacher.json",
+  "so_caption_dung_duoc": 290,
+  "so_bo_qua": 1,
+  "recall": {
+    "recall_tai_1": 0.9966,
+    "recall_tai_5": 1.0,
+    "recall_tai_10": 1.0,
+    "mrr": 0.9983
+  },
+  "ty_le_loi": {
+    "chep_few_shot": 0.0,
+    "nhet_chu_ocr": 0.0172,
+    "vong_vo": 0.0207,
+    "ngon_ngu_la": 0.0034
+  },
+  "top_te_nhat": [
+    {
+      "ten_anh": "088.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8857,
+      "caption": "Hình ảnh chụp từ trên cao sân bóng đá xanh lục với các cầu thủ áo sẫm màu và những vạch vàng, trắng phân chia sân, cho thấy vị trí đứng của các cầu thủ."
+    },
+    {
+      "ten_anh": "090.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.75,
+      "caption": "Slide giáo dục hóa học trình bày ứng dụng và tính chất vật lí của các hóa chất, cột trái liệt kê ứng dụng còn cột phải liệt kê tính chất kèm biểu tượng cảnh báo."
+    },
+    {
+      "ten_anh": "206.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9231,
+      "caption": "Một cô giáo nữ áo hồng đứng cạnh bảng đen trong lớp học, phía sau có slide tiếng Anh với tiêu đề 'Other Reporting Verbs' màu xanh dương, bàn giáo viên có sách giáo trình và bút chỉ dạy."
+    },
+    {
+      "ten_anh": "222.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8235,
+      "caption": "Một đứa trẻ đang cầm bút chì màu xanh lam tô màu trên giấy, bên cạnh là các bút chì màu hồng, vàng, xanh lục, tím và nhiều màu khác sắp xếp gọn gàng."
+    },
+    {
+      "ten_anh": "224.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9355,
+      "caption": "Một giáo viên nam mặc áo xanh nhạt ngồi trước laptop ASUS, trình bày bài toán hình học với hình vẽ đường tròn và các công thức trên bảng học trắng."
+    },
+    {
+      "ten_anh": "244.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": false,
+      "ngon_ngu_la": true,
+      "ttr": 0.9667,
+      "caption": "Một giáo viên nam mặc áo sơ mi tím nhạt đang坐 trước một máy tính xách tay trên nền xanh dương, với bảng câu hỏi trắng hiển thị phía sau."
+    },
+    {
+      "ten_anh": "263.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.9394,
+      "caption": "Một bảng đen xanh lá cây hiển thị bài tập lý thuyết hóa học với bốn đáp án A, B, C, D được khoanh tròn màu đỏ để chọn lựa đáp án đúng."
+    },
+    {
+      "ten_anh": "279.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8667,
+      "caption": "Một bảng xanh lá cây hiển thị phần II bài toán hóa học với công thức phản ứng vàng về amino axid và các điều kiện phản ứng hóa học."
+    },
+    {
+      "ten_anh": "280.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": false,
+      "vong_vo": true,
+      "ngon_ngu_la": false,
+      "ttr": 0.8529,
+      "caption": "Một giáo viên nam mặc áo hồng tím đang trình bày bảng tóm tắt về di truyền học với các tỷ lệ di truyền và công thức tính toán di truyền học phức tạp."
+    },
+    {
+      "ten_anh": "290.jpg",
+      "so_loi": 1,
+      "hang_self_retrieval": 1,
+      "chep_few_shot": false,
+      "nhet_chu_ocr": true,
+      "vong_vo": false,
+      "ngon_ngu_la": false,
+      "ttr": 0.875,
+      "caption": "Một sơ đồ hình học phức tạp với hình chữ nhật ABCD có các điểm P Q P' Q' được đánh dấu trên các cạnh, giao thoa được biểu diễn bằng đường xanh lam chéo qua các góc của hình."
+    }
+  ]
+}
