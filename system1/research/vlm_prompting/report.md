@@ -329,12 +329,36 @@ thì sập sau 4 ảnh:
 AcceleratorError: CUDA error: device-side assert triggered
 ```
 
-Lỗi lặp lại ở 88/92 ảnh còn lại. Dấu hiệu điển hình của tràn chỉ số trong
-kernel khi xử lý ảnh có kích thước khác nhau — keyframe thật không đồng đều
-kích thước, khác với ảnh test đơn lẻ.
+Lỗi lặp lại ở 88/92 ảnh còn lại.
 
-→ Cần thử `CUDA_LAUNCH_BLOCKING=1` để lấy vị trí lỗi thật, hoặc ép chuẩn hóa
-kích thước ảnh đầu vào (`max_pixels`) trước khi kết luận model này không dùng được.
+> ⚠️ **Đính chính 16/08/2026 — chẩn đoán ban đầu SAI.** Bản đầu của mục này ghi *"dấu hiệu
+> điển hình của tràn chỉ số trong kernel khi xử lý ảnh có kích thước khác nhau"* và đề xuất
+> sửa bằng `max_pixels`. **Đọc log đầy đủ cho thấy lỗi nằm ở tầng khác hẳn.**
+>
+> Dòng thật ngay trước khi model sập (log Kaggle Version 1):
+>
+> ```
+> /pytorch/aten/src/ATen/native/cuda/TensorCompare.cu:109: _assert_async_cuda_kernel:
+> Assertion `probability tensor contains either `inf`, `nan` or element < 0` failed.
+> ```
+>
+> Đây là assert của `torch.multinomial` — hàm **bốc thăm token từ phân phối xác suất**,
+> không liên quan gì tới kích thước ảnh.
+>
+> **Chuỗi nhân quả:**
+> 1. `vlm/adapters.py` đặt `TEMPERATURE = 0.3` → `do_sample=True`
+> 2. `do_sample=True` bắt model bốc thăm ngẫu nhiên thay vì lấy token xác suất cao nhất
+> 3. Model chạy `float16` (`vlm/model_loader.py:116`); phân phối của model 3B tràn số → `nan`
+> 4. `torch.multinomial` gặp `nan` → assert → sập
+>
+> Qwen2-VL-2B không sập vì nhỏ hơn nên ít tràn hơn — **may, không phải tốt hơn**.
+>
+> → **`max_pixels` không liên quan.** Đừng tốn GPU cho hướng đó.
+> → Cách sửa: `do_sample=False` (commit `d37bdc2`). Sinh JSON có cấu trúc thì lấy token
+> xác suất cao nhất vừa ổn định vừa đúng hơn bốc thăm.
+>
+> **Chưa chạy lại để xác nhận** — kế hoạch ở `plans/260816-1900-dong-bo-3-model-355-anh/`.
+> Nếu chạy lại vẫn sập thì chẩn đoán này cũng sai, và phải đọc log lần nữa.
 
 ### Model DUY NHẤT có số liệu tin cậy: Qwen2-VL-2B (số prompt v1, lần chạy đầu)
 
@@ -776,7 +800,7 @@ thành số đo, hay số giả thành số thật.
 | Qwen2-VL-2B: 77,18% JSON hợp lệ / 9,414 s / 2,006 GB (prompt v2, 355 ảnh, mục 3) | ✅ **Đo thật** trên Kaggle T4 ngày 16/08/2026, kernel version 18, 355 keyframe AIC |
 | Qwen2-VL-2B: 85,9% JSON hợp lệ / 9,131 s / 1,946 GB (prompt v2, 92 ảnh) | ✅ **Đo thật**, lần chạy trước trên bộ 92 ảnh — giữ lại để so cặp v1/v2, không còn là số hiện hành |
 | Qwen2-VL-2B: 93,5% JSON hợp lệ / 8,51 s / 1,84 GB (prompt v1, 92 ảnh, mục 7.2) | ✅ **Đo thật**, lần chạy đầu, không còn là số hiện hành |
-| Qwen2.5-VL-3B: 4,3% (4/92) | ✅ Đo thật (model sập giữa chừng — số thật của một thất bại). **Không chạy lại trên 355 ảnh**: model hỏng sau 4 ảnh, chạy thêm không cho thêm thông tin |
+| Qwen2.5-VL-3B: 4,3% (4/92) | ✅ Đo thật (model sập giữa chừng — số thật của một thất bại). ⚠️ **Số này đo khi còn `do_sample=True`** — nguyên nhân sập đã tìm ra (mục 7.2) và sửa ở commit `d37bdc2`. Chưa chạy lại nên bảng vẫn giữ số cũ |
 | Vintern-1B: 100% / 0,0 s / 0,0 GB | ❌ **Số giả** — mock, model chưa từng nạp được |
 | recall@1 = 0,9496 / recall@5 = 1,000 / MRR = 0,9727 (n=278) | ✅ **Đo thật**, mục 7.3 |
 | Nhét OCR 29,86% / Vòng vo 23,02% / Chép few-shot 1,80% / Ngôn ngữ lạ 1,80% (n=278) | ✅ **Đo thật** bằng bộ đo hiện hành trên `sample_results.json` sau lần chạy 355 ảnh. Bộ 92 ảnh cũ (n=83) cho 30,12% / 20,48% / 1,20% / 2,41% — cùng bộ đo, chạy lại từ bản sao lưu |
