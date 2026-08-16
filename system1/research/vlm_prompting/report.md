@@ -101,18 +101,35 @@ Chi tiết: `plans/reports/benchmark-260817-0615-4-model-va-13-ca-loi.md`.
 
 | Mô hình | Latency | VRAM | JSON hợp lệ | Nhét chữ OCR | Vòng vo | recall@1 | Chép mẫu |
 |---|---|---|---|---|---|---|---|
-| **Vintern-3B-R-beta** | 10,636 s (P50 10,326 · P95 15,136) | **2,841 GB** | **97,46%** (346/355) | **22,25%** | 37,28% | **0,9769** | 0,00% |
-| **Qwen2.5-VL-3B** | 12,118 s (P50 11,768 · P95 15,607) | 3,960 GB | 96,34% (342/355) | 34,80% | **9,65%** | 0,9737 | 0,00% |
-| **Qwen2-VL-2B** | **9,126 s** (P50 8,884 · P95 12,467) | 2,052 GB | 78,31% (278/355) | 26,26% | 16,91% | 0,8597 | 5,04% |
+| **Qwen2.5-VL-7B** ⁶ | 12,411 s (P50 12,271 · P95 15,253) | 6,798 GB | **99,72%** (354/355) | **8,47%** | **6,50%** | 0,9520 | 0,00% |
+| **Vintern-3B-R-beta** | 10,636 s (P50 10,326 · P95 15,136) | 2,841 GB | 97,46% (346/355) | 22,25% | 37,28% | **0,9769** | 0,00% |
+| **Qwen2.5-VL-3B** | 12,118 s (P50 11,768 · P95 15,607) | 3,960 GB | 96,34% (342/355) | 34,80% | 9,65% | 0,9737 | 0,00% |
+| **Qwen2-VL-2B** | **9,126 s** (P50 8,884 · P95 12,467) | **2,052 GB** | 78,31% (278/355) | 26,26% | 16,91% | 0,8597 | 5,04% |
 | **Vintern-1B-v3.5** | — | — | **0%** (0/355) | — | — | — | — |
 
-**Vintern-3B là phát hiện lớn nhất.** Lần đầu một model Vintern sinh caption thật — mọi số
-Vintern trong bản trước đều là mock. Nó dẫn đầu JSON hợp lệ, nhét chữ, recall@1, và tốn ít
-VRAM nhất trong nhóm chạy được. Điểm yếu duy nhất nhưng nặng: **vòng vo 37,28%**, gấp gần 4
-lần Qwen-3B.
+**Qwen2.5-VL-7B thắng gần như toàn diện**: JSON hợp lệ 99,72% (chỉ 1 ảnh lỗi trên 355),
+nhét chữ thấp nhất, vòng vo thấp nhất. Giá phải trả là 6,798 GB — gấp 1,7 lần bản 3B, và
+model có 8,29B tham số nên **vượt mốc "<7B" của đề bài**. recall@1 0,9520 thấp hơn 3B một
+chút, đủ nhỏ để không đảo kết luận.
 
-**Chưa đổi model được chọn.** Vintern-3B hơn ở 3 chỉ số nhưng thua nặng ở vòng vo — phải đọc
-caption thật bằng mắt trước khi quyết, không quyết bằng bảng số.
+**Vintern-3B là phát hiện đáng chú ý nhất.** Lần đầu một model Vintern sinh caption thật —
+mọi số Vintern trong bản trước đều là mock. Nhẹ nhất trong nhóm chạy được (2,841 GB),
+recall@1 cao nhất bảng. Điểm yếu nặng: **vòng vo 37,28%**, gấp gần 6 lần Qwen-7B.
+
+**Chép tên riêng giảm theo kích thước model** — đây là kết quả có ích nhất cho hướng đi tiếp:
+
+| Model | Ca chép tên riêng |
+|---|---|
+| Qwen2.5-VL-3B | 113/342 (33,04%) |
+| Vintern-3B | 59/346 (17,05%) |
+| **Qwen2.5-VL-7B** | **25/354 (7,06%)** |
+
+Thêm luật cấm vào prompt đổi được 111 → 113 ca (không đổi). Đổi sang model lớn hơn giảm
+**4,7 lần**. Kết luận: đây là giới hạn năng lực model, không phải chuyện diễn đạt prompt.
+
+**Chưa đổi model được chọn.** Qwen-7B tốt hơn về chất lượng nhưng vượt mốc tham số đề bài;
+Vintern-3B nhẹ và tiếng Việt tốt nhưng vòng vo cao. Cần đọc caption thật bằng mắt trước khi
+quyết, không quyết bằng bảng số.
 
 **Vintern-1B 0% — không phải model hỏng.** Nó sinh JSON đúng cú pháp nhưng tự đặt tên trường
 tiếng Việt (`"vật thể"`, `"câu tiếng Việt mô tả"`) thay vì khoá quy định. Model 1B không đủ
@@ -125,6 +142,20 @@ sức bám khuôn. Có 226/355 ca lưu được `raw_text` làm bằng chứng.
 **8.292.166.656** tham số, tức **vượt mốc "<7B"** của đề bài dù tên ghi 7B. Các model khác:
 Qwen2.5-VL-3B 3,75B · MiniCPM-V-4 4,06B · Vintern-3B-R-beta 3,71B. Bản trước ghi "7B" theo
 tên model, không phải theo số đếm.
+
+### Bản 7B sửa được cả 13 ca lỗi của bản 3B
+
+13 ảnh làm bản 3B sinh ra 320 dấu chấm than **đều chạy sạch trên bản 7B**. Ca lỗi duy nhất
+của 7B là `362.jpg` — không nằm trong 13 ca đó, và hỏng theo kiểu hoàn toàn khác:
+
+```
+{"doi_tuong": ["cục nguồn điện", "ống dẫn điện", "hình vẽ hóa học",
+ "hình vẽ điện phân", "hình vẽ điện phân", "hình vẽ điện phân", ... (954 ký tự)
+```
+
+JSON mở đúng cấu trúc rồi model lặp một cụm tới hết trần token. **Đây mới thật sự là "bị cắt
+vì quá dài"** — khác hẳn dạng sập token `!` của bản 3B. Với ca này, nâng `MAX_NEW_TOKENS`
+hoặc thêm `repetition_penalty` là hướng hợp lý; với 13 ca kia thì không.
 
 ¹ Số thực đo trên **RTX 4060 Laptop** bởi thành viên phụ trách Phần 2 (OCR & ASR),
 xem `system1/research/ocr_asr/ocr/ocr_evaluation_summary.md`. Đo trên tác vụ OCR,
@@ -205,8 +236,14 @@ Phiên bản: `v1` (hằng `PROMPT_VERSION` trong `vlm/prompts.py`)
 >
 > Các chỉ số khác không tụt quá ngưỡng (JSON hợp lệ giữ 96,34%, vòng vo 10,53% → 9,65%,
 > recall@1 0,9766 → 0,9737), nên **giữ prompt v3**. Nhưng **bỏ hướng sửa-bằng-prompt** cho
-> tên riêng: dặn model đừng chép thì nó vẫn chép. Hướng còn lại là lọc ở tầng validator —
-> đối chiếu OCR để xoá tên riêng sau khi sinh.
+> tên riêng: dặn model đừng chép thì nó vẫn chép.
+>
+> **Cùng prompt đó, model lớn hơn lại tự sửa được** — đo cùng ngày, cùng 355 ảnh:
+> Qwen-3B 33,04% → Vintern-3B 17,05% → **Qwen-7B 7,06%**. Prompt đổi được 2 ca; đổi model
+> giảm 4,7 lần. Đây là **giới hạn năng lực model**, không phải chuyện diễn đạt prompt.
+>
+> Hai hướng còn lại, theo thứ tự ưu tiên: (1) dùng model lớn hơn nếu VRAM cho phép,
+> (2) lọc ở tầng validator — đối chiếu OCR để xoá tên riêng sau khi sinh.
 
 Đề bài yêu cầu model *"không sinh câu giao tiếp thừa, không giải thích ngoài JSON"*.
 Xu hướng tự nhiên của model là trả lời thân thiện kiểu *"Chào bạn! Đây là mô tả..."*.
