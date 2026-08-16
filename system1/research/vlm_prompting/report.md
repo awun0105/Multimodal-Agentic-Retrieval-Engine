@@ -114,7 +114,29 @@ chút, đủ nhỏ để không đảo kết luận.
 
 **Vintern-3B là phát hiện đáng chú ý nhất.** Lần đầu một model Vintern sinh caption thật —
 mọi số Vintern trong bản trước đều là mock. Nhẹ nhất trong nhóm chạy được (2,841 GB),
-recall@1 cao nhất bảng. Điểm yếu nặng: **vòng vo 37,28%**, gấp gần 6 lần Qwen-7B.
+recall@1 cao nhất bảng.
+
+⚠️ **Con số "vòng vo 37,28%" của Vintern-3B là báo nhầm của thước đo, không phải lỗi model.**
+Phép kiểm là hợp của hai điều kiện; tách ra:
+
+| | TTR < 0,6 (lặp chuỗi thật) | Cụm 2 từ lặp | TTR trung bình | Độ dài caption |
+|---|---|---|---|---|
+| Vintern-3B | 12 (3,5%) | **129 (37,3%)** | **0,811** | **55 từ** |
+| Qwen-7B | 0 (0,0%) | 23 (6,5%) | 0,922 | 22 từ |
+| Qwen-3B | 1 (0,3%) | 33 (9,6%) | 0,904 | 26 từ |
+
+TTR 0,811 là lành mạnh. Gần như toàn bộ 37,28% đến từ phép kiểm cụm 2 từ, mà cụm bị bắt
+nhiều nhất là **danh từ ghép tiếng Việt bình thường**: `người đàn` (42), `đàn ông` (42),
+`máy tính` (36), `giáo viên` (17), `màu xanh` (17). Caption Vintern-3B dài 55 từ — gấp 2,4
+lần Qwen — nên xác suất một danh từ ghép xuất hiện hai lần là rất cao.
+
+Đọc caption thật thì thấy chất lượng tốt: *"Một người đàn ông mặc áo sơ mi trắng, đeo kính
+và đeo cà vạt màu xanh đậm đang ngồi trước một chiếc máy tính xách tay Dell màu bạc trên
+bàn làm việc."* Đây là mô tả chi tiết, không phải lặp ý.
+
+**Việc cần làm:** `kiem_cum_lap(n=2)` phạt oan tiếng Việt. Nên nâng lên n=3 hoặc miễn trừ
+danh từ ghép, rồi đo lại. Chưa sửa trong phiên này vì sửa thước đo cùng lúc với so sánh
+model thì không biết thay đổi đến từ đâu.
 
 **Chép tên riêng giảm theo kích thước model** — đây là kết quả có ích nhất cho hướng đi tiếp:
 
@@ -127,9 +149,24 @@ recall@1 cao nhất bảng. Điểm yếu nặng: **vòng vo 37,28%**, gấp g�
 Thêm luật cấm vào prompt đổi được 111 → 113 ca (không đổi). Đổi sang model lớn hơn giảm
 **4,7 lần**. Kết luận: đây là giới hạn năng lực model, không phải chuyện diễn đạt prompt.
 
-**Chưa đổi model được chọn.** Qwen-7B tốt hơn về chất lượng nhưng vượt mốc tham số đề bài;
-Vintern-3B nhẹ và tiếng Việt tốt nhưng vòng vo cao. Cần đọc caption thật bằng mắt trước khi
-quyết, không quyết bằng bảng số.
+**Đề xuất đổi model được chọn sang Vintern-3B-R-beta** — nhưng chưa đổi trong bản này, cần
+nhóm duyệt. Lý do:
+
+| | Vintern-3B | Qwen2.5-VL-3B (đang chọn) |
+|---|---|---|
+| JSON hợp lệ | **97,46%** | 96,34% |
+| VRAM | **2,841 GB** | 3,960 GB |
+| Latency | **10,636 s** | 12,118 s |
+| Chép tên riêng | **17,05%** | 33,04% |
+| recall@1 | **0,9769** | 0,9737 |
+| Vòng vo (đã hiệu chỉnh) | 3,5% TTR thấp | 0,3% |
+
+Vintern-3B thắng 5/6 chỉ số, nhẹ hơn 1,1 GB, nhanh hơn 1,5 s/ảnh, và chép tên riêng chỉ
+bằng một nửa. Lý do loại nó trước đây — "vòng vo 37,28%" — đã được chứng minh là **báo nhầm
+của thước đo**.
+
+Qwen2.5-VL-7B chất lượng cao nhất nhưng **8,29B tham số, vượt mốc đề bài** và tốn 6,8 GB —
+chỉ nên dùng nếu nhóm chấp nhận vượt mốc.
 
 **Vintern-1B 0% — không phải model hỏng.** Nó sinh JSON đúng cú pháp nhưng tự đặt tên trường
 tiếng Việt (`"vật thể"`, `"câu tiếng Việt mô tả"`) thay vì khoá quy định. Model 1B không đủ
