@@ -1,9 +1,9 @@
 # Báo cáo — Phần 3: VLM & Prompting
 
-**Người phụ trách:** lolizabrett-byte
+**Người phụ trách:** Khoa
 **Mảng phụ trách:** Vision-Language Model & Prompting — sinh text mô tả và ép cấu trúc JSON
-**Ngày:** 15/08/2026
-**Nhánh:** `research/vlm-prompting`
+**Ngày:** 15/08/2026 (cập nhật 16/08/2026)
+**Nhánh:** `research-branch/vlm-prompting` — PR [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29)
 
 > **TRẠNG THÁI: đã có số thực đo (2 lần chạy) + số chất lượng caption thật, nhưng 2/3 model vẫn chưa chạy được.**
 >
@@ -288,6 +288,21 @@ suy đoán trước, chỉ cần chạy trên bản `transformers` cũ hơn.
 adapter riêng cho InternVL. Bài học: chỉ số "tỷ lệ JSON hợp lệ" một mình không đủ tin —
 phải kiểm tra chéo với latency và VRAM, và phải đọc log lỗi thật thay vì đoán.
 
+**Cập nhật 16/08/2026 — bằng chứng củng cố chẩn đoán này.** Trong phiên train QLoRA,
+notebook chạy `pip install -U trl` và bị lỗi ngay ở dòng import:
+
+```
+ImportError: cannot import name 'AutoModelForVision2Seq' from 'transformers'
+transformers: 5.0.0
+```
+
+`pip install -U <thư viện phụ>` **kéo theo** bản `transformers` mới nhất, và bản 5.0 đã
+đổi tên lớp (`AutoModelForVision2Seq` → `AutoModelForImageTextToText`). Cùng một cơ chế
+đã giết Vintern-1B: thư viện lõi bị nâng ngoài ý muốn, model cũ không theo kịp.
+
+Cách xử lý đã áp dụng và chạy được: ghim `"transformers>=4.51,<5"`, và in
+`transformers.__version__` ngay sau bước cài để lần sau đọc log là biết ngay.
+
 **2. Qwen2.5-VL-3B: sập giữa chừng.**
 
 Chạy một ảnh lẻ thì tốt (mục 7.1: 9,65 s, caption đúng). Nhưng chạy liên tiếp
@@ -531,8 +546,6 @@ chưa chạy được.
 
 ### Cổng kiểm tiếng Việt (chưa chạy được)
 
-### Cổng kiểm tiếng Việt
-
 Nghiên cứu chỉ ra một khoảng trống nghiêm trọng: **chưa có điểm BLEU/METEOR
 tiếng Việt công khai** cho Qwen2.5-VL và InternVL3.5. Mọi điểm số công bố đều
 đo trên tiếng Anh hoặc tiếng Trung.
@@ -605,11 +618,11 @@ system1/research/vlm_prompting/
 | Áp dụng lượng tử hóa 4-bit | ✅ NF4, giữ vision tower FP16 |
 | Prompt ép JSON, có `caption_chi_tiet` | ✅ prompt v2 (hiện hành) + 3 tầng phòng thủ |
 | `caption_chi_tiet` mô tả dài, đủ ngữ cảnh | ✅ ép tối thiểu 25 ký tự, đo số từ |
-| Chạy thử ≥100 ảnh | ⚠️ Chạy 92 ảnh thật (kho chỉ có 92 ảnh không trùng tên trong mẫu đã lấy) |
+| Chạy thử ≥100 ảnh | ✅ **290 ảnh** — `results/checkpoint_haiku-teacher.json`. Riêng `sample_results.json` mới có 79 ảnh cho Qwen2-VL-2B, đang chạy bổ sung lên 355 |
 | Hàm `generate_json(image)` | ✅ `vlm/generate.py` — đã chạy thật trên keyframe AIC |
-| `sample_results.json` | ✅ **đã có file thật, 175 mục** (92 mock Vintern + 79 Qwen2-VL-2B thật + 4 Qwen2.5-VL-3B thật), tải từ Kaggle Version 1 |
+| `sample_results.json` | ⚠️ **175 mục nhưng chỉ 79 ảnh cho model được chọn** (92 mock Vintern + 79 Qwen2-VL-2B thật + 4 Qwen2.5-VL-3B thật). Đang chạy lại trên 355 ảnh |
 | Bảng benchmark 7 cột | ✅ mục 3, số thực đo (prompt v2) |
-| Pull Request | ⏳ nên sửa 2 model hỏng trước khi mở PR |
+| Pull Request | ✅ **Đã mở — [PR #29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29)**, base `system1-notebook01` theo tiền lệ PR #26 của Phần 2 |
 
 ---
 
@@ -624,17 +637,44 @@ system1/research/vlm_prompting/
 5. **Đo hiệu quả khử trùng lặp + batch inference trên tập lớn** — bắt buộc trước khi chạy
    toàn bộ dữ liệu cuộc thi (mục 7.4, cần giảm 30–40 lần thời gian)
 6. **Cổng kiểm tiếng Việt** — chấm tay 30 caption × 3 model, giấu tên model
-7. **Mở PR** — đề bài ghi nhánh `research-branch`, repo thực tế chưa có nhánh này,
-   cần hỏi lại nhóm trước khi mở
+7. **Chạy `sample_results.json` lên 355 ảnh** — hiện chỉ 79 ảnh cho Qwen2-VL-2B.
+   Con số "92 ảnh" hay gặp trong báo cáo này là **cộng dồn cả 3 model**, không phải
+   số ảnh của model được chọn. Notebook benchmark đã chuẩn bị, chờ Kaggle rảnh GPU.
+
+**Đã xong 16/08:** mở PR — [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29).
+Đề bài ghi nhánh `research-branch`, repo không có nhánh đó; tra lịch sử thấy PR #26 của
+Phần 2 đi từ `research-branch/ocr-asr` vào `system1-notebook01` và đã được gộp →
+`research-branch` là **tiền tố quy ước**, không phải nhánh có sẵn. Làm theo tiền lệ đó.
 
 ---
 
-## 12. Giai đoạn 2 — huấn luyện (nghiên cứu, chưa triển khai)
+## 12. Giai đoạn 2 — huấn luyện
 
 Báo cáo đầy đủ: `plans/reports/research-260815-2149-vlm-finetune-2026.md`
 
-Kết luận chính: **chưa nên train.** Ngưỡng hòa vốn của fine-tune năm 2026 là
-50–100 nghìn lượt gọi/ngày. Cuộc thi không đạt ngưỡng đó.
+Kết luận ban đầu: **chưa nên train** — ngưỡng hòa vốn của fine-tune năm 2026 là
+50–100 nghìn lượt gọi/ngày, cuộc thi không đạt ngưỡng đó.
+
+> **Cập nhật 16/08/2026 — hướng đã đổi, vì lý do khác.**
+>
+> Không phải để tiết kiệm chi phí gọi API, mà để **sửa lỗi chất lượng caption mà prompt
+> đã chạm trần**. Sửa prompt v1→v2 chỉ giảm được đúng một trong bốn lỗi (chép ví dụ mẫu);
+> ba lỗi còn lại gần như không đổi (mục 7.3).
+>
+> Cách làm là chưng cất: dùng agent trong phiên sinh 290 caption mẫu chuẩn, rồi dạy
+> Qwen2-VL-2B bắt chước. Không tốn tiền API, và LoRA gỡ ra là về model gốc nên thử sai
+> không mất gì.
+>
+> | Chỉ số lỗi | Qwen2-VL-2B gốc (n=83) | Agent thầy (n=290) |
+> |---|---|---|
+> | Vòng vo | 30,12% | **2,07%** |
+> | Nhét chữ OCR | 12,05% | **1,72%** |
+> | Chép ví dụ mẫu | 1,20% | **0,00%** |
+> | Ngôn ngữ lạ | 2,41% | **0,34%** |
+>
+> **Đây là phần mở rộng ngoài đề bài** — đề bài chỉ yêu cầu chọn model có sẵn + viết prompt
+> tốt + benchmark. Trạng thái: đang train trên Kaggle T4, chưa có adapter dùng được.
+> Dataset đã dựng: 261 train + 29 eval, 60 ảnh holdout giữ sạch để đo trước/sau.
 
 | Bước | Cách làm | Chi phí | Kết quả kỳ vọng |
 |---|---|---|---|
@@ -663,6 +703,8 @@ thành số đo, hay số giả thành số thật.
 | Vòng vo 30,12% / Nhét OCR 12,05% / Chép few-shot 1,20% (n=83) | ✅ **Đo thật**, mục 7.3 |
 | Chữ Hán lẫn caption: 2/79 (2,5%) | ✅ Đo thật (đếm tay bằng regex) |
 | `sample_results.json`: 175 mục | ✅ **Đo thật** — file tồn tại, tải về từ Kaggle Version 1 |
+| "92 ảnh" nhắc nhiều lần trong báo cáo | ⚠️ **Là số ảnh cộng dồn cả 3 model.** Riêng Qwen2-VL-2B (model được chọn) chỉ **79 ảnh**. Đang chạy bổ sung lên 355 |
+| Chất lượng caption agent thầy (mục 12): vòng vo 2,07% / OCR 1,72% / few-shot 0% / ngôn ngữ lạ 0,34% | ✅ **Đo thật** trên 290 caption, cùng bộ đo `quality/` với cột Qwen2-VL-2B |
 | So sánh chép ví dụ v1 (20%) vs v2 (1,2%) ở mục 7.3 | ⚠️ Cột v1 chỉ n=5 — tín hiệu định hướng, không so công bằng được với n=83 của v2 |
 | 8 file keyframe, tổng 19,27 GB (mục 7.4) | ✅ **Đo thật** — đọc header từ Drive của BTC ngày 16/08 |
 | ~127.000 keyframe (mục 7.4) | ⚠️ **Ước tính theo dung lượng** — L25 đếm thật (37.445 ảnh), 7 file kia suy từ 159 KB/ảnh |
