@@ -58,6 +58,15 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         trust_remote_code=True,
         ghi_chu="VLM fine-tune riêng cho tiếng Việt. Mốc so sánh bắt buộc ở cổng kiểm Phase 04.",
     ),
+    "vintern-3b": ModelSpec(
+        key="vintern-3b",
+        hf_id="5CD-AI/Vintern-3B-R-beta",
+        ten_hien_thi="Vintern 3B R beta (chuyên tiếng Việt)",
+        vram_4bit_gb=3.0,
+        loader="auto_causal",
+        trust_remote_code=True,
+        ghi_chu="Cùng kiến trúc InternVLChatModel với Vintern-1B, 3,71 tỷ tham số.",
+    ),
     "minicpm-v-4": ModelSpec(
         key="minicpm-v-4",
         hf_id="openbmb/MiniCPM-V-4",
