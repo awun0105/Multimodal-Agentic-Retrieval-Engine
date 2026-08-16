@@ -258,6 +258,16 @@ def _co_the_dung_transformers() -> bool:
         return False
 
 
+def _la_ho_internvl(spec) -> bool:
+    """InternVL cần đường riêng: processor của nó là tokenizer thuần, không nhận ảnh.
+
+    Nhận theo hf_id chứ không theo loader `auto_causal` — MiniCPM-V cũng dùng
+    loader đó nhưng có processor bình thường, đẩy nó sang InternVlAdapter là sai.
+    """
+    ten = spec.hf_id.lower()
+    return "internvl" in ten or "vintern" in ten
+
+
 def _nap_nghiem_ngat(
     lop_adapter,
     spec,
@@ -372,6 +382,10 @@ def get_adapter(
 
     if _co_the_dung_transformers():
         try:
+            if _la_ho_internvl(spec) and lora_model_path is None:
+                from .adapter_internvl import InternVlAdapter
+
+                return InternVlAdapter(spec, dung_4bit=dung_4bit)
             return TransformersAdapter(spec, dung_4bit=dung_4bit, lora_model_path=lora_model_path)
         except Exception as loi:
             if strict:
