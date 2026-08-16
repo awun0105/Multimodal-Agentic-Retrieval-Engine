@@ -1,97 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "shot_captions.schema.json",
+  "title": "shot_captions_v1",
   "type": "object",
-  "required": [
-    "shot_caption_id",
-    "shot_id",
-    "video_id",
-    "representative_keyframe_id",
-    "representative_timestamp_sec",
-    "caption_vi",
-    "caption_en",
-    "provider",
-    "model_name",
-    "model_version",
-    "prompt_version",
-    "schema_version",
-    "status"
-  ],
+  "required": ["shot_caption_id", "video_id", "shot_id", "representative_keyframe_id", "representative_timestamp_sec", "caption_vi", "caption_en", "provider", "model_name", "model_version", "prompt_version", "schema_version", "confidence", "status"],
   "properties": {
-    "shot_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "caption_vi": {
-      "type": ["string"],
-      "minLength": 1
-    },
-    "caption_en": {
-      "type": ["string"],
-      "minLength": 1
-    },
-    "shot_caption_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "video_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "representative_keyframe_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "representative_timestamp_sec": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "provider": {
-      "type": ["string"]
-    },
-    "model_name": {
-      "type": ["string"]
-    },
-    "model_version": {
-      "type": ["string"]
-    },
-    "prompt_version": {
-      "type": ["string"]
-    },
-    "schema_version": {
-      "type": ["string"]
-    },
-    "confidence": {
-      "type": ["number", "null"]
-    },
-    "status": {
-      "type": ["string"]
-    }
+    "shot_caption_id": {"type": "string", "minLength": 1},
+    "video_id": {"type": "string", "minLength": 1},
+    "shot_id": {"type": "string", "minLength": 1},
+    "representative_keyframe_id": {"type": "string", "pattern": "^.+:[0-9]+$"},
+    "representative_timestamp_sec": {"type": "number", "minimum": 0},
+    "caption_vi": {"type": "string", "minLength": 1},
+    "caption_en": {"type": "string", "minLength": 1},
+    "provider": {"const": "gemini"},
+    "model_name": {"type": "string", "minLength": 1},
+    "model_version": {"type": "string", "minLength": 1},
+    "prompt_version": {"type": "string", "minLength": 1},
+    "schema_version": {"type": "string", "minLength": 1},
+    "confidence": {"type": ["number", "null"]},
+    "status": {"const": "pass"}
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

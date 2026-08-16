@@ -26,6 +26,8 @@ answer export.
   `docs/architecture/system1-scene-grouping.md`.
 - Notebook 01 production pipeline:
   `docs/architecture/system1-notebook01-production-pipeline.md`.
+- Notebook 01 implementation plan:
+  `docs/plans/active/notebook01-production-pipeline.md`.
 - System 2 API shape: `docs/product/api-contracts.md`.
 - Current implementation status: `docs/product/current-state.md`.
 - Validation tracker: `docs/validation/test-matrix.md`.
@@ -163,6 +165,10 @@ Out of scope:
   uses at most two external `ffprobe` workers. Raw remains authoritative;
   Phase00 release contains the validated worker snapshot. Upload and progress
   remain single-coordinator operations.
+- 2026-08-13: Notebook 01 exposes one production pipeline and minimal operator
+  settings. Persistent resume is per video/stage. The 20/50/80 positions are
+  search-band centers, and representative selection uses the relative `0.85`
+  middle-quality rule. See the dedicated Notebook 01 implementation plan.
 
 Promote lasting product or architecture decisions into `docs/decisions/`.
 

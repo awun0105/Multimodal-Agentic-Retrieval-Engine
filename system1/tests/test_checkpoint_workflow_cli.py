@@ -1,23 +1,25 @@
 from __future__ import annotations
 
-import shutil
 import importlib
+import shutil
 from pathlib import Path
 
-from typer.testing import CliRunner
 import pytest
+from typer.testing import CliRunner
 
 from system1.artifacts import checkpoint_relative_path
 from system1.cli import app
 from system1.media.probe import VideoProbe, VideoProbeWithTimeline
 from system1.release.types import DEFAULT_RELEASE_ID
 
-
 runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
 def fast_frame_timeline_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AIC_ALLOW_TEST_PROVIDERS", "1")
+    monkeypatch.setenv("AIC_SYSTEM1_TEST_PROVIDER_PROFILE", "mock")
+
     def fake_probe_with_timeline(path: Path, *, video_id: str) -> VideoProbeWithTimeline:  # noqa: ARG001
         return VideoProbeWithTimeline(
             probe=VideoProbe(25.0, "test_frame_timeline", 3, False, "decoded_frame_timeline", 0.12, 640, 360, False),
@@ -107,7 +109,7 @@ def test_process_batch_sync_saves_phase01_checkpoint(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--providers", "mock", "--output", str(output_dir), "--input", "input", "--sync", "--artifact-root", str(artifact_root), "--no-resume",
+            "process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--output", str(output_dir), "--input", "input", "--sync", "--artifact-root", str(artifact_root), "--no-resume",
         ],
     )
 
@@ -121,13 +123,13 @@ def test_process_batch_resume_restores_phase01_and_skips(tmp_path: Path) -> None
 
     runner.invoke(app, ["ingest", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
     runner.invoke(app, ["assign-batches", "--num-batches", "1", "--output", str(output_dir), "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--providers", "mock", "--output", str(output_dir), "--input", "input", "--sync", "--artifact-root", str(artifact_root), "--no-resume"])
+    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--output", str(output_dir), "--input", "input", "--sync", "--artifact-root", str(artifact_root), "--no-resume"])
     shutil.rmtree(output_dir / DEFAULT_RELEASE_ID)
 
     result = runner.invoke(
         app,
         [
-            "process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--providers", "mock", "--output", str(output_dir), "--input", "input", "--resume", "--artifact-root", str(artifact_root), "--no-sync",
+            "process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--output", str(output_dir), "--input", "input", "--resume", "--artifact-root", str(artifact_root), "--no-sync",
         ],
     )
 
@@ -142,7 +144,7 @@ def test_feature_batch_sync_saves_phase02_checkpoint(tmp_path: Path) -> None:
 
     runner.invoke(app, ["ingest", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
     runner.invoke(app, ["assign-batches", "--num-batches", "1", "--output", str(output_dir), "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--providers", "mock", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
+    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
     result = runner.invoke(
         app,
         [

@@ -15,7 +15,7 @@ Official videos + optional organizer metadata
 → ffprobe + canonical metadata JSON for every video
 → batch assignment
 → TransNet V2 shot detection
-→ keyframes near 20%/50%/80% of each shot
+→ search-band keyframes centered at 20%/50%/80% of each shot
 → thumbnail generation
 → representative keyframe selection per shot
 → faster-whisper large-v3 ASR with auto language + VAD
@@ -1296,9 +1296,10 @@ Ví dụ ứng dụng:
 
 # 18. Production release profile
 
-Production notebooks run one full end-to-end contract. Provider selection is
-explicit; mock providers remain available for CI and development and must be
-reported as non-production.
+Production notebooks run one fixed end-to-end contract. Provider identities
+are versioned package configuration, not a user choice. Guarded mock adapters
+remain available only for CI/development and must be reported as
+non-production.
 
 The production release includes:
 
@@ -1538,7 +1539,7 @@ Cross-cutting contracts:
 - audio extraction
 - faster-whisper large-v3 ASR with automatic language and VAD
 - TransNet V2 shot detection
-- keyframes near 20%/50%/80% of each shot
+- search-band keyframes centered at 20%/50%/80% of each shot
 - thumbnail generation
 - representative keyframe selection per shot
 - one canonical Gemini bilingual shot-caption row per shot
@@ -2274,13 +2275,20 @@ Changing scene builder config/provider does not rerun keyframes/OCR/embeddings w
 Production contract:
 
 ```text
-Select decoded original frames near 20%, 50%, and 80% of each shot and label
-them early, middle, and late. Use middle as the first representative candidate;
-if it fails versioned decode/blur/black-frame checks, try early and then late.
-If every available candidate fails, fail the video. Short shots emit every
-distinct decodable frame once rather than duplicating keyframe IDs. All frame
-mapping uses the Phase00 decoded timeline; production does not silently replace
-missing exact mapping with timestamp-times-FPS estimates.
+Treat 20%, 50%, and 80% as centers of the early 10%-30%, middle 40%-60%, and
+late 70%-90% search bands. Sample at most five evenly distributed decoded
+candidate frames per band, reject decode/near-black/near-white failures, and
+select the sharpest candidate after a common resize, tie-breaking toward the
+band target. Do not use an absolute dataset-wide blur threshold. Expand toward
+the safe shot interior when a band has no valid candidate. Deduplicate selected
+frame IDs for short shots.
+
+Use middle as representative when its quality is at least 0.85 of the best
+selected role; otherwise use the highest-quality role, tie-breaking toward the
+shot center. If only one selected frame remains, it is representative. If no
+valid frame can be decoded, fail the video. All frame mapping uses the Phase00
+decoded timeline; production does not silently replace missing exact mapping
+with timestamp-times-FPS estimates.
 ```
 
 Output:
@@ -2309,6 +2317,7 @@ keyframe_ref
 thumbnail_ref
 is_primary
 keyframe_role
+quality_score
 is_representative
 selection_reason
 width

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
+from system1.artifacts.reports import utc_now
 
 
 @dataclass(frozen=True)
@@ -163,6 +164,7 @@ def upload_phase00_ingestion_to_hf(
         "phase": PHASE00_INGESTION,
         "schema_version": PHASE00_SYNC_SCHEMA_VERSION,
         "status": "complete",
+        "completed_at": utc_now(),
         "repo_id": repo_id,
         "prefix": prefix,
         "file_count": len(rows),

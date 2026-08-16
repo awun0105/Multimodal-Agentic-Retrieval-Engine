@@ -4,12 +4,15 @@ Date: 2026-08-05
 
 ## Status
 
-Accepted target contract for production `phase01_structure`.
+Accepted and implemented package contract for production `phase01_structure`.
+Automated tests cover deterministic stage/checkpoint/package behavior; a
+real-provider acceptance run remains required before operational readiness may
+be claimed.
 
-The existing package and Notebook 01 orchestration are partial. Mock and
-timeline-aware fallback behavior may remain for deterministic tests, but a
-production run is not allowed to select mock providers or silently replace a
-failed production stage with fabricated semantic output.
+Test doubles and timeline-aware fixtures remain injectable only through guarded
+test hooks. Notebook 01 and the public Phase01 CLI expose one production
+pipeline and no execution/provider selector. A production run never silently
+replaces a failed stage with fabricated semantic output.
 
 ## Source Policy
 
@@ -36,7 +39,7 @@ contract.
 ```text
 official video
   -> TransNet V2 shot detection
-  -> early/middle/late keyframes near 20%/50%/80% of each shot
+  -> early/middle/late keyframes from bands centered at 20%/50%/80%
   -> deterministic representative-keyframe selection
   -> faster-whisper large-v3 ASR with automatic language and VAD
   -> Gemini strict bilingual caption JSON, one response per shot
@@ -50,9 +53,57 @@ Business logic, prompts, schemas, caching, retries, rate limiting, validation,
 and artifact writing live in package/CLI code. Notebook 01 remains a thin
 operator-facing orchestration surface.
 
+## Notebook And Config Contract
+
+Notebook 01 contains one minimal `USER SETTINGS` cell. It exposes `batch_id`,
+`worker_id`, an optional Phase00 `release_id` override, optional
+storage/repository overrides, and secret-store lookups. If no release override
+is set, package code resolves the Phase00 release. Secrets come from the
+environment, Colab Secrets, or Kaggle Secrets and are neither displayed nor
+persisted.
+
+Auto-resolution selects the unique completed Phase00 release with the latest
+`completed_at`. Missing timestamps or a latest-time tie fail explicitly. A
+legacy release created before `completed_at` was added remains usable only with
+`release_id_override`; for the currently published legacy v001 snapshot, set
+that override to `canonical_release_v001`.
+
+Phase00 restore is batch-scoped: download the two canonical tables, the
+selected batch manifest, and only the decoded frame timelines referenced by
+that batch. A checksum marker makes the restore resumable and detects local
+corruption. Notebook 01 does not download every Phase00 timeline merely to
+process one batch.
+
+All deterministic settings live in versioned repository YAML: exact model IDs
+and revisions, schema and prompt versions, file naming and media encoding,
+TransNet, ASR, keyframe selection, scene grouping, retry/concurrency, and
+artifact/checkpoint layout. Notebook cells do not duplicate these values.
+
+At startup package code merges:
+
+```text
+repository YAML
++ USER SETTINGS
++ detected runtime environment
++ resolved Phase00 release
+  -> ResolvedConfig
+```
+
+It persists a secret-free `resolved_config.json` and full SHA-256
+`config_hash`. Production preflight fails before expensive processing if any
+required deterministic value is unresolved.
+
 ## Shot Detection
 
 Production uses TransNet V2 only.
+
+Runtime consumes a project-owned PyTorch artifact created once by
+`scripts/prepare_transnetv2_artifact.py`. The preparation job checks out the
+pinned official upstream commit, runs the official TensorFlow-to-PyTorch
+converter and its parity tests, then emits the source/weight checksums. Workers
+download and validate that immutable bundle; they never convert weights.
+Production readiness intentionally fails while the generated weight checksum
+is absent from `configs/models.yaml`.
 
 - A successful inference with no detected transition is valid: emit one shot
   covering the complete decoded video with a successful
@@ -64,27 +115,34 @@ Production uses TransNet V2 only.
 - Shot ranges use `[start_frame, end_frame)` and decoded original frame IDs.
 - Shot IDs remain `{video_id}_SH{shot_index:05d}`, zero-based in timeline order.
 
-## Three Keyframes Per Shot
+## Search-Band Keyframes
 
-For a shot with `start_frame`, exclusive `end_frame`, and
-`frame_count = end_frame - start_frame`, the nominal role targets are:
+The nominal `20%`, `50%`, and `80%` positions are semantic centers of three
+search bands, not exact frames that must be selected:
 
 ```text
-early  = 20%
-middle = 50%
-late   = 80%
+early:  search 10%-30%, target 20%
+middle: search 40%-60%, target 50%
+late:   search 70%-90%, target 80%
 ```
 
-Target positions are mapped to decoded original frame indexes inside the shot,
-never to codec I-frames. The implementation uses a deterministic, versioned
-rounding/clamping policy and records the actual frame ID and selection method.
+Each band samples at most five candidate decoded-frame IDs, distributed evenly
+by the decoded Phase00 timeline. Candidates are temporary selection inputs and
+are not all persisted as canonical keyframes. Candidate validation checks that
+the frame decodes and is not abnormally near-black or near-white according to
+versioned config. Sharpness is measured as variance of Laplacian after every
+candidate is resized to the same configured resolution.
 
-For normal shots, the three selected frame IDs must be distinct. A shot with
-fewer than three decodable frames cannot physically produce three distinct
-canonical `keyframe_id` values. In that edge case, emit every distinct
-decodable frame once, record `short_shot_keyframe_count`, and do not duplicate a
-`keyframe_id` merely to satisfy a count. If no frame can be decoded, fail the
-video.
+There is no absolute dataset-wide blur threshold. Within one band, package code
+filters invalid candidates, chooses the highest sharpness score, and breaks a
+tie by choosing the frame closest to that band's target. If a band has no valid
+candidate, it expands the search toward the nearest safe interior of the shot
+while avoiding the shot boundaries. If the shot contains no decodable valid
+frame, keyframe extraction and therefore the video fail.
+
+Selected frame IDs are deduplicated. A short shot may therefore persist only
+one or two canonical keyframes; it never duplicates a `keyframe_id` merely to
+satisfy three roles. If only one frame remains, that frame is representative.
 
 Canonical identity remains:
 
@@ -93,12 +151,34 @@ frame_id    = decoded original frame index
 keyframe_id = {video_id}:{frame_id}
 ```
 
-The middle keyframe is the first representative candidate. Package code checks
-decode success plus versioned blur/black-frame quality rules. If middle fails,
-try early and then late. If all available candidates fail quality/decode checks,
-the shot cannot receive its required caption and the video fails. The selected
-row has `is_representative = true`; the other rows remain retrieval/inspection
-keyframes with their `early`, `middle`, or `late` roles.
+For multiple selected roles, let `best_quality` be the maximum comparable
+Laplacian-variance quality score. Middle is representative when:
+
+```text
+middle_quality >= 0.85 * best_quality
+```
+
+Otherwise the highest-quality selected role is representative. A quality tie
+is broken by proximity to the temporal center of the shot. Every persisted row
+retains its semantic `early`, `middle`, or `late` role; exactly one row per shot
+has `is_representative = true`.
+
+Canonical `keyframes.parquet` additionally records:
+
+```text
+keyframe_role
+quality_score
+is_representative
+selection_reason
+```
+
+Detailed candidate metrics remain checkpoint/debug evidence instead of
+expanding the canonical table.
+
+Candidate decoding is a single forward pass through the video, grouped by shot.
+Only one shot's temporary candidate frames remain in memory at a time; selected
+images are written before the group is released. This preserves the search
+policy without retaining all full-resolution candidates for a long video.
 
 ## ASR
 
@@ -310,17 +390,47 @@ independent retrieval indexes.
 
 ## Production Failure And Resume Rules
 
-- Production profiles must not select mock providers.
+- Notebook 01 and public Phase01 commands have no production profile/provider
+  selector. Test doubles are test-only dependency injection.
 - A successful no-cut TransNet result, `no_audio`, or `no_speech` is a valid
   observed state, not a fallback.
 - Model/decode/inference/API failure after bounded retry fails the video at the
   responsible stage.
-- Every API/model stage uses deterministic cache keys, resumable checkpoints,
-  model/config/prompt/schema provenance, and bounded retries.
-- A rerun may reuse only cache/checkpoint entries whose complete inputs and
-  versions match.
+- The checkpoint key is `release_id + video_id + stage`. Stages are `shots`,
+  `keyframes`, `asr`, `shot_captions`, `shot_transcript_links`, `scenes`,
+  `scene_summaries`, `package`, and `sync`.
+- Each stage stores status, input fingerprint, relevant config hash,
+  model/revision, prompt version when applicable, schema version, output
+  checksums, and completion time.
+- Stage completion is atomic: write local temp, validate, checksum, sync to the
+  persistent artifact store, update `state.json`, then mark complete. Local
+  Colab/Kaggle storage is scratch, not resume authority.
+- A rerun reuses only complete stages whose persistent outputs, checksums,
+  upstream fingerprints, and relevant versions still match. Dependency changes
+  invalidate only downstream stages.
 - Worker reports and `errors.jsonl` distinguish failed, no-audio/no-speech, and
   successful-empty states.
+
+Notebook 01 processes one video at a time. TransNet and faster-whisper do not
+remain resident together; after each GPU-heavy stage package code drops model
+and tensor references, runs garbage collection, and clears unused CUDA cache.
+Model weights may remain in the runtime's Hugging Face cache, which is separate
+from persistent stage checkpoints.
+
+Faster-whisper uses CUDA `float16`, retries an OOM with CUDA `int8_float16`, and
+uses CPU `int8`; it does not replace large-v3 with a weaker model. If bounded
+OOM recovery is exhausted, the video becomes `failed_retryable`, its error is
+checkpointed, scratch/GPU state is cleaned, and processing continues with the
+next video. Gemini calls use bounded concurrency, initially two requests within
+the current video.
+
+Gemini request-level content-addressed cache entries live in the current
+video's stage scratch. The completed canonical stage is the persistent cache
+and is promoted to the private checkpoint repository. This avoids one Hugging
+Face commit per Gemini request while preserving stage-level resume semantics.
+All output files belonging to one checkpoint stage are uploaded in one backend
+commit; the separate `state.json` update remains the final atomic completion
+marker after output checksum verification.
 
 ## Validation Sequence
 
@@ -333,3 +443,18 @@ Production implementation is proven in this order:
 
 Mock tests remain useful for deterministic package contracts, but they do not
 prove production provider quality or preliminary readiness.
+
+## Implementation Map
+
+- `src/system1/phase01/runner.py`: release discovery/restore, config, preflight,
+  model artifact materialization, and batch entry point.
+- `src/system1/phase01/checkpoint.py`: per-video stage state, checksum restore,
+  stage fingerprints, and dependency invalidation.
+- `src/system1/phase01/production.py`: sequential orchestration, packaging,
+  sync verification, failure isolation, and reporting.
+- `src/system1/shots/`, `keyframes/`, `asr/`, `gemini/`, and `scenes/`: fixed
+  production stage implementations.
+- `src/system1/phase01/validation.py` and `qa.py`: strict canonical package gate
+  and deterministic manual-review sampling.
+- `notebooks/01_worker_structure_pipeline.ipynb`: minimal operator settings and
+  one package CLI invocation.

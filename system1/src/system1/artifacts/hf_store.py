@@ -194,14 +194,17 @@ class HuggingFaceDatasetArtifactStore:
 
     def download_file(self, relative_path: str | Path, target: Path, *, cache_dir: Path | str | None = None) -> Path:
         remote_path = self._remote_path(relative_path)
-        cached_path = hf_hub_download(
-            repo_id=self.repo_id,
-            repo_type=self.repo_type,
-            revision=self.revision,
-            filename=remote_path,
-            token=self.token,
-            cache_dir=str(cache_dir) if cache_dir is not None else None,
-        )
+        try:
+            cached_path = hf_hub_download(
+                repo_id=self.repo_id,
+                repo_type=self.repo_type,
+                revision=self.revision,
+                filename=remote_path,
+                token=self.token,
+                cache_dir=str(cache_dir) if cache_dir is not None else None,
+            )
+        except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
+            raise FileNotFoundError(remote_path) from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         temp_path = target.with_name(f".{target.name}.tmp.{os.getpid()}")
         shutil.copyfile(cached_path, temp_path)

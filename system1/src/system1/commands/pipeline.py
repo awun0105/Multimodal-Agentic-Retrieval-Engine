@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import typer
@@ -25,7 +26,9 @@ from system1.commands.common import (
 )
 from system1.features.builder import process_feature_batch
 from system1.ingest.pipeline import run_ingestion
+from system1.phase01 import run_phase01_pipeline
 from system1.release.merge import merge_worker_outputs
+from system1.release.types import config_dir
 from system1.structure.builder import process_structure_batch
 
 
@@ -146,9 +149,19 @@ def register(app: typer.Typer) -> None:
     def process_batch(
         batch_id: str = typer.Option(..., "--batch-id"),
         worker_id: str = typer.Option("worker_000", "--worker-id"),
-        providers: str = typer.Option("mock", "--providers"),
+        release_id_override: str | None = typer.Option(None, "--release-id-override"),
+        hf_checkpoint_repo: str | None = typer.Option(None, "--hf-checkpoint-repo"),
+        checkpoint_revision: str | None = typer.Option(None, "--checkpoint-revision"),
+        checkpoint_prefix: str | None = typer.Option(None, "--checkpoint-prefix"),
+        scratch_dir: Path | None = typer.Option(None, "--scratch-dir"),
+        restore_phase00: bool = typer.Option(
+            True, "--restore-phase00/--no-restore-phase00"
+        ),
+        validate_remote: bool = typer.Option(
+            True, "--validate-remote/--no-validate-remote"
+        ),
         require_frame_timeline: bool = typer.Option(
-            False,
+            True,
             "--require-frame-timeline/--allow-missing-frame-timeline",
             help="Fail the batch if any video lacks a usable decoded frame timeline.",
         ),
@@ -156,25 +169,68 @@ def register(app: typer.Typer) -> None:
         input_dir: Path | None = typer.Option(None, "--input", "-i"),
         artifact_backend: str = typer.Option(default_artifact_backend(), "--artifact-backend"),
         artifact_root: Path = typer.Option(default_artifact_root(), "--artifact-root"),
-        hf_repo_id: str | None = typer.Option(default_hf_repo_id(), "--hf-repo-id"),
-        hf_repo_type: str = typer.Option(default_hf_repo_type(), "--hf-repo-type"),
-        hf_revision: str = typer.Option(default_hf_revision(), "--hf-revision"),
-        hf_prefix: str = typer.Option(default_hf_prefix(), "--hf-prefix"),
+        hf_repo_id: str | None = typer.Option(None, "--hf-repo-id"),
+        hf_repo_type: str | None = typer.Option(None, "--hf-repo-type"),
+        hf_revision: str | None = typer.Option(None, "--hf-revision"),
+        hf_prefix: str | None = typer.Option(None, "--hf-prefix"),
         resume: bool = typer.Option(default_cli_resume(), "--resume/--no-resume"),
-        sync: bool = typer.Option(default_cli_sync(), "--sync/--no-sync"),
+        sync: bool = typer.Option(True, "--sync/--no-sync"),
     ) -> None:
         """Build phase01 structure artifacts for one assigned batch."""
-        require_supported_providers(providers)
+        provider_profile = _phase01_test_provider_profile()
+        if provider_profile == "config":
+            if input_dir is not None:
+                raise typer.BadParameter(
+                    "Production Phase01 reads canonical media from Phase00; --input is test-only"
+                )
+            if not require_frame_timeline:
+                raise typer.BadParameter("Production Phase01 requires the decoded frame timeline")
+            user_settings = {
+                "batch_id": batch_id,
+                "worker_id": worker_id,
+                "release_id_override": release_id_override,
+                "hf_release_repo": hf_repo_id,
+                "hf_repo_type": hf_repo_type,
+                "hf_release_revision": hf_revision,
+                "hf_release_prefix": hf_prefix,
+                "hf_checkpoint_repo": hf_checkpoint_repo,
+                "checkpoint_revision": checkpoint_revision,
+                "checkpoint_prefix": checkpoint_prefix,
+                "scratch_dir": str(scratch_dir) if scratch_dir else None,
+            }
+            user_settings = {
+                key: value for key, value in user_settings.items() if value is not None
+            }
+            try:
+                result = run_phase01_pipeline(
+                    config_dir=config_dir(),
+                    output_root=output,
+                    user_settings=user_settings,
+                    restore_phase00=restore_phase00,
+                    sync_release=sync,
+                    validate_remote=validate_remote,
+                )
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                raise typer.BadParameter(str(exc)) from exc
+            typer.echo(
+                f"Processed {batch_id}: {result.release_dir} "
+                f"({result.worker_report_path})"
+            )
+            return
+        legacy_hf_repo_type = hf_repo_type or default_hf_repo_type()
+        legacy_hf_revision = hf_revision or default_hf_revision()
+        legacy_hf_prefix = hf_prefix if hf_prefix is not None else default_hf_prefix()
+        legacy_hf_repo_id = hf_repo_id or default_hf_repo_id()
         if resume:
             try:
                 if try_restore_checkpoint(
                     output=output,
                     artifact_root=artifact_root,
                     artifact_backend=artifact_backend,
-                    hf_repo_id=hf_repo_id,
-                    hf_repo_type=hf_repo_type,
-                    hf_revision=hf_revision,
-                    hf_prefix=hf_prefix,
+                    hf_repo_id=legacy_hf_repo_id,
+                    hf_repo_type=legacy_hf_repo_type,
+                    hf_revision=legacy_hf_revision,
+                    hf_prefix=legacy_hf_prefix,
                     phase="phase01_structure",
                     batch_id=batch_id,
                 ):
@@ -188,7 +244,7 @@ def register(app: typer.Typer) -> None:
             input_dir=input_dir,
             batch_id=batch_id,
             worker_id=worker_id,
-            providers=providers,
+            providers=provider_profile,
             require_frame_timeline=require_frame_timeline,
         )
         typer.echo(f"Processed {batch_id}: {release_dir(output)} ({report_path})")
@@ -198,10 +254,10 @@ def register(app: typer.Typer) -> None:
                     release=release_dir(output),
                     artifact_root=artifact_root,
                     artifact_backend=artifact_backend,
-                    hf_repo_id=hf_repo_id,
-                    hf_repo_type=hf_repo_type,
-                    hf_revision=hf_revision,
-                    hf_prefix=hf_prefix,
+                    hf_repo_id=legacy_hf_repo_id,
+                    hf_repo_type=legacy_hf_repo_type,
+                    hf_revision=legacy_hf_revision,
+                    hf_prefix=legacy_hf_prefix,
                     phase="phase01_structure",
                     batch_id=batch_id,
                     worker_id=worker_id,
@@ -278,3 +334,18 @@ def register(app: typer.Typer) -> None:
         # Phase03 checkpoint remains manual via checkpoint-save after final release artifacts exist.
         report_path = merge_worker_outputs(release_dir(output))
         typer.echo(f"Merged artifacts: {report_path}")
+
+
+def _phase01_test_provider_profile() -> str:
+    """Return a test-only provider injection without exposing a CLI selector."""
+
+    profile = os.environ.get("AIC_SYSTEM1_TEST_PROVIDER_PROFILE", "").strip()
+    if not profile:
+        return "config"
+    if os.environ.get("AIC_ALLOW_TEST_PROVIDERS") != "1":
+        raise typer.BadParameter(
+            "AIC_SYSTEM1_TEST_PROVIDER_PROFILE is test-only and requires "
+            "AIC_ALLOW_TEST_PROVIDERS=1"
+        )
+    require_supported_providers(profile)
+    return profile

@@ -1,25 +1,74 @@
-providers:
-  asr: mock
-  ocr: mock
-  embedding: mock
-  object_detection: mock
-  shot_caption: mock
-  scene_summary: mock
+schema_version: phase01_models_v1
 
-mock:
-  embedding_model: mock-embedding-v1
-  embedding_dim: 4
+# One fixed production model graph. Notebook 01 does not select providers.
+# Model IDs and source revisions are pinned. The converted TransNet weight
+# checksum stays a blocker until the official converter parity job provisions
+# the project-owned artifact; runtime workers never convert weights themselves.
+phase01:
+  shot_detection:
+    provider: transnet_v2
+    model_id: TransNetV2
+    runtime: pytorch
+    upstream_repo: soCzech/TransNetV2
+    model_revision: 85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed
+    source_module: inference-pytorch/transnetv2_pytorch.py
+    source_sha256: f7c1d437465579a8ec28a5add19853d2cb2755248ea4a4207678210a609428e1
+    weights_file: transnetv2-pytorch-weights.pth
+    artifact_subdir: transnetv2/85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed
+    weights_sha256: null
+    threshold: 0.5
+    transition_run_boundary: midpoint
+    conversion_verified: true
+    subprocess_isolation: true
 
-real_adapters:
-  whisper:
-    enabled: false
-    dependency: optional
-  paddleocr:
-    enabled: false
-    dependency: optional
-  openclip:
-    enabled: false
-    dependency: optional
-  yolo:
-    enabled: false
-    dependency: optional
+  asr:
+    provider: faster_whisper
+    package_version: 1.2.1
+    model_id: Systran/faster-whisper-large-v3
+    model_revision: edaa852ec7e145841d8ffdb056a99866b5f0a478
+    language: auto
+    vad_enabled: true
+    beam_size: 5
+    word_timestamps: false
+    vad_parameters:
+      threshold: 0.5
+      min_speech_duration_ms: 0
+      max_speech_duration_s: null
+      min_silence_duration_ms: 2000
+      speech_pad_ms: 400
+    compute_type:
+      cuda_default: float16
+      cuda_oom_retry: int8_float16
+      cpu: int8
+
+  shot_caption:
+    provider: gemini
+    sdk: google-genai
+    sdk_version: 2.13.0
+    model_id: gemini-3.6-flash
+    model_revision: gemini-3.6-flash
+    thinking_level: medium
+    prompt_version: shot_caption_v1
+    response_schema_version: shot_caption_response_v1
+
+  scene_boundary:
+    provider: gemini
+    sdk: google-genai
+    sdk_version: 2.13.0
+    model_id: gemini-3.6-flash
+    model_revision: gemini-3.6-flash
+    thinking_level: medium
+    prompt_version: scene_boundary_primary_v1
+    focused_prompt_version: scene_boundary_focused_v1
+    consistency_prompt_version: scene_boundary_consistency_v1
+    response_schema_version: scene_boundary_response_v1
+
+  scene_summary:
+    provider: gemini
+    sdk: google-genai
+    sdk_version: 2.13.0
+    model_id: gemini-3.6-flash
+    model_revision: gemini-3.6-flash
+    thinking_level: medium
+    prompt_version: scene_summary_v1
+    response_schema_version: scene_summary_response_v1

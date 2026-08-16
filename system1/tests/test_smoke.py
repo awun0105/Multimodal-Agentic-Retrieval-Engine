@@ -16,6 +16,9 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import pytest
+from typer.main import get_command
+from typer.testing import CliRunner
+
 from system1.artifacts.package import validate_artifact_zip
 from system1.cli import app
 from system1.commands import imports as imports_commands_module
@@ -41,8 +44,6 @@ from system1.media.timeline import (
     FrameTimelineFileBuildResult,
 )
 from system1.validation.release_validator import validate_release
-from typer.main import get_command
-from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -51,6 +52,8 @@ runner = CliRunner()
 def local_phase_execution(monkeypatch):
     monkeypatch.setenv("AIC_RESUME", "0")
     monkeypatch.setenv("AIC_SYNC", "0")
+    monkeypatch.setenv("AIC_ALLOW_TEST_PROVIDERS", "1")
+    monkeypatch.setenv("AIC_SYSTEM1_TEST_PROVIDER_PROFILE", "mock")
 
     def fake_probe_with_timeline(path: Path, *, video_id: str) -> VideoProbeWithTimeline:  # noqa: ARG001
         return VideoProbeWithTimeline(
@@ -267,8 +270,6 @@ def phase_based_commands(
             "process-batch",
             "--batch-id",
             "batch_000",
-            "--providers",
-            providers,
             "--output",
             str(output_dir),
             "--input",
@@ -299,7 +300,14 @@ def run_phase_based_release(
     package: bool = False,
 ) -> Path:
     output_dir = tmp_path / "output"
-    run_cli_sequence(phase_based_commands(output_dir, providers=providers))
+    with patch.dict(
+        os.environ,
+        {
+            "AIC_ALLOW_TEST_PROVIDERS": "1",
+            "AIC_SYSTEM1_TEST_PROVIDER_PROFILE": providers,
+        },
+    ):
+        run_cli_sequence(phase_based_commands(output_dir, providers=providers))
     release_dir = output_dir / "competition_dataset_v001"
     smoke = invoke_app(["smoke-test", "--release", str(release_dir)])
     assert smoke.exit_code == 0, smoke.stdout
@@ -364,7 +372,7 @@ def prepare_structure_and_feature_artifacts(output_dir: Path) -> Path:
     commands = [
         ["ingest", "--output", str(output_dir), "--input", "input"],
         ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"],
         ["feature-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
@@ -448,7 +456,6 @@ def test_cli_contract_exposes_notebook_commands_without_rendering_help():
         "process-batch": {
             "--batch-id",
             "--worker-id",
-            "--providers",
             "--require-frame-timeline",
             "--output",
             "--input",
@@ -475,6 +482,8 @@ def test_cli_contract_exposes_notebook_commands_without_rendering_help():
         }
         assert expected <= actual, f"{command_name} missing {sorted(expected - actual)}"
         assert "--mode" not in actual, f"{command_name} still exposes a retired execution selector"
+        if command_name == "process-batch":
+            assert "--providers" not in actual
 
 
 def test_config_loading_reads_required_files():
@@ -509,6 +518,8 @@ def test_schema_files_are_complete_and_loadable():
         "feature_availability.schema.json",
         "vector_map.schema.json",
         "validation_report.schema.json",
+        "resolved_config.schema.json",
+        "phase01_checkpoint_state.schema.json",
     }
     assert expected.issubset({path.name for path in schema_dir.glob("*.json")})
     assert not (schema_dir / "image_captions.schema.json").exists()
@@ -583,6 +594,10 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         if not path.name.startswith("00"):
             assert "worker_id" in joined
             assert "batch_id" in joined
+        if path.name == "01_worker_structure_pipeline.ipynb":
+            assert "providers" not in joined
+            assert "--providers" not in joined
+        elif path.name == "02_worker_feature_enrichment.ipynb":
             assert "providers" in joined
         assert "run_cli" in joined
         for command in commands:
@@ -743,7 +758,7 @@ def test_cli_structure_phase_stops_before_feature_merge(tmp_path):
     commands = [
         ["ingest", "--output", str(output_dir), "--input", "input"],
         ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
         result = invoke_app(command)
@@ -896,7 +911,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
     release_dir = output_dir / "competition_dataset_v001"
     videos_before = (release_dir / "tables" / "videos.parquet").stat().st_mtime_ns
-    result = invoke_app(["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = release_dir / "artifacts" / "structure" / "L21_V001"
     assert artifact_dir.exists()
@@ -960,8 +975,10 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
     assert keyframes.iloc[0]["keyframe_ref"] == "media://keyframes/L21_V001/L21_V001_f0000000.jpg"
     assert keyframes.iloc[0]["thumbnail_ref"] == "media://thumbnails/L21_V001/L21_V001_f0000000.webp"
     assert keyframes.iloc[0]["frame_id_method"] == "decoded_frame_timeline"
-    assert keyframes.iloc[0]["keyframe_role"] == "representative"
+    assert keyframes.iloc[0]["keyframe_role"] == "middle"
+    assert keyframes.iloc[0]["quality_score"] == 0.0
     assert bool(keyframes.iloc[0]["is_representative"]) is True
+    assert keyframes.iloc[0]["selection_reason"] == "debug_single_keyframe"
     assert keyframes.iloc[0]["timestamp_sec"] == 0.0
     assert keyframes.iloc[0]["pts_time"] == 0.0
     assert keyframes.iloc[0]["duration_time"] == 0.04
@@ -1027,7 +1044,7 @@ def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
     invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
     invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
     with patch("subprocess.run", side_effect=__import__("subprocess").CalledProcessError(1, "ffmpeg")):
-        result = invoke_app(["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+        result = invoke_app(["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code == 0, result.stdout
     artifact_dir = output_dir / "competition_dataset_v001" / "artifacts" / "structure" / "L21_V001"
     jpg = next((artifact_dir / "keyframes").glob("*.jpg"))
@@ -1039,14 +1056,14 @@ def test_process_batch_ffmpeg_failure_writes_valid_placeholder_images(tmp_path):
 def test_process_batch_missing_batch_file_fails_clearly(tmp_path):
     output_dir = tmp_path / "output"
     invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
-    result = invoke_app(["process-batch", "--batch-id", "batch_999", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    result = invoke_app(["process-batch", "--batch-id", "batch_999", "--output", str(output_dir), "--input", "input"])
     assert result.exit_code != 0
 
 def test_feature_batch_creates_only_feature_artifacts_from_structure(tmp_path):
     output_dir = tmp_path / "output"
     invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
     invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
-    invoke_app(["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"])
     release_dir = output_dir / "competition_dataset_v001"
     structure_manifest = release_dir / "artifacts" / "structure" / "L21_V001" / "manifest.json"
     structure_before = structure_manifest.stat().st_mtime_ns
@@ -1115,8 +1132,6 @@ def test_process_batch_can_require_phase00_frame_timeline(tmp_path):
             "process-batch",
             "--batch-id",
             "batch_000",
-            "--providers",
-            "mock",
             "--output",
             str(output_dir),
             "--input",
@@ -1140,8 +1155,8 @@ def test_worker_reports_include_phase_batch_worker_and_do_not_overwrite(tmp_path
     output_dir = tmp_path / "output"
     invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
     invoke_app(["assign-batches", "--num-batches", "2", "--output", str(output_dir)])
-    first = invoke_app(["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_a", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
-    second = invoke_app(["process-batch", "--batch-id", "batch_001", "--worker-id", "worker_b", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    first = invoke_app(["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_a", "--output", str(output_dir), "--input", "input"])
+    second = invoke_app(["process-batch", "--batch-id", "batch_001", "--worker-id", "worker_b", "--output", str(output_dir), "--input", "input"])
     assert first.exit_code == 0, first.stdout
     assert second.exit_code == 0, second.stdout
     release_dir = output_dir / "competition_dataset_v001"
@@ -1165,7 +1180,7 @@ def test_feature_batch_restores_structure_from_zip_when_folder_missing(tmp_path)
     output_dir = tmp_path / "output"
     invoke_app(["ingest", "--output", str(output_dir), "--input", "input"])
     invoke_app(["assign-batches", "--num-batches", "1", "--output", str(output_dir)])
-    invoke_app(["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"])
+    invoke_app(["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"])
     release_dir = output_dir / "competition_dataset_v001"
     shutil.rmtree(release_dir / "artifacts" / "structure" / "L21_V001")
 
@@ -1182,7 +1197,7 @@ def test_cli_merge_db_index_validate_smoke_runtime(tmp_path):
     commands = [
         ["ingest", "--output", str(output_dir), "--input", "input"],
         ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"],
         ["feature-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
         ["merge", "--output", str(output_dir)],
     ]
@@ -1296,7 +1311,7 @@ def test_cli_single_workflow_structure_commands_succeed(tmp_path):
     commands = [
         ["ingest", "--output", str(output_dir), "--input", "input"],
         ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
         result = invoke_app(command)
@@ -1341,7 +1356,7 @@ def test_cli_single_workflow_writes_structure_artifacts(tmp_path):
     commands = [
         ["ingest", "--output", str(output_dir), "--input", "input"],
         ["assign-batches", "--num-batches", "1", "--output", str(output_dir)],
-        ["process-batch", "--batch-id", "batch_000", "--providers", "mock", "--output", str(output_dir), "--input", "input"],
+        ["process-batch", "--batch-id", "batch_000", "--output", str(output_dir), "--input", "input"],
     ]
     for command in commands:
         result = invoke_app(command)
