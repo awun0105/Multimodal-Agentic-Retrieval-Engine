@@ -277,3 +277,11 @@ scripts/bin/harness.exe
 .claudex.lock
 CLAUDE.md
 plans/
+
+# Trọng số LoRA — 71 MB, vượt ngưỡng khuyến nghị của GitHub.
+# Sinh lại bằng scripts/kaggle/notebook-train-qlora.ipynb (~97 phút trên T4).
+# Cấu hình + số đo ghi ở results/lora-qwen2vl-2b-haiku500/THONG-TIN.md
+*.safetensors
+system1/research/vlm_prompting/results/lora-*/tokenizer.json
+system1/research/vlm_prompting/results/lora-*/vocab.json
+system1/research/vlm_prompting/results/lora-*/merges.txt
