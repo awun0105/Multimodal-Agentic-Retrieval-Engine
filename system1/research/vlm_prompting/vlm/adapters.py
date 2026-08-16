@@ -273,6 +273,15 @@ def _la_ho_internvl(spec) -> bool:
     return "internvl" in ten or "vintern" in ten
 
 
+def _la_ho_minicpm(spec) -> bool:
+    """MiniCPM-V cũng dùng .chat() nhưng chữ ký khác InternVL hoàn toàn.
+
+    Nhận theo hf_id vì registry ghi `loader="auto_causal"` — loader đó trỏ tới
+    AutoModelForCausalLM, còn MiniCPM cần AutoModel. Adapter riêng tự nạp lấy.
+    """
+    return "minicpm" in spec.hf_id.lower()
+
+
 def _nap_nghiem_ngat(
     lop_adapter,
     spec,
@@ -360,6 +369,12 @@ def get_adapter(
             return _nap_nghiem_ngat(
                 InternVlAdapter, spec, dung_4bit, model_key, "internvl", strict
             )
+        if _la_ho_minicpm(spec) and lora_model_path is None:
+            from .adapter_minicpm import MiniCpmAdapter
+
+            return _nap_nghiem_ngat(
+                MiniCpmAdapter, spec, dung_4bit, model_key, "minicpm", strict
+            )
         return _nap_nghiem_ngat(
             TransformersAdapter,
             spec,
@@ -397,6 +412,10 @@ def get_adapter(
                 from .adapter_internvl import InternVlAdapter
 
                 return InternVlAdapter(spec, dung_4bit=dung_4bit)
+            if _la_ho_minicpm(spec) and lora_model_path is None:
+                from .adapter_minicpm import MiniCpmAdapter
+
+                return MiniCpmAdapter(spec, dung_4bit=dung_4bit)
             return TransformersAdapter(spec, dung_4bit=dung_4bit, lora_model_path=lora_model_path)
         except Exception as loi:
             if strict:

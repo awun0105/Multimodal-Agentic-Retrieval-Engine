@@ -74,7 +74,10 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         vram_4bit_gb=3.0,
         loader="auto_causal",
         trust_remote_code=True,
-        ghi_chu="Đường lui cho GPU yếu (<8GB).",
+        ghi_chu=(
+            "Đường lui cho GPU yếu (<8GB). Định tuyến thật do _la_ho_minicpm() lo "
+            "— MiniCpmAdapter tự nạp bằng AutoModel, không đi qua loader này."
+        ),
     ),
 }
 
