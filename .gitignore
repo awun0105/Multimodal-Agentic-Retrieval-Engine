@@ -270,3 +270,10 @@ scripts/bin/harness.exe
 
 # Local Harness installer backups; recovery history is kept in Git.
 .harness-backup/
+
+# Công cụ làm việc cá nhân (Claude Code) — không thuộc mã nguồn dự án.
+# KHÔNG thêm AGENTS.md vào đây: file đó do chủ repo (awun0105) commit, thuộc về nhóm.
+.claude/
+.claudex.lock
+CLAUDE.md
+plans/
