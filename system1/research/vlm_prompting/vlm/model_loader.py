@@ -83,6 +83,14 @@ def _nap_theo_loader(spec: ModelSpec, kwargs: dict[str, Any]):
 
         return Qwen2VLForConditionalGeneration.from_pretrained(spec.hf_id, **kwargs)
 
+    if spec.loader == "image_text_to_text":
+        # Lop chuan cho VLM dinh dang HF (InternVL3.5-HF, LLaVA-NeXT...).
+        # AutoModelForCausalLM khong nhan config cua chung: "Unrecognized
+        # configuration class InternVLConfig for this kind of AutoModel".
+        from transformers import AutoModelForImageTextToText
+
+        return AutoModelForImageTextToText.from_pretrained(spec.hf_id, **kwargs)
+
     from transformers import AutoModelForCausalLM
 
     return AutoModelForCausalLM.from_pretrained(spec.hf_id, **kwargs)

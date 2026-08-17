@@ -19,7 +19,7 @@ class ModelSpec:
     hf_id: str
     ten_hien_thi: str
     vram_4bit_gb: float
-    loader: str  # "qwen2vl" | "qwen25vl" | "auto_causal"
+    loader: str  # "qwen2vl" | "qwen25vl" | "image_text_to_text" | "auto_causal"
     ghi_chu: str = ""
     trust_remote_code: bool = False
 
@@ -72,7 +72,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         hf_id="OpenGVLab/InternVL3_5-8B-HF",
         ten_hien_thi="InternVL 3.5 8B",
         vram_4bit_gb=7.0,
-        loader="auto_causal",
+        loader="image_text_to_text",
         trust_remote_code=True,
         ghi_chu=(
             "8,53 tỷ tham số. Dùng bản -HF (InternVLForConditionalGeneration) chứ "
