@@ -101,7 +101,7 @@ model chưa từng nạp được, mọi số của nó là mock (mục 7.2).
 ### Cập nhật 17/08 — Vintern chạy được thật, bảng lên 4 model ⁵
 
 Số dưới đây đo cùng ngày, cùng T4, cùng 355 ảnh, prompt v3 (thêm luật cấm tên riêng).
-Chi tiết: `plans/reports/benchmark-260817-0615-4-model-va-13-ca-loi.md`.
+Chi tiết: `plans/reports/benchmark-260817-0615-6-model-va-13-ca-loi.md`.
 
 | Mô hình | Latency | VRAM | JSON hợp lệ | Nhét chữ OCR | Vòng vo | recall@1 | Chép mẫu |
 |---|---|---|---|---|---|---|---|
@@ -110,6 +110,7 @@ Chi tiết: `plans/reports/benchmark-260817-0615-4-model-va-13-ca-loi.md`.
 | **Qwen2.5-VL-3B** | 12,118 s (P50 11,768 · P95 15,607) | 3,960 GB | 96,34% (342/355) | 34,80% | 9,65% | 0,9737 | 0,00% |
 | **Qwen2-VL-2B** | **9,126 s** (P50 8,884 · P95 12,467) | **2,052 GB** | 78,31% (278/355) | 26,26% | 16,91% | 0,8597 | 5,04% |
 | **Vintern-1B-v3.5** | — | — | **0%** (0/355) | — | — | — | — |
+| **MiniCPM-V-4** | — | tràn 12,97 GB ⁷ | **0%** (0/355) | — | — | — | — |
 
 **Qwen2.5-VL-7B thắng gần như toàn diện**: JSON hợp lệ 99,72% (chỉ 1 ảnh lỗi trên 355),
 nhét chữ thấp nhất, vòng vo thấp nhất. Giá phải trả là 6,798 GB — gấp 1,7 lần bản 3B, và
@@ -183,6 +184,30 @@ sức bám khuôn. Có 226/355 ca lưu được `raw_text` làm bằng chứng.
 **8.292.166.656** tham số, tức **vượt mốc "<7B"** của đề bài dù tên ghi 7B. Các model khác:
 Qwen2.5-VL-3B 3,75B · MiniCPM-V-4 4,06B · Vintern-3B-R-beta 3,71B. Bản trước ghi "7B" theo
 tên model, không phải theo số đếm.
+
+⁷ **MiniCPM-V-4: đã viết adapter, chạy được, nhưng không dùng được trên T4.** Trước đây model
+này chưa từng chạy vì registry trỏ sai lớp nạp. Đã viết `MiniCpmAdapter`
+(`vlm/adapter_minicpm.py`, 87 dòng) dùng `AutoModel` + `.chat()`. Kết quả chạy thật 355 ảnh:
+
+| Kết cục | Số ca |
+|---|---|
+| Tràn bộ nhớ GPU (OOM) | 190 |
+| Model trả đúng một token `<CLS>` | 165 |
+| JSON hợp lệ | **0** |
+
+Hai vấn đề độc lập:
+
+1. **Lượng tử hoá 4-bit không có tác dụng.** Log ghi *"this process has 12.97 GiB memory in
+   use"* cho model 4,06B tham số — ở 4-bit lẽ ra ~3 GB. `BitsAndBytesConfig` được truyền
+   đúng, nhưng code `trust_remote_code` của MiniCPM nạp vision tower ngoài luồng
+   bitsandbytes. Bằng chứng gián tiếp: openbmb có bản `int4` **chính thức** cho MiniCPM-V
+   2.5 và 2.6, nhưng bản 4 chỉ có `gguf` (llama.cpp) — không có bản int4 cho transformers.
+2. **`.chat()` trả `<CLS>`** ở 165 ca còn lại — chữ ký gọi chưa đúng. MiniCPM-V-4 là
+   *legacy model* trong repo chính thức, tài liệu bản 4 không còn ví dụ `.chat()` đầy đủ.
+
+**Kết luận: không khả thi trên T4 trong khuôn khổ hiện tại.** Muốn dùng phải đi đường
+llama.cpp/GGUF — tức một pipeline khác hẳn, ngoài phạm vi. Adapter vẫn giữ lại: nó đúng về
+định tuyến và sẽ dùng được nếu sau này có bản int4 cho transformers.
 
 ### Bản 7B sửa được cả 13 ca lỗi của bản 3B
 
@@ -798,7 +823,7 @@ dưới 6 GB.
    (`!!!!…`), không lẫn ký tự nào khác, giống hệt nhau ở cả 13 ảnh. Không phải caption bị
    cắt — độ dài trùng `MAX_NEW_TOKENS` chỉ vì model lặp token `!` (id 0) tới hết trần.
    **Nâng trần token vô ích.** Chi tiết ở
-   `plans/reports/benchmark-260817-0615-4-model-va-13-ca-loi.md`.
+   `plans/reports/benchmark-260817-0615-6-model-va-13-ca-loi.md`.
 
 ### Việc phải làm trước khi chốt hẳn
 
