@@ -66,11 +66,31 @@ class InternVlAdapter(BaseVlmAdapter):
         # Nạp tokenizer riêng với use_fast=False. Model card InternVL yêu cầu bản
         # chậm; bản fast tách token ảnh sai, model sinh ra rác mà không báo lỗi.
         # Không sửa model_loader chung vì Qwen đang chạy tốt với AutoProcessor.
+        #
+        # Nhưng InternVL3.5 CHỈ phát hành tokenizer.json (định dạng fast) — không
+        # có file tokenizer chậm. Xin use_fast=False ở đó thì transformers vẫn trả
+        # Qwen2TokenizerFast, rồi code InternVL đòi `start_image_token` mà bản fast
+        # không có. Thử bản chậm trước, rơi về bản fast nếu model không phát hành.
         from transformers import AutoTokenizer
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            spec.hf_id, trust_remote_code=True, use_fast=False
-        )
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                spec.hf_id, trust_remote_code=True, use_fast=False
+            )
+        except Exception:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                spec.hf_id, trust_remote_code=True
+            )
+
+        # Bản fast của InternVL3.5 thiếu các token ảnh mà .chat() cần. Gắn thủ công
+        # theo added_tokens.json của model thay vì để nó nổ giữa chừng lúc chạy.
+        for ten, gia_tri in (
+            ("start_image_token", "<img>"),
+            ("end_image_token", "</img>"),
+            ("context_image_token", "<IMG_CONTEXT>"),
+        ):
+            if not hasattr(self.tokenizer, ten):
+                setattr(self.tokenizer, ten, gia_tri)
 
         if not hasattr(self.model, "chat"):
             from .model_loader import VlmKhongSanSang

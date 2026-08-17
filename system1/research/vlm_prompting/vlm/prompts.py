@@ -11,7 +11,7 @@ token nên model không thể sinh sai định dạng.
 
 from __future__ import annotations
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 # Ví dụ mẫu CỐ TÌNH khác xa keyframe thực tế (cảnh bếp, không phải cảnh đường phố
 # hay lớp học). Bản v1 dùng ví dụ trong đề bài — cảnh giao thông — và đo thật cho

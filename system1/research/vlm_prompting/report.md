@@ -293,38 +293,35 @@ buộc phải chạy trên Kaggle.
 
 ## 5. Prompt tối ưu đã chọn
 
-Phiên bản: `v1` (hằng `PROMPT_VERSION` trong `vlm/prompts.py`)
+**Phiên bản hiện hành: `v3`** (hằng `PROMPT_VERSION` trong `vlm/prompts.py`) — v2 cộng thêm
+luật cấm tên riêng cho mọi trường, dài hơn 24,3%.
 
-> ### Kết quả âm 17/08: cấm tên riêng bằng prompt KHÔNG hiệu quả
+> ### Giới hạn của prompt: cấm tên riêng không có tác dụng
 >
-> Chỉ số "nhét chữ OCR 33,33%" là **hợp của ba phép kiểm**. Tách ra trên 342 caption thật:
-> 111/114 ca (97%) là model **chép tên riêng người** vào caption — *"Cô Võ Hậu đang giảng
-> dạy…"* — chứ không phải nhét chữ biển hiệu. Prompt cũ có luật cấm nhét chữ nhưng chỉ áp
-> cho trường `doi_tuong`, nơi chỉ chiếm 0,88%.
+> Chỉ số "nhét chữ OCR 33,33%" là **hợp của ba phép kiểm**. Tách trên 342 caption:
+> 111/114 ca (97%) là model **chép tên riêng người** — *"Cô Võ Hậu đang giảng dạy…"* —
+> chứ không phải nhét chữ biển hiệu. Prompt v2 chỉ cấm nhét chữ ở trường `doi_tuong`,
+> nơi chiếm 0,88%.
 >
-> Đã thêm luật cấm tên riêng cho mọi trường (prompt v3, +24,3% độ dài). Đo lại trên cùng
-> 355 ảnh, cùng model:
+> v3 thêm luật cấm tên riêng cho mọi trường. Đo lại trên cùng 355 ảnh, cùng model:
 >
-> | Thành phần | Trước | Sau | Chênh |
+> | Thành phần | v2 | v3 | Chênh |
 > |---|---|---|---|
 > | Vật thể không dấu | 3 (0,88%) | 5 (1,46%) | +2 |
 > | Vật thể là chuỗi chữ | 20 (5,85%) | 12 (3,51%) | **−8** |
 > | **Tên riêng** | **111 (32,46%)** | **113 (33,04%)** | **+2** |
-> | **Hợp** | **114 (33,33%)** | **119 (34,80%)** | **+5** |
+> | **Hợp** | 114 (33,33%) | 119 (34,80%) | +5 |
 >
-> Luật nhắm vào 97% của lỗi **gần như không ăn**. Đã loại trừ khả năng prompt không chạy:
-> log kernel in `Commit: 328a8a7`, đúng commit chứa luật mới.
+> Luật nhắm vào 97% của lỗi mà **không đổi được gì**. Các chỉ số khác không tụt quá ngưỡng
+> (JSON hợp lệ giữ 96,34%, vòng vo 10,53% → 9,65%, recall@1 0,9766 → 0,9737) nên giữ v3,
+> nhưng **prompt không phải hướng sửa cho lỗi này**.
 >
-> Các chỉ số khác không tụt quá ngưỡng (JSON hợp lệ giữ 96,34%, vòng vo 10,53% → 9,65%,
-> recall@1 0,9766 → 0,9737), nên **giữ prompt v3**. Nhưng **bỏ hướng sửa-bằng-prompt** cho
-> tên riêng: dặn model đừng chép thì nó vẫn chép.
+> **Kích thước model mới là yếu tố quyết định.** Cùng prompt v3, cùng 355 ảnh:
+> Qwen-3B 33,04% → Vintern-3B 17,05% → **Qwen-7B 7,06%**. Prompt đổi 2 ca; đổi model giảm
+> 4,7 lần. Đây là giới hạn năng lực model, không phải cách diễn đạt.
 >
-> **Cùng prompt đó, model lớn hơn lại tự sửa được** — đo cùng ngày, cùng 355 ảnh:
-> Qwen-3B 33,04% → Vintern-3B 17,05% → **Qwen-7B 7,06%**. Prompt đổi được 2 ca; đổi model
-> giảm 4,7 lần. Đây là **giới hạn năng lực model**, không phải chuyện diễn đạt prompt.
->
-> Hai hướng còn lại, theo thứ tự ưu tiên: (1) dùng model lớn hơn nếu VRAM cho phép,
-> (2) lọc ở tầng validator — đối chiếu OCR để xoá tên riêng sau khi sinh.
+> Hai hướng còn lại, theo thứ tự: (1) dùng model lớn hơn nếu VRAM cho phép, (2) lọc ở tầng
+> validator — đối chiếu OCR để xoá tên riêng sau khi sinh.
 
 Đề bài yêu cầu model *"không sinh câu giao tiếp thừa, không giải thích ngoài JSON"*.
 Xu hướng tự nhiên của model là trả lời thân thiện kiểu *"Chào bạn! Đây là mô tả..."*.
@@ -796,107 +793,68 @@ vLLM (mục 5, ước tính nhanh hơn transformers 5–10 lần, chưa tự đo
 
 ---
 
-## 8. Mô hình được chọn cuối cùng
+## 8. Mô hình được chọn
 
-### **Qwen2.5-VL-3B-Instruct** — chọn theo dữ liệu thực đo
+### Đang chọn: **Qwen2.5-VL-3B-Instruct**
 
-**Lý do chọn:** thắng Qwen2-VL-2B ở **6/10 chỉ số**, trên cùng 355 ảnh, cùng một lượt chạy,
-cùng cấu hình. Hai chỉ số nó thua (tốc độ, VRAM) đều không phải ràng buộc thật trên T4.
+Chọn ngày 16/08 khi mới có 2 model đo thật. Lý do khi đó: thắng Qwen2-VL-2B ở 6/10 chỉ số
+trên cùng 355 ảnh, đặc biệt là `caption_en` 100% — schema của nhóm
+(`system1/schemas/shot_captions.schema.json`) bắt buộc cả `caption_vi` lẫn `caption_en`,
+mà Qwen2-VL-2B để 28% mục ở `status="partial"`.
 
-| Tiêu chí | **Qwen2.5-VL-3B** | Qwen2-VL-2B | Chênh |
-|---|---|---|---|
-| Tỷ lệ JSON hợp lệ | **96,34%** (342/355) | 77,46% (275/355) | **+18,9 điểm** |
-| `caption_en` có thật | **100%** (342/342) | 72,0% (198/275) | **+28 điểm** |
-| Vòng vo (TTR) | **10,53%** | 22,91% | giảm hơn nửa |
-| Chép ví dụ mẫu | **0,00%** | 1,82% | sạch hoàn toàn |
-| recall@1 | **0,9766** | 0,9491 | +0,0275 |
-| MRR | **0,9878** | 0,9724 | +0,0154 |
-| Nhét chữ OCR | 33,33% | **29,82%** | thua 3,5 điểm |
-| Latency | 11,824 s/ảnh | **9,15 s/ảnh** | chậm hơn 2,7 s |
-| VRAM đỉnh | 4,304 GB | **2,005 GB** | tốn thêm 2,3 GB |
-| Caption TB | **26,0 từ** | 24,3 từ | dài hơn chút |
+### Đề xuất đổi sang: **Vintern-3B-R-beta**
 
-**Vì sao chấp nhận chậm hơn và nặng hơn:** 4,3 GB chỉ chiếm 30% của T4 14,56 GB — còn thừa
-chỗ. Chênh 2,7 s/ảnh trên 127.000 keyframe là ~95 giờ GPU, đáng kể, nhưng đổi lại **thêm
-19 điểm JSON hợp lệ** nghĩa là ít hơn hẳn số ảnh phải chạy lại. Tính ròng vẫn lợi.
+Sau khi đo đủ 6 model (mục 3), Vintern-3B thắng model đang chọn ở 5/6 chỉ số:
 
-**Điểm quyết định là `caption_en` 100%.** Schema của nhóm
-(`system1/schemas/shot_captions.schema.json`) bắt buộc cả `caption_vi` lẫn `caption_en`.
-Qwen2-VL-2B để 28% mục ở `status="partial"`; Qwen2.5-VL-3B không mục nào.
-
-**Đường lui:** Qwen2-VL-2B vẫn giữ trong registry, đổi bằng một tham số. Dùng khi GPU
-dưới 6 GB.
-
-> ### ⚠️ Cập nhật 17/08 — mục 8 này đã lỗi thời một phần
->
-> Kết luận "Qwen2.5-VL-3B là model được chọn" vẫn **chưa bị thay chính thức**, nhưng số đo
-> mới cho thấy nên đổi:
->
-> | | Vintern-3B | Qwen2.5-VL-3B (đang chọn) |
-> |---|---|---|
-> | JSON hợp lệ | **97,46%** | 96,34% |
-> | VRAM | **2,841 GB** | 3,960 GB |
-> | Latency | **10,636 s** | 12,118 s |
-> | Chép tên riêng | **17,05%** | 33,04% |
-> | recall@1 | **0,9769** | 0,9737 |
->
-> Thắng 5/6. Xem "Cập nhật 17/08" ở mục 3 để biết đầy đủ. **Cần nhóm duyệt trước khi đổi.**
-
-⚠️ **Ba điểm còn treo:**
-
-1. ~~**Chưa qua cổng kiểm tiếng Việt.** Vintern-1B (mốc đối chứng bắt buộc) vẫn chưa sinh
-   được caption.~~ **Đã giải quyết 17/08 theo hướng khác:** Vintern-1B chạy thật nhưng 0%
-   (tự chế tên trường JSON). Thay vào đó **Vintern-3B-R-beta** làm mốc tiếng Việt — nó đạt
-   97,46% và chép tên riêng chỉ bằng nửa Qwen-3B.
-2. **Nhét chữ OCR là lỗi lớn nhất và model được chọn còn tệ hơn** — 33,33% so với 29,82%.
-   Việc đọc chữ thuộc Phần 2; chặn ở tầng validator là việc ưu tiên tiếp theo.
-   *(17/08: đã thử sửa bằng prompt — **không hiệu quả**, 111→113 ca. Nhưng đổi model thì ăn:
-   Vintern-3B 17,05%, Qwen-7B 7,06%. Xem mục 5.)*
-3. **13 ca lỗi còn lại đều là JSON không parse được** — nguyên nhân đã tìm ra 17/08 bằng
-   cách chạy lại 13 ảnh và lưu nguyên văn output: model sinh **320 dấu chấm than liên tiếp**
-   (`!!!!…`), không lẫn ký tự nào khác, giống hệt nhau ở cả 13 ảnh. Không phải caption bị
-   cắt — độ dài trùng `MAX_NEW_TOKENS` chỉ vì model lặp token `!` (id 0) tới hết trần.
-   **Nâng trần token vô ích.** Chi tiết ở
-   `plans/reports/benchmark-260817-0615-6-model-va-13-ca-loi.md`.
-
-### Việc phải làm trước khi chốt hẳn
-
-| # | Việc | Trạng thái |
+| | Vintern-3B | Qwen2.5-VL-3B |
 |---|---|---|
-| 1 | ~~Ghim `transformers` bản cũ hơn cho Vintern-1B~~ | ✅ **Xong** — ghim `<4.50`, Vintern-1B chạy thật (0%), Vintern-3B chạy tốt (97,46%) |
-| 2 | ~~Sửa lỗi CUDA assert của Qwen2.5-VL-3B~~ | ✅ **Xong 16/08** — tắt `do_sample`, 4,3% → 96,34% |
-| 3 | Giảm nhét chữ OCR rồi tới vòng vo | 🔄 **Đổi hướng.** Prompt không ăn (111→113). Đổi model thì ăn: Vintern-3B 17,05%, Qwen-7B 7,06%. Vòng vo: thước đo đang báo nhầm, phải sửa `kiem_cum_lap` trước |
-| 4 | Chặn chép ví dụ + nhét OCR ở tầng validator | 🔄 **Còn lại** — giờ là hướng chính sau khi prompt thất bại |
-| 5 | Chấm tay 30 caption × 3 model, giấu tên model | 🔄 **Còn lại**, và cấp thiết hơn: giờ có 4 model chạy được, số máy chấm mâu thuẫn nhau (vòng vo) |
-| 6 | **Sửa `kiem_cum_lap(n=2)`** — nâng n=3 hoặc miễn trừ danh từ ghép | 🆕 Phát hiện 17/08: nó phạt oan tiếng Việt, làm Vintern-3B trông tệ hơn thực tế |
-| 7 | **Mở rộng tập holdout** ngoài 355 ảnh | 🆕 Chỉ 65/355 ảnh không có nhãn — quá ít để đo model sau train |
+| JSON hợp lệ | **97,46%** | 96,34% |
+| VRAM | **2,841 GB** | 3,960 GB |
+| Latency | **10,636 s** | 12,118 s |
+| Chép tên riêng | **17,05%** | 33,04% |
+| recall@1 | **0,9769** | 0,9737 |
+| Vòng vo (TTR thật) | 3,5% | **0,3%** |
 
-### Cổng kiểm tiếng Việt (chưa chạy được)
+Nhẹ hơn 1,1 GB, nhanh hơn 1,5 s/ảnh, chép tên riêng bằng nửa. Nó cũng là **VLM fine-tune
+riêng cho tiếng Việt** — đúng vai "mốc so sánh tiếng Việt" mà bản chia việc yêu cầu.
 
-Nghiên cứu chỉ ra một khoảng trống nghiêm trọng: **chưa có điểm BLEU/METEOR
-tiếng Việt công khai** cho Qwen2.5-VL và InternVL3.5. Mọi điểm số công bố đều
-đo trên tiếng Anh hoặc tiếng Trung.
+**Nếu ưu tiên chất lượng caption:** Qwen2.5-VL-7B đạt 99,72% và chép tên riêng chỉ 7,06%,
+đổi lại nặng gấp 2,4 lần khi tải (16,6 GB) và chiếm 47% VRAM T4. Cả hai đều nằm trong trần
+phần cứng thật ~11 tỷ tham số.
 
-Nguy cơ này **không phải giả định** — thành viên Phần 2 đã ghi nhận thực tế:
-- Qwen2-VL-2B **từ chối trả lời** bằng tiếng Việt trong một số trường hợp
-- Florence-2 **rơi vào vòng lặp vô hạn** khi gặp tiếng Việt
-- Vintern-1B (chuyên tiếng Việt) đạt WER tốt nhất: 0,34
+**Đường lui khi GPU dưới 6 GB:** Qwen2-VL-2B, giữ trong registry, đổi bằng một tham số.
 
-Nên quy trình chốt model là:
+### Điều kiện để chốt
 
-1. ~~Chạy ≥100 ảnh qua cả 3 model~~ ✅ **Xong 17/08 — 4 model chạy được, mỗi model 355 ảnh:**
-   Qwen2.5-VL-7B (354 caption) · Vintern-3B (346) · Qwen2.5-VL-3B (342) · Qwen2-VL-2B (278)
-2. Đọc tay 30 caption mỗi model, **giấu tên model** để tránh thiên vị — 🔄 **chưa làm, giờ là
-   bước chặn duy nhất còn lại**
-3. Chấm 3 tiêu chí: đúng nội dung ảnh / tiếng Việt tự nhiên / đủ chi tiết
-4. ~~Nếu Vintern-1B thắng phần chấm tay → chọn Vintern~~ → **Ứng viên tiếng Việt giờ là
-   Vintern-3B-R-beta, không phải 1B.** Bản 1B đạt 0% (tự chế tên trường JSON); bản 3B đạt
-   97,46% và chép tên riêng chỉ bằng nửa Qwen-3B.
+**Chấm tay 30 caption × 4 model, giấu tên model** — bước chặn duy nhất còn lại.
 
-> **Vì sao bước 2 giờ cấp thiết hơn trước.** Máy chấm đang cho tín hiệu mâu thuẫn: Vintern-3B
-> thắng JSON hợp lệ / VRAM / tốc độ / chép tên riêng / recall@1, nhưng "vòng vo 37,28%" —
-> mà con số đó đã chứng minh là **thước đo phạt oan danh từ ghép tiếng Việt**. Khi số máy
-> chấm không đáng tin ở một chỉ số, mắt người là trọng tài duy nhất còn lại.
+Lý do cần mắt người: máy chấm cho tín hiệu mâu thuẫn. Vintern-3B thắng 5 chỉ số nhưng thua
+"vòng vo 37,28%", mà con số đó đã chứng minh là thước đo phạt oan danh từ ghép tiếng Việt
+(mục 3). Khi thước đo không đáng tin ở một chiều, số máy chấm không đủ để quyết.
+
+Quy trình: chạy ≥100 ảnh mỗi model *(xong — 355 ảnh × 4 model)* → đọc tay 30 caption mỗi
+model, giấu tên → chấm 3 tiêu chí: đúng nội dung ảnh / tiếng Việt tự nhiên / đủ chi tiết.
+
+### Việc kỹ thuật còn lại
+
+| # | Việc | Vì sao |
+|---|---|---|
+| 1 | Sửa `kiem_cum_lap(n=2)` — nâng n=3 hoặc miễn trừ danh từ ghép | Nó phạt oan tiếng Việt, làm Vintern-3B trông tệ hơn thực tế. Sửa xong phải đo lại toàn bộ |
+| 2 | Chặn nhét chữ OCR ở tầng validator | Prompt đã thử và không ăn (mục 5). Đối chiếu OCR của Phần 2 để xoá tên riêng sau khi sinh |
+| 3 | Mở rộng tập holdout ngoài 355 ảnh | Chỉ 65/355 ảnh không có nhãn — quá ít để đo model sau khi train LoRA |
+| 4 | 13 ca lỗi: thử XGrammar hoặc đổi độ phân giải ảnh | Model sập token `!`; nâng `MAX_NEW_TOKENS` vô ích (mục 3) |
+
+### Về điểm benchmark tiếng Việt
+
+**Chưa có điểm BLEU/METEOR tiếng Việt công khai** cho Qwen2.5-VL hay InternVL3.5 — mọi điểm
+công bố đều đo trên tiếng Anh hoặc tiếng Trung. Đây là lý do phải tự đo thay vì tra bảng.
+
+Rủi ro tiếng Việt không phải giả định, thành viên Phần 2 đã ghi nhận: Qwen2-VL-2B **từ chối
+trả lời** bằng tiếng Việt trong một số trường hợp; Florence-2 **rơi vào vòng lặp vô hạn**;
+Vintern-1B đạt WER tốt nhất 0,34 trên tác vụ OCR.
+
+Số đo của chúng tôi khớp xu hướng đó: hai model Vintern có tỉ lệ chép tên riêng thấp hơn
+hẳn Qwen cùng cỡ, và Qwen2-VL-2B là model duy nhất còn chép ví dụ mẫu (5,04%).
 
 ---
 
