@@ -748,7 +748,7 @@ hẳn Qwen cùng cỡ, và Qwen2-VL-2B là model duy nhất còn chép ví dụ 
 | Máy cá nhân chỉ 4GB VRAM | RTX 3050 Ti Laptop | Chuyển hướng chạy trên Kaggle (16GB, miễn phí). Code tự dò VRAM và gợi ý model vừa |
 | Python 3.14 không cài được PyTorch | Phiên bản quá mới | Import lười — module vẫn dùng được phần schema/prompt khi thiếu torch. Chạy model trên Kaggle |
 | Script crash ngay dòng đầu | Console Windows dùng cp1252, không in được tiếng Việt | `sys.stdout.reconfigure(encoding="utf-8")`; log dùng ASCII |
-| Kaggle CLI lỗi chứng chỉ SSL | Phần mềm trên máy chèn chứng chỉ không đúng chuẩn vào kết nối HTTPS | Không cần thiết — chạy trực tiếp trên web Kaggle. Không tắt kiểm tra bảo mật để lách |
+| Kaggle CLI lỗi chứng chỉ SSL | Phần mềm trên máy chèn chứng chỉ vào kết nối HTTPS, `certifi` không xác thực được | `truststore.inject_into_ssl()` trước khi import kaggle — dùng kho chứng chỉ của hệ điều hành, không tắt kiểm tra bảo mật. Nhờ vậy đẩy/chạy/tải notebook bằng API, không cần mở web |
 | Không có quyền push repo nhóm | Repo thuộc tài khoản khác | Fork sang tài khoản cá nhân, làm việc trên fork, gửi PR sau |
 | Nguy cơ làm vỡ CI của nhóm | `system1/pyproject.toml` không khai báo torch | Đặt provider trong `research/` thay vì `src/`. Đã kiểm chứng `src/` không import gì từ code mới |
 | Model trả JSON kèm lời dẫn | Bản chất model hội thoại | Ba tầng phòng thủ (mục 5) |
@@ -756,8 +756,10 @@ hẳn Qwen cùng cỡ, và Qwen2-VL-2B là model duy nhất còn chép ví dụ 
 | File keyframe nặng 5.7GB, gần cạn đĩa Kaggle (~20GB) | Kho ảnh của cuộc thi rất lớn, trong khi benchmark chỉ cần 100 ảnh | `tai_anh_tu_zip_tren_mang.py` — đọc mục lục ở cuối file zip rồi chỉ tải đúng các đoạn byte chứa ảnh cần. Tải ~10MB thay vì 5.7GB |
 | Phiên Kaggle vẫn chạy CPU dù đã chọn GPU | Kaggle chỉ áp dụng lựa chọn accelerator **khi khởi động phiên**. Phiên đang chạy giữ nguyên cấu hình cũ | Dừng phiên (Run → Stop session) rồi chạy lại. Xác nhận bằng `torch.cuda.is_available()` |
 | `llm_int8_skip_modules` làm model chết khi chạy | Tham số này (giữ vision tower ở FP16) không tương thích với 4-bit trên bitsandbytes hiện tại → `FP4 quantization state not initialized` | Bỏ tham số, chấp nhận nén cả vision tower. Đã cô lập bằng 3 thí nghiệm A/B/C (mục 6) |
-| Vintern-1B cho latency 0,0s và VRAM 0,0GB | Adapter rơi về `MockAdapter`. Nguyên nhân gốc xác nhận từ log Kaggle: `InternVLChatModel` thiếu thuộc tính `all_tied_weights_keys` mà `transformers` 4.5x+ đòi hỏi — xung đột phiên bản, không phải thiếu adapter riêng | **CHƯA SỬA.** Hướng sửa rẻ hơn: ghim `transformers` về bản cũ hơn, thay vì viết adapter InternVL riêng |
-| Qwen2.5-VL-3B sập sau 4 ảnh | `CUDA error: device-side assert triggered` — nhiều khả năng tràn chỉ số khi ảnh có kích thước khác nhau | **CHƯA SỬA.** Cần chạy lại với `CUDA_LAUNCH_BLOCKING=1` hoặc ép `max_pixels` cố định |
+| Vintern-1B cho latency 0,0s và VRAM 0,0GB | Adapter rơi về `MockAdapter`: `InternVLChatModel` thiếu `all_tied_weights_keys` mà `transformers` 4.5x+ đòi hỏi | ✅ Ghim `transformers>=4.37,<4.50` + thêm cờ `--strict` để model nạp hỏng ném lỗi thay vì rơi về mock. Vintern-1B nay chạy thật (0%), Vintern-3B đạt 97,46% |
+| Qwen2.5-VL-3B sập sau 4 ảnh | `do_sample=True` bốc thăm trên phân phối `float16` tràn số thành `nan` — không phải lỗi model | ✅ Tắt lấy mẫu (`DUNG_LAY_MAU = False`, commit `d37bdc2`): 4,3% → 96,34% |
+| Chạy nhiều model một lượt thì tràn VRAM | `benchmark_runner` không gọi `xoa_cache_model()` giữa các model | ✅ Gọi trong khối `finally` cuối vòng lặp, kể cả nhánh nạp lỗi và khi người dùng ngắt |
+| Ca lỗi không chẩn đoán được | Checkpoint chỉ lưu thông báo lỗi, vứt nguyên văn output của model | ✅ Lưu `raw_text` (cắt trần 2000 ký tự) cho ca lỗi. Nhờ đó biết 13 ca lỗi là 320 dấu chấm than, không phải caption bị cắt |
 
 ---
 
@@ -766,33 +768,37 @@ hẳn Qwen cùng cỡ, và Qwen2-VL-2B là model duy nhất còn chép ví dụ 
 ```
 system1/research/vlm_prompting/
 ├── vlm/
-│   ├── schema.py           hình dạng JSON + ép kiểu khi model trả sai
-│   ├── prompts.py          prompt v1, có đánh phiên bản
-│   ├── json_utils.py       cứu JSON hỏng, 3 tầng
-│   ├── model_registry.py   5 model, tự chọn theo VRAM
-│   ├── model_loader.py     lượng tử hóa 4-bit, giữ vision tower FP16
-│   ├── adapters.py         3 backend: vLLM / transformers / mock
-│   ├── generate.py         **generate_json(image)** ← hàm đề bài yêu cầu
-│   └── provider.py         cắm vào system1 qua ImageCaptionProvider
+│   ├── schema.py             hình dạng JSON + ép kiểu khi model trả sai
+│   ├── prompts.py            prompt v3, có đánh phiên bản
+│   ├── json_utils.py         cứu JSON hỏng, 3 tầng
+│   ├── model_registry.py     8 model, tự chọn theo VRAM
+│   ├── model_loader.py       lượng tử hóa 4-bit + 4 nhánh nạp theo họ model
+│   ├── adapters.py           định tuyến backend: vLLM / transformers / mock
+│   ├── adapter_internvl.py   InternVL + Vintern (.chat() với pixel_values)
+│   ├── adapter_minicpm.py    MiniCPM-V (.chat() với msgs)
+│   ├── adapter_moondream.py  Moondream (.query() trả dict)
+│   ├── generate.py           **generate_json(image)** ← hàm đề bài yêu cầu
+│   └── provider.py           cắm vào system1 qua ImageCaptionProvider
+├── quality/                  bộ chấm chất lượng caption, không phụ thuộc model
 ├── scripts/
-│   ├── smoke_one_image.py      chạy thử 1 ảnh
-│   ├── prepare_sample_images.py chuẩn bị ≥100 ảnh
-│   ├── benchmark_runner.py     chạy benchmark, 2 chế độ DEBUG/MASS
-│   ├── metrics.py              tính 6 chỉ số
-│   ├── checkpoint_utils.py     lưu tiến độ mỗi 25 ảnh
-│   └── kaggle_smoke.ipynb      notebook chạy trên Kaggle
-├── README.md               hướng dẫn cho người mới
-└── report.md               file này
+│   ├── benchmark_runner.py         chạy benchmark, 2 chế độ DEBUG/MASS
+│   ├── gom-bang-benchmark-report.py gom số 3 nguồn thành bảng report
+│   ├── metrics.py                  tính 6 chỉ số
+│   ├── checkpoint_utils.py         lưu tiến độ mỗi 25 ảnh
+│   └── kaggle/                     đẩy + chạy + tải kết quả bằng API
+├── data/holdout-65-anh-sach.txt    65 ảnh không có nhãn, để đo model sau train
+├── README.md                 hướng dẫn cho người mới
+└── report.md                 file này
 ```
 
 ### Đối chiếu yêu cầu đề bài
 
 | Yêu cầu | Trạng thái |
 |---|---|
-| Khảo sát VLM <7B, chạy được 4-bit | ✅ 7 model khảo sát, 5 model cài sẵn |
-| Ít nhất 3 mô hình ứng viên | ✅ 5 model |
+| Khảo sát VLM nhỏ gọn, chạy được 4-bit | ✅ 8 model khảo sát, tất cả cài sẵn trong registry |
+| Ít nhất 3 mô hình ứng viên | ✅ **4 model có số đo đầy đủ** trên 355 ảnh |
 | Áp dụng lượng tử hóa 4-bit | ✅ NF4, giữ vision tower FP16 |
-| Prompt ép JSON, có `caption_chi_tiet` | ✅ prompt v2 (hiện hành) + 3 tầng phòng thủ |
+| Prompt ép JSON, có `caption_chi_tiet` | ✅ prompt v3 (hiện hành) + 3 tầng phòng thủ |
 | `caption_chi_tiet` mô tả dài, đủ ngữ cảnh | ✅ ép tối thiểu 25 ký tự, đo số từ |
 | Chạy thử ≥100 ảnh | ✅ **355 ảnh × 2 model Qwen** — Qwen2.5-VL-3B thành công 342 (96,34%), Qwen2-VL-2B 275 (77,46%). Kaggle T4, 16/08/2026, kernel v19, `data/keyframes_aic/` |
 | Hàm `generate_json(image)` | ✅ `vlm/generate.py` — đã chạy thật trên keyframe AIC |
