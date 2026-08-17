@@ -67,6 +67,18 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         trust_remote_code=True,
         ghi_chu="Cùng kiến trúc InternVLChatModel với Vintern-1B, 3,71 tỷ tham số.",
     ),
+    "internvl35-8b": ModelSpec(
+        key="internvl35-8b",
+        hf_id="OpenGVLab/InternVL3_5-8B",
+        ten_hien_thi="InternVL 3.5 8B",
+        vram_4bit_gb=7.0,
+        loader="auto_causal",
+        trust_remote_code=True,
+        ghi_chu=(
+            "8,53 tỷ tham số, cùng InternVLChatModel với Vintern nên dùng chung "
+            "adapter. Trước bị loại vì 'vượt 7B của đề bài' — lý do đó đã đổ."
+        ),
+    ),
     "minicpm-v-4": ModelSpec(
         key="minicpm-v-4",
         hf_id="openbmb/MiniCPM-V-4",
