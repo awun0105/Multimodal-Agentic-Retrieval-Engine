@@ -72,7 +72,7 @@ data/aic25-b1-v1/
 - Hugging Face CLI `hf`
 - Enough disk space for the release data
 
-If the bucket is private, you also need Hugging Face access.
+The data bucket is public, so login is not required for normal download.
 
 ## 1. Go to the app folder
 
@@ -90,7 +90,7 @@ pip install -r requirements.txt
 
 If `python3.10` is not found, install Python 3.10 first.
 
-## 3. Install and login to Hugging Face
+## 3. Install Hugging Face CLI
 
 Install `hf` if you do not have it:
 
@@ -98,15 +98,12 @@ Install `hf` if you do not have it:
 curl -LsSf https://hf.co/cli/install.sh | bash -s
 ```
 
-Login if needed:
+No login is needed for the public bucket.
+
+Only login if the command later fails with an auth or permission error:
 
 ```bash
 hf auth login
-```
-
-Check login:
-
-```bash
 hf auth whoami
 ```
 
