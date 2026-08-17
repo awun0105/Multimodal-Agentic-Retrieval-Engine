@@ -1,0 +1,813 @@
+{
+ "_ghi_chu": "Diem cham tay: Dung/TiengViet/Du, moi tieu chi 0-2. Nguoi cham: Claude, co mo anh that.",
+ "012.jpg": {
+  "_anh": "Do hoa dung san: bang XANH LA, giao vien o goc phai khung nho, chu chim 'Giao vien HONG NHUNG / Truong Quoc te A Chau'",
+  "A": [
+   1,
+   2,
+   1,
+   "sai mau bang (den vs xanh la), co khong dung truoc bang"
+  ],
+  "B": [
+   1,
+   1,
+   2,
+   "chep ten rieng tu chu chim; mau dung nhung 'gian hang hoc' la sai"
+  ],
+  "C": [
+   1,
+   1,
+   1,
+   "sai mau bang; boi_canh='mot giao vien' sai kieu truong"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "ao hong dung, noi dung bang dung, chi tiet nhat; 'bang den mau xanh la' hoi mau thuan"
+  ]
+ },
+ "013.jpg": {
+  "_anh": "Chung chi IACBE trao cho The Saigon International University, School of Business Administration, 2 chu ky",
+  "A": [
+   2,
+   2,
+   1,
+   "dung, ngan"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "chi tiet nhat: logo + 2 chu ky"
+  ],
+  "C": [
+   2,
+   0,
+   1,
+   "VIET BANG TIENG ANH - sai yeu cau"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "dung, co ghi day du ten to chuc"
+  ]
+ },
+ "015.jpg": {
+  "_anh": "Dan ong ao so mi trang, quan jeans xanh dam, cam sach DONG, di giua hai ke sach thu vien",
+  "A": [
+   1,
+   2,
+   1,
+   "'hang rao sach' la cach goi la; thieu chi tiet trang phuc"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "chinh xac nhat: ao trang, quan jeans, hai hang ke, thu vien"
+  ],
+  "C": [
+   1,
+   1,
+   2,
+   "bia 'cam sach mo ra' (sach dong); 'thu muc rong lon' dung sai tu"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "dung; 'hanh lang day sach mau sac ruc ro' hop ly"
+  ]
+ },
+ "021.jpg": {
+  "_anh": "Cung canh thu vien nhu 015 nhung PHAI TRANG nang, van nhan ra nguoi di giua hai ke sach",
+  "A": [
+   1,
+   2,
+   1,
+   "goi la 'sanh trong toa nha', bo sot ke sach"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "dung ca nguoi lan ke sach"
+  ],
+  "C": [
+   1,
+   1,
+   1,
+   "'canh hang sach' toi nghia, rat ngan"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "dung, mo ta loi di hep giua hai hang ke"
+  ]
+ },
+ "040.jpg": {
+  "_anh": "Anh GAN NHU TRANG XOA - khung chuyen canh bi phai, chi con bong mo khong ro vat gi",
+  "A": [
+   2,
+   2,
+   1,
+   "mo ta dung thu nhin thay: mau be/trang, khong co doi tuong cu the"
+  ],
+  "B": [
+   0,
+   2,
+   2,
+   "CHEP VI DU MAU trong prompt (noi kim loai, bep gas) - bia hoan toan"
+  ],
+  "C": [
+   0,
+   2,
+   1,
+   "bia 'nguoi va con meo'"
+  ],
+  "D": [
+   1,
+   2,
+   1,
+   "'nhieu hinh dang va mau sac' hoi qua, nhung 'chu yeu mau trang' dung"
+  ]
+ },
+ "042.jpg": {
+  "_anh": "2 nguoi vest sam cam bia/bang, logo SIU Saigon International University, truoc man chieu trang",
+  "A": [
+   2,
+   2,
+   1,
+   "dung, 'phong hop' hoi chung"
+  ],
+  "B": [
+   1,
+   2,
+   1,
+   "SIU la Saigon khong phai Singapore"
+  ],
+  "C": [
+   1,
+   1,
+   2,
+   "bia 'DH Su pham Quoc gia TPHCM'; nhung bat dung man hinh trang + logo SIU"
+  ],
+  "D": [
+   0,
+   2,
+   1,
+   "sai hoan toan: 'ao khoac do', 'vay trang' deu khong dung"
+  ]
+ },
+ "045.jpg": {
+  "_anh": "BA nguoi ao so mi trang ngoi ghe cao choi guitar acoustic, nen rem trang, anh phai sang",
+  "A": [
+   0,
+   1,
+   1,
+   "'Tro ly vien nhac' vo nghia, bia 'phong am thanh', khong neu so nguoi"
+  ],
+  "B": [
+   1,
+   2,
+   2,
+   "noi BON nguoi (that la ba); con lai chinh xac: ao trang, guitar acoustic, anh sang mo ao"
+  ],
+  "C": [
+   2,
+   2,
+   1,
+   "dung so nguoi (ba); 'nha hat' hoi qua"
+  ],
+  "D": [
+   1,
+   2,
+   1,
+   "sai so nguoi (hai)"
+  ]
+ },
+ "061.jpg": {
+  "_anh": "SV ao XANH DUONG tren san khau, nguoi VEST DEN giua cam CO vang-do, man chieu 'LE CONG BO Journey Scholarship' logo SIU",
+  "A": [
+   1,
+   2,
+   2,
+   "vest den dung nhung noi 'nghe' - that ra dang cam co"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "chinh xac nhat: bat duoc ca 'cam co' lan 'buoi le'"
+  ],
+  "C": [
+   1,
+   2,
+   2,
+   "sai 'ao so mi trang' (la vest den), bo sot la co"
+  ],
+  "D": [
+   1,
+   0,
+   1,
+   "LAN CHU HAN 'Xi zhuang zheng zai sheng qi', cau dut giua chung"
+  ]
+ },
+ "082.jpg": {
+  "_anh": "Nhom nguoi doi mu boi, kinh boi, dung VAN TAP BOI xanh/vang trong be boi",
+  "A": [
+   1,
+   2,
+   1,
+   "bia 'duoi su huong dan cua giao vien' - khong thay giao vien"
+  ],
+  "B": [
+   1,
+   2,
+   2,
+   "'ao phao va mu bao ho' sai (la mu boi + van tap); be boi va anh sang dung"
+  ],
+  "C": [
+   1,
+   1,
+   1,
+   "'con tay boi loi' - tu vo nghia"
+  ],
+  "D": [
+   1,
+   0,
+   1,
+   "'bot bien va boi lon' - vo nghia nang"
+  ]
+ },
+ "089.jpg": {
+  "_anh": "So do tu duy 'HOI NGHI YALTA' 4 nhanh, thay ao sang truoc laptop Dell, chu chim 'Thay NGUYEN VIET DANG DU', bang chu 'On thi THPT 2024 Mon Lich Su CD7'",
+  "A": [
+   1,
+   1,
+   2,
+   "bat duoc chuong trinh 2024 + lich su nhung BO SOT Yalta, cau le the"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "gon va trung nhat: Yalta + on thi THPT 2024 mon Lich su"
+  ],
+  "C": [
+   1,
+   2,
+   2,
+   "CHEP TEN THAY tu chu chim"
+  ],
+  "D": [
+   2,
+   2,
+   1,
+   "ta hinh anh chinh xac nhat (ao trang, kinh, laptop den, so do vong tron) nhung khong neu chu de Yalta"
+  ]
+ },
+ "096.jpg": {
+  "_anh": "Slide 'Luyen viet doan van nghi luan xa hoi 200 chu', de ve cong dan toan cau, thay ao xanh DUNG goc trai",
+  "A": [
+   0,
+   2,
+   1,
+   "thay DUNG khong ngoi, 'may tinh bang' sai, 'ben ngoai toa nha' sai han"
+  ],
+  "B": [
+   0,
+   1,
+   0,
+   "'Tro ly' vo nghia, 'quan ly nhan su' bia"
+  ],
+  "C": [
+   1,
+   2,
+   2,
+   "CHEP TEN THAY nhung chu de dung"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "trung nhat: dung chu de, 'lop hoc truc tuyen' hop ly, khong chep ten"
+  ]
+ },
+ "098.jpg": {
+  "_anh": "Slide 'Nguoi lai do song Da - Nguyen Tuan', thay ao XANH DUONG dung goc trai, anh song nuoc + thac",
+  "A": [
+   1,
+   2,
+   2,
+   "thay DUNG khong ngoi, ao xanh khong phai xam; bat dung Nguyen Tuan"
+  ],
+  "B": [
+   0,
+   2,
+   2,
+   "CHEP VI DU MAU (noi, bep gas) - bia hoan toan"
+  ],
+  "C": [
+   2,
+   2,
+   2,
+   "dung tac pham + hinh anh song/thac, goi 'giao vien nam' khong chep ten"
+  ],
+  "D": [
+   2,
+   2,
+   1,
+   "dung noi dung nhat nhung CHEP TEN THAY"
+  ]
+ },
+ "187.jpg": {
+  "_anh": "Phu nu AO TIM toc dai quay lung nhin bien quang cao GAIE Group of Asian International Education, anh tre em ao do, toa nha AHS, chu TOEFL",
+  "A": [
+   1,
+   2,
+   2,
+   "dung 'ao do' + GAIE nhung bia ten 'Truong DH Quoc te AHS'"
+  ],
+  "B": [
+   2,
+   2,
+   1,
+   "ao tim dung, toa nha cao tang dung, thieu chi tiet GAIE"
+  ],
+  "C": [
+   1,
+   2,
+   2,
+   "bat dung 'quay lung', 'do va trang', nhung bo sot GAIE"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "day du nhat: ao tim + GAIE + toa nha"
+  ]
+ },
+ "189.jpg": {
+  "_anh": "Phong thi nghiem: nguoi ao blouse trang, ong nghiem/binh dung dich hong-xanh la-xanh duong-vang-do, den con",
+  "A": [
+   1,
+   2,
+   1,
+   "dung nhung bo sot nguoi"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "day du nhat: nguoi + dung cu + mau sac cu the"
+  ],
+  "C": [
+   1,
+   0,
+   1,
+   "LAN CHU HAN 'shi guan', 'rong ye'"
+  ],
+  "D": [
+   2,
+   2,
+   1,
+   "dung nhung chung chung"
+  ]
+ },
+ "220.jpg": {
+  "_anh": "Cung slide voi 096 khung sau, thay ao xanh DUNG dang gio tay giang",
+  "A": [
+   2,
+   2,
+   2,
+   "trung nhat: dung chu de nguyen van, khong chep ten"
+  ],
+  "B": [
+   1,
+   2,
+   2,
+   "dung chu de nhung CHEP TEN THAY"
+  ],
+  "C": [
+   0,
+   1,
+   0,
+   "'Tro ly' vo nghia, 'van nghe luan' sai chinh ta"
+  ],
+  "D": [
+   1,
+   2,
+   1,
+   "thay DUNG khong ngoi; ao xanh dung nhung 'bang trang va bang den' bia"
+  ]
+ },
+ "228.jpg": {
+  "_anh": "Thay nuoc ngoai deo kinh ao trang CA VAT DO + nu sinh dong phuc trang (logo Asian Intl School), lop co tu go, tuong gach do tia",
+  "A": [
+   1,
+   2,
+   1,
+   "dung co ban, mau sac gan dung nhung thieu chi tiet"
+  ],
+  "B": [
+   0,
+   1,
+   0,
+   "'phong bep' SAI HAN"
+  ],
+  "C": [
+   1,
+   2,
+   1,
+   "dung nhung 'hai nguoi mac dong phuc' - chi nu sinh mac"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "chinh xac nhat: kinh, ao trang, ca vat do, dong phuc nu sinh, tu the lang nghe"
+  ]
+ },
+ "252.jpg": {
+  "_anh": "HS nu dong phuc DO deo tai nghe dung MAY DE BAN (khong phai laptop), co giao ao hong dung huong dan",
+  "A": [
+   1,
+   2,
+   2,
+   "tai nghe + dong phuc do dung nhung 'may tinh xach tay' sai"
+  ],
+  "B": [
+   1,
+   2,
+   0,
+   "dung nhung qua so sai"
+  ],
+  "C": [
+   2,
+   2,
+   2,
+   "trung nhat: dong phuc do, tai nghe, may tinh, khong sai chi tiet nao"
+  ],
+  "D": [
+   2,
+   2,
+   1,
+   "bat duoc GIAO VIEN huong dan - chi tiet ba model kia bo sot"
+  ]
+ },
+ "253.jpg": {
+  "_anh": "Slide 'Bai tap ap dung' nen XANH LA DAM, Cau 5 Fe+Mg vao AgNO3, 4 dap an, day ion Mg2+/Fe2+/Ag+",
+  "A": [
+   2,
+   2,
+   2,
+   "bat duoc nen xanh la + 'lua chon dap an' + 'ion hoa' nhung goi 'trang giay'"
+  ],
+  "B": [
+   2,
+   2,
+   1,
+   "dung chat phan ung, ngan"
+  ],
+  "C": [
+   2,
+   2,
+   1,
+   "dung, gon"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "day du nhat: neu ca dung dich X hai muoi va chat ran Y"
+  ]
+ },
+ "258.jpg": {
+  "_anh": "Dan piano DEN tren san khau hoi truong KHONG CO NGUOI, den xanh duong va vang, hang ghe trong",
+  "A": [
+   2,
+   2,
+   2,
+   "chinh xac nhat: piano, san khau, nha hat, anh sang xanh"
+  ],
+  "B": [
+   2,
+   2,
+   1,
+   "dung piano den + san khau; 'rap chieu phim' hoi lech"
+  ],
+  "C": [
+   0,
+   2,
+   1,
+   "BIA nguoi choi dan - khong co ai"
+  ],
+  "D": [
+   1,
+   1,
+   0,
+   "qua chung chung, 'am nhac dang dien' sai"
+  ]
+ },
+ "278.jpg": {
+  "_anh": "Slide trang 'BAI TAP AP DUNG', Cau 2 nhiet do soi 4 chat huu co, 4 dap an",
+  "A": [
+   0,
+   0,
+   0,
+   "SAI HOAN TOAN: 'hai canh mau trang va do dang chua' vo nghia"
+  ],
+  "B": [
+   1,
+   0,
+   1,
+   "chep dung cong thuc nhung 'Chu tu so hoa' vo nghia, bo sot cau hoi"
+  ],
+  "C": [
+   2,
+   2,
+   1,
+   "gon va dung chu de"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "day du nhat: nen trang, phan tu hoa hoc, cau hoi thu tu nhiet do soi"
+  ]
+ },
+ "282.jpg": {
+  "_anh": "Slide 'Doan mau tham khao' - bai van mau ve cong dan toan cau, thay ao xanh DUNG goc trai, bang chu 'On thi THPT 2024 Ngu van CD6'",
+  "A": [
+   0,
+   2,
+   1,
+   "'ban hoc tap voi nhieu do hoc va bang chu cai' - bia"
+  ],
+  "B": [
+   1,
+   2,
+   1,
+   "CHEP TEN THAY; 'mau cam va xanh duong' dung tong slide"
+  ],
+  "C": [
+   1,
+   2,
+   2,
+   "thay DUNG khong ngoi, ao XANH khong phai den; ta nguoi co phan dung"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "trung nhat: bat dung bang chu chuong trinh, khong chep ten"
+  ]
+ },
+ "299.jpg": {
+  "_anh": "Nguoi doi mu boi den boi trong be nuoc xanh, HAI TAY CAM TA NUOC (dumbbell xop xanh), mat vua nho len",
+  "A": [
+   2,
+   2,
+   2,
+   "gan nhat: 'dau noi len khoi mat nuoc', 'tay giu chat hai ben' (that ra cam ta), gon song dung"
+  ],
+  "B": [
+   1,
+   2,
+   0,
+   "dung nhung so sai"
+  ],
+  "C": [
+   1,
+   2,
+   1,
+   "dung, ngan"
+  ],
+  "D": [
+   1,
+   0,
+   1,
+   "LAN CHU HAN 'shui mian'; 'anh sang mat troi' bia (be trong nha)"
+  ]
+ },
+ "314.jpg": {
+  "_anh": "Thay tre ao so mi xanh nhat ngoi truoc laptop Asus, man hinh phai la bai TOAN SO PHUC (Vi du 5, mat phang Oxy), nen toi co cong thuc toan",
+  "A": [
+   0,
+   2,
+   0,
+   "SAI MON: 'hoa hoc', that ra la toan"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "dung nhat: 'ngoi truoc man hinh' + 'bai tap toan'; chi tiet toa do hoi lech nhung dung mang"
+  ],
+  "C": [
+   1,
+   2,
+   1,
+   "dung chung chung, co laptop"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "'ao so mi trang' gan dung (xanh nhat), 'bang den voi bieu do' hop ly"
+  ]
+ },
+ "322.jpg": {
+  "_anh": "Cung boi canh 012: bang XANH LA, co ao hong NGOI goc phai, bai 'PRACTICE 2' cau dieu kien, ten chim 'Giao vien HONG NHUNG'",
+  "A": [
+   2,
+   2,
+   2,
+   "dung nhat va KHONG CHEP TEN: 'bang mau xanh la' chinh xac, chu de dung"
+  ],
+  "B": [
+   1,
+   2,
+   2,
+   "CHEP TEN; 'dung truoc bang' sai (co ngoi); 'bang den mau xanh la' mau thuan"
+  ],
+  "C": [
+   1,
+   2,
+   1,
+   "CHEP TEN; 'sach giao trinh tren ban' bia"
+  ],
+  "D": [
+   0,
+   1,
+   0,
+   "gan nhu khong co thong tin"
+  ]
+ },
+ "329.jpg": {
+  "_anh": "Cung canh 061: 'LE CONG BO Journey Scholarship', The Saigon International University, nguoi vest den cam co",
+  "A": [
+   1,
+   2,
+   2,
+   "'Dai hoc Sai Gon Quoc te' dao ten; bia 'doc bai phat bieu'"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "chinh xac nhat: dung ten truong lan ten chuong trinh"
+  ],
+  "C": [
+   2,
+   2,
+   2,
+   "bat duoc LA CO - chi tiet noi bat ma A,B,D bo sot"
+  ],
+  "D": [
+   1,
+   2,
+   2,
+   "sai 'giao vien nam' (la nguoi vest den cam co)"
+  ]
+ },
+ "338.jpg": {
+  "_anh": "Dan nhac giao huong day du tren san khau, PIANO CANH o giua co nguoi choi, violin/cello quanh, nhac truong dung giua",
+  "A": [
+   2,
+   2,
+   2,
+   "chinh xac nhat: dan nhac giao huong, piano dat giua"
+  ],
+  "B": [
+   2,
+   0,
+   1,
+   "VIET TIENG ANH - sai yeu cau"
+  ],
+  "C": [
+   2,
+   2,
+   2,
+   "dung nhac cu (violin, cello, piano), anh sang vang dung"
+  ],
+  "D": [
+   2,
+   2,
+   2,
+   "bat dung NHAC TRUONG dung giua - chi tiet ba model kia bo sot"
+  ]
+ },
+ "339.jpg": {
+  "_anh": "Logo 'THANH NIEN' mau xanh tren nen xam, co thanhnien.vn",
+  "A": [
+   2,
+   2,
+   1,
+   "dung, rat ngan"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "day du nhat: mau xanh duong + ten + nen xam"
+  ],
+  "C": [
+   2,
+   2,
+   2,
+   "dung, co ghi 'to bao Thanh Nien'"
+  ],
+  "D": [
+   2,
+   2,
+   1,
+   "dung nhung khong neu ten logo"
+  ]
+ },
+ "428.jpg": {
+  "_anh": "BA thanh nien ao so mi trang ngoi ghe cao choi guitar acoustic, anh sang vang am, nen rem trang",
+  "A": [
+   1,
+   2,
+   2,
+   "noi BON nguoi (that ba); con lai dung: ao trang, quan tay, guitar acoustic, anh sang vang"
+  ],
+  "B": [
+   2,
+   2,
+   1,
+   "dung so ba; 'buoi hoa nhac' hoi lech"
+  ],
+  "C": [
+   1,
+   2,
+   1,
+   "dung ba nguoi + anh sang vang; 'phong tap the duc' sai"
+  ],
+  "D": [
+   2,
+   2,
+   1,
+   "dung ba nguoi + anh sang vang; 'gian hang nhac' la"
+  ]
+ },
+ "498.jpg": {
+  "_anh": "Thay ao so mi XANH NHAT ngoi truoc laptop Asus, nen XANH DUONG, man hinh phai la Cau 7 xac dinh tuoi co vat bang C14 (toan mu-logarit, TN THPT 2022)",
+  "A": [
+   2,
+   2,
+   2,
+   "bat dung 'ngoi lam viec tren laptop' + NEN XANH DUONG; 'van phong' hoi lech"
+  ],
+  "B": [
+   2,
+   2,
+   1,
+   "'ao so mi mau xanh' dung; du y giang day tren man hinh"
+  ],
+  "C": [
+   2,
+   2,
+   2,
+   "trung nhat: 'lop hoc truc tuyen' + 'bai toan toan hoc'"
+  ],
+  "D": [
+   1,
+   1,
+   0,
+   "'khoang giang day' toi nghia, thieu thong tin"
+  ]
+ },
+ "595.jpg": {
+  "_anh": "Hai nguoi dan ong cam bang 'TRAO TANG QUY HOC BONG TAI NANG TRE - Truong DH Quoc te Sai Gon', mot ao so mi xanh nhat, mot vest den ca vat do",
+  "A": [
+   2,
+   2,
+   2,
+   "'bang thong bao mau den' dung, ten truong dung"
+  ],
+  "B": [
+   2,
+   2,
+   2,
+   "dung noi dung, 'bang quang cao' hoi lech"
+  ],
+  "C": [
+   2,
+   2,
+   2,
+   "dung so nguoi (2) + ten truong + logo"
+  ],
+  "D": [
+   1,
+   2,
+   2,
+   "bia 'giao vien nam va sinh vien nam'"
+  ]
+ }
+}

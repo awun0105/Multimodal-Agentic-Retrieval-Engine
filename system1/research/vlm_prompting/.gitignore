@@ -17,6 +17,7 @@ results/*.tmp
 !results/checkpoint_vintern-1b-355anh.json
 !results/checkpoint_minicpm-v-4.json
 !results/checkpoint_moondream2.json
+!results/checkpoint_internvl35-8b.json
 
 # Python
 __pycache__/

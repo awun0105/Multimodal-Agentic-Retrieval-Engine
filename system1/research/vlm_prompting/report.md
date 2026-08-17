@@ -5,13 +5,14 @@
 **Ngày:** 15/08/2026 (cập nhật 16/08/2026)
 **Nhánh:** `research-branch/vlm-prompting` — PR [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29)
 
-> **TRẠNG THÁI: 7 model đã đo trên 355 keyframe thật, vượt mốc ≥100 ảnh của đề bài.**
+> **TRẠNG THÁI: 8 model đã đo trên 355 keyframe thật, vượt mốc ≥100 ảnh của đề bài.**
 >
 > **Bốn model chạy được** (chi tiết mục 3):
 >
 > | Model | JSON hợp lệ | VRAM | Chép tên riêng |
 > |---|---|---|---|
 > | Qwen2.5-VL-7B | **99,72%** (354/355) | 6,798 GB | **7,06%** |
+> | InternVL3.5-8B | 98,31% (349/355) | 9,294 GB | 8,88% |
 > | Vintern-3B-R-beta | 97,46% (346/355) | **2,841 GB** | 17,05% |
 > | Qwen2.5-VL-3B ← đang chọn | 96,34% (342/355) | 3,960 GB | 33,04% |
 > | Qwen2-VL-2B | 78,31% (278/355) | 2,052 GB | 26,26% |
@@ -65,7 +66,7 @@ tên gọi hay làm tròn xuống (Qwen2.5-VL-"7B" thật ra 8,29 tỷ).
 | Model | Tham số | VRAM đo thật | Trạng thái |
 |---|---|---|---|
 | Qwen2.5-VL-7B-Instruct | 8,29B | 6,798 GB | ✅ Đã đo — cao nhất mọi chỉ số chất lượng |
-| InternVL3.5-8B | 8,53B | *đang đo* | Á quân MMBench; lý do loại cũ ("vượt 7B") đã đổ |
+| InternVL3.5-8B | 8,53B | 9,294 GB | ✅ Đã đo — 98,31%, vòng vo thấp nhất bảng |
 | MiniCPM-V-4.0 | 4,06B | tràn 12,97 GB | ❌ 4-bit không có tác dụng trên model này |
 | Qwen2.5-VL-3B-Instruct | 3,75B | 3,960 GB | ✅ Đã đo — model đang chọn |
 | Vintern-3B-R-beta | 3,71B | 2,841 GB | ✅ Đã đo — **đề xuất đổi sang** |
@@ -109,6 +110,7 @@ Mọi model chạy **cùng bộ ảnh, cùng cấu hình**, nên so sánh trực
 | **Qwen2.5-VL-7B** | 8,29B | 12,411 s | 6,798 GB | **99,72%** (354/355) | **8,47%** | **6,50%** | 0,9520 | 0,00% |
 | **Vintern-3B-R-beta** | 3,71B | 10,636 s | 2,841 GB | 97,46% (346/355) | 22,25% | 37,28% ⚠️ | **0,9769** | 0,00% |
 | **Qwen2.5-VL-3B** ← đang chọn | 3,75B | 12,118 s | 3,960 GB | 96,34% (342/355) | 34,80% | 9,65% | 0,9737 | 0,00% |
+| **InternVL3.5-8B** | 8,53B | 26,242 s | 9,294 GB | 98,31% (349/355) | 8,88% | **4,30%** | 0,9656 | 0,00% |
 | **Qwen2-VL-2B** | 2,21B | **9,126 s** | **2,052 GB** | 78,31% (278/355) | 26,26% | 16,91% | 0,8597 | 5,04% |
 | Vintern-1B-v3.5 | 0,94B | — | — | **0%** (0/355) | — | — | — | — |
 | MiniCPM-V-4 | 4,06B | — | tràn 12,97 GB | **0%** (0/355) | — | — | — | — |
@@ -710,7 +712,10 @@ mà Qwen2-VL-2B để 28% mục ở `status="partial"`.
 
 ### Đề xuất đổi sang: **Vintern-3B-R-beta**
 
-Sau khi đo đủ 6 model (mục 3), Vintern-3B thắng model đang chọn ở 5/6 chỉ số:
+Chấm tay 30 ảnh cho thấy **chất lượng caption của ba model đầu ngang nhau** (p ≥ 0,48) — nên
+quyết định phải dựa vào tài nguyên và tỉ lệ JSON hợp lệ, không phải chất lượng caption.
+
+Vintern-3B thắng model đang chọn ở 5/6 chỉ số:
 
 | | Vintern-3B | Qwen2.5-VL-3B |
 |---|---|---|
@@ -724,22 +729,49 @@ Sau khi đo đủ 6 model (mục 3), Vintern-3B thắng model đang chọn ở 5
 Nhẹ hơn 1,1 GB, nhanh hơn 1,5 s/ảnh, chép tên riêng bằng nửa. Nó cũng là **VLM fine-tune
 riêng cho tiếng Việt** — đúng vai "mốc so sánh tiếng Việt" mà bản chia việc yêu cầu.
 
-**Nếu ưu tiên chất lượng caption:** Qwen2.5-VL-7B đạt 99,72% và chép tên riêng chỉ 7,06%,
-đổi lại nặng gấp 2,4 lần khi tải (16,6 GB) và chiếm 47% VRAM T4. Cả hai đều nằm trong trần
-phần cứng thật ~11 tỷ tham số.
+**Nếu ưu tiên tỉ lệ thành công:** Qwen2.5-VL-7B đạt 99,72% (354/355) và chép tên riêng chỉ
+7,06%, đổi lại nặng gấp 2,4 lần khi tải (16,6 GB) và chiếm 47% VRAM T4.
+
+**InternVL3.5-8B** cũng đo được: 98,31%, vòng vo thấp nhất bảng (4,30%). Nhưng chậm gấp đôi
+(26,2 s/ảnh) và tốn 9,29 GB — không có lợi thế nào bù lại so với Qwen-7B.
+
+Cả ba đều nằm trong trần phần cứng thật ~11 tỷ tham số.
 
 **Đường lui khi GPU dưới 6 GB:** Qwen2-VL-2B, giữ trong registry, đổi bằng một tham số.
 
-### Điều kiện để chốt
+### Kết quả chấm tay 30 ảnh × 4 model
 
-**Chấm tay 30 caption × 4 model, giấu tên model** — bước chặn duy nhất còn lại.
+Chấm mù (giấu tên model, xáo A/B/C/D mỗi ảnh), có mở từng ảnh gốc. Ba tiêu chí thang 0-2.
+Chi tiết: `plans/reports/cham-tay-260817-1230-30-anh-4-model.md`
 
-Lý do cần mắt người: máy chấm cho tín hiệu mâu thuẫn. Vintern-3B thắng 5 chỉ số nhưng thua
-"vòng vo 37,28%", mà con số đó đã chứng minh là thước đo phạt oan danh từ ghép tiếng Việt
-(mục 3). Khi thước đo không đáng tin ở một chiều, số máy chấm không đủ để quyết.
+| Model | Đúng | Tiếng Việt | Đủ | **Tổng /6** |
+|---|---|---|---|---|
+| Qwen2.5-VL-7B | **1,63** | **1,93** | 1,47 | **5,03** |
+| Vintern-3B-R-beta | 1,30 | 1,87 | **1,77** | **4,93** |
+| Qwen2.5-VL-3B | 1,50 | 1,77 | 1,50 | **4,77** |
+| Qwen2-VL-2B | 1,00 | 1,43 | 0,93 | **3,37** |
 
-Quy trình: chạy ≥100 ảnh mỗi model *(xong — 355 ảnh × 4 model)* → đọc tay 30 caption mỗi
-model, giấu tên → chấm 3 tiêu chí: đúng nội dung ảnh / tiếng Việt tự nhiên / đủ chi tiết.
+**Ba model đầu KHÔNG phân biệt được về chất lượng caption.** Phép thử dấu trên từng cặp ảnh:
+
+| Cặp | Thắng-Thua-Hoà | p | Kết luận |
+|---|---|---|---|
+| Qwen-7B vs Vintern-3B | 13-12-5 | 1,000 | không phân biệt được |
+| Qwen-3B vs Qwen-7B | 11-15-4 | 0,557 | không đủ bằng chứng |
+| Qwen-3B vs Vintern-3B | 7-11-12 | 0,481 | không đủ bằng chứng |
+| **Qwen2-VL-2B vs cả ba** | 4-22, 4-21, 6-21 | **≤ 0,006** | ✅ kém hơn hẳn |
+
+Kết luận duy nhất có ý nghĩa thống kê: **Qwen2-VL-2B kém hơn rõ rệt**. Muốn tách ba model
+đầu cần ~100-150 ảnh.
+
+**Mỗi model mạnh một kiểu** — điểm trung bình che mất chỗ này:
+- Qwen-7B: đúng nhất, tiếng Việt trôi chảy nhất, nhưng caption ngắn (22 từ) nên "Đủ" thấp
+- Vintern-3B: chi tiết nhất (55 từ, "Đủ" 1,77 bỏ xa phần còn lại), đổi lại dễ sai chi tiết nhỏ
+
+**Hai lỗi mà bộ đo tự động bỏ sót**, chỉ thấy khi đọc ảnh:
+1. **Chép ví dụ mẫu** — 2 ảnh có caption "nồi kim loại đun sôi trên bếp gas" (ví dụ trong
+   `prompts.py`), cả hai của Vintern-3B. Bộ đo ghi 0,00% vì so n-gram 8 từ quá chặt.
+2. **Caption viết bằng tiếng Anh** — 2 ca của Qwen-3B. Bộ đo chỉ bắt ký tự lạ, không bắt
+   câu tiếng Anh đúng chính tả.
 
 ### Việc kỹ thuật còn lại
 
