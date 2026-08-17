@@ -5,7 +5,7 @@
 **Ngày:** 15/08/2026 (cập nhật 16/08/2026)
 **Nhánh:** `research-branch/vlm-prompting` — PR [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29)
 
-> **TRẠNG THÁI: 6 model đã đo trên 355 keyframe thật, vượt mốc ≥100 ảnh của đề bài.**
+> **TRẠNG THÁI: 7 model đã đo trên 355 keyframe thật, vượt mốc ≥100 ảnh của đề bài.**
 >
 > **Bốn model chạy được** (chi tiết mục 3):
 >
@@ -16,8 +16,9 @@
 > | Qwen2.5-VL-3B ← đang chọn | 96,34% (342/355) | 3,960 GB | 33,04% |
 > | Qwen2-VL-2B | 78,31% (278/355) | 2,052 GB | 26,26% |
 >
-> **Hai model không dùng được:** Vintern-1B 0% (tự chế tên trường JSON) · MiniCPM-V-4 0%
-> (tràn bộ nhớ — lượng tử hoá 4-bit không có tác dụng trên model này).
+> **Ba model không dùng được:** Vintern-1B 0% (tự chế tên trường JSON) · MiniCPM-V-4 0%
+> (lượng tử hoá 4-bit không có tác dụng, tràn 12,97 GB) · Moondream 2 0% (ngữ cảnh 2048
+> token, không nhận nổi prompt chuẩn). InternVL3.5-8B đang đo.
 >
 > **Đề xuất đổi model được chọn sang Vintern-3B-R-beta** — thắng Qwen2.5-VL-3B ở 5/6 chỉ số,
 > nhẹ hơn 1,1 GB, nhanh hơn 1,5 s/ảnh, chép tên riêng bằng nửa. Cần nhóm duyệt sau khi chấm
@@ -69,14 +70,30 @@ tên gọi hay làm tròn xuống (Qwen2.5-VL-"7B" thật ra 8,29 tỷ).
 | Qwen2.5-VL-3B-Instruct | 3,75B | 3,960 GB | ✅ Đã đo — model đang chọn |
 | Vintern-3B-R-beta | 3,71B | 2,841 GB | ✅ Đã đo — **đề xuất đổi sang** |
 | Qwen2-VL-2B-Instruct | 2,21B | 2,052 GB | ✅ Đã đo — đường lui cho GPU nhỏ |
-| Moondream 2 | 1,93B | *đang đo* | Chạy fp16, không nén 4-bit |
+| Moondream 2 | 1,93B | — | ❌ Ngữ cảnh 2048 token, không nhận nổi prompt chuẩn |
 | Vintern-1B-v3.5 | 0,94B | — | ❌ 0% — tự chế tên trường JSON |
 
 Cả 8 model đã cài trong `vlm/model_registry.py`, đổi bằng một tham số.
 
-**Moondream 3-preview (9,27B, MoE) không vào danh sách đo:** MoE nạp toàn bộ 9,27 tỷ tham số
-vào bộ nhớ dù chỉ kích hoạt 2 tỷ mỗi token, và tài liệu không nói gì về bitsandbytes — cùng
-ba dấu hiệu đã làm MiniCPM-V-4 thất bại. Bản Moondream 2 nhẹ hơn được chọn thay.
+**Moondream không dùng được cho pipeline này — giới hạn kiến trúc, không phải cấu hình sai.**
+
+Đọc `config.py` của model: `max_context = 2048` token, trong đó `prefix_attn = 730` dành cho
+token ảnh, còn **1318 token cho text**. Prompt chuẩn của chúng ta khoảng 979–1224 token
+(2447 ký tự tiếng Việt có dấu), cộng 320 token output là chạm trần. Chạy thật: `device-side
+assert` ngay ảnh đầu — log ghi `IndexKernel.cu:111 ... index out of bounds`, đúng dạng lỗi
+tra cứu vị trí vượt ngữ cảnh. GPU vào trạng thái lỗi nên 354 ảnh sau hỏng theo.
+
+Không có đường vòng: `caption()` dùng **template token cố định** (`[1, 32708, 2, 6382, 3]`),
+không nhận prompt tùy ý; chỉ `query()` nhận text tự do, mà đó là đường vừa tràn. Rút gọn
+prompt riêng cho Moondream thì số của nó không so được với các model khác — cả bảng dựa trên
+"cùng prompt, cùng parser, chỉ khác model".
+
+Bản **Moondream 3-preview** (9,27B, MoE) không thử: MoE nạp toàn bộ 9,27 tỷ tham số dù chỉ
+kích hoạt 2 tỷ mỗi token, và tài liệu không nói gì về bitsandbytes — cùng ba dấu hiệu đã làm
+MiniCPM-V-4 thất bại. Ngữ cảnh cũng không rộng hơn đáng kể.
+
+Adapter (`vlm/adapter_moondream.py`) giữ lại: định tuyến đúng, dùng được nếu sau này cần
+Moondream cho tác vụ câu hỏi ngắn — đúng thứ nó được thiết kế cho.
 
 ---
 
@@ -95,6 +112,7 @@ Mọi model chạy **cùng bộ ảnh, cùng cấu hình**, nên so sánh trực
 | **Qwen2-VL-2B** | 2,21B | **9,126 s** | **2,052 GB** | 78,31% (278/355) | 26,26% | 16,91% | 0,8597 | 5,04% |
 | Vintern-1B-v3.5 | 0,94B | — | — | **0%** (0/355) | — | — | — | — |
 | MiniCPM-V-4 | 4,06B | — | tràn 12,97 GB | **0%** (0/355) | — | — | — | — |
+| Moondream 2 | 1,93B | — | — | **0%** (0/355) | — | — | — | — |
 
 Chi tiết P50/P95 và cách đo: `plans/reports/benchmark-260817-0615-6-model-va-13-ca-loi.md`
 
@@ -133,6 +151,11 @@ khuôn. 226/355 ca lưu `raw_text` làm bằng chứng.
 không có tác dụng — 12,97 GB cho model 4,06B, trong khi ở 4-bit lẽ ra ~3 GB. Code
 `trust_remote_code` của MiniCPM nạp vision tower ngoài luồng bitsandbytes. Đường lượng tử
 hoá của bản 4 là llama.cpp/GGUF, không phải transformers.
+
+**Moondream 2: ngữ cảnh quá hẹp cho prompt nhiều trường.** `max_context` 2048 token, trừ 730
+token ảnh còn 1318 cho text — prompt chuẩn ~979-1224 token cộng output là tràn. Lỗi
+`device-side assert` ngay ảnh đầu (`index out of bounds` trong `IndexKernel.cu`), GPU vào
+trạng thái hỏng nên 354 ảnh sau chết theo. Chi tiết ở mục 2.
 
 ### Chép tên riêng giảm theo kích thước model
 
