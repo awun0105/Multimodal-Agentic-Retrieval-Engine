@@ -34,8 +34,10 @@ def write_valid_schema_release(release_dir: Path) -> None:
                 "frame_id": 0,
                 "shot_id": "L21_V001_SH00000",
                 "scene_id": "L21_V001_SC00000",
-                "keyframe_role": "representative",
+                "keyframe_role": "middle",
+                "quality_score": 91.0,
                 "is_representative": True,
+                "selection_reason": "best_near_middle_anchor",
                 "keyframe_ref": "media://keyframes/L21_V001/L21_V001_f0000000.jpg",
                 "thumbnail_ref": "media://thumbnails/L21_V001/L21_V001_f0000000.webp",
             }

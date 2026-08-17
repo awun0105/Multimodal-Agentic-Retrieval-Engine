@@ -1,32 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "scene_transcript_links.schema.json",
+  "title": "scene_transcript_links_v1",
   "type": "object",
-  "required": [
-    "scene_id",
-    "asr_segment_id",
-    "video_id",
-    "coverage"
-  ],
+  "required": ["video_id", "scene_id", "asr_segment_id", "coverage"],
   "properties": {
-    "scene_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "asr_segment_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    }
+    "video_id": {"type": "string", "minLength": 1},
+    "scene_id": {"type": "string", "minLength": 1},
+    "asr_segment_id": {"type": "string", "minLength": 1},
+    "coverage": {"type": "number", "minimum": 0, "maximum": 1}
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

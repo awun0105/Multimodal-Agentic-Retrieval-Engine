@@ -26,6 +26,8 @@ answer export.
   `docs/architecture/system1-scene-grouping.md`.
 - Notebook 01 production pipeline:
   `docs/architecture/system1-notebook01-production-pipeline.md`.
+- Notebook 01 implementation plan:
+  `docs/plans/active/notebook01-production-pipeline.md`.
 - System 2 API shape: `docs/product/api-contracts.md`.
 - Current implementation status: `docs/product/current-state.md`.
 - Validation tracker: `docs/validation/test-matrix.md`.
@@ -102,9 +104,21 @@ Out of scope:
   design, canonical schema mappings, validation, caching, and failure behavior.
 - [x] Accept the video-plus-optional-metadata source policy and production
   Notebook 01/02 provider contract in ADR 0015.
+- [x] Accept canonical per-video metadata for Notebook 00B/00C in ADR 0016:
+  normalize a required canonical JSON with `ffprobe` facts and provenance,
+  retain source reference/checksum when available, avoid a duplicate organizer
+  metadata tree, and retain the pre-generation missing audit.
 - [x] Migrate canonical caption/summary schemas and debug compatibility rows to
   one bilingual row per shot/scene; retain and validate both transcript-link
   tables; retire `image_captions`.
+- [x] Implement ADR 0016 in both raw upload package paths used by Notebook
+  00B/00C, update notebook validation gates, and propagate metadata provenance
+  through canonical HF ingest and Phase00.
+- [x] Build production decoded timelines while each raw video is already in
+  bounded upload scratch, then reuse the compact timeline during HF ingest.
+- [x] Bound timeline memory with chunked atomic Parquet writes and add a
+  Colab-safe `auto|1|2` worker setting while keeping extraction, progress, and
+  HF commits coordinator-owned.
 - [ ] Implement and validate Notebook 01 production structure providers and
   multimodal scene grouping.
 - [ ] Build a competition release containing app-ready SQLite, FTS, separate
@@ -138,6 +152,23 @@ Out of scope:
   faster-whisper large-v3, Gemini bilingual captions/grouping/summaries, and
   explicit failure after bounded retry. Notebook 02 generates Gemini OCR,
   configured objects, and separate SigLIP/BEiT3 indexes. See ADR 0015.
+- 2026-08-10: Notebook 00B/00C are the primary large-dataset ingestion paths.
+  Organizer metadata remains optional input, but each raw video receives one
+  schema-valid canonical metadata JSON. Missing organizer values are
+  null/empty, `ffprobe` supplies technical facts, provenance points to source
+  storage without duplicating organizer JSON on HF, and missing-organizer audit
+  state survives generation. See ADR 0016.
+- 2026-08-11: Notebook 00B/00C require decoded timelines during raw streaming.
+  Canonical HF ingest validates the uploaded compact Parquet without a second
+  raw-video download; production Notebook 01 rejects missing timelines.
+- 2026-08-12: Timeline creation streams into one atomic Parquet per video and
+  uses at most two external `ffprobe` workers. Raw remains authoritative;
+  Phase00 release contains the validated worker snapshot. Upload and progress
+  remain single-coordinator operations.
+- 2026-08-13: Notebook 01 exposes one production pipeline and minimal operator
+  settings. Persistent resume is per video/stage. The 20/50/80 positions are
+  search-band centers, and representative selection uses the relative `0.85`
+  middle-quality rule. See the dedicated Notebook 01 implementation plan.
 
 Promote lasting product or architecture decisions into `docs/decisions/`.
 
@@ -147,14 +178,21 @@ Promote lasting product or architecture decisions into `docs/decisions/`.
   caption/summary contract, and targeted searches for stale organizer-import,
   single-index, hard metadata-pairing, and canonical `temporal_search.parquet`
   requirements.
-- Integration or end-to-end proof: later System 1 seed release and System 2
+- Integration or end-to-end proof: canonical metadata has deterministic local
+  uploader/HF-ingest tests and a three-video real-file probe smoke; live HF
+  upload remains for the operator run. Later System 1 seed release and System 2
   fixture search/export rehearsal for TKIS, Q&A, and TRAKE.
 - Repository-required checks: markdown/link sanity and focused code tests when
   implementation begins.
 
 ## Result
 
-The decision/docs/schema alignment increment is complete and covered by the
-System 1 schema and smoke suites. The overall plan remains active because the
-production Notebook 01 providers, Notebook 02 dual-index pipeline, final
-release, and System 2 runtime are not implemented yet.
+The decision/docs alignment and ADR 0016 package implementation are complete.
+Automated tests cover canonical generation, both upload paths, inventory
+agreement, HF ingest, provenance propagation, and Notebook 00B/00C gates; three
+local sample videos also pass real `ffprobe`. A real 31,720-frame comparison
+also proves the streamed timeline is row-identical to the former in-memory
+writer. The overall plan remains active
+because the live HF `canonical_raw_v009` run, Notebook 01 providers, Notebook
+02 dual-index pipeline, final release, and
+System 2 runtime are not complete.

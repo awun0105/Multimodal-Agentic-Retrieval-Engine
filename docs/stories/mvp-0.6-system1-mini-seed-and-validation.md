@@ -12,7 +12,8 @@ normal
 
 Create the smallest executable System 1 slice that proves the app-ready data
 contract can be built from real organizer-style inputs: official raw `.mp4`
-videos plus optional metadata mapped by `video_id`.
+videos plus optional organizer metadata mapped by `video_id`, normalized into
+one canonical metadata JSON per video.
 
 This story does not build the full competition pipeline. It creates a tiny
 seed path that proves the repo can discover inputs, assign stable IDs, generate
@@ -143,7 +144,9 @@ Acceptance criteria:
 ## Acceptance Criteria
 
 - A tiny official-source seed dataset path exists or is documented as an operator-provided input.
-- System 1 mini can build app-ready seed artifacts from raw video and optional metadata roots.
+- System 1 mini can build app-ready seed artifacts from raw video and optional
+  organizer metadata roots while producing required canonical metadata for
+  every video.
 - Generated `app.sqlite` contains canonical IDs, logical refs, minimal FTS5/text evidence, `vector_map`, and `feature_availability`.
 - Validation report proves video identity, refs, frame metadata, vector map, and
   SQLite path safety.

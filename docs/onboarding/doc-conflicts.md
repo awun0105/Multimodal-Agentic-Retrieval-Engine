@@ -71,3 +71,21 @@ shot-caption ownership, Phase02 caption removal, and timeline-aware fallback
 interfaces have been migrated toward the target phase01 contract. Real provider
 implementations and algorithm integrations remain open package work and must
 not move into Notebook 01 cells.
+
+## Conflict 8: Optional Organizer Metadata vs Required Canonical Metadata
+
+- Official organizer metadata is optional and may be absent for a video.
+- Older package behavior generated only a minimal placeholder for missing
+  metadata and could make downstream code infer provenance from file presence.
+- ADR 0016 requires one project-owned canonical metadata JSON for every video,
+  whether organizer metadata exists or not.
+
+Resolved at the contract level. Notebook 00B/00C package code must read
+organizer JSON when present, retain its source reference/checksum when
+available, probe every video with `ffprobe`, generate and validate the same
+canonical schema for every video, and retain the pre-generation
+missing/unmatched audits. The HF raw prefix does not contain a duplicate
+organizer metadata tree. Unknown organizer scalar values remain `null`,
+`keywords` remains an empty list, and organizer values must not be fabricated.
+Implementation and executable proof are still pending, so this resolution must
+not be read as current code readiness.

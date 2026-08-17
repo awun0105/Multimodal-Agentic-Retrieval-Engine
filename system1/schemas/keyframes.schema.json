@@ -1,100 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "keyframes.schema.json",
+  "title": "keyframes_v2",
   "type": "object",
-  "required": [
-    "keyframe_id",
-    "video_id",
-    "frame_id",
-    "shot_id",
-    "scene_id",
-    "keyframe_role",
-    "is_representative",
-    "keyframe_ref",
-    "thumbnail_ref"
-  ],
+  "required": ["keyframe_id", "video_id", "frame_id", "timestamp_sec", "shot_id", "scene_id", "keyframe_role", "quality_score", "is_representative", "selection_reason", "keyframe_ref", "thumbnail_ref", "status"],
   "properties": {
-    "keyframe_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "video_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "frame_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "shot_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "scene_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "keyframe_role": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "is_representative": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "keyframe_ref": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "thumbnail_ref": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    }
+    "keyframe_id": {"type": "string", "pattern": "^.+:[0-9]+$"},
+    "video_id": {"type": "string", "minLength": 1},
+    "frame_id": {"type": "integer", "minimum": 0},
+    "timestamp_sec": {"type": "number", "minimum": 0},
+    "shot_id": {"type": "string", "minLength": 1},
+    "scene_id": {"type": ["string", "null"]},
+    "keyframe_role": {"enum": ["early", "middle", "late"]},
+    "quality_score": {"type": "number", "minimum": 0},
+    "is_representative": {"type": "boolean"},
+    "selection_reason": {"type": "string", "minLength": 1},
+    "keyframe_ref": {"type": "string", "minLength": 1},
+    "thumbnail_ref": {"type": "string", "minLength": 1},
+    "status": {"const": "pass"}
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

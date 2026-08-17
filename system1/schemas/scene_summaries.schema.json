@@ -1,67 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "scene_summaries.schema.json",
+  "title": "scene_summaries_v1",
   "type": "object",
-  "required": [
-    "scene_id",
-    "video_id",
-    "summary_vi",
-    "summary_en",
-    "provider",
-    "model_name",
-    "model_version",
-    "prompt_version",
-    "schema_version",
-    "status"
-  ],
+  "required": ["scene_id", "video_id", "summary_vi", "summary_en", "provider", "model_name", "model_version", "prompt_version", "schema_version", "confidence", "status"],
   "properties": {
-    "scene_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "summary_vi": {
-      "type": ["string"],
-      "minLength": 1
-    },
-    "summary_en": {
-      "type": ["string"],
-      "minLength": 1
-    },
-    "video_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "provider": {
-      "type": ["string"]
-    },
-    "model_name": {
-      "type": ["string"]
-    },
-    "model_version": {
-      "type": ["string"]
-    },
-    "prompt_version": {
-      "type": ["string"]
-    },
-    "schema_version": {
-      "type": ["string"]
-    },
-    "confidence": {
-      "type": ["number", "null"]
-    },
-    "status": {
-      "type": ["string"]
-    }
+    "scene_id": {"type": "string", "minLength": 1},
+    "video_id": {"type": "string", "minLength": 1},
+    "summary_vi": {"type": "string", "minLength": 1},
+    "summary_en": {"type": "string", "minLength": 1},
+    "provider": {"const": "gemini"},
+    "model_name": {"type": "string", "minLength": 1},
+    "model_version": {"type": "string", "minLength": 1},
+    "prompt_version": {"type": "string", "minLength": 1},
+    "schema_version": {"type": "string", "minLength": 1},
+    "confidence": {"type": ["number", "null"]},
+    "status": {"const": "pass"}
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

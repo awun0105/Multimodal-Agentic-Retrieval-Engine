@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from system1.artifacts.hf_store import HF_EXPECTED_ERRORS, HuggingFaceDatasetArtifactStore
+from system1.artifacts.hf_store import (
+    HF_EXPECTED_ERRORS,
+    HuggingFaceDatasetArtifactStore,
+)
 
 
 class MissingEntryError(Exception):
@@ -65,6 +68,83 @@ def test_upload_files_uses_single_create_commit(monkeypatch, tmp_path: Path) -> 
     assert calls["repo_type"] == "dataset"
     assert calls["commit_message"] == "Upload raw batch"
     assert [operation.path_in_repo for operation in calls["operations"]] == ["raw/first.bin", "raw/second.bin"]
+
+
+def test_sync_files_commits_adds_and_exact_deletes(monkeypatch, tmp_path: Path) -> None:
+    calls = {}
+
+    class FakeApi:
+        def __init__(self, token=None):
+            calls["token"] = token
+
+        def create_commit(self, **kwargs):
+            calls.update(kwargs)
+
+    monkeypatch.setattr("system1.artifacts.hf_store.HfApi", FakeApi)
+    source = tmp_path / "new.bin"
+    source.write_bytes(b"new")
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo", prefix="root")
+
+    store.sync_files(
+        [(source, "phase/new.bin")],
+        delete_paths=["phase/stale.bin"],
+        commit_message="Reconcile phase",
+    )
+
+    assert [operation.path_in_repo for operation in calls["operations"]] == [
+        "root/phase/new.bin",
+        "root/phase/stale.bin",
+    ]
+
+
+def test_list_files_uses_server_scoped_repo_tree(monkeypatch) -> None:
+    calls = {}
+
+    class FakeRepoFile:
+        def __init__(self, path: str):
+            self.path = path
+
+    class FakeApi:
+        def __init__(self, token=None):
+            calls["token"] = token
+
+        def list_repo_tree(self, **kwargs):
+            calls.update(kwargs)
+            return [
+                FakeRepoFile("root/release/a.json"),
+                FakeRepoFile("root/release/nested/b.json"),
+            ]
+
+    monkeypatch.setattr("system1.artifacts.hf_store.RepoFile", FakeRepoFile)
+    monkeypatch.setattr("system1.artifacts.hf_store.HfApi", FakeApi)
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo", prefix="root")
+
+    files = store.list_files("release")
+
+    assert calls["path_in_repo"] == "root/release"
+    assert calls["recursive"] is True
+    assert files == [Path("release/a.json"), Path("release/nested/b.json")]
+
+
+def test_list_files_returns_empty_when_scoped_tree_is_missing(monkeypatch) -> None:
+    class FakeMissingEntryError(Exception):
+        pass
+
+    class FakeApi:
+        def __init__(self, token=None):
+            pass
+
+        def list_repo_tree(self, **kwargs):
+            raise FakeMissingEntryError("missing prefix")
+
+    monkeypatch.setattr(
+        "system1.artifacts.hf_store.EntryNotFoundError",
+        FakeMissingEntryError,
+    )
+    monkeypatch.setattr("system1.artifacts.hf_store.HfApi", FakeApi)
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo")
+
+    assert store.list_files("missing") == []
 
 
 def test_download_file_uses_hf_hub_download_and_copies(monkeypatch, tmp_path: Path) -> None:

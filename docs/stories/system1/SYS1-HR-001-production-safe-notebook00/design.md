@@ -20,9 +20,11 @@ Notebook 00A preserves the older Colab/Drive path:
 6. Required `system1 sync-phase00-ingestion` to the configured Hugging Face Dataset repo.
 
 Notebook 00B/00C are the current large-dataset streaming paths. They stream raw
-video/metadata pairs to `AIC26_raw`, then run canonical HF raw ingest to produce
-the phase00 release tables, raw mapping, frame timeline manifest, batch files,
-and reports.
+video plus optional organizer-metadata pairs, create one canonical metadata JSON
+and one decoded frame timeline per video, and upload all three artifacts to
+`AIC26_raw`. Canonical HF raw ingest then validates and reuses the compact
+timeline Parquet without downloading the video again, and produces the phase00
+release tables, raw mapping, batch files, and reports.
 
 Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
 
@@ -31,11 +33,22 @@ Notebook 00B is the Colab-free-CPU streaming variant for large zip handoffs:
 2. `system1 stream-standardize-upload-raw` scans zip members globally, builds
    video/metadata pairs by `video_id`, extracts pair batches bounded by
    `RAW_UPLOAD_BATCH_SIZE` files and scratch bytes into local scratch, probes
-   those local files, uploads the batch to `AIC26_raw` with the existing batched
-   HF commit helper, records per-pair progress, and deletes the batch scratch
-   directories before moving on.
-3. Canonical HF ingest reads the raw repo manifests and inventory.
-4. Batch assignment and required `system1 sync-phase00-ingestion` stay the same.
+   each video, merges organizer fields when present, creates and validates
+   canonical metadata and decoded frame timeline, uploads the video, metadata,
+   and timeline batch to `AIC26_raw` with the existing batched HF commit helper,
+   records per-pair progress, and deletes the batch scratch directories before
+   moving on. Timeline probing uses one lightweight header query plus one
+   decoded-frame scan; it does not add a redundant full `-count_packets` scan.
+   Decoded rows are written to one atomic Parquet per video in 8,192-row memory
+   chunks. `timeline_workers=auto` resolves to at most two `ffprobe` workers;
+   extraction is sequential and HF upload/progress remain coordinator-owned.
+3. Canonical HF ingest reads the raw repo manifests, canonical metadata, and
+   inventory, downloads each compact timeline Parquet, validates it, and copies
+   it into Phase00. It does not download raw video only to regenerate a timeline.
+4. Batch assignment atomically replaces the current batch plan and removes
+   stale `batch_*.txt` files.
+5. Required `system1 sync-phase00-ingestion` reconciles the exact configured
+   Phase00 prefix and writes its completion manifest last.
 
 The streaming variant does not materialize full `raw_videos/` and `metadata/`
 folders on Google Drive.
@@ -52,6 +65,14 @@ Notebook 00C is the local-machine variant of the same streaming flow:
 
 The safety gate belongs in the CLI commands so Notebook 00, shell users, and
 tests share the same behavior.
+
+Notebook preflight must not infer command or option availability by searching
+rendered `--help` text. Typer/Rich may shorten long option names when Colab or a
+local terminal is narrow, even though the option is valid. Notebook setup
+instead verifies that `system1` was imported from the just-synchronized repo,
+`run_cli` pins that repo's `src/` on `PYTHONPATH`, and the real command invocation
+is the runtime authority. Automated tests inspect the Click/Typer command graph
+directly for the options used by Notebooks 00A/00B/00C/01.
 
 ## Interface Contract
 
@@ -71,7 +92,12 @@ tests share the same behavior.
 
 - Fails non-zero when pair scan, extraction, probe, or upload records errors.
 - Supports `--allow-partial` for manual recovery.
-- Uses `--resume` by default and appends pair progress to JSONL.
+- Uses `--resume` by default and appends pair progress to JSONL. Progress is
+  scoped by canonical HF repo plus `raw_import_id`; resume and notebook gates
+  use only the latest record per video. Notebook 00B/00C use a prefix-specific
+  progress filename and migrate matching latest records from the legacy shared
+  file when needed. Phase00 snapshot, upload validation, and remote validation
+  reuse that exact configured filename rather than a second hard-coded name.
 - Uses `--overwrite` only for explicit remote replacement.
 - Rejects Google Drive paths as `--scratch-dir`.
 - Reuses `RAW_UPLOAD_BATCH_SIZE` and batched HF commits instead of committing
@@ -79,12 +105,23 @@ tests share the same behavior.
 - Reuses the same disk-safe option family as `standardize-archives`:
   `--min-free-gb`, `--drive-sync-sleep-seconds`, `--cleanup-every-files`, and
   `--cleanup-every-gb`.
+- Creates and validates `metadata/{video_id}.json` for every video using ADR
+  0016; it never fabricates organizer title/channel/URL values.
+- `--frame-timeline-policy` supports `required`, `if-available`, and `disabled`.
+  Notebook 00B/00C use `required`; a video is not recorded as passed until its
+  timeline exists and validates.
+- `--timeline-workers` supports `auto`, `1`, and `2`. Notebook 00B/00C use
+  `auto`; the package caps the resolved value at two. A worker group completes
+  before batched upload, so HF commits and progress writes remain serialized.
+- Records organizer source reference/checksum when available and its absence
+  before canonical generation; it does not upload a duplicate organizer JSON.
 
 ## Data Model
 
 No database schema change.
 
-Reports remain JSON files:
+Reports remain JSON files, and canonical per-video metadata becomes a versioned
+JSON contract:
 
 - `drive_shadow_report.json`
 - `standardize_archives_report.json`
@@ -92,7 +129,8 @@ Reports remain JSON files:
 - `unmatched_metadata.json`
 
 `missing_metadata.json` and `unmatched_metadata.json` are produced by the
-standardized raw-video/metadata pairing audit. They are raw-level audit
+raw-video/original-organizer-metadata pairing audit before canonical metadata
+generation. They are raw-level audit
 manifests in `AIC26_raw/canonical_raw_vXXX/manifests/`. The release repo may
 also snapshot them under
 `AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
@@ -101,14 +139,23 @@ manifests rather than re-scan or download raw videos solely for pairing audit.
 
 `upload-standardized-raw` also writes
 `manifests/canonical_video_inventory.parquet` beside the canonical file
-manifest. The inventory carries `video_id`, canonical video/metadata paths,
-duration, detected fps, frame count, and video size. Canonical Hugging Face
-ingest must use this small inventory by default and must not download
-`raw_videos/*.mp4` for probing unless the operator explicitly enables the
-legacy fallback with `AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1`.
+manifest. The inventory carries `video_id`, canonical video/metadata/timeline
+paths, timeline status/row count/size, organizer-presence/generated flags,
+duration, dimensions, detected fps, frame count, VFR state, and video size. It
+is a projection of canonical metadata plus the decoded timeline result and must
+validate against both artifacts. Canonical Hugging Face ingest must use these
+small artifacts by default and must not download `raw_videos/*.mp4` only to
+repeat probing or timeline decoding.
+
+Phase00 `raw_mapping/media_store_manifest.parquet` preserves the normalized
+`canonical_video_path`, `canonical_metadata_path`, and
+`canonical_frame_timeline_path` from that raw inventory together with
+`canonical_prefix`; Notebook 00 remote validation requires all three paths.
 
 `stream-standardize-upload-raw` writes the same canonical raw manifests and
-inventory while each video is present in local scratch.
+inventory while each video is present in local scratch. Required resume treats
+an older pass row without a valid remote timeline as incomplete and backfills
+only the missing timeline when the video and metadata already exist.
 
 When standardized raw videos are mounted from Colab DriveFS under
 `/content/drive`, `upload-standardized-raw` stages each video read used for
@@ -121,8 +168,11 @@ Hugging Face cache.
 Phase00 release output is synced under
 `AIC26_release/canonical_release_vXXX/phase00_ingestion/` in the configured
 Hugging Face Dataset repo. The synced snapshot includes `tables/`,
-`raw_mapping/`, `frame_timeline/` when decoded timelines are available,
-`manifests/`, and `reports/`.
+`raw_mapping/`, required `frame_timeline/`, `manifests/`, and `reports/`.
+Synchronization compares SHA-256 plus size, skips unchanged files, uploads and
+deletes in bounded retryable commits, deletes stale files only under that exact
+Phase00 prefix, and uploads `reports/phase00_sync_manifest.json` last as the
+completion marker.
 
 ## UI / Platform Impact
 
