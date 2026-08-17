@@ -5,53 +5,29 @@
 **Ngày:** 15/08/2026 (cập nhật 16/08/2026)
 **Nhánh:** `research-branch/vlm-prompting` — PR [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29)
 
-> **TRẠNG THÁI: đạt mốc ≥100 ảnh của đề bài. Hai model chạy trọn 355 ảnh cùng một lượt.**
+> **TRẠNG THÁI: 6 model đã đo trên 355 keyframe thật, vượt mốc ≥100 ảnh của đề bài.**
 >
-> **Qwen2.5-VL-3B — model được chọn** (Kaggle T4, prompt v2, kernel v19, 16/08/2026):
-> - **96,34% JSON hợp lệ (342/355)** · `caption_en` **100%** · vòng vo 10,53% · chép ví dụ 0%
-> - Latency 11,824 s/ảnh · VRAM đỉnh 4,304 GB · caption TB 26,0 từ
+> **Bốn model chạy được** (chi tiết mục 3):
 >
-> **Qwen2-VL-2B — đường lui cho GPU nhỏ**, cùng lượt chạy, cùng 355 ảnh:
-> - 77,46% JSON hợp lệ (275/355) · `caption_en` 72,0% · vòng vo 22,91%
-> - Latency 9,15 s/ảnh · VRAM đỉnh 2,005 GB
+> | Model | JSON hợp lệ | VRAM | Chép tên riêng |
+> |---|---|---|---|
+> | Qwen2.5-VL-7B | **99,72%** (354/355) | 6,798 GB | **7,06%** |
+> | Vintern-3B-R-beta | 97,46% (346/355) | **2,841 GB** | 17,05% |
+> | Qwen2.5-VL-3B ← đang chọn | 96,34% (342/355) | 3,960 GB | 33,04% |
+> | Qwen2-VL-2B | 78,31% (278/355) | 2,052 GB | 26,26% |
 >
-> **Đổi model được chọn (16/08).** Bản trước chọn Qwen2-VL-2B vì Qwen2.5-VL-3B "sập sau 4 ảnh".
-> Nguyên nhân sập hóa ra là `do_sample=True` bốc thăm trên phân phối `float16` chứa `nan`,
-> không phải lỗi model. Tắt lấy mẫu → 4,3% thành 96,34%. Chi tiết mục 7.2.
-
----
-
-> ## Cập nhật 17/08 — đo hết 6 model, ba kết luận cũ bị lật
+> **Hai model không dùng được:** Vintern-1B 0% (tự chế tên trường JSON) · MiniCPM-V-4 0%
+> (tràn bộ nhớ — lượng tử hoá 4-bit không có tác dụng trên model này).
 >
-> Bảng đầy đủ ở mục 3. Chi tiết: `plans/reports/benchmark-260817-0615-6-model-va-13-ca-loi.md`
+> **Đề xuất đổi model được chọn sang Vintern-3B-R-beta** — thắng Qwen2.5-VL-3B ở 5/6 chỉ số,
+> nhẹ hơn 1,1 GB, nhanh hơn 1,5 s/ảnh, chép tên riêng bằng nửa. Cần nhóm duyệt sau khi chấm
+> tay 30 caption × 4 model.
 >
-> **Hai model mới có số thật:**
-> - **Vintern-3B-R-beta: 97,46%** (346/355) · 2,841 GB · 10,636 s — lần đầu một model Vintern
->   sinh caption thật. Mọi số Vintern trong bản cũ là mock.
-> - **Qwen2.5-VL-7B: 99,72%** (354/355) · 6,798 GB · chép tên riêng chỉ **7,06%**.
+> **Trần phần cứng thật trên T4 free: ~11 tỷ tham số** (mục 3). Con số "dưới 7B" là ước
+> lượng nội bộ của nhóm, không phải quy định BTC — cả Qwen-7B (8,29B) lẫn Vintern-3B đều
+> nằm trong trần.
 >
-> **Ba kết luận cũ bị dữ liệu bác bỏ:**
->
-> | Tuyên bố cũ | Sự thật đo được |
-> |---|---|
-> | 13 ca lỗi do caption bị cắt ở 320 token | Model sinh **320 dấu chấm than**, không một chữ caption. Nâng trần token vô ích |
-> | Thêm luật cấm tên riêng vào prompt sẽ giảm nhét chữ | 111 → **113 ca**, không đổi. Nhưng model lớn hơn tự sửa: 3B 33% → 7B 7% |
-> | "Dưới 7B tham số" là yêu cầu đề bài | **Không phải.** PDF chính thức của BTC không có dòng nào về tham số. Trần thật trên T4 là **~11 tỷ** (chú thích ⁶) |
->
-> **Vintern-1B: 0% (0/355)** — nhưng không phải model hỏng. Nó sinh JSON đúng cú pháp với
-> tên trường tự chế (`"vật thể"` thay vì `doi_tuong`). Model 1B không đủ sức bám khuôn.
->
-> **MiniCPM-V-4: không khả thi trên T4** — đã viết adapter, model chạy nhưng tràn bộ nhớ
-> (12,97 GB cho model 4B, lượng tử hoá 4-bit không có tác dụng).
->
-> **Đề xuất đổi model được chọn sang Vintern-3B** — thắng Qwen2.5-VL-3B ở 5/6 chỉ số, nhẹ
-> hơn 1,1 GB, chép tên riêng bằng nửa. Lý do loại nó trước đây ("vòng vo 37,28%") là **thước
-> đo báo nhầm** danh từ ghép tiếng Việt. Chưa tự đổi — cần nhóm duyệt.
-
----
-
-> Chất lượng caption đo riêng từng model ở mục 7.3. Mọi số có ký hiệu ⁴ là tự đo; số khác
-> ghi rõ nguồn.
+> Mọi số có ký hiệu ⁴ là tự đo; số khác ghi rõ nguồn.
 
 ---
 
@@ -98,81 +74,59 @@ Năm model đầu đã cài đặt sẵn trong `vlm/model_registry.py`, đổi b
 
 ## 3. Bảng benchmark (bắt buộc theo đề bài)
 
-**Số hiện hành, prompt v2** (16/08/2026). Môi trường: Python 3.12.13, PyTorch 2.10.0+cu128,
-Tesla T4 14,56 GB.
+**Môi trường:** Kaggle Tesla T4 14,56 GB · Python 3.12.13 · PyTorch 2.10.0+cu128 ·
+4-bit NF4 · `do_sample=False` · 355 keyframe AIC thật (`Keyframes_L25.zip`).
 
-Hai model Qwen chạy **cùng một lượt, cùng 355 ảnh, cùng cấu hình** (kernel version 19,
-`do_sample=False`) — so sánh trực tiếp được. Vintern-1B giữ số của lần chạy 92 ảnh vì
-model chưa từng nạp được, mọi số của nó là mock (mục 7.2). *(17/08: Vintern-1B đã chạy thật
-trên 355 ảnh — 0% JSON hợp lệ, xem bảng cập nhật bên dưới. Số mock 100% đã bị thay.)*
+Mọi model chạy **cùng bộ ảnh, cùng cấu hình**, nên so sánh trực tiếp được.
 
-> 📌 **Bảng dưới đây là bản 16/08, giữ lại để đối chiếu.** Số hiện hành và kết luận mới nhất
-> nằm ở **"Cập nhật 17/08"** ngay bên dưới — bảng đó có 5 model đo thật, và nhãn "✅ CHỌN"
-> ở đây **không còn phản ánh đề xuất hiện tại**.
+| Mô hình | Tham số | Latency | VRAM | JSON hợp lệ | Nhét chữ OCR | Vòng vo | recall@1 | Chép mẫu |
+|---|---|---|---|---|---|---|---|---|
+| **Qwen2.5-VL-7B** | 8,29B | 12,411 s | 6,798 GB | **99,72%** (354/355) | **8,47%** | **6,50%** | 0,9520 | 0,00% |
+| **Vintern-3B-R-beta** | 3,71B | 10,636 s | 2,841 GB | 97,46% (346/355) | 22,25% | 37,28% ⚠️ | **0,9769** | 0,00% |
+| **Qwen2.5-VL-3B** ← đang chọn | 3,75B | 12,118 s | 3,960 GB | 96,34% (342/355) | 34,80% | 9,65% | 0,9737 | 0,00% |
+| **Qwen2-VL-2B** | 2,21B | **9,126 s** | **2,052 GB** | 78,31% (278/355) | 26,26% | 16,91% | 0,8597 | 5,04% |
+| Vintern-1B-v3.5 | 0,94B | — | — | **0%** (0/355) | — | — | — | — |
+| MiniCPM-V-4 | 4,06B | — | tràn 12,97 GB | **0%** (0/355) | — | — | — | — |
 
-| Mô hình | Latency | VRAM | Điểm benchmark | Ưu điểm | Nhược điểm | Kết luận |
-|---|---|---|---|---|---|---|
-| **Qwen2.5-VL-3B** | 11,824 s/ảnh ⁴ (P50 11,431 · P95 16,055 s) | 4,304 GB ⁴ | **JSON hợp lệ 96,34%** (342/**355**) ⁴ | Cao nhất mọi mặt: JSON hợp lệ, `caption_en` **100%**, vòng vo thấp nhất (10,53%), không chép ví dụ mẫu (0%) | Chậm hơn 2,7 s/ảnh; tốn thêm 2,3 GB; nhét chữ OCR cao nhất (33,33%) | ✅ **CHỌN** |
-| **Qwen2-VL-2B** | **9,15 s/ảnh** ⁴ (P50 8,527 · P95 13,437 s) | **2,005 GB** ⁴ | JSON hợp lệ 77,46% (275/**355**) ⁴ | Nhanh nhất, nhẹ nhất — chạy được cả GPU 4GB | 80/355 ảnh lỗi; `caption_en` chỉ 72,0%; vòng vo 22,91% | 🔄 Đường lui khi GPU dưới 6GB |
-| **Vintern-1B-v3.5** | *0,0 s* ❌ số giả | *0,0 GB* ❌ số giả | *100%* ❌ số giả | Tiếng Việt tốt nhất theo đo của Phần 2; nhẹ nhất | **Chưa từng sinh được caption** — nạp được sau khi ghim `transformers <4.50`, nhưng hỏng ở tầng xử lý ảnh (mục 7.2) | ❌ Chưa dùng được |
+Chi tiết P50/P95 và cách đo: `plans/reports/benchmark-260817-0615-6-model-va-13-ca-loi.md`
 
-> **Đổi model được chọn (16/08, kernel v19).** Bản trước chọn Qwen2-VL-2B với lý do
-> "model DUY NHẤT cho caption thật". Lý do đó **không còn đúng**: Qwen2.5-VL-3B sập là do
-> `do_sample=True` bốc thăm trên phân phối `float16` có `nan`, không phải lỗi model
-> (mục 7.2). Tắt lấy mẫu xong nó chạy 342/355 và thắng ở 6/10 chỉ số.
->
-> Cái giá phải trả — chậm hơn 2,7 s/ảnh, tốn thêm 2,3 GB — nằm trong khả năng: 4,3 GB
-> chỉ chiếm 30% của T4 14,56 GB.
-| **Qwen2.5-VL-7B** | ~~CHỜ ĐO~~ → **12,411 s** | ~~CHỜ ĐO~~ → **6,798 GB** | **99,72%** (354/355) ⁵ | Cao nhất mọi chỉ số chất lượng | 8,29B tham số, tải về 16,6 GB | ✅ Đã đo — xem bảng 17/08 |
-| **MiniCPM-V-4.0** | ~~CHỜ ĐO~~ → không chạy nổi | ~~CHỜ ĐO~~ → **tràn 12,97 GB** | **0%** (0/355) ⁷ | — | 4-bit không có tác dụng trên model này | ❌ Không khả thi trên T4 |
+### Đọc bảng
 
-### Cập nhật 17/08 — Vintern chạy được thật, bảng lên 4 model ⁵
+**Qwen2.5-VL-7B mạnh nhất về chất lượng** — 354/355 ảnh, nhét chữ và vòng vo đều thấp nhất.
+Giá: 6,798 GB (47% T4) và tải về 16,6 GB.
 
-Số dưới đây đo cùng ngày, cùng T4, cùng 355 ảnh, prompt v3 (thêm luật cấm tên riêng).
-Chi tiết: `plans/reports/benchmark-260817-0615-6-model-va-13-ca-loi.md`.
+**Vintern-3B-R-beta là ứng viên tiếng Việt** — nhẹ nhất trong nhóm chạy được, nhanh nhất
+sau bản 2B, recall@1 cao nhất bảng, và chép tên riêng chỉ bằng nửa Qwen-3B.
 
-| Mô hình | Latency | VRAM | JSON hợp lệ | Nhét chữ OCR | Vòng vo | recall@1 | Chép mẫu |
-|---|---|---|---|---|---|---|---|
-| **Qwen2.5-VL-7B** ⁶ | 12,411 s (P50 12,271 · P95 15,253) | 6,798 GB | **99,72%** (354/355) | **8,47%** | **6,50%** | 0,9520 | 0,00% |
-| **Vintern-3B-R-beta** | 10,636 s (P50 10,326 · P95 15,136) | 2,841 GB | 97,46% (346/355) | 22,25% | 37,28% | **0,9769** | 0,00% |
-| **Qwen2.5-VL-3B** | 12,118 s (P50 11,768 · P95 15,607) | 3,960 GB | 96,34% (342/355) | 34,80% | 9,65% | 0,9737 | 0,00% |
-| **Qwen2-VL-2B** | **9,126 s** (P50 8,884 · P95 12,467) | **2,052 GB** | 78,31% (278/355) | 26,26% | 16,91% | 0,8597 | 5,04% |
-| **Vintern-1B-v3.5** | — | — | **0%** (0/355) | — | — | — | — |
-| **MiniCPM-V-4** | — | tràn 12,97 GB ⁷ | **0%** (0/355) | — | — | — | — |
+⚠️ **Con số vòng vo 37,28% của Vintern-3B là thước đo báo nhầm, không phải lỗi model.**
+Phép kiểm gồm hai điều kiện; tách ra:
 
-**Qwen2.5-VL-7B thắng gần như toàn diện**: JSON hợp lệ 99,72% (chỉ 1 ảnh lỗi trên 355),
-nhét chữ thấp nhất, vòng vo thấp nhất. Giá phải trả là 6,798 GB — gấp 1,7 lần bản 3B, và
-model có 8,29B tham số — vượt con số "<7B" trong bản chia việc nội bộ, nhưng **nằm trong
-trần thật ~11 tỷ của T4** (xem chú thích ⁶). recall@1 0,9520 thấp hơn 3B một
-chút, đủ nhỏ để không đảo kết luận.
-
-**Vintern-3B là phát hiện đáng chú ý nhất.** Lần đầu một model Vintern sinh caption thật —
-mọi số Vintern trong bản trước đều là mock. Nhẹ nhất trong nhóm chạy được (2,841 GB),
-recall@1 cao nhất bảng.
-
-⚠️ **Con số "vòng vo 37,28%" của Vintern-3B là báo nhầm của thước đo, không phải lỗi model.**
-Phép kiểm là hợp của hai điều kiện; tách ra:
-
-| | TTR < 0,6 (lặp chuỗi thật) | Cụm 2 từ lặp | TTR trung bình | Độ dài caption |
+| | TTR < 0,6 (lặp thật) | Cụm 2 từ lặp | TTR trung bình | Độ dài caption |
 |---|---|---|---|---|
-| Vintern-3B | 12 (3,5%) | **129 (37,3%)** | **0,811** | **55 từ** |
+| Vintern-3B | 12 (3,5%) | 129 (37,3%) | **0,811** | **55 từ** |
 | Qwen-7B | 0 (0,0%) | 23 (6,5%) | 0,922 | 22 từ |
 | Qwen-3B | 1 (0,3%) | 33 (9,6%) | 0,904 | 26 từ |
 
-TTR 0,811 là lành mạnh. Gần như toàn bộ 37,28% đến từ phép kiểm cụm 2 từ, mà cụm bị bắt
-nhiều nhất là **danh từ ghép tiếng Việt bình thường**: `người đàn` (42), `đàn ông` (42),
-`máy tính` (36), `giáo viên` (17), `màu xanh` (17). Caption Vintern-3B dài 55 từ — gấp 2,4
-lần Qwen — nên xác suất một danh từ ghép xuất hiện hai lần là rất cao.
+TTR 0,811 là lành mạnh. Phần còn lại do `kiem_cum_lap(n=2)` bắt **danh từ ghép tiếng Việt
+bình thường**: `người đàn` (42 lần), `đàn ông` (42), `máy tính` (36), `giáo viên` (17).
+Caption Vintern dài 55 từ — gấp 2,4 lần Qwen — nên một danh từ ghép lặp lại là khó tránh.
 
-Đọc caption thật thì thấy chất lượng tốt: *"Một người đàn ông mặc áo sơ mi trắng, đeo kính
-và đeo cà vạt màu xanh đậm đang ngồi trước một chiếc máy tính xách tay Dell màu bạc trên
-bàn làm việc."* Đây là mô tả chi tiết, không phải lặp ý.
+Caption thật đọc tốt: *"Một người đàn ông mặc áo sơ mi trắng, đeo kính và đeo cà vạt màu
+xanh đậm đang ngồi trước một chiếc máy tính xách tay Dell màu bạc trên bàn làm việc."*
 
-**Việc cần làm:** `kiem_cum_lap(n=2)` phạt oan tiếng Việt. Nên nâng lên n=3 hoặc miễn trừ
-danh từ ghép, rồi đo lại. Chưa sửa trong phiên này vì sửa thước đo cùng lúc với so sánh
-model thì không biết thay đổi đến từ đâu.
+Cần sửa `kiem_cum_lap` (nâng n=3 hoặc miễn trừ danh từ ghép) rồi đo lại toàn bộ.
 
-**Chép tên riêng giảm theo kích thước model** — đây là kết quả có ích nhất cho hướng đi tiếp:
+**Vintern-1B: 0% nhưng không phải model hỏng.** Nó sinh JSON đúng cú pháp với tên trường tự
+chế (`"vật thể"`, `"câu tiếng Việt mô tả"`) thay vì khoá quy định. Model 1B không đủ sức bám
+khuôn. 226/355 ca lưu `raw_text` làm bằng chứng.
+
+**MiniCPM-V-4: không khả thi trên T4.** Adapter nạp được model, chạy hết 355 ảnh, nhưng
+190 ca tràn bộ nhớ và 165 ca trả đúng một token `<CLS>`. Nguyên nhân: lượng tử hoá 4-bit
+không có tác dụng — 12,97 GB cho model 4,06B, trong khi ở 4-bit lẽ ra ~3 GB. Code
+`trust_remote_code` của MiniCPM nạp vision tower ngoài luồng bitsandbytes. Đường lượng tử
+hoá của bản 4 là llama.cpp/GGUF, không phải transformers.
+
+### Chép tên riêng giảm theo kích thước model
 
 | Model | Ca chép tên riêng |
 |---|---|
@@ -180,54 +134,30 @@ model thì không biết thay đổi đến từ đâu.
 | Vintern-3B | 59/346 (17,05%) |
 | **Qwen2.5-VL-7B** | **25/354 (7,06%)** |
 
-Thêm luật cấm vào prompt đổi được 111 → 113 ca (không đổi). Đổi sang model lớn hơn giảm
-**4,7 lần**. Kết luận: đây là giới hạn năng lực model, không phải chuyện diễn đạt prompt.
+Thêm luật cấm tên riêng vào prompt: 111 → 113 ca, không đổi. Đổi sang model lớn hơn: giảm
+**4,7 lần**. Đây là giới hạn năng lực model, không phải chuyện diễn đạt prompt (mục 5).
 
-**Đề xuất đổi model được chọn sang Vintern-3B-R-beta** — nhưng chưa đổi trong bản này, cần
-nhóm duyệt. Lý do:
+### Chọn model nào
 
-| | Vintern-3B | Qwen2.5-VL-3B (đang chọn) |
-|---|---|---|
-| JSON hợp lệ | **97,46%** | 96,34% |
-| VRAM | **2,841 GB** | 3,960 GB |
-| Latency | **10,636 s** | 12,118 s |
-| Chép tên riêng | **17,05%** | 33,04% |
-| recall@1 | **0,9769** | 0,9737 |
-| Vòng vo (đã hiệu chỉnh) | 3,5% TTR thấp | 0,3% |
+**Đề xuất đổi sang Vintern-3B-R-beta**, cần nhóm duyệt trước khi chốt.
 
-Vintern-3B thắng 5/6 chỉ số, nhẹ hơn 1,1 GB, nhanh hơn 1,5 s/ảnh, và chép tên riêng chỉ
-bằng một nửa. Lý do loại nó trước đây — "vòng vo 37,28%" — đã được chứng minh là **báo nhầm
-của thước đo**.
+| | Vintern-3B | Qwen2.5-VL-3B (đang chọn) | Qwen2.5-VL-7B |
+|---|---|---|---|
+| JSON hợp lệ | 97,46% | 96,34% | **99,72%** |
+| Chép tên riêng | 17,05% | 33,04% | **7,06%** |
+| VRAM | **2,841 GB** (20% T4) | 3,960 GB (27%) | 6,798 GB (47%) |
+| Latency | **10,636 s** | 12,118 s | 12,411 s |
+| Tải về | **7,4 GB** | 7,5 GB | 16,6 GB |
+| recall@1 | **0,9769** | 0,9737 | 0,9520 |
+| Tiếng Việt | fine-tune riêng | đa ngữ | đa ngữ |
 
-**Qwen2.5-VL-7B là lựa chọn tốt nhất nếu ưu tiên chất lượng.** 8,29B tham số và 6,798 GB —
-**nằm trong trần thật ~11 tỷ / 14,56 GB của T4**, chỉ dùng 47% bộ nhớ card. Con số "<7B"
-trong bản chia việc là ràng buộc nhóm tự đặt trước khi có số đo, không phải quy định BTC
-(chú thích ⁶).
+Vintern-3B thắng Qwen-3B ở 5/6 chỉ số, nhẹ hơn 1,1 GB, nhanh hơn 1,5 s/ảnh.
 
-Đánh đổi thật giữa hai ứng viên:
+Qwen-7B tốt hơn về chất lượng caption nhưng nặng gấp 2,4 lần khi tải và chiếm gấp đôi VRAM.
+Cả hai đều nằm trong trần phần cứng thật (mục dưới).
 
-| | Vintern-3B | Qwen2.5-VL-7B |
-|---|---|---|
-| JSON hợp lệ | 97,46% | **99,72%** |
-| Chép tên riêng | 17,05% | **7,06%** |
-| VRAM | **2,841 GB** (20% T4) | 6,798 GB (47% T4) |
-| Latency | **10,636 s** | 12,411 s |
-| Tải về | **7,4 GB** | 16,6 GB |
-| Tiếng Việt | fine-tune riêng | đa ngữ |
-
-Chọn Vintern-3B nếu cần nhẹ và có mốc so sánh tiếng Việt; chọn 7B nếu ưu tiên chất lượng
-caption và chấp nhận nặng gấp 2,4 lần.
-
-**Vintern-1B 0% — không phải model hỏng.** Nó sinh JSON đúng cú pháp nhưng tự đặt tên trường
-tiếng Việt (`"vật thể"`, `"câu tiếng Việt mô tả"`) thay vì khoá quy định. Model 1B không đủ
-sức bám khuôn. Có 226/355 ca lưu được `raw_text` làm bằng chứng.
-
-⁵ Đo 17/08/2026, kernel `notebookdd8236fd34` v5 + `notebook4764945a8d` v20, commit `328a8a7`
-(xác nhận bằng dòng `Commit:` trong log kernel).
-
-⁶ **Tên model gây hiểu nhầm.** Đếm từ HuggingFace API 17/08: Qwen2.5-VL-7B-Instruct có
-**8.292.166.656** tham số. Các model khác: Qwen2.5-VL-3B 3,75B · MiniCPM-V-4 4,06B ·
-Vintern-3B-R-beta 3,71B. Bản trước ghi "7B" theo tên model, không phải theo số đếm.
+**Bước chặn duy nhất còn lại:** chấm tay 30 caption × 4 model, giấu tên model. Máy chấm cho
+tín hiệu mâu thuẫn ở chỉ số vòng vo, nên mắt người là trọng tài cuối.
 
 ### Trần tham số thật: ~11 tỷ, không phải 7 tỷ
 
