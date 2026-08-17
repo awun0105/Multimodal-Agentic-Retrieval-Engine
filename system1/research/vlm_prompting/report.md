@@ -58,17 +58,25 @@ model nên gần như không tốn thêm chi phí.
 Khảo sát dựa trên nghiên cứu tính tới 15/08/2026 (báo cáo đầy đủ tại
 `plans/reports/research-260815-2149-vlm-small-2026.md`).
 
-| Model | Tham số | VRAM 4-bit | Lý do vào danh sách |
-|---|---|---|---|
-| Qwen2.5-VL-7B-Instruct | **8,29B** ⁶ | ~5.5GB | Dẫn đầu MMBench nhóm <7B (82.6/100) |
-| Qwen2.5-VL-3B-Instruct | 3B | ~3.0GB | Cân bằng nhất cho GPU phổ thông |
-| Qwen2-VL-2B-Instruct | 2B | ~2.0GB | Nhẹ, đã có số đo thực tế trong nhóm |
-| Vintern-1B-v3.5 | 1B | ~1.5GB | **VLM duy nhất fine-tune riêng tiếng Việt** |
-| MiniCPM-V-4.0 | 4B | ~3.0GB | Đường lui cho GPU yếu |
-| InternVL3.5-8B | 8B | ~6.5GB | Á quân — loại vì vượt 7B của đề bài |
-| Moondream 3.1 | 9B MoE | ~3.0GB | Loại — chưa có benchmark tiếng Việt nào |
+Cột **Tham số** đếm từ HuggingFace API (`safetensors.total`), không phải theo tên model —
+tên gọi hay làm tròn xuống (Qwen2.5-VL-"7B" thật ra 8,29 tỷ).
 
-Năm model đầu đã cài đặt sẵn trong `vlm/model_registry.py`, đổi bằng một tham số.
+| Model | Tham số | VRAM đo thật | Trạng thái |
+|---|---|---|---|
+| Qwen2.5-VL-7B-Instruct | 8,29B | 6,798 GB | ✅ Đã đo — cao nhất mọi chỉ số chất lượng |
+| InternVL3.5-8B | 8,53B | *đang đo* | Á quân MMBench; lý do loại cũ ("vượt 7B") đã đổ |
+| MiniCPM-V-4.0 | 4,06B | tràn 12,97 GB | ❌ 4-bit không có tác dụng trên model này |
+| Qwen2.5-VL-3B-Instruct | 3,75B | 3,960 GB | ✅ Đã đo — model đang chọn |
+| Vintern-3B-R-beta | 3,71B | 2,841 GB | ✅ Đã đo — **đề xuất đổi sang** |
+| Qwen2-VL-2B-Instruct | 2,21B | 2,052 GB | ✅ Đã đo — đường lui cho GPU nhỏ |
+| Moondream 2 | 1,93B | *đang đo* | Chạy fp16, không nén 4-bit |
+| Vintern-1B-v3.5 | 0,94B | — | ❌ 0% — tự chế tên trường JSON |
+
+Cả 8 model đã cài trong `vlm/model_registry.py`, đổi bằng một tham số.
+
+**Moondream 3-preview (9,27B, MoE) không vào danh sách đo:** MoE nạp toàn bộ 9,27 tỷ tham số
+vào bộ nhớ dù chỉ kích hoạt 2 tỷ mỗi token, và tài liệu không nói gì về bitsandbytes — cùng
+ba dấu hiệu đã làm MiniCPM-V-4 thất bại. Bản Moondream 2 nhẹ hơn được chọn thay.
 
 ---
 
@@ -929,7 +937,7 @@ system1/research/vlm_prompting/
 Vintern-1B: 92 mục mock từ bộ ảnh cũ — không phải output model thật.
 ```
 
-**Cập nhật 17/08 — thêm 4 lượt chạy, cùng 355 ảnh:**
+**Bốn lượt chạy 17/08, cùng 355 ảnh:**
 
 ```
 checkpoint_vintern-3b.json          346 thành công (97,46%) ·   9 lỗi
@@ -939,8 +947,8 @@ checkpoint_minicpm-v-4.json           0 thành công ( 0,00%) · 355 lỗi  [190
 checkpoint-13-ca-loi-rawtext.json     0 thành công          ·  13 lỗi  [nguyên văn 320 dấu !]
 ```
 
-Bốn file này **có commit** (khác các checkpoint cũ) vì chúng là bằng chứng cho những kết
-luận bị lật — người đọc PR cần xem được `raw_text` thật, không phải tin lời kể.
+Bốn file này **có commit** (khác các checkpoint cũ): report khẳng định `raw_text` chứa gì,
+nên người đọc PR phải mở được file mà kiểm.
 
 ⚠️ **`sample_results.json` chỉ lưu ca thành công.** Đếm số mục trong file đó rồi kết luận
 "chỉ chạy 274 ảnh" là sai — đã chạy đủ 355, 81 ca lỗi nằm ở checkpoint. Mà `.gitignore`
@@ -954,35 +962,25 @@ nó đọc cả hai nguồn và in ra tổng/thành công/lỗi, không phải s
 
 ## 11. Việc còn lại
 
-Xếp theo mức độ ảnh hưởng, dựa trên số đo hiện hành (không phải cảm tính):
+Xếp theo mức độ ảnh hưởng, dựa trên số đo hiện hành:
 
-1. **Giảm lỗi nhét chữ OCR (33,33% ở model được chọn)** — lỗi lớn nhất còn lại.
-   **17/08: sửa bằng prompt đã thử và THẤT BẠI** (111→113 ca). Hai hướng còn lại, theo thứ
-   tự: (a) đổi sang model lớn hơn — Vintern-3B 17,05%, Qwen-7B 7,06%; (b) chặn ở tầng
-   validator, đối chiếu OCR của Phần 2.
-2. ~~**Chỉnh prompt cho Vintern-1B.**~~ **Bỏ hướng này.** 17/08 chạy thật 355 ảnh: Vintern-1B
-   đạt 0%, sinh JSON đúng cú pháp nhưng tự chế tên trường (`"vật thể"`, `"câu tiếng Việt
-   mô tả"`). Model 1B không đủ sức bám khuôn — chỉnh prompt không cứu được.
-   **Thay bằng Vintern-3B-R-beta**: cùng kiến trúc, cùng adapter, đạt 97,46%.
-3. **13 ca lỗi còn lại của Qwen2.5-VL-3B** — đã kiểm 17/08, giả thuyết "caption bị cắt ở
-   `MAX_NEW_TOKENS = 320`" **sai**. Nguyên văn output là 320 dấu chấm than liên tiếp, cả 13
-   ảnh như một. Đây là dạng sập token của Qwen2-VL/2.5-VL, không phải caption dài. Hướng
-   sửa: ép JSON lúc sinh token (XGrammar) hoặc đổi độ phân giải ảnh — không phải nâng trần.
-5. **Đo hiệu quả khử trùng lặp + batch inference trên tập lớn** — bắt buộc trước khi chạy
-   toàn bộ dữ liệu cuộc thi (mục 7.4, cần giảm 30–40 lần thời gian)
-6. **Cổng kiểm tiếng Việt** — chấm tay 30 caption × **4 model chạy được** (Qwen-7B,
-   Vintern-3B, Qwen-3B, Qwen-2B), giấu tên model. Đây giờ là **bước chặn duy nhất** trước
-   khi chốt đổi model: máy chấm cho tín hiệu mâu thuẫn ở chỉ số vòng vo.
+1. **Chấm tay 30 caption × 4 model, giấu tên model** — bước chặn duy nhất trước khi chốt
+   đổi model. Máy chấm mâu thuẫn ở chỉ số vòng vo (mục 3), nên cần mắt người.
+2. **Sửa `kiem_cum_lap(n=2)`** — nâng lên n=3 hoặc miễn trừ danh từ ghép tiếng Việt, rồi
+   đo lại toàn bộ. Hiện nó phạt oan `người đàn`, `máy tính`, `giáo viên`.
+3. **Chặn nhét chữ OCR ở tầng validator** — prompt đã thử và không ăn (mục 5). Đối chiếu
+   OCR của Phần 2 để xoá tên riêng sau khi sinh.
+4. **13 ca lỗi của Qwen2.5-VL-3B** — thử XGrammar hoặc đổi độ phân giải ảnh. Không nâng
+   `MAX_NEW_TOKENS`: model sập token `!`, không phải caption dài (mục 3).
+5. **Mở rộng tập holdout ngoài 355 ảnh** — chỉ 65 ảnh không có nhãn, quá ít để đo model
+   sau khi train LoRA.
+6. **Đo hiệu quả khử trùng lặp + batch inference trên tập lớn** — bắt buộc trước khi chạy
+   toàn bộ dữ liệu cuộc thi (mục 7.4, cần giảm 30–40 lần thời gian).
 
-**Đã xong 16/08:**
-
-- **Phép kiểm ký tự ngoài tiếng Việt** — `quality/caption_ngon_ngu_la.py` đã có từ 02:22,
-  đang chạy trên cả 5 trường. Bắt được 2/83 (gốc) và 1/290 (agent thầy). Mục 7.3 chỗ nào
-  còn ghi "bộ kiểm không bắt được lỗi chữ Hán" là tàn dư lỗi thời.
-- **Mở PR** — [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29).
-Đề bài ghi nhánh `research-branch`, repo không có nhánh đó; tra lịch sử thấy PR #26 của
-Phần 2 đi từ `research-branch/ocr-asr` vào `system1-notebook01` và đã được gộp →
-`research-branch` là **tiền tố quy ước**, không phải nhánh có sẵn. Làm theo tiền lệ đó.
+**PR:** [#29](https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine/pull/29),
+nhánh `research-branch/vlm-prompting`. Đề bài ghi nhánh `research-branch` nhưng repo không
+có nhánh đó; PR #26 của Phần 2 đi từ `research-branch/ocr-asr` và đã được gộp, nên
+`research-branch` là tiền tố quy ước chứ không phải nhánh có sẵn.
 
 ---
 
@@ -1061,8 +1059,8 @@ thành số đo, hay số giả thành số thật.
 | Qwen2-VL-2B: 77,18% / 9,414 s / 2,006 GB (355 ảnh, kernel v18) | ✅ **Đo thật**, lượt trước khi tắt lấy mẫu. Chênh 0,28 điểm — tắt lấy mẫu gần như không ảnh hưởng model 2B |
 | Qwen2-VL-2B: 85,9% JSON hợp lệ / 9,131 s / 1,946 GB (prompt v2, 92 ảnh) | ✅ **Đo thật**, lần chạy trước trên bộ 92 ảnh — giữ lại để so cặp v1/v2, không còn là số hiện hành |
 | Qwen2-VL-2B: 93,5% JSON hợp lệ / 8,51 s / 1,84 GB (prompt v1, 92 ảnh, mục 7.2) | ✅ **Đo thật**, lần chạy đầu, không còn là số hiện hành |
-| Qwen2.5-VL-3B: 4,3% (4/92) — số CŨ | ✅ Đo thật, nhưng **đã lỗi thời**. Đo khi còn `do_sample=True`. Sau khi tắt lấy mẫu (commit `d37bdc2`), model đạt **96,34% (342/355)** — xác nhận chẩn đoán ở mục 7.2. Giữ lại để thấy mức cải thiện |
-| Vintern-1B: 100% / 0,0 s / 0,0 GB | ❌ **Số giả** — mock. **Đã bị thay 17/08**: model chạy thật cho **0%** (0/355) |
+| Qwen2.5-VL-3B: 4,3% (4/92) | ✅ Đo thật khi còn `do_sample=True`, **không còn là số hiện hành**. Tắt lấy mẫu (`d37bdc2`) → 96,34% (342/355). Giữ để thấy mức cải thiện |
+| Vintern-1B: 100% / 0,0 s / 0,0 GB (log cũ) | ❌ **Số giả** — mock. Số hiện hành là 0% (0/355), đo thật |
 | **Vintern-3B-R-beta: 97,46% / 10,636 s / 2,841 GB** (355 ảnh) | ✅ **Đo thật** Kaggle T4 17/08, kernel `notebookdd8236fd34` v5, commit `328a8a7` |
 | **Qwen2.5-VL-7B: 99,72% / 12,411 s / 6,798 GB** (355 ảnh) | ✅ **Đo thật** Kaggle T4 17/08, kernel v6 |
 | **Vintern-1B: 0% (0/355)** — số thật thay cho mock | ✅ **Đo thật** 17/08. 226/355 ca lưu được `raw_text` làm bằng chứng: JSON đúng cú pháp, sai tên trường |
