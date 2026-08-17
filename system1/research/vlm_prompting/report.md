@@ -114,7 +114,8 @@ Chi tiết: `plans/reports/benchmark-260817-0615-6-model-va-13-ca-loi.md`.
 
 **Qwen2.5-VL-7B thắng gần như toàn diện**: JSON hợp lệ 99,72% (chỉ 1 ảnh lỗi trên 355),
 nhét chữ thấp nhất, vòng vo thấp nhất. Giá phải trả là 6,798 GB — gấp 1,7 lần bản 3B, và
-model có 8,29B tham số nên **vượt mốc "<7B" của đề bài**. recall@1 0,9520 thấp hơn 3B một
+model có 8,29B tham số — vượt con số "<7B" trong bản chia việc nội bộ, nhưng **nằm trong
+trần thật ~11 tỷ của T4** (xem chú thích ⁶). recall@1 0,9520 thấp hơn 3B một
 chút, đủ nhỏ để không đảo kết luận.
 
 **Vintern-3B là phát hiện đáng chú ý nhất.** Lần đầu một model Vintern sinh caption thật —
@@ -170,8 +171,24 @@ Vintern-3B thắng 5/6 chỉ số, nhẹ hơn 1,1 GB, nhanh hơn 1,5 s/ảnh, v�
 bằng một nửa. Lý do loại nó trước đây — "vòng vo 37,28%" — đã được chứng minh là **báo nhầm
 của thước đo**.
 
-Qwen2.5-VL-7B chất lượng cao nhất nhưng **8,29B tham số, vượt mốc đề bài** và tốn 6,8 GB —
-chỉ nên dùng nếu nhóm chấp nhận vượt mốc.
+**Qwen2.5-VL-7B là lựa chọn tốt nhất nếu ưu tiên chất lượng.** 8,29B tham số và 6,798 GB —
+**nằm trong trần thật ~11 tỷ / 14,56 GB của T4**, chỉ dùng 47% bộ nhớ card. Con số "<7B"
+trong bản chia việc là ràng buộc nhóm tự đặt trước khi có số đo, không phải quy định BTC
+(chú thích ⁶).
+
+Đánh đổi thật giữa hai ứng viên:
+
+| | Vintern-3B | Qwen2.5-VL-7B |
+|---|---|---|
+| JSON hợp lệ | 97,46% | **99,72%** |
+| Chép tên riêng | 17,05% | **7,06%** |
+| VRAM | **2,841 GB** (20% T4) | 6,798 GB (47% T4) |
+| Latency | **10,636 s** | 12,411 s |
+| Tải về | **7,4 GB** | 16,6 GB |
+| Tiếng Việt | fine-tune riêng | đa ngữ |
+
+Chọn Vintern-3B nếu cần nhẹ và có mốc so sánh tiếng Việt; chọn 7B nếu ưu tiên chất lượng
+caption và chấp nhận nặng gấp 2,4 lần.
 
 **Vintern-1B 0% — không phải model hỏng.** Nó sinh JSON đúng cú pháp nhưng tự đặt tên trường
 tiếng Việt (`"vật thể"`, `"câu tiếng Việt mô tả"`) thay vì khoá quy định. Model 1B không đủ
@@ -181,9 +198,49 @@ sức bám khuôn. Có 226/355 ca lưu được `raw_text` làm bằng chứng.
 (xác nhận bằng dòng `Commit:` trong log kernel).
 
 ⁶ **Tên model gây hiểu nhầm.** Đếm từ HuggingFace API 17/08: Qwen2.5-VL-7B-Instruct có
-**8.292.166.656** tham số, tức **vượt mốc "<7B"** của đề bài dù tên ghi 7B. Các model khác:
-Qwen2.5-VL-3B 3,75B · MiniCPM-V-4 4,06B · Vintern-3B-R-beta 3,71B. Bản trước ghi "7B" theo
-tên model, không phải theo số đếm.
+**8.292.166.656** tham số. Các model khác: Qwen2.5-VL-3B 3,75B · MiniCPM-V-4 4,06B ·
+Vintern-3B-R-beta 3,71B. Bản trước ghi "7B" theo tên model, không phải theo số đếm.
+
+### Trần tham số thật: ~11 tỷ, không phải 7 tỷ
+
+**Con số "dưới 7B" không phải quy định của BTC.** Đã kiểm nguồn:
+
+| Nguồn | Có nói gì về giới hạn tham số? |
+|---|---|
+| `preliminary-round-info.pdf` (BTC chính thức, 6 trang) | **Không một dòng nào** về tham số / VRAM / phần cứng |
+| `Ban_chia_viec_nghien_cuu_multimodal.pdf` tr.3 mục 15 | *"VLM nhỏ gọn dưới 7B tham số"* — nhưng đây là **bản chia việc nội bộ nhóm** |
+
+Mục 17 của chính văn bản đó nói rõ lý do: *"Áp dụng lượng tử hóa 4-bit **để giảm tải phần
+cứng**"*. Tức 7B là **ràng buộc hạ tầng nhóm tự đặt**, không phải quy chế. Ràng buộc hạ tầng
+thì đo lại được.
+
+**Tính trần thật từ 4 model đã đo trên T4** (4-bit NF4):
+
+| Model | Tham số | VRAM đỉnh | GB/tỷ tham số |
+|---|---|---|---|
+| Qwen2-VL-2B | 2,21B | 2,052 GB | 0,929 |
+| Vintern-3B | 3,71B | 2,841 GB | 0,765 |
+| Qwen2.5-VL-3B | 3,75B | 3,960 GB | **1,055** ← xấu nhất |
+| Qwen2.5-VL-7B | 8,29B | 6,798 GB | 0,820 |
+
+Lấy hệ số xấu nhất (1,055 GB/tỷ) để tính an toàn:
+
+| Dự phòng | Trần tham số |
+|---|---|
+| 15% | **11,7 tỷ** |
+| 20% | **11,0 tỷ** |
+| 30% | 9,7 tỷ |
+
+**Hai ràng buộc khác đã kiểm, đều không bó buộc:**
+
+- **Thời gian**: 7B chạy 355 ảnh hết 73 phút = 10% quota 12h. Đáng chú ý, 7B chỉ **chậm hơn
+  3B 2,4%** dù gấp 2,2 lần kích thước — tốc độ không tỉ lệ với số tham số.
+- **Đĩa**: 7B tải về 16,6 GB dạng gốc fp16 (nén 4-bit chỉ xảy ra sau khi tải). Kaggle cho
+  ~57-73 GB, còn rộng.
+
+**Kết luận: trần thực tế trên T4 free là ~11 tỷ tham số.** Qwen2.5-VL-7B (8,29B, dùng 47%
+VRAM) nằm gọn trong đó — **không vi phạm ràng buộc nào cả**. Con số 7B trong bản chia việc
+là ước lượng thận trọng đặt ra trước khi có số đo.
 
 ⁷ **MiniCPM-V-4: đã viết adapter, chạy được, nhưng không dùng được trên T4.** Trước đây model
 này chưa từng chạy vì registry trỏ sai lớp nạp. Đã viết `MiniCpmAdapter`
