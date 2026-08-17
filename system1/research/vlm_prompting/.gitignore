@@ -8,6 +8,15 @@ results/checkpoint_*.json
 results/stability_*/
 results/*.tmp
 
+# Ngoại lệ: checkpoint của lượt 17/08 là BẰNG CHỨNG cho các kết luận bị lật trong
+# report (Vintern-3B chạy được, 13 ca lỗi là 320 dấu chấm than, MiniCPM tràn bộ nhớ,
+# Vintern-1B tự chế tên trường). Người đọc PR phải xem được raw_text thật thay vì
+# tin lời kể. Tổng 1,1 MB.
+!results/checkpoint_vintern-3b.json
+!results/checkpoint_qwen25vl-7b.json
+!results/checkpoint_vintern-1b-355anh.json
+!results/checkpoint_minicpm-v-4.json
+
 # Python
 __pycache__/
 *.pyc

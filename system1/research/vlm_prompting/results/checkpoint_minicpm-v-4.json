@@ -1,0 +1,2300 @@
+{
+  "model_key": "minicpm-v-4",
+  "da_xong": {
+    "001.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "002.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "003.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "004.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "005.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "006.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "008.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "009.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "010.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "011.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "012.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "013.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "014.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "015.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "017.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "019.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "020.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "021.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 22.81 MiB is free. Including non-PyTorch memory, this process has 14.54 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 180.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "023.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "025.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "026.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "027.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "028.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "029.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "030.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "032.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "033.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "034.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "035.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "036.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "037.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "038.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "040.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "042.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "043.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "044.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "045.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 62.81 MiB is free. Including non-PyTorch memory, this process has 14.50 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 140.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "047.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "048.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "049.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "050.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "051.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.41 GiB is free. Including non-PyTorch memory, this process has 13.15 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 73.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "052.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 94.81 MiB is free. Including non-PyTorch memory, this process has 14.47 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 88.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "054.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "056.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "058.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "059.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "060.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "061.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "062.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "063.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "064.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "065.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "066.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "067.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "070.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "071.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "072.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "073.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "074.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "075.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "076.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "077.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "079.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "081.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "082.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "083.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "086.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "087.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "088.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "089.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "090.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "091.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "092.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "094.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "095.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "096.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "097.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "098.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "099.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "100.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "102.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "104.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "106.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "107.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "108.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.55 GiB is free. Including non-PyTorch memory, this process has 13.01 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 129.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "110.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "111.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "112.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "113.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "114.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "115.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "116.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.37 GiB is free. Including non-PyTorch memory, this process has 13.19 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 113.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "118.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "119.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 62.81 MiB is free. Including non-PyTorch memory, this process has 14.50 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 140.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "120.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "121.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "123.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "125.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "126.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "127.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "128.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "129.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "131.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "132.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "133.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.35 GiB is free. Including non-PyTorch memory, this process has 13.21 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 133.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "134.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "135.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 62.81 MiB is free. Including non-PyTorch memory, this process has 14.50 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 140.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "136.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "137.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "138.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "139.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "141.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "142.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 94.81 MiB is free. Including non-PyTorch memory, this process has 14.47 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 88.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "143.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "144.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "145.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "147.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "149.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "150.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "151.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 22.81 MiB is free. Including non-PyTorch memory, this process has 14.54 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 180.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "152.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "153.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "154.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "155.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "156.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "157.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "158.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "159.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "160.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "161.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "162.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "164.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "166.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "168.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "169.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "172.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "174.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "175.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.37 GiB is free. Including non-PyTorch memory, this process has 13.19 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 113.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "176.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "178.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "180.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "182.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "183.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.55 GiB is free. Including non-PyTorch memory, this process has 13.01 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 129.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "185.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.37 GiB is free. Including non-PyTorch memory, this process has 13.19 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 113.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "187.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "188.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "189.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "190.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "191.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "193.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "194.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.37 GiB is free. Including non-PyTorch memory, this process has 13.19 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 113.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "195.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "196.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "197.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "198.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "199.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "200.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "201.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "203.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "205.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "206.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "207.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "211.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "212.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "213.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "214.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "215.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "216.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "217.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "218.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.37 GiB is free. Including non-PyTorch memory, this process has 13.19 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 113.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "219.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 34.81 MiB is free. Including non-PyTorch memory, this process has 14.53 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 148.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "220.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "221.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "222.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "223.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "224.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "226.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.37 GiB is free. Including non-PyTorch memory, this process has 13.19 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 113.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "228.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "230.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "231.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "234.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "236.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "237.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "238.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "239.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 62.81 MiB is free. Including non-PyTorch memory, this process has 14.50 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 140.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "240.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "242.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "244.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "245.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "247.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "249.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "250.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "251.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "252.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "253.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "256.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "257.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "258.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 62.81 MiB is free. Including non-PyTorch memory, this process has 14.50 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 140.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "259.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "260.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "261.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "262.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "263.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "265.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "267.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "268.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "269.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "273.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "274.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.37 GiB is free. Including non-PyTorch memory, this process has 13.19 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 113.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "275.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "276.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "277.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "278.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "279.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "280.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "281.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "282.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "283.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "284.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "285.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "286.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "288.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.37 GiB is free. Including non-PyTorch memory, this process has 13.19 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 113.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "289.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "290.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "291.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "292.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "293.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "296.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "297.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "298.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "299.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "300.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "302.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "304.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "306.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "307.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "308.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 62.81 MiB is free. Including non-PyTorch memory, this process has 14.50 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 140.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "309.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "311.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "312.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "313.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "314.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "315.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "316.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "317.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "318.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "319.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "320.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "321.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "322.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "323.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "324.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "325.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "327.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "329.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "330.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "331.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "335.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "336.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "337.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "338.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "339.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "340.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 14.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 22.81 MiB is free. Including non-PyTorch memory, this process has 14.54 GiB memory in use. Of the allocated memory 14.29 GiB is allocated by PyTorch, and 115.89 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "342.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "343.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "344.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "346.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "347.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "348.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "350.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "352.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "354.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "355.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "356.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "359.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "360.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 62.81 MiB is free. Including non-PyTorch memory, this process has 14.50 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 140.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "361.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "362.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "366.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "368.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "369.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "371.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "373.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "374.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "375.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "376.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "377.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "379.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "380.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "381.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "382.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "384.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "385.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "386.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "387.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "391.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "392.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "393.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "397.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "398.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "399.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "400.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "402.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "405.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "406.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "408.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "409.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "414.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "417.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "420.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "424.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "427.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "428.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "430.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "431.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 42.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 160.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "435.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "436.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "437.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "438.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "439.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "442.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "443.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "444.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "446.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "447.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.59 GiB is free. Including non-PyTorch memory, this process has 12.97 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 89.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "448.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "449.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "453.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 14.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 22.81 MiB is free. Including non-PyTorch memory, this process has 14.54 GiB memory in use. Of the allocated memory 14.28 GiB is allocated by PyTorch, and 128.79 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "454.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "455.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "456.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "464.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "468.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "470.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "471.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "486.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "490.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "492.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "493.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "498.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "500.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 22.81 MiB is free. Including non-PyTorch memory, this process has 14.54 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 180.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "501.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "504.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "506.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "511.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "528.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "531.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 74.81 MiB is free. Including non-PyTorch memory, this process has 14.49 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 108.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "532.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "533.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "552.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "JsonParseError: Không tìm thấy JSON hợp lệ trong output (dài 5 ký tự)",
+      "raw_text": "<CLS>"
+    },
+    "568.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.57 GiB is free. Including non-PyTorch memory, this process has 12.99 GiB memory in use. Of the allocated memory 12.75 GiB is allocated by PyTorch, and 109.65 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "573.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 1.76 GiB. GPU 0 has a total capacity of 14.56 GiB of which 1.39 GiB is free. Including non-PyTorch memory, this process has 13.17 GiB memory in use. Of the allocated memory 12.95 GiB is allocated by PyTorch, and 93.13 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "594.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "OutOfMemoryError: CUDA out of memory. Tried to allocate 228.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 54.81 MiB is free. Including non-PyTorch memory, this process has 14.51 GiB memory in use. Of the allocated memory 14.25 GiB is allocated by PyTorch, and 128.83 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    },
+    "595.jpg": {
+      "thanh_cong": false,
+      "latency_sec": null,
+      "ket_qua": null,
+      "loi": "VlmKhongSanSang: Không nạp được openbmb/MiniCPM-V-4: CUDA out of memory. Tried to allocate 50.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 22.81 MiB is free. Including non-PyTorch memory, this process has 14.54 GiB memory in use. Of the allocated memory 14.23 GiB is allocated by PyTorch, and 180.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+    }
+  }
+}
