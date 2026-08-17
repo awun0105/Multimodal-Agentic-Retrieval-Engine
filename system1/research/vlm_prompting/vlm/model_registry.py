@@ -69,14 +69,17 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
     ),
     "internvl35-8b": ModelSpec(
         key="internvl35-8b",
-        hf_id="OpenGVLab/InternVL3_5-8B",
+        hf_id="OpenGVLab/InternVL3_5-8B-HF",
         ten_hien_thi="InternVL 3.5 8B",
         vram_4bit_gb=7.0,
         loader="auto_causal",
         trust_remote_code=True,
         ghi_chu=(
-            "8,53 tỷ tham số, cùng InternVLChatModel với Vintern nên dùng chung "
-            "adapter. Trước bị loại vì 'vượt 7B của đề bài' — lý do đó đã đổ."
+            "8,53 tỷ tham số. Dùng bản -HF (InternVLForConditionalGeneration) chứ "
+            "không phải bản gốc: bản gốc nạp qua trust_remote_code thì transformers "
+            "4.5x+ tự nhận diện InternVL và đòi tokenizer kiểu HF, ném "
+            "'Qwen2TokenizerFast has no attribute start_image_token'. Bản HF dùng "
+            ".generate() chuẩn nên đi qua TransformersAdapter, không cần adapter riêng."
         ),
     ),
     "moondream2": ModelSpec(

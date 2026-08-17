@@ -270,6 +270,10 @@ def _la_ho_internvl(spec) -> bool:
     loader đó nhưng có processor bình thường, đẩy nó sang InternVlAdapter là sai.
     """
     ten = spec.hf_id.lower()
+    # Ban "-hf" la InternVLForConditionalGeneration: dung .generate() chuan nhu Qwen,
+    # khong co .chat(). Day adapter nay vao la hong.
+    if ten.endswith("-hf"):
+        return False
     return "internvl" in ten or "vintern" in ten
 
 

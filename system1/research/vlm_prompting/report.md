@@ -450,193 +450,68 @@ Hệ quả của latency 9,65s: chạy 1 triệu keyframe bằng cấu hình nà
 chuyển sang vLLM (nghiên cứu ước tính nhanh hơn 5–10 lần) hoặc dùng model nhẹ
 hơn như Vintern-1B.
 
-### 7.2. Benchmark đầy đủ 3 model
+### 7.2. Hai lỗi hạ tầng đã sửa
 
-**ĐÃ CHẠY 2 LẦN.** 92 keyframe thật × 3 model, Kaggle Tesla T4. Lần đầu dùng prompt v1
-(kết quả thô bên dưới, mục này). Lần hai dùng prompt v2 — số hiện hành, đã đưa lên mục 3.
+Số hiện hành ở mục 3. Phần này giữ lại nguyên nhân gốc của hai lỗi từng làm hỏng cả lượt
+benchmark — cùng loại lỗi dễ tái diễn khi thêm model mới.
 
-### Kết quả thô — prompt v1 (lần chạy đầu, không còn là số hiện hành)
+**Lỗi 1: Qwen2.5-VL-3B sập sau 4 ảnh (4,3% JSON hợp lệ).**
 
-| Model | JSON hợp lệ | Latency TB | P95 | VRAM đỉnh | Caption TB | Dùng được? |
-|---|---|---|---|---|---|---|
-| Vintern-1B-v3.5 | 100% (92/92) | **0,0 s** | 0,0 s | **0,0 GB** | 31 từ | ❌ **KHÔNG** — xem dưới |
-| **Qwen2-VL-2B** | **93,5%** (86/92) | 8,51 s | 13,43 s | 1,84 GB | 18,5 từ | ✅ **CÓ** |
-| Qwen2.5-VL-3B | 4,3% (4/92) | 10,61 s | 13,61 s | 4,22 GB | 22,8 từ | ❌ **KHÔNG** — xem dưới |
-
-⚠️ Đây là số của **prompt v1**. Lần chạy sau (prompt v2, mục 3) cho JSON hợp lệ Qwen2-VL-2B
-**thấp hơn** (85,9% thay vì 93,5%) nhưng caption **chất lượng cao hơn** — xem mục 7.3.
-
-### ⚠️ Hai trong ba kết quả KHÔNG dùng được
-
-**1. Vintern-1B: số 100% là giả — đã xác nhận nguyên nhân gốc.**
-
-Latency 0,0 giây và VRAM 0,0 GB là bất khả thi với một model thật. Nghĩa là
-adapter đã **rơi về `MockAdapter`** — trả JSON giả hợp lệ thay vì chạy model.
-Cơ chế degrade hoạt động đúng như thiết kế (không crash cả mẻ), nhưng con số
-sinh ra **không phải kết quả model**.
-
-Log Kaggle của lần chạy prompt v2 ghi rõ nguyên nhân thật:
+Không phải lỗi model. `do_sample=True` bốc thăm trên phân phối xác suất, mà ở `float16`
+phân phối của model 3B tràn số thành `nan`:
 
 ```
-Không nạp được 5CD-AI/Vintern-1B-v3_5:
-  'InternVLChatModel' object has no attribute 'all_tied_weights_keys'
-→ transformers init failed, falling back to mock
-→ MockAdapter active - returning FAKE JSON, not real model output
+RuntimeError: probability tensor contains either inf, nan or element < 0
 ```
 
-**Không phải chỉ do thiếu adapter InternVL** như suy đoán ban đầu. Nguyên nhân thật là
-**xung đột phiên bản `transformers`**: `InternVLChatModel` của Vintern thiếu thuộc tính
-`all_tied_weights_keys` mà `transformers` bản 4.5x trở lên đòi hỏi. Đây là lỗi tương thích
-phiên bản, không phải lỗi kiến trúc — model **không cần** gọi `model.chat()` riêng như
-suy đoán trước, chỉ cần chạy trên bản `transformers` cũ hơn.
+88/92 ca lỗi cùng một thông báo. Sinh JSON có cấu trúc thì lấy chữ xác suất cao nhất vừa
+ổn định vừa đúng hơn lấy mẫu — tắt `do_sample` (commit `d37bdc2`) đưa model từ **4,3% lên
+96,34%**. Hằng `DUNG_LAY_MAU = False` trong `vlm/adapters.py`.
 
-→ **Hướng sửa rẻ hơn nhiều: ghim `transformers` về phiên bản cũ hơn**, thay vì viết
-adapter riêng cho InternVL. Bài học: chỉ số "tỷ lệ JSON hợp lệ" một mình không đủ tin —
-phải kiểm tra chéo với latency và VRAM, và phải đọc log lỗi thật thay vì đoán.
+**Lỗi 2: Vintern-1B trả 100% nhưng là mock.**
 
-**Cập nhật 16/08/2026 — bằng chứng củng cố chẩn đoán này.** Trong phiên train QLoRA,
-notebook chạy `pip install -U trl` và bị lỗi ngay ở dòng import:
+Nguyên nhân là **xung đột phiên bản `transformers`**, không phải thiếu adapter:
+`InternVLChatModel` thiếu thuộc tính `all_tied_weights_keys` mà transformers 4.5x+ bắt buộc,
+nên nạp hỏng rồi âm thầm rơi về mock. Ghim `transformers>=4.37,<4.50` là nạp được.
 
-```
-ImportError: cannot import name 'AutoModelForVision2Seq' from 'transformers'
-transformers: 5.0.0
-```
+Hai hệ quả về sau:
 
-`pip install -U <thư viện phụ>` **kéo theo** bản `transformers` mới nhất, và bản 5.0 đã
-đổi tên lớp (`AutoModelForVision2Seq` → `AutoModelForImageTextToText`). Cùng một cơ chế
-đã giết Vintern-1B: thư viện lõi bị nâng ngoài ý muốn, model cũ không theo kịp.
+- Cờ `--strict` được thêm để model nạp hỏng **ném lỗi** thay vì rơi về mock. Không có nó,
+  bảng benchmark nhận số giả trông y như số thật.
+- Mốc thư viện **không dùng chung được cho cả họ InternVL**: Vintern cần `<4.50`, còn
+  InternVL3.5 dùng Qwen3 làm phần ngôn ngữ nên cần `>=4.52.1`. Hai notebook riêng.
 
-Cách xử lý **thực sự đã áp dụng** trong notebook train: `try/except` đổi tên lớp —
-thử tên mới trước, không có thì lùi về tên cũ. Chạy được với cả hai bản.
+---
 
-✅ **Đã ghim** (16/08): `requirements.txt` là `transformers>=4.51,<5`, `kaggle_smoke.ipynb`
-bỏ `pip install -U`. Mốc này cho Qwen — Vintern cần bản cũ hơn nên phải chạy môi trường riêng.
+### ⚠️ JSON hợp lệ không có nghĩa là caption dùng được
 
-#### Cập nhật 16/08 tối — chẩn đoán được xác nhận, và lộ ra tầng hỏng thứ hai
-
-Chạy thử trên Kaggle T4 với `transformers 4.49` (ghim `>=4.37,<4.50`):
-
-| Tầng | Kết quả |
-|---|---|
-| 1. Nạp model | ✅ **NẠP ĐƯỢC** — `InternVLChatModel`, không còn rơi về mock |
-| 2. Sinh caption | ❌ Hỏng — nhưng lỗi **đổi bản chất** qua từng lần sửa |
-| 3. Chất lượng | Chưa đo được |
-
-Chẩn đoán "xung đột phiên bản `transformers`" ở trên **đúng** — đây là bằng chứng trực tiếp
-đầu tiên, thay cho suy luận gián tiếp.
-
-Tầng 2 đi qua ba trạng thái:
-
-1. `TypeError: _batch_encode_plus() got an unexpected keyword argument 'images'`
-   → `AutoProcessor` của Vintern trả **tokenizer thuần**, không xử lý được ảnh. Đường chung
-   `processor(text=..., images=...)` không dùng được cho họ InternVL.
-2. Viết `vlm/adapter_internvl.py` (ảnh → tensor 448×448 → `model.chat()`), nhưng lỗi cũ lặp
-   nguyên xi → adapter **chưa từng được gọi**: nó chỉ cắm ở nhánh `backend="auto"`, còn
-   benchmark truyền thẳng `backend="transformers"`.
-3. Sửa định tuyến → lỗi đổi thành `ValidationError: KeyframeMetadata` —
-   **model đã sinh ra text thật**, chỉ là chưa đúng khuôn JSON.
-
-→ Adapter hoạt động. Việc còn lại là chỉnh prompt cho InternVL: nó không có kênh `system`
-riêng, hiện đang ghép cả system + user vào một câu hỏi, nhiều khả năng làm model bỏ qua
-ràng buộc định dạng. **Chưa sửa** — xem mục 11.
-
-**2. Qwen2.5-VL-3B: sập giữa chừng.**
-
-Chạy một ảnh lẻ thì tốt (mục 7.1: 9,65 s, caption đúng). Nhưng chạy liên tiếp
-thì sập sau 4 ảnh:
-
-```
-AcceleratorError: CUDA error: device-side assert triggered
-```
-
-Lỗi lặp lại ở 88/92 ảnh còn lại.
-
-> ⚠️ **Đính chính 16/08/2026 — chẩn đoán ban đầu SAI.** Bản đầu của mục này ghi *"dấu hiệu
-> điển hình của tràn chỉ số trong kernel khi xử lý ảnh có kích thước khác nhau"* và đề xuất
-> sửa bằng `max_pixels`. **Đọc log đầy đủ cho thấy lỗi nằm ở tầng khác hẳn.**
->
-> Dòng thật ngay trước khi model sập (log Kaggle Version 1):
->
-> ```
-> /pytorch/aten/src/ATen/native/cuda/TensorCompare.cu:109: _assert_async_cuda_kernel:
-> Assertion `probability tensor contains either `inf`, `nan` or element < 0` failed.
-> ```
->
-> Đây là assert của `torch.multinomial` — hàm **bốc thăm token từ phân phối xác suất**,
-> không liên quan gì tới kích thước ảnh.
->
-> **Chuỗi nhân quả:**
-> 1. `vlm/adapters.py` đặt `TEMPERATURE = 0.3` → `do_sample=True`
-> 2. `do_sample=True` bắt model bốc thăm ngẫu nhiên thay vì lấy token xác suất cao nhất
-> 3. Model chạy `float16` (`vlm/model_loader.py:116`); phân phối của model 3B tràn số → `nan`
-> 4. `torch.multinomial` gặp `nan` → assert → sập
->
-> Qwen2-VL-2B không sập vì nhỏ hơn nên ít tràn hơn — **may, không phải tốt hơn**.
->
-> → **`max_pixels` không liên quan.** Đừng tốn GPU cho hướng đó.
-> → Cách sửa: `do_sample=False` (commit `d37bdc2`). Sinh JSON có cấu trúc thì lấy token
-> xác suất cao nhất vừa ổn định vừa đúng hơn bốc thăm.
->
-> **Chưa chạy lại để xác nhận** — kế hoạch ở `plans/260816-1900-dong-bo-3-model-355-anh/`.
-> Nếu chạy lại vẫn sập thì chẩn đoán này cũng sai, và phải đọc log lần nữa.
-
-### Model DUY NHẤT có số liệu tin cậy: Qwen2-VL-2B (số prompt v1, lần chạy đầu)
-
-| Chỉ số | Giá trị |
-|---|---|
-| Tỷ lệ JSON hợp lệ | **93,5%** (86/92 ảnh) |
-| Độ tuân thủ prompt | 93,5% |
-| Latency trung bình | 8,51 s/ảnh (P50 7,76 s, P95 13,43 s) |
-| VRAM đỉnh | 1,84 GB |
-| Độ chi tiết caption | 18,5 từ / 84,8 ký tự |
-| Số đối tượng TB | 1,71 |
-| Số màu sắc TB | 1,12 |
-
-⚠️ Bảng trên là số của **lần chạy prompt v1 trên 92 ảnh**. Số hiện hành (prompt v2,
-355 ảnh) là 77,18%, 9,414 s/ảnh, 2,006 GB — xem mục 3. Giữ bảng này để đối chiếu
-trước/sau khi đổi prompt.
-
-Sáu ảnh thất bại (trên 92, prompt v1), chia hai nhóm:
-- **4 ca** `JsonParseError` — model trả văn bản dài (760–1136 ký tự) không chứa JSON
-- **2 ca** `ValidationError` — JSON đúng cú pháp nhưng sai kiểu: một lần
-  `caption_chi_tiet` là mảng thay vì chuỗi, một lần thiếu hẳn trường này
-
-Nhóm thứ hai đáng chú ý: prompt và parser đều làm đúng việc, model vẫn sai
-schema. Đây chính xác là thứ mà constrained decoding (XGrammar) chặn được ở
-tầng sinh token — và là lý do nghiên cứu khuyến nghị nó.
-
-### ⚠️ 93,5% JSON hợp lệ KHÔNG có nghĩa là 93,5% caption dùng được
-
-Đọc tay caption thật của Qwen2-VL-2B (prompt v1) cho thấy vấn đề mà chỉ số "JSON hợp lệ"
-không bắt được. Năm ảnh đầu tiên:
+Đọc tay caption thật cho thấy vấn đề mà chỉ số "JSON hợp lệ" không bắt được. Năm ảnh đầu
+của Qwen2-VL-2B, **cả năm đều là JSON hợp lệ 100%**:
 
 | Ảnh | `caption_chi_tiet` sinh ra | Đánh giá |
 |---|---|---|
-| `001.jpg` | *"Caption Chi tiết: Một người đàn ông mặc áo mưa đỏ đang chạy xe máy qua đoạn đường ngập nước dưới cơn mưa tầm tã."* | ❌ **Chép nguyên ví dụ trong prompt.** Đây là câu mẫu ở `prompts.py`, không phải nội dung ảnh. Còn lẫn cả nhãn "Caption Chi tiết:" |
+| `001.jpg` | *"Caption Chi tiết: Một người đàn ông mặc áo mưa đỏ đang chạy xe máy qua đoạn đường ngập nước dưới cơn mưa tầm tã."* | ❌ **Chép nguyên ví dụ trong prompt**, còn lẫn cả nhãn "Caption Chi tiết:" |
 | `009.jpg` | *"Người giảng dạy đang giảng dạy tại Trung tâm học tập."* | ⚠️ Vòng vo, gần như không có thông tin |
 | `010.jpg` | *"Người giới thiệu đang trình bày trong phòng học với một màn hình hiển thị hình ảnh khoa học kỹ thuật."* | ✅ Dùng được |
 | `014.jpg` | `doi_tuong` = `["enjoy","admit","avoid","deny","fancy","keep","mind","spend","suggest","tolerate"]` | ❌ Model đọc chữ tiếng Anh trên bảng rồi nhét vào ô "đối tượng" |
 | `019.jpg` | *"Bà giảng dạy về phân tích một cấu trúc gen học."* | ⚠️ Tiếng Việt lủng củng, sai ngữ pháp |
 
-**Ước lượng thô: chỉ 1–2 trong 5 caption thật sự dùng được**, dù cả 5 đều là
-JSON hợp lệ 100%. Số n=5 này quá nhỏ — mục 7.3 có số đo trên n=83 xác nhận và
-mở rộng phát hiện này bằng công cụ đo tự động.
+Chỉ 1–2 trong 5 caption thật sự dùng được. Mục 7.3 xác nhận và mở rộng bằng công cụ đo
+tự động trên n=617.
 
-Ba lỗi phải sửa ở prompt (`prompts.py`, đã thành `PROMPT_VERSION = "v2"`):
+**Đây là lý do bước chấm tay 30 caption × 4 model vẫn là điều kiện để chốt model** (mục 8):
+chỉ số tự động không thay thế được việc đọc bằng mắt. Chỉ nhìn JSON hợp lệ thì đã kết luận
+sai là pipeline đạt yêu cầu.
 
-1. **Model chép ví dụ few-shot.** Ví dụ mẫu đang dùng chính là câu trong đề bài;
-   khi model "bí" nó chép lại. Cách sửa ban đầu: đổi ví dụ sang cảnh khác hẳn keyframe
-   thực tế (đổi sang cảnh bếp). **Kết quả thật (mục 7.3): giảm mạnh nhưng KHÔNG diệt được**
-   — `032.jpg` ở prompt v2 vẫn chép nguyên xi ví dụ bếp mới. Giả thuyết "ví dụ càng khác
-   keyframe càng khó bị chép" là **sai một phần** — chỉ giảm tần suất, không loại bỏ lỗi.
-2. **Nhãn "Caption Chi tiết:" lọt vào giá trị.** Phải bỏ khi hậu xử lý, hoặc
-   siết prompt cấm lặp lại tên trường.
-3. **`doi_tuong` nhận chữ thay vì vật thể.** Prompt v2 đã thêm câu cấm nhưng **chưa đủ mạnh**
-   — mục 7.3 đo được **29,86%** caption vẫn nhét chữ vào `doi_tuong` ở n=278.
+Ba lỗi rút ra, đã đưa vào prompt v2/v3:
 
-Đây là bài học chính của lần benchmark này: **chỉ số tự động không thay thế được
-việc đọc bằng mắt**. Nếu chỉ nhìn con số JSON hợp lệ thì đã kết luận sai là pipeline
-đạt yêu cầu.
+1. **Chép ví dụ few-shot** — đổi ví dụ mẫu sang cảnh khác hẳn keyframe thật (cảnh bếp).
+   Giảm mạnh nhưng không diệt hẳn: `032.jpg` ở v2 vẫn chép nguyên ví dụ bếp mới. Số hiện
+   hành: 0,00% ở ba model lớn, 5,04% ở Qwen2-VL-2B.
+2. **Nhãn tên trường lọt vào giá trị** — prompt cấm lặp lại tên trường. Đã hết.
+3. **`doi_tuong` nhận chữ thay vì vật thể** — prompt v2 thêm câu cấm nhưng chưa đủ; v3 mở
+   rộng sang mọi trường vẫn không ăn. Hướng còn lại là model lớn hơn hoặc lọc ở validator
+   (mục 5).
 
 ### 7.3. Đo chất lượng caption bằng công cụ tự động — n=617
 
