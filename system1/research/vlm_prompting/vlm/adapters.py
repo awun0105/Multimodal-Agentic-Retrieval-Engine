@@ -273,6 +273,15 @@ def _la_ho_internvl(spec) -> bool:
     return "internvl" in ten or "vintern" in ten
 
 
+def _la_ho_moondream(spec) -> bool:
+    """Moondream dùng .query(image, question) trả dict, không phải .generate().
+
+    Nhận theo hf_id: registry ghi loader="auto_causal" nhưng adapter riêng tự nạp
+    kèm revision ghim ngày — model card đánh phiên bản theo ngày phát hành.
+    """
+    return "moondream" in spec.hf_id.lower()
+
+
 def _la_ho_minicpm(spec) -> bool:
     """MiniCPM-V cũng dùng .chat() nhưng chữ ký khác InternVL hoàn toàn.
 
@@ -375,6 +384,12 @@ def get_adapter(
             return _nap_nghiem_ngat(
                 MiniCpmAdapter, spec, dung_4bit, model_key, "minicpm", strict
             )
+        if _la_ho_moondream(spec) and lora_model_path is None:
+            from .adapter_moondream import MoondreamAdapter
+
+            return _nap_nghiem_ngat(
+                MoondreamAdapter, spec, dung_4bit, model_key, "moondream", strict
+            )
         return _nap_nghiem_ngat(
             TransformersAdapter,
             spec,
@@ -416,6 +431,10 @@ def get_adapter(
                 from .adapter_minicpm import MiniCpmAdapter
 
                 return MiniCpmAdapter(spec, dung_4bit=dung_4bit)
+            if _la_ho_moondream(spec) and lora_model_path is None:
+                from .adapter_moondream import MoondreamAdapter
+
+                return MoondreamAdapter(spec, dung_4bit=dung_4bit)
             return TransformersAdapter(spec, dung_4bit=dung_4bit, lora_model_path=lora_model_path)
         except Exception as loi:
             if strict:

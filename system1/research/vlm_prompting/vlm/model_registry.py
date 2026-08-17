@@ -79,6 +79,18 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
             "adapter. Trước bị loại vì 'vượt 7B của đề bài' — lý do đó đã đổ."
         ),
     ),
+    "moondream2": ModelSpec(
+        key="moondream2",
+        hf_id="vikhyatk/moondream2",
+        ten_hien_thi="Moondream 2 (1,93 tỷ)",
+        vram_4bit_gb=4.0,
+        loader="auto_causal",
+        trust_remote_code=True,
+        ghi_chu=(
+            "Chạy fp16 chứ không nén 4-bit — model đủ nhỏ, và tài liệu không "
+            "nói gì về bitsandbytes. Định tuyến qua _la_ho_moondream()."
+        ),
+    ),
     "minicpm-v-4": ModelSpec(
         key="minicpm-v-4",
         hf_id="openbmb/MiniCPM-V-4",
