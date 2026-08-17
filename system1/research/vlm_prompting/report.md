@@ -78,6 +78,10 @@ Hai model Qwen chạy **cùng một lượt, cùng 355 ảnh, cùng cấu hình*
 `do_sample=False`) — so sánh trực tiếp được. Vintern-1B giữ số của lần chạy 92 ảnh vì
 model chưa từng nạp được, mọi số của nó là mock (mục 7.2).
 
+> 📌 **Bảng dưới đây là bản 16/08, giữ lại để đối chiếu.** Số hiện hành và kết luận mới nhất
+> nằm ở **"Cập nhật 17/08"** ngay bên dưới — bảng đó có 5 model đo thật, và nhãn "✅ CHỌN"
+> ở đây **không còn phản ánh đề xuất hiện tại**.
+
 | Mô hình | Latency | VRAM | Điểm benchmark | Ưu điểm | Nhược điểm | Kết luận |
 |---|---|---|---|---|---|---|
 | **Qwen2.5-VL-3B** | 11,824 s/ảnh ⁴ (P50 11,431 · P95 16,055 s) | 4,304 GB ⁴ | **JSON hợp lệ 96,34%** (342/**355**) ⁴ | Cao nhất mọi mặt: JSON hợp lệ, `caption_en` **100%**, vòng vo thấp nhất (10,53%), không chép ví dụ mẫu (0%) | Chậm hơn 2,7 s/ảnh; tốn thêm 2,3 GB; nhét chữ OCR cao nhất (33,33%) | ✅ **CHỌN** |
