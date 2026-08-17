@@ -234,6 +234,10 @@ data/
 datasets/
 runtime/
 !system1/src/system1/runtime/
+
+# Danh sách tên ảnh holdout (585 byte, không phải dữ liệu ảnh) — report tham
+# chiếu tới nó, phải theo repo thì người khác mới đo lại được.
+!system1/research/vlm_prompting/data/holdout-*.txt
 !system1/src/system1/runtime/__init__.py
 !system1/src/system1/runtime/environment.py
 artifacts/
