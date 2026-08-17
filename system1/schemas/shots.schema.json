@@ -1,73 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "shots.schema.json",
+  "title": "shots_v1",
   "type": "object",
-  "required": [
-    "shot_id",
-    "video_id",
-    "scene_id",
-    "start_frame",
-    "end_frame",
-    "start_sec",
-    "end_sec",
-    "detection_method",
-    "status"
-  ],
+  "required": ["shot_id", "video_id", "scene_id", "shot_index", "start_frame", "end_frame", "start_sec", "end_sec", "duration_sec", "frame_count", "boundary_convention", "detection_method", "status"],
   "properties": {
-    "shot_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "video_id": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "start_frame": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "end_frame": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "start_sec": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    },
-    "end_sec": {
-      "type": [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "null"
-      ]
-    }
+    "shot_id": {"type": "string", "minLength": 1},
+    "video_id": {"type": "string", "minLength": 1},
+    "scene_id": {"type": ["string", "null"]},
+    "shot_index": {"type": "integer", "minimum": 0},
+    "start_frame": {"type": "integer", "minimum": 0},
+    "end_frame": {"type": "integer", "minimum": 1},
+    "start_sec": {"type": "number", "minimum": 0},
+    "end_sec": {"type": "number", "exclusiveMinimum": 0},
+    "duration_sec": {"type": "number", "minimum": 0},
+    "frame_count": {"type": "integer", "minimum": 1},
+    "boundary_convention": {"const": "[start_frame, end_frame)"},
+    "detection_method": {"const": "transnet_v2"},
+    "status": {"enum": ["pass", "transnet_v2_no_cut"]}
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

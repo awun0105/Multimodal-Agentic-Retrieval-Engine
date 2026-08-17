@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import heapq
+import os
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -10,9 +12,14 @@ from system1.release.types import release_root
 
 
 def write_batches(release_dir: Path, videos: list[dict[str, object]], num_batches: int = 1) -> list[Path]:
+    if num_batches < 1:
+        raise ValueError("num_batches must be >= 1")
+    if not videos:
+        raise ValueError("cannot assign batches: videos table is empty")
     manifests_dir = release_dir / "manifests"
     manifests_dir.mkdir(parents=True, exist_ok=True)
-    assignments = _assign_cost_aware(videos, num_batches)
+    effective_num_batches = min(num_batches, len(videos))
+    assignments = _assign_cost_aware(videos, effective_num_batches)
     manifest_path = manifests_dir / "batch_manifest.csv"
     fieldnames = [
         "batch_id",
@@ -24,17 +31,30 @@ def write_batches(release_dir: Path, videos: list[dict[str, object]], num_batche
         "feature_artifact_path",
         "error_note",
     ]
-    with manifest_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in assignments:
-            writer.writerow(row)
-    batch_paths: list[Path] = []
-    for batch_id in sorted({row["batch_id"] for row in assignments}):
-        batch_path = manifests_dir / f"{batch_id}.txt"
-        batch_video_ids = [str(row["video_id"]) for row in assignments if row["batch_id"] == batch_id]
-        batch_path.write_text("".join(f"{video_id}\n" for video_id in batch_video_ids), encoding="utf-8")
-        batch_paths.append(batch_path)
+    batch_ids = sorted({str(row["batch_id"]) for row in assignments})
+    with tempfile.TemporaryDirectory(prefix=".batch_assignment_", dir=manifests_dir) as temp_dir:
+        temp_root = Path(temp_dir)
+        staged_manifest = temp_root / manifest_path.name
+        with staged_manifest.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(assignments)
+        for batch_id in batch_ids:
+            batch_video_ids = [str(row["video_id"]) for row in assignments if row["batch_id"] == batch_id]
+            (temp_root / f"{batch_id}.txt").write_text(
+                "".join(f"{video_id}\n" for video_id in batch_video_ids),
+                encoding="utf-8",
+            )
+
+        os.replace(staged_manifest, manifest_path)
+        generated_names = {f"{batch_id}.txt" for batch_id in batch_ids}
+        for batch_id in batch_ids:
+            os.replace(temp_root / f"{batch_id}.txt", manifests_dir / f"{batch_id}.txt")
+        for stale_path in manifests_dir.glob("batch_*.txt"):
+            if stale_path.name not in generated_names:
+                stale_path.unlink()
+
+    batch_paths = [manifests_dir / f"{batch_id}.txt" for batch_id in batch_ids]
     return batch_paths
 
 

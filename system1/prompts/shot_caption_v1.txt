@@ -1,0 +1,3 @@
+Describe only what is visibly supported by the representative shot image.
+Return one concise Vietnamese caption and one semantically equivalent English
+caption. Do not infer names, locations, intent, or events that are not visible.

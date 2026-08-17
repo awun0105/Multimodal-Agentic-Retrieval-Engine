@@ -314,13 +314,24 @@ def _build_release_capabilities(
     has_embeddings = bool(counts.get("embeddings_meta"))
     has_text = bool(counts.get("text_documents"))
     has_context = bool(counts.get("keyframes")) and bool(counts.get("shots")) and bool(counts.get("scenes"))
-    enrichment_status = "pass" if not feature_availability.empty and (feature_availability["status"] == "pass").all() else "degraded"
-    mode = _first_manifest_value(feature_manifests, "mode", "debug_small_sample")
     provider_plan = _first_manifest_value(feature_manifests, "provider_plan", {})
+    availability_complete = bool(
+        not feature_availability.empty
+        and (feature_availability["status"] == "pass").all()
+    )
+    uses_mock_provider = bool(
+        isinstance(provider_plan, dict)
+        and any(str(provider) == "mock" for provider in provider_plan.values())
+    )
+    enrichment_status = (
+        "pass" if availability_complete and not uses_mock_provider else "degraded"
+    )
     asr_provider = str(provider_plan.get("asr", "mock")) if isinstance(provider_plan, dict) else "mock"
     ocr_provider = str(provider_plan.get("ocr", "mock")) if isinstance(provider_plan, dict) else "mock"
-    asr_status = "degraded" if mode in {"debug_small_sample", "bronze_fast"} or asr_provider != "mock" else "pass"
-    ocr_status = "degraded" if mode in {"debug_small_sample", "bronze_fast"} or ocr_provider != "mock" else "pass"
+    # Until real adapters write successful capability evidence, both mock and
+    # unavailable-provider outputs are explicitly non-production.
+    asr_status = "degraded"
+    ocr_status = "degraded"
     rows = [
         {"capability": "core_runtime", "status": "pass", "reason": "merged release tables available"},
         {"capability": "visual_search", "status": "degraded" if has_embeddings else "fail", "reason": "index built later"},
@@ -343,8 +354,8 @@ def _build_release_capabilities(
         {"capability": "enrichment_overall", "status": enrichment_status, "reason": "feature availability merged"},
         {
             "capability": "incremental_reuse",
-            "status": "pass" if mode == "gold_full" else "degraded",
-            "reason": "phase checkpoints support resumable/reusable worker outputs",
+            "status": "degraded",
+            "reason": "batch checkpoints exist; per-video content-addressed reuse is not implemented",
         },
     ]
     return pd.DataFrame(rows)

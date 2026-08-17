@@ -11,11 +11,11 @@
 ```text
 System 1 = Data Preparation / Preprocessing / Index Factory
 
-Official videos + optional metadata
-→ metadata normalization when available
+Official videos + optional organizer metadata
+→ ffprobe + canonical metadata JSON for every video
 → batch assignment
 → TransNet V2 shot detection
-→ keyframes near 20%/50%/80% of each shot
+→ search-band keyframes centered at 20%/50%/80% of each shot
 → thumbnail generation
 → representative keyframe selection per shot
 → faster-whisper large-v3 ASR with auto language + VAD
@@ -599,8 +599,9 @@ AIC26_release
 Do not use Team Drive as the primary shared storage contract and do not create
 a third Hugging Face repo for System 1 outputs.
 
-`AIC26_raw` is the canonical raw dataset repo. It contains only standardized
-raw videos, metadata, and raw-level inventory/import manifests:
+`AIC26_raw` is the canonical raw dataset repo. It contains standardized raw
+videos, one canonical metadata JSON and one decoded timeline per video, plus
+raw-level inventory/import manifests:
 
 ```text
 AIC26_raw/
@@ -612,6 +613,10 @@ AIC26_raw/
     ├── metadata/
     │   ├── L21_V001.json
     │   ├── L21_V002.json
+    │   └── ...
+    ├── frame_timeline/
+    │   ├── L21_V001.parquet
+    │   ├── L21_V002.parquet
     │   └── ...
     └── manifests/
         ├── canonical_file_manifest.jsonl
@@ -1291,10 +1296,10 @@ Ví dụ ứng dụng:
 
 # 18. Production release profile
 
-Production notebooks should run the full end-to-end contract instead of asking
-operators to choose bronze/silver/gold execution modes. Lightweight/mock
-profiles may remain package-internal for CI and development, but they are not
-the user-facing production workflow.
+Production notebooks run one fixed end-to-end contract. Provider identities
+are versioned package configuration, not a user choice. Guarded mock adapters
+remain available only for CI/development and must be reported as
+non-production.
 
 The production release includes:
 
@@ -1534,7 +1539,7 @@ Cross-cutting contracts:
 - audio extraction
 - faster-whisper large-v3 ASR with automatic language and VAD
 - TransNet V2 shot detection
-- keyframes near 20%/50%/80% of each shot
+- search-band keyframes centered at 20%/50%/80% of each shot
 - thumbnail generation
 - representative keyframe selection per shot
 - one canonical Gemini bilingual shot-caption row per shot
@@ -1698,21 +1703,34 @@ metadata/
 ## Steps
 
 ```text
-1. Scan raw_videos.
-2. Scan metadata JSON.
+1. Scan raw videos.
+2. Scan optional organizer metadata JSON.
 3. Extract video_id from filenames.
-4. Match video_id between video and metadata.
-5. Read metadata JSON.
-6. Run ffprobe packet/frame probe for duration, FPS, resolution, decoded frame timeline, and VFR detection.
-7. Normalize metadata fields.
-8. Create videos.parquet.
-9. Create frame_timeline/{video_id}.parquet.
-10. Create manifests/frame_timeline_manifest.parquet.
-11. Create media_store_manifest.parquet.
-12. Create master_manifest.parquet.
-13. Create dataset_report.json.
-14. Create ingestion_errors.jsonl.
+4. Match video_id between video and organizer metadata when present.
+5. Record missing/unmatched organizer metadata before canonical generation.
+6. Run ffprobe for duration, FPS, dimensions, packet/frame count, and VFR facts.
+7. Create and validate one versioned `metadata/{video_id}.json` for every video.
+8. Record the organizer source reference/checksum when available; do not upload
+   a duplicate organizer JSON tree. Use null/empty organizer fields when absent.
+9. Decode and validate `frame_timeline/{video_id}.parquet` while each video is
+   already in bounded raw-upload scratch; production fails the pair after
+   bounded retry if this cannot be created.
+10. Upload video, canonical metadata, and timeline to the same raw prefix.
+11. Create `canonical_video_inventory.parquet` with metadata and timeline facts.
+12. Canonical HF ingest downloads and validates the compact timeline Parquet,
+    not the raw video, then materializes the Phase00 copy.
+13. Create `videos.parquet` and `manifests/frame_timeline_manifest.parquet`.
+14. Create `media_store_manifest.parquet` with organizer provenance flags.
+15. Create batch manifests, dataset report, and ingestion errors.
+16. Reconcile the exact Phase00 HF prefix and upload its completion marker last.
 ```
+
+Canonical metadata keeps the observed organizer fields `author`, `channel_id`,
+`channel_url`, `description`, `keywords`, `length`, `publish_date`,
+`thumbnail_url`, `title`, and `watch_url`. It adds `schema_version`, `video_id`,
+`organizer_metadata_present`, `media`, and `provenance`. Unknown scalars are
+JSON `null`; unknown keywords are `[]`. Organizer `length` is not overwritten by
+the more precise `media.duration_sec` from ffprobe. See ADR 0016.
 
 ## Output
 
@@ -2257,13 +2275,20 @@ Changing scene builder config/provider does not rerun keyframes/OCR/embeddings w
 Production contract:
 
 ```text
-Select decoded original frames near 20%, 50%, and 80% of each shot and label
-them early, middle, and late. Use middle as the first representative candidate;
-if it fails versioned decode/blur/black-frame checks, try early and then late.
-If every available candidate fails, fail the video. Short shots emit every
-distinct decodable frame once rather than duplicating keyframe IDs. All frame
-mapping uses the Phase00 decoded timeline; production does not silently replace
-missing exact mapping with timestamp-times-FPS estimates.
+Treat 20%, 50%, and 80% as centers of the early 10%-30%, middle 40%-60%, and
+late 70%-90% search bands. Sample at most five evenly distributed decoded
+candidate frames per band, reject decode/near-black/near-white failures, and
+select the sharpest candidate after a common resize, tie-breaking toward the
+band target. Do not use an absolute dataset-wide blur threshold. Expand toward
+the safe shot interior when a band has no valid candidate. Deduplicate selected
+frame IDs for short shots.
+
+Use middle as representative when its quality is at least 0.85 of the best
+selected role; otherwise use the highest-quality role, tie-breaking toward the
+shot center. If only one selected frame remains, it is representative. If no
+valid frame can be decoded, fail the video. All frame mapping uses the Phase00
+decoded timeline; production does not silently replace missing exact mapping
+with timestamp-times-FPS estimates.
 ```
 
 Output:
@@ -2292,6 +2317,7 @@ keyframe_ref
 thumbnail_ref
 is_primary
 keyframe_role
+quality_score
 is_representative
 selection_reason
 width
@@ -3375,6 +3401,11 @@ AIC26_raw/
     │   ├── L21_V002.json
     │   └── ...
     │
+    ├── frame_timeline/
+    │   ├── L21_V001.parquet
+    │   ├── L21_V002.parquet
+    │   └── ...
+    │
     └── manifests/
         ├── canonical_file_manifest.jsonl
         ├── canonical_import_report.json
@@ -3521,6 +3552,7 @@ Notebook 00 uploads canonical raw output to:
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
 AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/frame_timeline/{video_id}.parquet
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -3544,11 +3576,18 @@ AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/unmatched_metadat
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/drive_shadow_report.json
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/standardize_archives_report.json
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/standardize_progress.jsonl
+AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/phase00_sync_manifest.json
 ```
 
 `batch_manifest.csv` and `batch_*.txt` do not belong in `AIC26_raw` because
 they depend on a pipeline run: `num_batches`, worker strategy, execution
 profile, and release version.
+
+`phase00_sync_manifest.json` is the completion marker. The sync compares local
+SHA-256 and size with the previous complete manifest, skips unchanged files,
+retries bounded transient HF errors, reconciles stale files only inside the
+exact configured Phase00 prefix, and writes this marker after all other
+operations succeed.
 
 Notebook 01 reads:
 
@@ -3813,7 +3852,7 @@ A distributed multimedia dataset factory.
 It converts:
 
 ```text
-official videos + optional metadata
+official videos + optional organizer metadata
 ```
 
 into:

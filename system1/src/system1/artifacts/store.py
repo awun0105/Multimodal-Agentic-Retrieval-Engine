@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import json
 import os
 import shutil
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -39,6 +40,21 @@ class ArtifactStore:
         shutil.copyfile(source, temp_path)
         os.replace(temp_path, destination)
         return destination
+
+    def upload_files(
+        self,
+        files: Sequence[tuple[Path, str | Path]],
+        *,
+        commit_message: str,
+        num_threads: int = 2,
+    ) -> list[Path]:
+        """Store a logical file group through the same API as the HF backend."""
+
+        del commit_message, num_threads
+        return [
+            self.upload_file(source, relative_path)
+            for source, relative_path in files
+        ]
 
     def download_file(self, relative_path: str | Path, target: Path) -> Path:
         source = self.path(relative_path)

@@ -20,13 +20,23 @@ Notebook 02 handoff.
 
 ## Decision
 
-System 1 uses official videos and optional metadata only. It regenerates all
-derived retrieval evidence.
+System 1 uses official videos and optional organizer metadata only. It
+regenerates all derived retrieval evidence. ADR 0016 further requires one
+project-owned canonical metadata JSON per video without claiming that the
+organizer supplied metadata for every video.
 
-Production Notebook 01 uses TransNet V2, three target keyframes per normal shot
-at approximately 20/50/80 percent, faster-whisper large-v3 with automatic
-language and VAD, Gemini bilingual strict-JSON shot captions, multimodal Gemini
-scene grouping, and Gemini bilingual strict-JSON scene summaries.
+Production Notebook 01 has one pipeline and no user-facing execution/provider
+selector. It uses TransNet V2; early/middle/late keyframes selected from bands
+centered at 20/50/80 percent; faster-whisper large-v3 with automatic language
+and VAD; Gemini bilingual strict-JSON shot captions; multimodal Gemini scene
+grouping; and Gemini bilingual strict-JSON scene summaries. Middle remains the
+representative when its quality reaches at least 85 percent of the best selected
+role; otherwise the highest-quality role is used.
+
+Repository YAML owns deterministic behavior. Minimal operator settings and the
+detected runtime are merged into a secret-free `ResolvedConfig`, whose content
+and hash are persisted. Resume authority is a persistent checkpoint per video
+and stage, not local notebook storage or a batch-wide completion flag.
 
 Production failures are explicit after bounded retry; mock and silent semantic
 fallbacks are prohibited. Valid observed empty states such as a successful
@@ -68,11 +78,15 @@ Tradeoffs:
   third baseline.
 - Exact Gemini, object detector, SigLIP, and BEiT3 model IDs must be configured
   and captured before a run is reproducible.
+- Per-stage checkpoints and one-video scheduling create more small state
+  operations, but allow Colab/Kaggle restarts to reuse valid work precisely.
 
 ## Follow-Up
 
-- Implement production provider adapters and update Notebook 01 configuration.
-- Complete production provider output against the migrated bilingual
-  Parquet/schema contract and multilingual text-source generation.
+- Provision the one-time official-converter TransNet PyTorch artifact in the
+  private model-artifact store and record its generated weight checksum.
+- Run the one-video and heterogeneous-small-batch real-provider acceptance
+  sequence, complete the manual review report, then run the assigned batch.
+- Complete multilingual text-source generation from the canonical bilingual
+  Phase01 Parquet tables during the later merge work.
 - Implement Notebook 02 dual embedding outputs and dual FAISS build.
-- Prove one-video, small-batch, then full-Batch-1 execution.

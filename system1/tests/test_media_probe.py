@@ -139,7 +139,8 @@ def test_probe_video_with_timeline_uses_decoded_frame_rows(monkeypatch, tmp_path
 
     assert commands
     assert len(commands) == 2
-    assert any("nb_read_packets" in part for part in commands[0])
+    assert "-count_packets" not in commands[0]
+    assert not any("nb_read_packets" in part for part in commands[0])
     assert "csv=p=0" in commands[1]
     assert any("best_effort_timestamp_time" in part for part in commands[1])
     assert result.probe.frame_count == 3

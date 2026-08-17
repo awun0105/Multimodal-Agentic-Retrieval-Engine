@@ -31,7 +31,6 @@ def process_feature_batch(
     *,
     input_dir: Path | str | None = None,
     batch_id: str,
-    mode: str = "debug_small_sample",
     providers: str = "mock",
     worker_id: str = "worker_000",
 ) -> Path:
@@ -84,7 +83,6 @@ def process_feature_batch(
             text_provider=text_provider,
             provider_plan=provider_plan,
             providers=providers,
-            mode=mode,
             batch_id=batch_id,
             worker_id=worker_id,
         )
@@ -137,20 +135,23 @@ def _resolve_structure_artifact_dir(release_dir: Path, video_id: str) -> Path:
 
 def providers_for_plan(plan: ProviderPlan):
     embedding_provider = MockEmbeddingProvider() if plan.embedding == "mock" else RealEmbeddingUnavailable(plan.embedding)
-    text_provider = MockTextProvider() if plan.mode == "mock" else RealProviderUnavailable("mixed_real_unavailable")
+    text_provider = MockTextProvider() if plan.uses_only_mock_providers else RealProviderUnavailable("mixed_real_unavailable")
     return embedding_provider, text_provider
 
 
-def capability_states(mode: str, plan: ProviderPlan) -> tuple[str, str, str, str, str]:
-    visual_status = "degraded" if mode == "debug_small_sample" or plan.embedding != "mock" else "pass"
+def capability_states(plan: ProviderPlan) -> tuple[str, str, str, str, str]:
+    # The current adapters are either explicit mocks or unavailable real-provider
+    # placeholders. Neither is production evidence, so status is derived from
+    # provider availability instead of an execution-quality label.
+    visual_status = "degraded"
     visual_reason = (
         f"{plan.embedding} embedding adapter unavailable; using deterministic fallback vectors"
         if plan.embedding != "mock"
-        else ("mock vectors; FAISS file is a stub in debug_small_sample" if mode == "debug_small_sample" else "deterministic ffmpeg keyframes + mock embeddings")
+        else "mock vectors; FAISS file is a non-production stub"
     )
-    asr_status = "degraded" if mode in {"debug_small_sample", "bronze_fast"} or plan.asr != "mock" else "pass"
-    ocr_status = "degraded" if mode in {"debug_small_sample", "bronze_fast"} or plan.ocr != "mock" else "pass"
-    enrichment_status = "pass" if mode == "gold_full" else ("degraded" if mode == "debug_small_sample" else "pass")
+    asr_status = "degraded"
+    ocr_status = "degraded"
+    enrichment_status = "degraded"
     return visual_status, visual_reason, asr_status, ocr_status, enrichment_status
 
 
@@ -178,7 +179,7 @@ def feature_rows(
     )
 
 
-def release_capability_rows(mode: str, plan: ProviderPlan, visual_status: str, visual_reason: str, asr_status: str, ocr_status: str, enrichment_status: str) -> list[dict[str, object]]:
+def release_capability_rows(plan: ProviderPlan, visual_status: str, visual_reason: str, asr_status: str, ocr_status: str, enrichment_status: str) -> list[dict[str, object]]:
     return [
         {"capability": "core_runtime", "status": "pass", "reason": "app.sqlite and required tables built"},
         {"capability": "visual_search", "status": visual_status, "reason": visual_reason},
@@ -187,7 +188,7 @@ def release_capability_rows(mode: str, plan: ProviderPlan, visual_status: str, v
         {"capability": "asr", "status": asr_status, "reason": f"{plan.asr} ASR adapter unavailable; emitted schema-valid empty rows" if plan.asr != "mock" else ("mock empty ASR provider" if asr_status == "degraded" else "ASR provider contract emitted schema-valid rows")},
         {"capability": "ocr", "status": ocr_status, "reason": f"{plan.ocr} OCR adapter unavailable; emitted schema-valid empty rows" if plan.ocr != "mock" else ("mock empty OCR provider" if ocr_status == "degraded" else "OCR provider contract emitted schema-valid rows")},
         {"capability": "enrichment_overall", "status": enrichment_status, "reason": "mock providers ready for real adapters"},
-        {"capability": "incremental_reuse", "status": "pass" if mode == "gold_full" else "degraded", "reason": "checkpoint manifest records checksums and reuse decisions"},
+        {"capability": "incremental_reuse", "status": "degraded", "reason": "batch checkpoints exist; per-video content-addressed reuse is not implemented"},
     ]
 
 
@@ -201,7 +202,6 @@ def _write_video_feature_artifact(
     text_provider,
     provider_plan: ProviderPlan,
     providers: str,
-    mode: str,
     batch_id: str,
     worker_id: str,
 ) -> list[dict[str, Any]]:
@@ -216,7 +216,7 @@ def _write_video_feature_artifact(
     object_rows: list[dict[str, Any]] = []
     text_source_rows: list[dict[str, Any]] = []
 
-    visual_status, _, _, _, _ = capability_states(mode, provider_plan)
+    visual_status, _, _, _, _ = capability_states(provider_plan)
     for row in keyframes.to_dict("records"):
         keyframe_id = str(row["keyframe_id"])
         frame_id = int(row["frame_id"])
@@ -307,7 +307,6 @@ def _write_video_feature_artifact(
                 "embedding_rows": int(vectors.shape[0]) if vectors.ndim == 2 else 0,
             },
             "provider": providers,
-            "mode": mode,
             "batch_id": batch_id,
             "worker_id": worker_id,
             "embedding_model_slug": getattr(embedding_provider, "model_slug", "unknown"),

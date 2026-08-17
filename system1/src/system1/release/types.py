@@ -19,7 +19,6 @@ CHECKPOINT_VERSION = "v001"
 
 @dataclass(frozen=True)
 class BuildOptions:
-    mode: str = "debug_small_sample"
     providers: str = "mock"
     provider_plan: ProviderPlan | None = None
 
@@ -60,7 +59,7 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def config_hash(options: BuildOptions) -> str:
     plan = options.provider_plan.__dict__ if options.provider_plan else {}
-    payload = {"mode": options.mode, "providers": options.providers, "provider_plan": plan}
+    payload = {"providers": options.providers, "provider_plan": plan}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 

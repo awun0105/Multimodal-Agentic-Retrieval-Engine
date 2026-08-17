@@ -12,7 +12,7 @@ Do not require live Google Drive or Hugging Face credentials for CI-grade proof.
 | Unit | Archive standardization flattens `.mp4`, `.wav`, and `.json`; existing matching files are skipped on rerun; unsafe zip paths are rejected. |
 | Integration | CLI exits non-zero for partial Drive/archive results unless `--allow-partial` is provided. |
 | E2E | Not required for this hardening slice. |
-| Platform | Notebook JSON validates and command strings reference safer CLI options. |
+| Platform | Notebook JSON/code cells validate, package imports resolve to the synchronized repo, and CLI contracts are inspected structurally rather than through terminal-rendered help text. |
 | Performance | Rerun skips existing matching files without re-copying. |
 | Logs/Audit | JSON reports include skipped and failed item rows. |
 
@@ -29,11 +29,66 @@ uv run pytest
 jq empty system1/notebooks/00_master_ingestion_and_assignment.ipynb
 jq empty system1/notebooks/00A_master_ingestion_and_assignment.ipynb
 jq empty system1/notebooks/00B_master_ingestion_and_assignment.ipynb
+jq empty "system1/notebooks/00C_master_ingestion_and_assignment (local).ipynb"
+jq empty system1/notebooks/01_worker_structure_pipeline.ipynb
 git diff --check
 system1/.venv/bin/system1 --help
 ```
 
 ## Acceptance Evidence
+
+The historical entries below prove the earlier streaming, disk-safety, audit,
+and inventory behavior. Current focused tests additionally prove ADR 0016
+canonical generation, organizer-source reference/checksum, missing-organizer
+semantics, inventory agreement, provenance propagation, and Notebook 00B/00C
+gates. The 2026-08-11 implementation additionally proves required decoded
+timeline generation in bounded raw scratch, retry/validation, resume backfill,
+compact HF ingest without MP4 download, stale local timeline/batch cleanup,
+scoped hash-based Phase00 reconciliation, and the Notebook 01 production gate.
+Only the live full-dataset HF rehearsal remains pending for this story.
+
+- 2026-08-13 regression: Phase00 `media_store_manifest.parquet` now preserves
+  `canonical_frame_timeline_path`. Focused tests cover both prefixed and
+  prefix-relative raw paths, required timeline download/reuse, and the complete
+  canonical path-column set enforced by Notebook 00B/00C step 15.
+- `python -m pytest -q`: 188 passed on 2026-08-13 after adding streaming
+  Parquet, bounded timeline-worker coverage, and the Phase00 canonical timeline
+  path regression fix.
+- Real-file equivalence on `L21_V002`: both implementations produced the same
+  31,720 rows and probe values. Streaming peak RSS was 115,652 KB versus
+  132,852 KB for the former in-memory path; elapsed time was approximately 52
+  seconds for each single-worker scan.
+- Real two-worker smoke on `L21_V001` and `L21_V003`: 37,849 and 29,946 rows
+  passed concurrently in 78.04 seconds with 122,060 KB peak RSS. This validates
+  local concurrency mechanics; Colab throughput still depends on runtime CPU
+  and disk allocation.
+- Notebook 00B/00C JSON and IPython-transformed compilation passed for 40 code
+  cells; Ruff `E9,F,I` passed for all changed Python files.
+- `uv run pytest -q`: 183 passed on 2026-08-11.
+- Preflight regression slice: 4 passed; it checks the module entrypoint, the
+  structured CLI contract used by 00A/00B/00C/01, notebook source guards, and
+  the streaming disk-safe option binding.
+- Narrow-terminal reproduction with `COLUMNS=40`: CLI exit code remained `0`
+  while rendered help omitted the full `--frame-timeline-policy` spelling,
+  proving that rendered text is not a valid option-availability signal.
+- JSON validation and Python compilation passed for 75 code cells across
+  Notebooks 00A, 00B, 00C, and 01.
+- Focused timeline/raw/HF/sync/notebook suite: 95 passed on 2026-08-11.
+- Ruff `E9,F,I` checks passed for every changed Python file.
+- Notebook JSON, cleared output/execution state, and code-cell compilation
+  checks passed for 00B, 00C, and 01.
+- `git diff --check`: passed on 2026-08-11.
+
+- `python -m pytest tests/test_canonical_metadata.py tests/test_smoke.py -k
+  "canonical_metadata or canonical_inventory_match or
+  notebooks_are_operator_ready or upload_standardized_raw_to_hf or
+  stream_standardize_upload_raw_to_hf or ingest_from_canonical_hf_manifest"`:
+  18 passed.
+- Real-file smoke: `L21_V001`, `L21_V002`, and `L21_V003` each produced valid
+  schema 1.0 metadata with `probe_status=pass` on the first attempt.
+- Mixed-history progress tests verify repo/prefix isolation and latest-status
+  semantics, while Notebook 00B/00C checks require prefix-specific progress
+  files and legacy checkpoint migration.
 
 - `uv run pytest tests/test_smoke.py -q`: 37 passed.
 - `uv run pytest`: 103 passed.

@@ -160,16 +160,12 @@ Artifact phải có manifest và checksum để merge/release có thể kiểm t
 
 ---
 
-## 3. Production profile, not execution modes
+## 3. Một workflow thống nhất
 
-Production notebooks should run the full end-to-end profile. Operators choose
-batch/workers and provider credentials, not bronze/silver/gold execution modes.
+Các notebook production chạy cùng một workflow end-to-end. Operator chỉ chọn
+batch, worker và provider credentials; không chọn cấp chất lượng thực thi.
 
-Legacy names such as `debug_small_sample`, `bronze_fast`, `silver_balanced`, and
-`gold_full` may remain package-internal while tests and older CLIs are being
-refactored, but they are not the production notebook contract.
-
-The production profile runs:
+Workflow thống nhất gồm:
 
 ```text
 Phase00 ingest + batch planning
@@ -178,198 +174,15 @@ Phase02 feature extraction
 Phase03 merge + index + validate + release
 ```
 
-Each phase owns one responsibility and should not defer core work to a later
-phase. In particular, Phase01 owns canonical shot captions and scene summaries;
-Phase02 does not add caption/enriched-summary work.
-
-The older mode sections below are retained as historical capacity-planning
-notes until the package/CLI is fully refactored. Do not use them as the
-production notebook contract.
+Mock provider chỉ phục vụ test và development, luôn được báo cáo là
+non-production. Chất lượng và trạng thái artifact phải được suy ra từ provider,
+validation và lỗi thực tế. Mỗi phase sở hữu đúng trách nhiệm của nó; Phase01 sở
+hữu canonical shot captions và scene summaries, Phase02 không bổ sung lại các
+artifact này.
 
 ---
 
-## 4. Mode 1 — debug_small_sample
-
-Dùng để test nhanh pipeline trên vài video nhỏ.
-
-Mục tiêu:
-
-```text
-- kiểm tra notebook chạy được không
-- kiểm tra config đúng không
-- kiểm tra artifact sinh ra đúng schema không
-- kiểm tra merge/release skeleton hoạt động không
-```
-
-Đặc điểm:
-
-```text
-- chạy 1–5 video
-- có thể dùng model nhỏ hoặc mock/stub
-- ưu tiên debug, không ưu tiên chất lượng
-```
-
-Nên dùng khi:
-
-```text
-- mới setup repo
-- mới sửa pipeline
-- mới thêm module mới
-- muốn test trước khi chạy nhiều video
-```
-
-Output của mode này không nhất thiết dùng cho release chính.
-
----
-
-## 5. Legacy note — bronze_fast
-
-Legacy planning note only. Production notebooks should not expose this as an
-operator mode.
-
-Mục tiêu:
-
-```text
-- có video metadata
-- có shot/keyframe metadata
-- có keyframes
-- có thumbnails
-- có SigLIP/BEiT3 embeddings
-- có hai FAISS indexes
-- có SQLite/FTS cơ bản
-- có release chạy được
-```
-
-This legacy profile could skip or use a lightweight version of:
-
-```text
-- ASR
-- OCR
-- object detection
-```
-
-Đặc điểm:
-
-```text
-- chạy nhanh
-- đủ để test System 2
-- đủ để test UI/retrieval core
-- chất lượng retrieval chưa tối đa
-```
-
-This legacy profile created artifacts such as:
-
-```text
-- videos.parquet
-- frame_timeline/{video_id}.parquet
-- shots.parquet
-- scenes.parquet hoặc fallback scene
-- keyframes
-- thumbnails
-- SigLIP/BEiT3 embeddings
-- two FAISS indexes/vector_map
-- app.sqlite base
-```
-
----
-
-## 6. Legacy note — silver_balanced
-
-Legacy planning note only. The production profile now targets the full release
-contract directly.
-
-The older plan reused bronze artifacts if still valid.
-
-It reused:
-
-```text
-- video metadata
-- frame_timeline/{video_id}.parquet
-- shots/scenes
-- keyframes
-- thumbnails
-- SigLIP/BEiT3 embeddings nếu model tương ứng không đổi
-- FAISS/vector_map rows của model không đổi
-```
-
-It added or upgraded:
-
-```text
-- OCR
-- ASR
-- text_sources
-- text_documents
-- SQLite FTS5 rebuild
-- validation report mới
-- release version mới
-```
-
-Đặc điểm:
-
-```text
-- cân bằng giữa tốc độ và chất lượng
-- phù hợp làm release chính ban đầu
-- hỗ trợ tốt hơn cho query có chữ trong ảnh, lời thoại, bảng hiệu, địa danh
-```
-
-Legacy example:
-
-```text
-competition_dataset_v001_bronze
-→ add OCR + ASR
-→ competition_dataset_v002_silver
-```
-
----
-
-## 7. Legacy note — gold_full
-
-Legacy planning note only. This should not be implemented as a production
-notebook mode.
-
-The older plan reused bronze/silver artifacts if inputs/configs were unchanged.
-
-It reused:
-
-```text
-- video metadata
-- keyframes/thumbnails
-- OCR
-- ASR
-- embeddings
-- FAISS/vector_map
-- SQLite base tables
-```
-
-It added:
-
-```text
-- object detection
-- richer text_documents
-- SQLite FTS5 rebuild nếu text thay đổi
-- validation report mới
-- release version mới
-```
-
-Đặc điểm:
-
-```text
-- chạy lâu hơn
-- tốn GPU hơn
-- chất lượng evidence và retrieval tốt hơn
-```
-
-Ví dụ:
-
-```text
-competition_dataset_v002_silver
-→ add object/caption/enriched summaries
-→ competition_dataset_v003_gold
-```
-
----
-
-## 8. Reuse rule
+## 4. Reuse rule
 
 Pipeline phải kiểm tra artifact cũ trước khi chạy lại một bước.
 
@@ -400,9 +213,9 @@ Không rerun toàn bộ pipeline nếu không cần.
 
 ---
 
-## 9. Khi nào phải chạy lại phần nào?
+## 5. Khi nào phải chạy lại phần nào?
 
-### 9.1. Đổi OCR model
+### 5.1. Đổi OCR model
 
 Chỉ cần chạy lại:
 
@@ -427,7 +240,7 @@ FAISS
 
 ---
 
-### 9.2. Đổi ASR model
+### 5.2. Đổi ASR model
 
 Chỉ cần chạy lại:
 
@@ -452,7 +265,7 @@ FAISS
 
 ---
 
-### 9.3. Đổi embedding model
+### 5.3. Đổi embedding model
 
 Chỉ cần chạy lại:
 
@@ -475,7 +288,7 @@ ASR
 
 ---
 
-### 9.4. Đổi keyframe extraction config
+### 5.4. Đổi keyframe extraction config
 
 Đây là thay đổi lớn vì nhiều output downstream phụ thuộc vào keyframe.
 
@@ -497,7 +310,7 @@ keyframes
 
 ---
 
-### 9.5. Chỉ sửa schema merge/release
+### 5.5. Chỉ sửa schema merge/release
 
 Nếu artifact gốc không đổi, thường chỉ cần chạy lại:
 
@@ -511,7 +324,7 @@ merge
 
 ---
 
-## 10. Default MVP strategy
+## 6. Default MVP strategy
 
 MVP không cần dynamic queue phức tạp ngay.
 
@@ -537,9 +350,9 @@ Dynamic queue là optional advanced mode, không bắt buộc cho MVP.
 
 ---
 
-## 11. Cost-aware static batch assignment
+## 7. Cost-aware static batch assignment
 
-### 11.1. Vấn đề
+### 7.1. Vấn đề
 
 Không nên chia đều theo số lượng video.
 
@@ -557,9 +370,12 @@ Tổng thời gian bị kéo dài.
 
 ---
 
-### 11.2. Cách làm đúng
+### 7.2. Cách làm đúng
 
-Master ingestion notebook cần scan metadata của video bằng `ffprobe` hoặc công cụ tương đương.
+Package code được Notebook 00B/00C gọi cần probe từng video bằng `ffprobe` khi
+video đang nằm trong bounded local scratch. Nó đồng thời tạo một canonical
+metadata JSON theo ADR 0016; không đặt business logic này trực tiếp trong
+notebook.
 
 Mỗi video nên có thông tin:
 
@@ -580,6 +396,13 @@ file_size_bytes
 has_audio
 ```
 
+Mỗi canonical metadata JSON cũng giữ các field organizer đã quan sát:
+`author`, `channel_id`, `channel_url`, `description`, `keywords`, `length`,
+`publish_date`, `thumbnail_url`, `title`, và `watch_url`. Organizer metadata
+thiếu thì scalar dùng `null`, `keywords` dùng `[]`, và
+`organizer_metadata_present=false`. Inventory là projection của cùng record,
+không phải một cách diễn giải metadata độc lập.
+
 `frame_count` should come from `ffprobe -count_packets` / `nb_read_packets`
 when available. Header `nb_frames` is only a fallback, and `duration_sec *
 fps_detected` is a last-resort estimate that must set
@@ -596,7 +419,7 @@ estimated_compute_cost
 
 ---
 
-### 11.3. Công thức MVP đơn giản
+### 7.3. Công thức MVP đơn giản
 
 Công thức ban đầu không cần quá phức tạp.
 
@@ -639,7 +462,7 @@ Công thức này chỉ là ước lượng. Không cần chính xác tuyệt đ
 
 ---
 
-### 11.4. Output cần có
+### 7.4. Output cần có
 
 `videos.parquet` chỉ nên chứa metadata cấp video và cost estimate:
 
@@ -688,7 +511,7 @@ Không nhất thiết số lượng video mỗi batch phải bằng nhau.
 
 ---
 
-### 11.5. Fallback rule
+### 7.5. Fallback rule
 
 Nếu thiếu metadata, dùng fallback:
 
@@ -700,7 +523,7 @@ Nếu thiếu metadata, dùng fallback:
 
 ---
 
-## 12. Worker workflow trong MVP
+## 8. Worker workflow trong MVP
 
 Mỗi teammate làm theo flow đơn giản:
 
@@ -744,11 +567,11 @@ output/competition_dataset_v001/
 
 ---
 
-## 13. Optional dynamic worker queue
+## 9. Optional dynamic worker queue
 
 Dynamic queue là mode nâng cao. Chỉ nên làm sau khi MVP static batch đã ổn.
 
-### 13.1. Khi nào cần dynamic queue?
+### 9.1. Khi nào cần dynamic queue?
 
 Cần dynamic queue nếu:
 
@@ -761,7 +584,7 @@ Cần dynamic queue nếu:
 
 ---
 
-### 13.2. Ý tưởng
+### 9.2. Ý tưởng
 
 Thay vì mỗi worker nhận batch cố định, tất cả worker cùng nhìn vào một queue chung:
 
@@ -792,7 +615,7 @@ worker starts
 
 ---
 
-### 13.3. work_queue fields
+### 9.3. work_queue fields
 
 `work_queue` nên có:
 
@@ -827,7 +650,7 @@ skipped
 
 ---
 
-### 13.4. Claim lock
+### 9.4. Claim lock
 
 Để tránh hai worker cùng xử lý một video, worker phải tạo lock file trước khi chạy.
 
@@ -852,7 +675,7 @@ Nếu lock đã tồn tại và chưa hết hạn, worker khác không được 
 
 ---
 
-### 13.5. Heartbeat
+### 9.5. Heartbeat
 
 Mỗi worker nên ghi heartbeat để báo rằng nó vẫn còn sống.
 
@@ -878,7 +701,7 @@ Nếu heartbeat quá lâu không cập nhật, worker có thể đã crash.
 
 ---
 
-### 13.6. lease_until và retry
+### 9.6. lease_until và retry
 
 `lease_until` là thời điểm claim hết hạn.
 
@@ -905,7 +728,7 @@ pending
 
 ---
 
-### 13.7. Lưu ý
+### 9.7. Lưu ý
 
 Dynamic queue có lợi nhưng phức tạp hơn static batch.
 
@@ -918,11 +741,11 @@ Chỉ implement dynamic queue khi static batch không còn đủ nhanh.
 
 ---
 
-## 14. Model batching policy
+## 10. Model batching policy
 
 Model inference thường là phần tốn thời gian nhất. Không nên chạy từng ảnh một nếu model hỗ trợ batch.
 
-### 14.1. Embedding
+### 10.1. Embedding
 
 Dùng riêng cho SigLIP và BEiT3; mỗi model có batch/config/checkpoint độc lập.
 
@@ -945,7 +768,7 @@ Nguyên tắc:
 
 ---
 
-### 14.2. OCR
+### 10.2. OCR
 
 Gợi ý:
 
@@ -965,7 +788,7 @@ Nguyên tắc:
 
 ---
 
-### 14.3. Captioning / VLM
+### 10.3. Captioning / VLM
 
 Gợi ý:
 
@@ -986,7 +809,7 @@ Nguyên tắc:
 
 ---
 
-### 14.4. Object detection
+### 10.4. Object detection
 
 Gợi ý:
 
@@ -1006,7 +829,7 @@ Nguyên tắc:
 
 ---
 
-### 14.5. ASR
+### 10.5. ASR
 
 Gợi ý:
 
@@ -1027,7 +850,7 @@ Nguyên tắc:
 
 ---
 
-### 14.6. OOM retry policy
+### 10.6. OOM retry policy
 
 Nếu GPU out-of-memory:
 
@@ -1041,11 +864,11 @@ Nếu GPU out-of-memory:
 
 ---
 
-## 15. Cache/reuse policy
+## 11. Cache/reuse policy
 
 Cache giúp tránh chạy lại phần đã có kết quả.
 
-### 15.1. Nguyên tắc cache
+### 11.1. Nguyên tắc cache
 
 Một output có thể reuse nếu input và model không đổi.
 
@@ -1066,7 +889,7 @@ image_sha256 + embedding_model + embedding_model_version
 
 ---
 
-### 15.2. Những thứ nên cache
+### 11.2. Những thứ nên cache
 
 Nên cache:
 
@@ -1084,7 +907,7 @@ Nên cache:
 
 ---
 
-### 15.3. Khi nào phải rebuild?
+### 11.3. Khi nào phải rebuild?
 
 Ví dụ:
 
@@ -1106,11 +929,11 @@ Không nên rerun toàn bộ pipeline nếu chỉ một phần thay đổi.
 
 ---
 
-## 16. Artifact ZIP/upload/download policy
+## 12. Artifact ZIP/upload/download policy
 
 Artifact ZIP giúp tránh upload hàng trăm nghìn file nhỏ lên Drive/Kaggle.
 
-### 16.1. Vì sao dùng ZIP?
+### 12.1. Vì sao dùng ZIP?
 
 Không nên upload từng keyframe/thumbnails rời rạc vì:
 
@@ -1131,7 +954,7 @@ L21_V001_features.zip
 
 ---
 
-### 16.2. ZIP size
+### 12.2. ZIP size
 
 Gợi ý:
 
@@ -1144,7 +967,7 @@ Không nên quá lớn vì lỗi upload sẽ phải retry lại nhiều.
 
 ---
 
-### 16.3. Compression mode
+### 12.3. Compression mode
 
 Với file đã nén như:
 
@@ -1167,7 +990,7 @@ Mục tiêu là đóng gói nhanh, không phải giảm dung lượng tối đa.
 
 ---
 
-### 16.4. Upload retry
+### 12.4. Upload retry
 
 Khi upload artifact:
 
@@ -1183,7 +1006,7 @@ Không đánh dấu `completed` nếu artifact chưa upload/validate xong.
 
 ---
 
-### 16.5. Artifact validation
+### 12.5. Artifact validation
 
 Mỗi artifact phải có:
 
@@ -1205,7 +1028,7 @@ Nếu artifact lỗi:
 
 ---
 
-## 17. Worker runtime report
+## 13. Worker runtime report
 
 Mỗi worker nên xuất report không overwrite theo phase, batch, và worker:
 
@@ -1217,7 +1040,7 @@ Report này giúp team biết worker chạy gì, mất bao lâu, lỗi ở đâu
 
 ---
 
-### 17.1. Fields khuyến nghị
+### 13.1. Fields khuyến nghị
 
 ```json
 {
@@ -1255,7 +1078,7 @@ Report này giúp team biết worker chạy gì, mất bao lâu, lỗi ở đâu
 
 ---
 
-### 17.2. Vì sao cần report?
+### 13.2. Vì sao cần report?
 
 Không có report thì team không biết bottleneck ở đâu.
 
@@ -1271,7 +1094,7 @@ Có report thì biết:
 
 ---
 
-## 18. Throughput metrics cần theo dõi
+## 14. Throughput metrics cần theo dõi
 
 Các metric quan trọng:
 
@@ -1322,9 +1145,9 @@ artifact_validation_fail_count:
 
 ---
 
-## 19. Recommended team workflow
+## 15. Recommended team workflow
 
-### 19.1. Giai đoạn đầu
+### 15.1. Giai đoạn đầu
 
 Team lead chạy:
 
@@ -1345,7 +1168,7 @@ Notebook này làm:
 
 ---
 
-### 19.2. Giai đoạn structure
+### 15.2. Giai đoạn structure
 
 Mỗi worker chạy:
 
@@ -1388,7 +1211,7 @@ AIC26_release/canonical_release_vXXX/phase01_structure/worker_reports/structure_
 
 ---
 
-### 19.3. Giai đoạn feature
+### 15.3. Giai đoạn feature
 
 Mỗi worker chạy:
 
@@ -1419,7 +1242,7 @@ AIC26_release/canonical_release_vXXX/phase02_features/worker_reports/features_{b
 
 ---
 
-### 19.4. Giai đoạn merge/release
+### 15.4. Giai đoạn merge/release
 
 Team lead hoặc một worker chính chạy:
 
@@ -1445,7 +1268,7 @@ Notebook này làm:
 
 ---
 
-## 20. Trách nhiệm của teammate
+## 16. Trách nhiệm của teammate
 
 Mỗi teammate cần làm đúng 5 việc:
 
@@ -1468,7 +1291,7 @@ Nếu lỗi:
 
 ---
 
-## 21. MVP recommendation
+## 17. MVP recommendation
 
 MVP nên làm theo thứ tự:
 
@@ -1498,7 +1321,7 @@ Lý do:
 
 ---
 
-## 22. Kết luận
+## 18. Kết luận
 
 System 1 nên được vận hành theo nguyên tắc:
 
@@ -1517,17 +1340,14 @@ Mặc định dùng:
 cost-aware static batch assignment
 ```
 
-Production profile là:
+Workflow production là:
 
 ```text
 full end-to-end release contract
 ```
 
-Không phải:
-
-```text
-bronze/silver/gold modes cho operator chọn trong notebook production
-```
+Provider, validation và lỗi thực tế quyết định trạng thái artifact; không có
+cấp chất lượng thực thi do operator chọn.
 
 Dynamic queue là advanced mode:
 

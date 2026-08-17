@@ -18,7 +18,6 @@ from system1.runtime.environment import resolve_runtime_paths
 from system1.runtime.environment import parse_bool
 from system1.release.types import release_root
 
-SUPPORTED_MODES = {"debug_small_sample", "bronze_fast", "silver_balanced", "gold_full"}
 SUPPORTED_PROVIDERS = {"mock", "real", "config", "rule_based", "vlm"}
 
 def default_output() -> Path:
@@ -55,13 +54,6 @@ def default_cli_sync() -> bool:
 
 def release_dir(output: Path) -> Path:
     return release_root(output)
-
-
-def require_supported_mode(mode: str) -> None:
-    if mode not in SUPPORTED_MODES:
-        raise typer.BadParameter(
-            "supported modes: debug_small_sample, bronze_fast, silver_balanced, gold_full"
-        )
 
 
 def require_supported_providers(providers: str) -> None:

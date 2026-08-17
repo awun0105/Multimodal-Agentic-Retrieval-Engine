@@ -10,7 +10,9 @@ input/
   metadata/*.json
 ```
 
-Video and metadata are paired by filename stem.
+Video and canonical metadata are paired by filename stem. Organizer metadata is
+optional source evidence, but the Notebook 00B/00C target creates one
+schema-valid canonical metadata JSON for every video before raw upload.
 
 ## Sample input requirement
 
@@ -24,7 +26,7 @@ input/
     *.json
 ```
 
-Each video and metadata file must share the same stem, for example:
+Each video and canonical metadata file must share the same stem, for example:
 
 ```text
 input/raw_videos/L21_V001.mp4
@@ -37,8 +39,8 @@ Primary shared storage uses exactly two Hugging Face Dataset repos:
 
 ```text
 AIC26_raw
-  canonical raw dataset repo: raw_videos/, metadata/, raw-level manifests,
-  raw-level missing/unmatched audit manifests
+  canonical raw dataset repo: raw_videos/, required canonical metadata/,
+  raw-level manifests and audits; no duplicate organizer_metadata/ tree
   canonical_raw_vXXX/manifests/missing_metadata.json
   canonical_raw_vXXX/manifests/unmatched_metadata.json
 
@@ -71,8 +73,12 @@ Notebook 00 workflow for Colab/local source preparation:
 ```text
 organizer Google Drive folder
   -> drive-shadow into your Drive folder
-  -> 00A: standardize-archives into input/raw_videos + input/metadata, then upload canonical raw files to AIC26_raw
-  -> 00B: stream-standardize-upload-raw extracts one zip pair at a time into local scratch and uploads canonical raw files to AIC26_raw
+  -> 00A: older full-standardization compatibility path
+  -> 00B: Colab/Drive streaming path
+  -> 00C: local-machine streaming path
+  -> stream path extracts one video/organizer-metadata pair at a time,
+     probes the video, creates canonical metadata, validates it, and uploads
+     canonical raw files to AIC26_raw
   -> ingest from AIC26_raw
   -> assign-batches
   -> upload phase00 ingestion outputs to AIC26_release/phase00_ingestion
@@ -104,12 +110,10 @@ system1 stream-standardize-upload-raw \
   --progress-path /content/drive/MyDrive/AIC2026/stream_standardize_upload_progress.jsonl
 
 system1 ingest \
-  --mode debug_small_sample \
   --input input \
   --output output
 
 system1 assign-batches \
-  --mode debug_small_sample \
   --num-batches 1 \
   --output output
 
@@ -152,6 +156,14 @@ matching archive outputs are skipped on rerun; use `--overwrite` only when you
 intend to replace target files. Use `--allow-partial` only for manual recovery
 when ingest should proceed despite a partial input-prep report.
 
+Canonical metadata retains the ten observed organizer fields (`author`,
+`channel_id`, `channel_url`, `description`, `keywords`, `length`,
+`publish_date`, `thumbnail_url`, `title`, and `watch_url`) plus `video_id`,
+`organizer_metadata_present`, `media` probe facts, and `provenance`. Missing
+organizer scalar values are `null`, missing keywords are `[]`, and the package
+must not fabricate a title or URL. See ADR 0016 and
+`docs/architecture/data-contracts.md` for the full contract.
+
 Fallback, use an existing standardized input directory:
 
 ```bash
@@ -168,25 +180,45 @@ Notebook 00 outputs. Restore keeps the canonical
 `sync-structure-artifacts` and
 `restore-structure-artifacts` map local phase01 structure ZIPs and worker
 reports to and from the Hugging Face `phase01_structure` layout. Notebook 01 is
-the thin worker orchestration for those commands; the current package can
-produce valid structure artifact packages, but the production semantic
-algorithms behind `process-batch` are still provider work.
+the thin worker orchestration for the production `process-batch` path. Package
+code now owns release resolution/restore, persistent per-stage resume,
+TransNet V2, search-band keyframes, faster-whisper, Gemini captions/grouping/
+summaries, strict packaging, remote checksum verification, and reports.
 
 ## Local setup
 
 ```bash
 cd system1
 uv sync
+
+# Required for the production Notebook 01 path.
+uv sync --extra phase01-production
 ```
 
 ## Main phase-based pipeline
 
-Run this exact order for the current MVP mock pipeline:
+Notebook 01 and public `process-batch` expose one production pipeline. There is
+no mode or provider selector. A typical invocation after Phase00 is:
 
-The `--mode debug_small_sample` flags below are current CLI/test compatibility
-for the mock pipeline. Production notebooks should run the full production
-profile and should not expose bronze/silver/gold execution-mode choices to
-operators.
+```bash
+system1 process-batch \
+  --batch-id batch_000 \
+  --worker-id worker_000 \
+  --release-id-override canonical_release_v001 \
+  --hf-repo-id your-org/AIC26_release \
+  --hf-checkpoint-repo your-org/AIC26_checkpoints \
+  --output output \
+  --sync
+```
+
+The override is needed for legacy Phase00 manifests without `completed_at`;
+new manifests are auto-resolved when it is omitted. The checkpoint repository
+must be private. Before the first production run, provision the verified
+TransNet artifact and set its generated `weights_sha256` in `configs/models.yaml`
+as described below.
+
+The older mock E2E remains a developer test path, injected only through guarded
+test environment variables. It is not a user-facing Notebook 01 choice.
 
 Verified clean mock E2E sequence:
 
@@ -194,52 +226,43 @@ Verified clean mock E2E sequence:
 rm -rf output/competition_dataset_v001
 
 system1 ingest \
-  --mode debug_small_sample \
   --input input \
   --output output
 
 system1 assign-batches \
-  --mode debug_small_sample \
   --num-batches 1 \
   --output output
 
-system1 process-batch \
+AIC_ALLOW_TEST_PROVIDERS=1 AIC_SYSTEM1_TEST_PROVIDER_PROFILE=mock system1 process-batch \
   --worker-id worker_clean \
   --batch-id batch_000 \
-  --mode debug_small_sample \
-  --providers mock \
   --input input \
   --output output
 
 system1 feature-batch \
   --worker-id worker_clean \
   --batch-id batch_000 \
-  --mode debug_small_sample \
   --providers mock \
   --input input \
   --output output
 
 system1 merge \
-  --mode debug_small_sample \
   --output output
 
 system1 build-index \
-  --mode debug_small_sample \
   --output output
 
 system1 build-db \
-  --mode debug_small_sample \
   --output output
 
 system1 validate \
-  --mode debug_small_sample \
   --output output
 
 system1 smoke-test \
   --release output/competition_dataset_v001
 ```
 
-Expected debug/mock E2E result:
+Expected mock E2E result:
 
 - `validation_report.json` status: `pass`
 - `smoke_test_report.json` status: `pass`
@@ -300,20 +323,22 @@ structure ZIP manifest/checksum before upload, and uploads only artifacts in
 that batch. `restore-structure-artifacts` downloads structure ZIPs and worker
 reports for one batch back into the local layout; it does not extract ZIPs.
 
-Notebook 01 target responsibility:
+Notebook 01 responsibility:
 
 ```text
 setup runtime + package
-  -> restore phase00_ingestion from AIC26_release
-  -> materialize tables/raw_mapping/frame_timeline/manifests for process-batch
+  -> restore Phase00 core tables + selected batch manifest from AIC26_release
+  -> restore only frame_timeline files referenced by that batch
   -> read manifests/{batch_id}.txt
-  -> process only that batch with timeline-aware provider interfaces
+  -> resolve versioned config and validate production dependencies
+  -> restore and validate per-video/per-stage checkpoints
+  -> process only that batch through the fixed production stages
   -> write artifacts/structure/{video_id}_structure.zip
   -> write manifests/worker_reports/structure_{batch_id}_{worker_id}.json
   -> sync those batch artifacts to phase01_structure
 ```
 
-`process-batch` should reuse phase00 video facts from `tables/videos.parquet`
+`process-batch` reuses Phase00 video facts from `tables/videos.parquet`
 and `raw_mapping/media_store_manifest.parquet`, plus
 `frame_timeline/{video_id}.parquet` when available, instead of re-probing every
 video. It may stage only the current video/metadata pair from `AIC26_raw` or a
@@ -323,16 +348,15 @@ must fail that production video because canonical `frame_id` values require the
 decoded original timeline. Explicit estimated/degraded mapping may remain only
 in debug/test profiles and must never be hidden in notebook code.
 
-The target phase01 structure package is semantic structure, not feature
-enrichment. It should contain shot rows, selected keyframes, thumbnails,
+The Phase01 structure package is semantic structure, not feature enrichment.
+It contains shot rows, selected keyframes, thumbnails,
 production faster-whisper large-v3 ASR/transcript rows, one canonical bilingual
 shot-caption row per shot generated by Gemini from that shot's representative
 keyframe, scene rows, bilingual Gemini scene summaries, package manifests,
 checksums, and errors. Production phase01 standardizes on TransNet V2 for shot
-boundaries and keyframes near 20%/50%/80% of each shot, while package code may
-keep provider interfaces for tests and local development. Current mock/fallback
-code may emit one full-video shot/scene and a first-frame keyframe, but that is
-explicitly non-production behavior while the selected providers are unfinished.
+boundaries and keyframes selected from bands centered at 20%/50%/80% of each
+shot. Legacy mock/fallback code remains reachable only through guarded test
+injection and cannot be selected from Notebook 01 or the public CLI.
 
 The complete accepted production sequence and failure policy are documented in
 `docs/architecture/system1-notebook01-production-pipeline.md`.
@@ -342,8 +366,27 @@ The accepted production scene-grouping target is documented in
 context/focus windows and structured boundary judgements, but deterministic
 package code remains responsible for the complete scene partition, canonical
 IDs/ranges, mappings, and validation. Unresolved Gemini/provider failure fails
-the production video; current fallback behavior is test/debug only. This target is not yet
-implemented by the current fallback builder.
+the production video. The production implementation is in
+`src/system1/scenes/grouping.py` and `src/system1/scenes/gemini_judge.py`;
+fallback behavior is test/debug only.
+
+## One-time TransNet artifact preparation
+
+Runtime workers never convert TensorFlow weights. In a controlled environment
+with TensorFlow, PyTorch, Git LFS, and `HF_TOKEN`, run:
+
+```bash
+python scripts/prepare_transnetv2_artifact.py \
+  --output-dir /tmp/transnetv2-artifact \
+  --repo-id your-org/AIC26_checkpoints
+```
+
+The script checks out the pinned official commit, runs the official converter's
+single-head and many-head parity tests, uploads the resulting private artifact,
+and prints the exact checksum to place at
+`phase01.shot_detection.weights_sha256` in `configs/models.yaml`. Until that
+checksum is configured, production preflight fails intentionally before video
+processing.
 
 Target per-video structure ZIP layout:
 

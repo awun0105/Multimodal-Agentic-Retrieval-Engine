@@ -4,13 +4,12 @@ Date: 2026-08-05
 
 ## Status
 
-Accepted target design for Notebook 01 / `phase01_structure`.
-
-The current package does not implement this design yet. It still uses
-`TimelineAwareFallbackProvider`, which emits one degraded scene covering the
-available shots. This document defines the production behavior to implement and
-the proof required before that test/debug fallback can cease to be the normal
-path. Production provider failure must fail the video rather than select it.
+Accepted and implemented package design for Notebook 01 /
+`phase01_structure`. Deterministic fake-judge tests cover windowing, voting,
+review routing, partitioning, and failure validation. Live Gemini acceptance
+and manual quality review remain pending. `TimelineAwareFallbackProvider` is
+available only through guarded debug/test injection; production provider
+failure fails the video.
 
 ## Canonical Definition
 
@@ -98,10 +97,10 @@ thumbnail_ref
 ```
 
 Exactly one representative keyframe is expected per shot. A normal shot has
-distinct early/middle/late rows near 20%/50%/80%; only a short shot with fewer
-than three decodable frames may lack one of those roles. Focused review selects
-available early/late rows through `keyframe_role`; role does not change the
-canonical `keyframe_id = "{video_id}:{frame_id}"` convention.
+early/middle/late rows selected from search bands centered at 20%/50%/80%; a
+short shot may have fewer roles after duplicate frame IDs are removed. Focused
+review selects available early/late rows through `keyframe_role`; role does not
+change the canonical `keyframe_id = "{video_id}:{frame_id}"` convention.
 
 At scene-grouping input time, `keyframes.scene_id` may be null or provisional.
 It is assigned from the final shot partition after grouping.
@@ -567,10 +566,13 @@ Provider interface:
 
 ```python
 class SceneBoundaryJudge(Protocol):
-    def judge_window(
+    def judge(
         self,
-        request: SceneWindowRequest,
-    ) -> SceneWindowResult:
+        *,
+        request_kind: str,
+        focus_gap_ids: tuple[str, ...],
+        context: Sequence[Mapping[str, Any]],
+    ) -> Mapping[str, bool]:
         ...
 ```
 
@@ -586,28 +588,26 @@ def group_scenes(
     ...
 ```
 
-Target module layout:
+Implemented module layout:
 
 ```text
 system1/src/system1/scenes/
 |-- builder.py
 |-- grouping.py
-|-- providers.py
-`-- types.py
+`-- gemini_judge.py
 ```
 
-- `types.py`: immutable evidence, gap, request, response, vote, and scene-range
-  types plus structured-response validation models.
-- `providers.py`: provider adapters, initially a Gemini
-  `SceneBoundaryJudge`; the exact Gemini model name, credentials, timeouts, and
-  retry limits come from config and are not hardcoded in Notebook 01.
+- `gemini_judge.py`: the production Gemini `SceneBoundaryJudge`, deterministic
+  contact sheets, strict response shape, and request evidence serialization.
+  Model, credentials, timeouts, and retry limits come from config/runtime and
+  are not hardcoded in Notebook 01.
 - `grouping.py`: window planning, contact-sheet request planning, vote
   aggregation, ambiguous second pass, consistency review, failure handling,
   partition,
   and pure validation logic.
-- `builder.py`: load canonical tables, resolve logical image refs to temporary
-  local media, build evidence/contact sheets, invoke grouping, write tables,
-  backfill mappings, and record diagnostics.
+- `phase01/production.py`: load canonical tables, resolve logical image refs to
+  temporary local media, build evidence, invoke grouping, write tables, backfill
+  mappings, and record diagnostics. `builder.py` is the legacy debug path.
 
 Notebook 01 remains thin orchestration. It calls package/CLI behavior and does
 not contain grouping algorithms, prompt text, JSON parsing, cache logic, or
@@ -737,8 +737,8 @@ load ordered shots
   -> write manifest provenance, diagnostics, errors, and final status
 ```
 
-This is the canonical Phase01 scene-grouping design. Implementation may optimize
-batching, contact-sheet rendering, or cache storage, but it must preserve the
+This is the canonical Phase01 scene-grouping design. Future changes may optimize
+batching, contact-sheet rendering, or cache storage, but must preserve the
 inputs, structured boundary semantics, deterministic partition authority,
 canonical IDs/ranges, validation guarantees, and explicit failure behavior
 defined here.
