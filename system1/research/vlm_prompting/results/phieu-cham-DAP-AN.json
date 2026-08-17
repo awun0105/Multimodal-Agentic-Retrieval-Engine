@@ -1,0 +1,186 @@
+{
+  "seed": 42,
+  "so_anh": 30,
+  "anh": {
+    "012.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "qwen25vl-3b",
+      "C": "qwen2vl-2b",
+      "D": "vintern-3b"
+    },
+    "013.jpg": {
+      "A": "qwen25vl-3b",
+      "B": "vintern-3b",
+      "C": "qwen2vl-2b",
+      "D": "qwen25vl-7b"
+    },
+    "015.jpg": {
+      "A": "qwen2vl-2b",
+      "B": "qwen25vl-7b",
+      "C": "vintern-3b",
+      "D": "qwen25vl-3b"
+    },
+    "021.jpg": {
+      "A": "qwen25vl-3b",
+      "B": "qwen25vl-7b",
+      "C": "qwen2vl-2b",
+      "D": "vintern-3b"
+    },
+    "040.jpg": {
+      "A": "qwen25vl-3b",
+      "B": "qwen2vl-2b",
+      "C": "vintern-3b",
+      "D": "qwen25vl-7b"
+    },
+    "042.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "qwen2vl-2b",
+      "C": "vintern-3b",
+      "D": "qwen25vl-3b"
+    },
+    "045.jpg": {
+      "A": "qwen2vl-2b",
+      "B": "vintern-3b",
+      "C": "qwen25vl-3b",
+      "D": "qwen25vl-7b"
+    },
+    "061.jpg": {
+      "A": "qwen25vl-3b",
+      "B": "qwen2vl-2b",
+      "C": "vintern-3b",
+      "D": "qwen25vl-7b"
+    },
+    "082.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "vintern-3b",
+      "C": "qwen2vl-2b",
+      "D": "qwen25vl-3b"
+    },
+    "089.jpg": {
+      "A": "qwen2vl-2b",
+      "B": "qwen25vl-7b",
+      "C": "qwen25vl-3b",
+      "D": "vintern-3b"
+    },
+    "096.jpg": {
+      "A": "vintern-3b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-3b",
+      "D": "qwen25vl-7b"
+    },
+    "098.jpg": {
+      "A": "vintern-3b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-7b",
+      "D": "qwen25vl-3b"
+    },
+    "187.jpg": {
+      "A": "qwen2vl-2b",
+      "B": "qwen25vl-3b",
+      "C": "vintern-3b",
+      "D": "qwen25vl-7b"
+    },
+    "189.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "vintern-3b",
+      "C": "qwen25vl-3b",
+      "D": "qwen2vl-2b"
+    },
+    "220.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "qwen25vl-3b",
+      "C": "qwen2vl-2b",
+      "D": "vintern-3b"
+    },
+    "228.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-3b",
+      "D": "vintern-3b"
+    },
+    "252.jpg": {
+      "A": "vintern-3b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-3b",
+      "D": "qwen25vl-7b"
+    },
+    "253.jpg": {
+      "A": "qwen25vl-3b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-7b",
+      "D": "vintern-3b"
+    },
+    "258.jpg": {
+      "A": "qwen25vl-3b",
+      "B": "qwen25vl-7b",
+      "C": "vintern-3b",
+      "D": "qwen2vl-2b"
+    },
+    "278.jpg": {
+      "A": "vintern-3b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-7b",
+      "D": "qwen25vl-3b"
+    },
+    "282.jpg": {
+      "A": "qwen2vl-2b",
+      "B": "qwen25vl-3b",
+      "C": "vintern-3b",
+      "D": "qwen25vl-7b"
+    },
+    "299.jpg": {
+      "A": "vintern-3b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-7b",
+      "D": "qwen25vl-3b"
+    },
+    "314.jpg": {
+      "A": "qwen2vl-2b",
+      "B": "vintern-3b",
+      "C": "qwen25vl-7b",
+      "D": "qwen25vl-3b"
+    },
+    "322.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "vintern-3b",
+      "C": "qwen25vl-3b",
+      "D": "qwen2vl-2b"
+    },
+    "329.jpg": {
+      "A": "qwen25vl-3b",
+      "B": "qwen25vl-7b",
+      "C": "qwen2vl-2b",
+      "D": "vintern-3b"
+    },
+    "338.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-3b",
+      "D": "vintern-3b"
+    },
+    "339.jpg": {
+      "A": "qwen25vl-7b",
+      "B": "vintern-3b",
+      "C": "qwen25vl-3b",
+      "D": "qwen2vl-2b"
+    },
+    "428.jpg": {
+      "A": "vintern-3b",
+      "B": "qwen2vl-2b",
+      "C": "qwen25vl-7b",
+      "D": "qwen25vl-3b"
+    },
+    "498.jpg": {
+      "A": "vintern-3b",
+      "B": "qwen25vl-3b",
+      "C": "qwen25vl-7b",
+      "D": "qwen2vl-2b"
+    },
+    "595.jpg": {
+      "A": "vintern-3b",
+      "B": "qwen25vl-3b",
+      "C": "qwen2vl-2b",
+      "D": "qwen25vl-7b"
+    }
+  }
+}
