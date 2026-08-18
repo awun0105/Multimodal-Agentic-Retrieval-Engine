@@ -69,7 +69,7 @@ Do not use `git archive --remote` for GitHub. GitHub blocks that mode.
 
 ## 2. Requirements
 
-- Python 3.10
+- `uv`
 - Git 2.25 or newer
 - Hugging Face CLI `hf`
 - Enough disk space for the release data
@@ -113,13 +113,22 @@ data/aic25-b1-v1/
 
 From inside `mvp-app`:
 
+Install `uv` first if the command is missing:
+
 ```bash
-python3.10 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-If `python3.10` is not found, install Python 3.10 first.
+Then create the Python 3.10 environment and install dependencies:
+
+```bash
+uv venv --python 3.10
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+`uv venv --python 3.10` creates `.venv` with Python 3.10. If Python 3.10 is not
+already installed locally, `uv` can download and install it automatically.
 
 ## 4. Install Hugging Face CLI
 
@@ -191,7 +200,7 @@ TRANSLATION_MODEL_REVISION=c8d2853e77f5fae31124d993e0b35176b1c8914e
 ## 7. Run the App
 
 ```bash
-. .venv/bin/activate
+source .venv/bin/activate
 python app.py
 ```
 
@@ -214,8 +223,8 @@ Set `PORT` in the command line. Do not put it in `.env`.
 Install development dependencies:
 
 ```bash
-. .venv/bin/activate
-pip install -r requirements-dev.txt
+source .venv/bin/activate
+uv pip install -r requirements-dev.txt
 ```
 
 Run tests:
@@ -262,13 +271,15 @@ Use the browser UI first. Use the API only if you need script access.
 
 ## Common Problems
 
-### `python3.10: command not found`
+### `uv: command not found`
 
-Install Python 3.10, then rerun:
+Install `uv`, then close and reopen the terminal:
 
 ```bash
-python3.10 -m venv .venv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+Return to the app folder and rerun `uv venv --python 3.10`.
 
 ### `hf: command not found`
 
@@ -276,7 +287,7 @@ Close and reopen the terminal, then return to the app folder:
 
 ```bash
 cd /full/path/to/mvp-app
-. .venv/bin/activate
+source .venv/bin/activate
 hf --help
 ```
 
