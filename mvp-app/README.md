@@ -4,53 +4,6 @@ Local keyframe retrieval app for the AIoU MVP. The app runs on your machine with
 Gradio, CLIP text search, metadata filters, object filters, and Vietnamese to
 English query translation.
 
-## Quick Start
-
-Run these commands from a terminal:
-
-```bash
-git clone --no-checkout --depth 1 --single-branch -b monolith-mvp-app \
-  https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine.git
-cd Multimodal-Agentic-Retrieval-Engine
-git sparse-checkout set mvp-app
-git checkout
-cd mvp-app
-
-python3.10 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-
-curl -LsSf https://hf.co/cli/install.sh | bash -s
-hf --help
-mkdir -p data
-hf buckets sync \
-  hf://buckets/1thesudden/aiou-app-storage/releases/aic25-b1-v1 \
-  ./data/aic25-b1-v1
-
-cp .env.example .env
-```
-
-Edit `.env` and set `DATA_ROOT` to the full local path of the downloaded
-release. Example:
-
-```env
-DATA_ROOT=/home/your-user/Multimodal-Agentic-Retrieval-Engine/mvp-app/data/aic25-b1-v1
-CACHE_ROOT=/tmp/aiou-cache
-```
-
-Then start the app:
-
-```bash
-. .venv/bin/activate
-python app.py
-```
-
-Open this URL in your browser:
-
-```text
-http://localhost:7860
-```
-
 ## What the App Does
 
 You type a text query. The app embeds the query with CLIP, searches the prepared
@@ -66,12 +19,23 @@ You can filter results by:
 
 Vietnamese queries are translated to English before CLIP search.
 
-## Get Only the `mvp-app` Folder from GitHub
+## Setup Flow
+
+Follow these sections in order:
+
+1. Get only the `mvp-app` folder from GitHub.
+2. Install Python dependencies.
+3. Install Hugging Face CLI.
+4. Download the release data.
+5. Configure `.env`.
+6. Run the app.
+
+## 1. Get Only the `mvp-app` Folder from GitHub
 
 Normal `git clone` downloads the whole repository. To download only this app
 folder, use Git sparse checkout. This requires Git 2.25 or newer.
 
-### Recommended: Git Sparse Checkout
+### Option A: Git Sparse Checkout
 
 ```bash
 git clone --no-checkout --depth 1 --single-branch -b monolith-mvp-app \
@@ -90,7 +54,7 @@ What each option means:
 - `git sparse-checkout set mvp-app`: keeps only the `mvp-app/` folder in your
   working tree.
 
-### Alternative: SVN Export from GitHub
+### Option B: SVN Export from GitHub
 
 Use this if you only want a copy of the folder and do not need Git history,
 commit, or push.
@@ -103,7 +67,7 @@ cd mvp-app
 
 Do not use `git archive --remote` for GitHub. GitHub blocks that mode.
 
-## Requirements
+## 2. Requirements
 
 - Python 3.10
 - Git 2.25 or newer
@@ -145,7 +109,7 @@ data/aic25-b1-v1/
 
 `manifest.json` and `READY.json` are required. The app checks them at startup.
 
-## Install the App
+## 3. Install the App
 
 From inside `mvp-app`:
 
@@ -157,7 +121,7 @@ pip install -r requirements.txt
 
 If `python3.10` is not found, install Python 3.10 first.
 
-## Install Hugging Face CLI
+## 4. Install Hugging Face CLI
 
 Install `hf` if you do not already have it:
 
@@ -177,7 +141,7 @@ hf auth login
 hf auth whoami
 ```
 
-## Download the Data
+## 5. Download the Data
 
 From inside `mvp-app`:
 
@@ -198,7 +162,7 @@ test -d data/aic25-b1-v1/keyframes
 
 No output means the required files exist.
 
-## Configure `.env`
+## 6. Configure `.env`
 
 Create local config:
 
@@ -224,7 +188,7 @@ TRANSLATION_MODEL_ID=Helsinki-NLP/opus-mt-vi-en
 TRANSLATION_MODEL_REVISION=c8d2853e77f5fae31124d993e0b35176b1c8914e
 ```
 
-## Run the App
+## 7. Run the App
 
 ```bash
 . .venv/bin/activate
@@ -245,7 +209,7 @@ PORT=7861 python app.py
 
 Set `PORT` in the command line. Do not put it in `.env`.
 
-## Quick Test
+## 8. Quick Test
 
 Install development dependencies:
 
