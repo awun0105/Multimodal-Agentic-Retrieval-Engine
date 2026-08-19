@@ -25,22 +25,49 @@ except ImportError:
     spaces = _LocalSpaces()  # type: ignore[assignment]
 
 import gradio as gr
+
 from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
+from db import SearchMechanism
 from schemas import SearchFilters
 from translation import QueryTranslator
-
-from db import SearchMechanism
 
 logger = logging.getLogger(__name__)
 
 APP_CSS = """
 body { overflow-y: auto !important; }
+#keyframe-gallery {
+    height: 320px !important;
+    margin-top: 0.25rem;
+}
+#keyframe-gallery .grid-wrap {
+    height: calc(100% - 1.75rem) !important;
+    overflow-y: hidden !important;
+}
+#keyframe-gallery .grid-container {
+    height: 100% !important;
+    grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
+    grid-auto-rows: minmax(0, 1fr) !important;
+}
+#selected-keyframe { min-height: 400px; }
+#selected-keyframe img { object-fit: contain !important; }
 @media (max-width: 600px) {
     #app-title { margin-top: 3.5rem; }
+    #selected-keyframe { min-height: 260px; }
 }
 """
+
+RESULT_FIELD_CHOICES = [
+    ("All fields", "all"),
+    ("Keyframe ID", "keyframe_id"),
+    ("Video ID", "video_id"),
+    ("Collection", "collection_id"),
+    ("Title", "title"),
+    ("Author", "author"),
+    ("Keyframe No.", "keyframe_no"),
+    ("Frame Index", "frame_idx"),
+]
 
 
 def _timestamp(seconds: float) -> str:
@@ -113,28 +140,169 @@ class SearchController:
         self.search_mechanism = search_mechanism
         self.page_size = page_size
 
-    def page_payload(self, rows: list[dict], page: int):
+    def page_payload(
+        self,
+        rows: list[dict],
+        page: int,
+        original_count: int | None = None,
+    ):
         rows = rows or []
         total_pages = max(1, (len(rows) + self.page_size - 1) // self.page_size)
         page = max(0, min(int(page), total_pages - 1))
         start = page * self.page_size
         page_rows = rows[start : start + self.page_size]
+        rendered_rows = [row for row in page_rows if Path(row["image_path"]).is_file()]
         gallery = [
             (
                 row["image_path"],
                 f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])} | {row['score']:.4f}",
             )
-            for row in page_rows
-            if Path(row["image_path"]).is_file()
+            for row in rendered_rows
         ]
-        label = f"Page {page + 1} / {total_pages} | {len(rows)} results"
+        if original_count is not None and original_count != len(rows):
+            count_label = f"{len(rows)} of {original_count} results"
+        else:
+            count_label = f"{len(rows)} results"
+        label = f"Page {page + 1} / {total_pages} | {count_label}"
         return (
             gallery,
+            rendered_rows,
             page,
             label,
             gr.update(interactive=page > 0),
             gr.update(interactive=page + 1 < total_pages),
         )
+
+    @staticmethod
+    def _search_filters(
+        collections,
+        video_id,
+        object_entities,
+        object_match_mode,
+        minimum_object_confidence,
+        author,
+        publish_date_from,
+        publish_date_to,
+    ) -> SearchFilters:
+        return SearchFilters(
+            collections=tuple(collections or ()),
+            video_id=video_id or None,
+            object_entities=tuple(object_entities or ()),
+            object_match_mode=str(object_match_mode).lower(),
+            minimum_object_confidence=float(minimum_object_confidence),
+            author=author or None,
+            publish_date_from=publish_date_from or None,
+            publish_date_to=publish_date_to or None,
+        )
+
+    def _run_search(
+        self,
+        query,
+        top_k,
+        query_language,
+        collections,
+        video_id,
+        object_entities,
+        object_match_mode,
+        minimum_object_confidence,
+        author,
+        publish_date_from,
+        publish_date_to,
+        *,
+        translate_vietnamese: bool | None = None,
+    ) -> tuple[list[dict], str]:
+        filters = self._search_filters(
+            collections,
+            video_id,
+            object_entities,
+            object_match_mode,
+            minimum_object_confidence,
+            author,
+            publish_date_from,
+            publish_date_to,
+        )
+        outcome = self.search_mechanism.search_by_text(
+            query,
+            int(top_k),
+            str(query_language).lower(),
+            filters,
+            translate_vietnamese=translate_vietnamese,
+        )
+        rows = [result.to_dict() for result in outcome.results]
+        if not outcome.query.translation_enabled:
+            translation_status = "Off"
+        elif outcome.query.warning:
+            translation_status = "Failed"
+        else:
+            translation_status = "On"
+        status = (
+            f"Found {len(rows)} results | Translation: {translation_status} | "
+            f"Original query: {outcome.query.original_query} | "
+            f"CLIP query: {outcome.query.clip_query}"
+        )
+        if outcome.query.warning:
+            status = f"{status} | {outcome.query.warning}"
+        return rows, status
+
+    @staticmethod
+    def _refinement_updates(rows: list[dict]):
+        collections = sorted({str(row["collection_id"]) for row in rows})
+        videos = sorted({str(row["video_id"]) for row in rows})
+        authors = sorted({str(row.get("author") or "") for row in rows} - {""})
+        return (
+            gr.update(choices=collections, value=[]),
+            gr.update(choices=videos, value=[]),
+            gr.update(choices=authors, value=[]),
+        )
+
+    @staticmethod
+    def _matches_within_results(row: dict, query: str, field: str) -> bool:
+        needle = str(query or "").strip().casefold()
+        if not needle:
+            return True
+        if field in {"keyframe_no", "frame_idx"}:
+            try:
+                return int(row[field]) == int(needle)
+            except ValueError as exc:
+                label = "Keyframe No." if field == "keyframe_no" else "Frame Index"
+                raise ValueError(f"{label} must be an integer") from exc
+        if field == "all":
+            values = (
+                row.get("keyframe_id"),
+                row.get("video_id"),
+                row.get("collection_id"),
+                row.get("title"),
+                row.get("author"),
+                row.get("keyframe_no"),
+                row.get("frame_idx"),
+            )
+            return any(needle in str(value or "").casefold() for value in values)
+        return needle in str(row.get(field) or "").casefold()
+
+    def _refined_rows(
+        self,
+        rows: list[dict],
+        within_query,
+        within_field,
+        collections,
+        videos,
+        authors,
+        minimum_score,
+    ) -> list[dict]:
+        selected_collections = set(collections or ())
+        selected_videos = set(videos or ())
+        selected_authors = set(authors or ())
+        threshold = float(minimum_score)
+        field = str(within_field or "all")
+        return [
+            row
+            for row in rows or []
+            if (not selected_collections or row["collection_id"] in selected_collections)
+            and (not selected_videos or row["video_id"] in selected_videos)
+            and (not selected_authors or row.get("author") in selected_authors)
+            and float(row["score"]) >= threshold
+            and self._matches_within_results(row, within_query, field)
+        ]
 
     def search_keyframes(
         self,
@@ -151,30 +319,22 @@ class SearchController:
         publish_date_to,
     ):
         try:
-            filters = SearchFilters(
-                collections=tuple(collections or ()),
-                video_id=video_id or None,
-                object_entities=tuple(object_entities or ()),
-                object_match_mode=str(object_match_mode).lower(),
-                minimum_object_confidence=float(minimum_object_confidence),
-                author=author or None,
-                publish_date_from=publish_date_from or None,
-                publish_date_to=publish_date_to or None,
-            )
-            outcome = self.search_mechanism.search_by_text(
+            rows, status = self._run_search(
                 query,
-                int(top_k),
-                str(query_language).lower(),
-                filters,
+                top_k,
+                query_language,
+                collections,
+                video_id,
+                object_entities,
+                object_match_mode,
+                minimum_object_confidence,
+                author,
+                publish_date_from,
+                publish_date_to,
             )
-            rows = [result.to_dict() for result in outcome.results]
-            gallery, page, label, previous_update, next_update = self.page_payload(rows, 0)
-            query_info = f"CLIP query: {outcome.query.clip_query}"
-            if outcome.query.translated:
-                query_info = f"Translated query: {outcome.query.clip_query}"
-            if outcome.query.warning:
-                query_info = f"{query_info} | {outcome.query.warning}"
-            status = f"Found {len(rows)} results | {query_info}"
+            gallery, _page_rows, page, label, previous_update, next_update = (
+                self.page_payload(rows, 0)
+            )
             return (
                 gallery,
                 rows,
@@ -202,20 +362,204 @@ class SearchController:
                 [],
             )
 
-    def previous_page(self, rows, page):
-        return self.page_payload(rows, int(page) - 1)
+    def search_keyframes_v2(
+        self,
+        query,
+        top_k,
+        translate_vietnamese,
+        collections,
+        video_id,
+        object_entities,
+        object_match_mode,
+        minimum_object_confidence,
+        author,
+        publish_date_from,
+        publish_date_to,
+    ):
+        try:
+            rows, status = self._run_search(
+                query,
+                top_k,
+                "auto",
+                collections,
+                video_id,
+                object_entities,
+                object_match_mode,
+                minimum_object_confidence,
+                author,
+                publish_date_from,
+                publish_date_to,
+                translate_vietnamese=bool(translate_vietnamese),
+            )
+            gallery, page_rows, page, label, previous_update, next_update = (
+                self.page_payload(rows, 0)
+            )
+            collection_update, video_update, author_update = self._refinement_updates(rows)
+            return (
+                gallery,
+                rows,
+                rows,
+                page_rows,
+                page,
+                status,
+                label,
+                previous_update,
+                next_update,
+                None,
+                "Select a keyframe to view metadata",
+                [],
+                collection_update,
+                video_update,
+                author_update,
+                -1.0,
+                "",
+                "all",
+                f"Refine current Top K results | {len(rows)} results",
+            )
+        except Exception as exc:
+            logger.exception("Keyframe search failed")
+            empty_update = gr.update(choices=[], value=[])
+            return (
+                [],
+                [],
+                [],
+                [],
+                0,
+                f"Error: {exc}",
+                "Page 1 / 1 | 0 results",
+                gr.update(interactive=False),
+                gr.update(interactive=False),
+                None,
+                "Select a keyframe to view metadata",
+                [],
+                empty_update,
+                empty_update,
+                empty_update,
+                -1.0,
+                "",
+                "all",
+                "Refine current Top K results | 0 results",
+            )
 
-    def next_page(self, rows, page):
-        return self.page_payload(rows, int(page) + 1)
+    def refine_results(
+        self,
+        original_rows,
+        current_rows,
+        within_query,
+        within_field,
+        collections,
+        videos,
+        authors,
+        minimum_score,
+    ):
+        try:
+            rows = self._refined_rows(
+                original_rows,
+                within_query,
+                within_field,
+                collections,
+                videos,
+                authors,
+                minimum_score,
+            )
+            message = (
+                f"Refine current Top K results | {len(rows)} of "
+                f"{len(original_rows or [])} results"
+            )
+        except ValueError as exc:
+            rows = current_rows or []
+            message = f"Refine error: {exc}"
+        gallery, page_rows, page, label, previous_update, next_update = self.page_payload(
+            rows,
+            0,
+            len(original_rows or []),
+        )
+        return (
+            gallery,
+            rows,
+            page_rows,
+            page,
+            label,
+            previous_update,
+            next_update,
+            None,
+            "Select a keyframe to view metadata",
+            [],
+            message,
+        )
 
-    def select_keyframe(self, rows, page, evt: gr.SelectData):
-        if not rows or evt.index is None:
+    def clear_within_results(
+        self,
+        original_rows,
+        current_rows,
+        within_field,
+        collections,
+        videos,
+        authors,
+        minimum_score,
+    ):
+        return (
+            "",
+            *self.refine_results(
+                original_rows,
+                current_rows,
+                "",
+                within_field,
+                collections,
+                videos,
+                authors,
+                minimum_score,
+            ),
+        )
+
+    def clear_all_refinements(self, original_rows):
+        rows = original_rows or []
+        gallery, page_rows, page, label, previous_update, next_update = self.page_payload(
+            rows,
+            0,
+        )
+        return (
+            gallery,
+            rows,
+            page_rows,
+            page,
+            label,
+            previous_update,
+            next_update,
+            None,
+            "Select a keyframe to view metadata",
+            [],
+            f"Refine current Top K results | {len(rows)} results",
+            "",
+            "all",
+            [],
+            [],
+            [],
+            -1.0,
+        )
+
+    def previous_page(self, rows, original_rows, page):
+        return self._change_page(rows, original_rows, int(page) - 1)
+
+    def next_page(self, rows, original_rows, page):
+        return self._change_page(rows, original_rows, int(page) + 1)
+
+    def _change_page(self, rows, original_rows, page):
+        payload = self.page_payload(rows, page, len(original_rows or []))
+        return (
+            *payload,
+            None,
+            "Select a keyframe to view metadata",
+            [],
+        )
+
+    def select_keyframe(self, page_rows, evt: gr.SelectData):
+        if not page_rows or evt.index is None:
             return None, "Select a keyframe to view metadata", []
         local_index = int(evt.index[0] if isinstance(evt.index, tuple) else evt.index)
-        global_index = int(page) * self.page_size + local_index
-        if global_index < 0 or global_index >= len(rows):
+        if local_index < 0 or local_index >= len(page_rows):
             return None, "Selected result is no longer available", []
-        row = rows[global_index]
+        row = page_rows[local_index]
         details = self.search_mechanism.get_keyframe_details(row["keyframe_id"])
         return row["image_path"], _detail_markdown(details), _detection_rows(details)
 
@@ -264,7 +608,39 @@ def search_keyframes_gpu(
     )
 
 
-def build_app(search_mechanism: SearchMechanism, *, page_size: int = 20) -> gr.Blocks:
+@spaces.GPU(duration=120)
+def search_keyframes_gpu_v2(
+    query,
+    top_k,
+    translate_vietnamese,
+    collections,
+    video_id,
+    object_entities,
+    object_match_mode,
+    minimum_object_confidence,
+    author,
+    publish_date_from,
+    publish_date_to,
+):
+    """Run the boolean-translation search flow on ZeroGPU."""
+    if _search_controller is None:
+        raise RuntimeError("Search controller has not been initialized")
+    return _search_controller.search_keyframes_v2(
+        query,
+        top_k,
+        translate_vietnamese,
+        collections,
+        video_id,
+        object_entities,
+        object_match_mode,
+        minimum_object_confidence,
+        author,
+        publish_date_from,
+        publish_date_to,
+    )
+
+
+def build_app(search_mechanism: SearchMechanism, *, page_size: int = 10) -> gr.Blocks:
     """Construct the Gradio UI and bind it to a prepared search mechanism."""
     global _search_controller
 
@@ -274,7 +650,9 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 20) -> gr.B
 
     with gr.Blocks(css=APP_CSS) as webui:
         gr.Markdown("## AIoU Keyframe Retrieval", elem_id="app-title")
-        results_state = gr.State([])
+        original_results_state = gr.State([])
+        visible_results_state = gr.State([])
+        page_rows_state = gr.State([])
         page_state = gr.State(0)
 
         with gr.Row(equal_height=True):
@@ -283,13 +661,20 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 20) -> gr.B
                 placeholder="Describe the keyframe you want to find",
                 scale=5,
             )
-            query_language = gr.Dropdown(
-                label="Language",
-                choices=[("Auto", "auto"), ("English", "english"), ("Vietnamese", "vietnamese")],
-                value="auto",
-                scale=1,
+            translate_vietnamese = gr.Checkbox(
+                label="Translate Vietnamese query to English",
+                value=True,
+                info="Off: direct multilingual search. On: NLLB translation before search.",
+                scale=2,
             )
-            top_k = gr.Slider(label="Top K", minimum=1, maximum=100, step=1, value=20, scale=2)
+            top_k = gr.Slider(
+                label="Top K",
+                minimum=1,
+                maximum=200,
+                step=1,
+                value=100,
+                scale=2,
+            )
 
         with gr.Accordion("Filters", open=False):
             with gr.Row():
@@ -338,13 +723,63 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 20) -> gr.B
 
         search_button = gr.Button("Search", variant="primary")
         status = gr.Textbox(label="Status", value="Ready", interactive=False)
+
+        with gr.Accordion("Refine current Top K results", open=False):
+            with gr.Row(equal_height=True):
+                within_results_query = gr.Textbox(
+                    label="Search within results",
+                    placeholder="Filter the current Top K results",
+                    scale=5,
+                )
+                within_results_field = gr.Dropdown(
+                    label="Field",
+                    choices=RESULT_FIELD_CHOICES,
+                    value="all",
+                    scale=2,
+                )
+                filter_results_button = gr.Button("Filter", scale=1)
+                clear_within_button = gr.Button("Clear", scale=1)
+
+            refine_status = gr.Markdown("Refine current Top K results | 0 results")
+            with gr.Row():
+                refine_collections = gr.Dropdown(
+                    label="Result collections",
+                    choices=[],
+                    multiselect=True,
+                )
+                refine_videos = gr.Dropdown(
+                    label="Result video IDs",
+                    choices=[],
+                    multiselect=True,
+                    filterable=True,
+                )
+                refine_authors = gr.Dropdown(
+                    label="Result authors",
+                    choices=[],
+                    multiselect=True,
+                    filterable=True,
+                )
+            with gr.Row():
+                minimum_result_score = gr.Slider(
+                    label="Minimum similarity score",
+                    minimum=-1.0,
+                    maximum=1.0,
+                    step=0.01,
+                    value=-1.0,
+                    scale=4,
+                )
+                clear_refinements_button = gr.Button("Clear all refinements", scale=1)
+
         gallery = gr.Gallery(
             label="Keyframes",
             show_label=True,
             columns=5,
-            rows=4,
-            height="auto",
+            rows=2,
+            height=320,
+            object_fit="contain",
+            allow_preview=False,
             preview=False,
+            elem_id="keyframe-gallery",
         )
         with gr.Row():
             previous_button = gr.Button("Previous", interactive=False)
@@ -356,9 +791,14 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 20) -> gr.B
             next_button = gr.Button("Next", interactive=False)
 
         with gr.Row(equal_height=False):
-            with gr.Column(scale=2):
-                detail_image = gr.Image(label="Selected keyframe", interactive=False)
             with gr.Column(scale=3):
+                detail_image = gr.Image(
+                    label="Selected keyframe",
+                    interactive=False,
+                    height=420,
+                    elem_id="selected-keyframe",
+                )
+            with gr.Column(scale=2):
                 detail_metadata = gr.Markdown("Select a keyframe to view metadata")
         detections = gr.Dataframe(
             headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
@@ -368,13 +808,19 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 20) -> gr.B
         )
 
         with gr.Column(visible=False):
+            legacy_query_language = gr.Dropdown(
+                label="Language",
+                choices=[("Auto", "auto"), ("English", "english"), ("Vietnamese", "vietnamese")],
+                value="auto",
+            )
+            legacy_search_button = gr.Button("Legacy Search API")
             api_keyframe_id = gr.Textbox()
             api_details = gr.JSON()
             api_details_button = gr.Button("Metadata API")
 
-        search_outputs = [
+        legacy_search_outputs = [
             gallery,
-            results_state,
+            original_results_state,
             page_state,
             status,
             page_label,
@@ -384,10 +830,10 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 20) -> gr.B
             detail_metadata,
             detections,
         ]
-        search_inputs = [
+        legacy_search_inputs = [
             query,
             top_k,
-            query_language,
+            legacy_query_language,
             collections,
             video_id,
             object_entities,
@@ -397,35 +843,178 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 20) -> gr.B
             publish_date_from,
             publish_date_to,
         ]
+
+        search_inputs_v2 = [
+            query,
+            top_k,
+            translate_vietnamese,
+            collections,
+            video_id,
+            object_entities,
+            object_match_mode,
+            minimum_object_confidence,
+            author,
+            publish_date_from,
+            publish_date_to,
+        ]
+        search_outputs_v2 = [
+            gallery,
+            original_results_state,
+            visible_results_state,
+            page_rows_state,
+            page_state,
+            status,
+            page_label,
+            previous_button,
+            next_button,
+            detail_image,
+            detail_metadata,
+            detections,
+            refine_collections,
+            refine_videos,
+            refine_authors,
+            minimum_result_score,
+            within_results_query,
+            within_results_field,
+            refine_status,
+        ]
         search_button.click(
-            fn=search_keyframes_gpu,
-            inputs=search_inputs,
-            outputs=search_outputs,
-            api_name="search_keyframes",
+            fn=search_keyframes_gpu_v2,
+            inputs=search_inputs_v2,
+            outputs=search_outputs_v2,
+            api_name="search_keyframes_v2",
         )
         query.submit(
-            fn=search_keyframes_gpu,
-            inputs=search_inputs,
-            outputs=search_outputs,
+            fn=search_keyframes_gpu_v2,
+            inputs=search_inputs_v2,
+            outputs=search_outputs_v2,
             api_name=False,
         )
+
+        legacy_search_button.click(
+            fn=search_keyframes_gpu,
+            inputs=legacy_search_inputs,
+            outputs=legacy_search_outputs,
+            api_name="search_keyframes",
+        )
+
+        refine_inputs = [
+            original_results_state,
+            visible_results_state,
+            within_results_query,
+            within_results_field,
+            refine_collections,
+            refine_videos,
+            refine_authors,
+            minimum_result_score,
+        ]
+        refine_outputs = [
+            gallery,
+            visible_results_state,
+            page_rows_state,
+            page_state,
+            page_label,
+            previous_button,
+            next_button,
+            detail_image,
+            detail_metadata,
+            detections,
+            refine_status,
+        ]
+        filter_results_button.click(
+            controller.refine_results,
+            inputs=refine_inputs,
+            outputs=refine_outputs,
+            queue=False,
+            api_name=False,
+        )
+        within_results_query.submit(
+            controller.refine_results,
+            inputs=refine_inputs,
+            outputs=refine_outputs,
+            queue=False,
+            api_name=False,
+        )
+        for component in (
+            within_results_field,
+            refine_collections,
+            refine_videos,
+            refine_authors,
+        ):
+            component.input(
+                controller.refine_results,
+                inputs=refine_inputs,
+                outputs=refine_outputs,
+                queue=False,
+                api_name=False,
+            )
+        minimum_result_score.release(
+            controller.refine_results,
+            inputs=refine_inputs,
+            outputs=refine_outputs,
+            queue=False,
+            api_name=False,
+        )
+
+        clear_within_button.click(
+            controller.clear_within_results,
+            inputs=[
+                original_results_state,
+                visible_results_state,
+                within_results_field,
+                refine_collections,
+                refine_videos,
+                refine_authors,
+                minimum_result_score,
+            ],
+            outputs=[within_results_query, *refine_outputs],
+            queue=False,
+            api_name=False,
+        )
+        clear_refinements_button.click(
+            controller.clear_all_refinements,
+            inputs=[original_results_state],
+            outputs=[
+                *refine_outputs,
+                within_results_query,
+                within_results_field,
+                refine_collections,
+                refine_videos,
+                refine_authors,
+                minimum_result_score,
+            ],
+            queue=False,
+            api_name=False,
+        )
+
+        page_outputs = [
+            gallery,
+            page_rows_state,
+            page_state,
+            page_label,
+            previous_button,
+            next_button,
+            detail_image,
+            detail_metadata,
+            detections,
+        ]
         previous_button.click(
             controller.previous_page,
-            inputs=[results_state, page_state],
-            outputs=[gallery, page_state, page_label, previous_button, next_button],
+            inputs=[visible_results_state, original_results_state, page_state],
+            outputs=page_outputs,
             queue=False,
             api_name=False,
         )
         next_button.click(
             controller.next_page,
-            inputs=[results_state, page_state],
-            outputs=[gallery, page_state, page_label, previous_button, next_button],
+            inputs=[visible_results_state, original_results_state, page_state],
+            outputs=page_outputs,
             queue=False,
             api_name=False,
         )
         gallery.select(
             controller.select_keyframe,
-            inputs=[results_state, page_state],
+            inputs=[page_rows_state],
             outputs=[detail_image, detail_metadata, detections],
             api_name=False,
         )
@@ -445,8 +1034,7 @@ def create_search_mechanism(runtime: RuntimePaths) -> SearchMechanism:
         model_id=environment["MODEL_ID"],
         revision=environment["MODEL_REVISION"],
     )
-    if os.environ.get("SPACE_ID"):
-        clip_searcher.load()
+    clip_searcher.load()
     return SearchMechanism(
         clip_searcher=clip_searcher,
         translator=QueryTranslator(

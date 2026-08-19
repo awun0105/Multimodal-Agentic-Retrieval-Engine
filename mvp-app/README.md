@@ -6,8 +6,9 @@ English query translation.
 
 ## What the App Does
 
-You type a text query. The app embeds the query with CLIP, searches the prepared
-image index, and returns the best keyframes.
+You type a text query. The app embeds Vietnamese or English text with the
+multilingual CLIP-aligned encoder, searches the prepared image index, and
+returns the best keyframes.
 
 You can filter results by:
 
@@ -17,7 +18,22 @@ You can filter results by:
 - object label
 - publish date
 
-Vietnamese queries are translated to English before CLIP search.
+The checked `Translate Vietnamese query to English` option enables deep search:
+NLLB translates Vietnamese to English, then multilingual CLIP embeds the English
+query. Clear it for the faster path, where multilingual CLIP embeds the original
+Vietnamese or English query directly without loading NLLB.
+
+At startup, only `sentence-transformers/clip-ViT-B-32-multilingual-v1` is
+loaded. `facebook/nllb-200-distilled-600M` is loaded lazily on the first search
+with translation enabled. CUDA uses FP16; CPU uses FP32. NLLB is released under
+CC-BY-NC-4.0 and its model card describes it as a research model rather than a
+production-deployment model.
+
+Search returns 100 keyframes by default and supports up to 200. Results are
+shown ten at a time in a fixed five-column by two-row gallery. `Search within
+results` is grouped with the other controls under `Refine current Top K
+results`. These controls filter only the current semantic Top K results; they
+do not search the full dataset or call CLIP again.
 
 ## Setup Flow
 
@@ -345,13 +361,16 @@ CACHE_ROOT=C:\Users\your-user\AppData\Local\Temp\aiou-cache
 
 Use a full path. Do not use `~` in `.env`.
 
-Keep these model values unchanged unless you rebuild the index:
+Keep these pinned model values unchanged. The multilingual text model is aligned
+with the original CLIP ViT-B/32 image encoder recorded in the release manifest,
+so the existing image index remains in use:
 
 ```env
-MODEL_ID=openai/clip-vit-base-patch32
-MODEL_REVISION=3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268
-TRANSLATION_MODEL_ID=Helsinki-NLP/opus-mt-vi-en
-TRANSLATION_MODEL_REVISION=c8d2853e77f5fae31124d993e0b35176b1c8914e
+MODEL_ID=sentence-transformers/clip-ViT-B-32-multilingual-v1
+MODEL_REVISION=58edf8cada9e398793dca955574a48cbb7f18be2
+TRANSLATION_MODEL_ID=facebook/nllb-200-distilled-600M
+TRANSLATION_MODEL_REVISION=f8d333a098d19b4fd9a8b18f94170487ad3f821d
+RESULTS_PER_PAGE=10
 ```
 
 ## 7. Run the App
@@ -448,7 +467,10 @@ You can change it with `CACHE_ROOT` in `.env`.
 
 When the app is running, Gradio exposes:
 
-- `/search_keyframes`
+- `/search_keyframes` for the legacy `auto`/`english`/`vietnamese` language
+  contract
+- `/search_keyframes_v2` for the boolean `translate_vietnamese` contract used
+  by the current UI
 - `/get_keyframe_details`
 
 Use the browser UI first. Use the API only if you need script access.
@@ -533,8 +555,10 @@ hf buckets sync `
 
 ### Model Download Is Slow
 
-The first run downloads CLIP and translation model files. Later runs use the
-local Hugging Face cache.
+The first app start downloads multilingual CLIP. NLLB is downloaded only when
+translation is used for the first time. Later runs use the local Hugging Face
+cache. NLLB-600M remains a large model even with lazy loading, especially on a
+CPU-only machine where the architecture intentionally retains FP32.
 
 ### Port Already in Use
 

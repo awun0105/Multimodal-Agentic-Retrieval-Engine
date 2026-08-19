@@ -4,26 +4,41 @@ from pathlib import Path
 import faiss
 import numpy as np
 import pytest
-from clusterer import ImageIndexer
-from schemas import PreparedQuery, SearchFilters
 
+from clusterer import ImageIndexer
 from db import SearchMechanism
+from schemas import PreparedQuery, SearchFilters
 
 
 class FakeClipSearcher:
     def __init__(self, query=(1.0, 0.0)):
         self.query = np.asarray([query], dtype=np.float32)
+        self.last_text = None
 
-    def get_text_features(self, _text):
+    def get_text_features(self, text):
+        self.last_text = text
         return self.query
 
 
 class FakeTranslator:
-    def prepare(self, query, requested_language):
+    def prepare(self, query, requested_language, *, translate_vietnamese=None):
         normalized = " ".join(query.split())
         if not normalized:
             raise ValueError("Query text cannot be empty")
-        return PreparedQuery(normalized, normalized, requested_language, "english")
+        enabled = requested_language != "english" if translate_vietnamese is None else bool(
+            translate_vietnamese
+        )
+        clip_query = "bird" if translate_vietnamese is True else normalized
+        return PreparedQuery(
+            normalized,
+            clip_query,
+            requested_language,
+            "vietnamese" if translate_vietnamese is True else "english"
+            if enabled
+            else "not_checked",
+            translated=translate_vietnamese is True,
+            translation_enabled=enabled,
+        )
 
 
 def _make_store(tmp_path: Path) -> SearchMechanism:
@@ -145,6 +160,17 @@ def test_unfiltered_search_uses_faiss_cosine_order(tmp_path):
     assert outcome.results[1].score == pytest.approx(0.8)
 
 
+def test_translated_query_is_the_text_encoded_by_clip(tmp_path):
+    store = _make_store(tmp_path)
+
+    outcome = store.search_by_text("con chim", top_k=1, translate_vietnamese=True)
+
+    assert outcome.query.original_query == "con chim"
+    assert outcome.query.clip_query == "bird"
+    assert outcome.query.translated
+    assert store.clip_searcher.last_text == "bird"
+
+
 def test_object_filter_selects_candidates_before_exact_cosine(tmp_path):
     store = _make_store(tmp_path)
     filters = SearchFilters(object_entities=("Car",), minimum_object_confidence=0.5)
@@ -182,12 +208,27 @@ def test_filter_options_and_keyframe_details(tmp_path):
     assert details.video["title"] == "First video"
     assert [row["entity"] for row in details.detections] == ["Car", "Person"]
 
+    outcome = store.search_by_text("query", top_k=3)
+    assert [result.author for result in outcome.results] == ["Alice", "Alice", "Bob"]
 
-@pytest.mark.parametrize("top_k", [0, 101])
+
+@pytest.mark.parametrize("top_k", [0, 201])
 def test_top_k_is_limited_to_public_contract(tmp_path, top_k):
     store = _make_store(tmp_path)
     with pytest.raises(ValueError, match="top_k"):
         store.search_by_text("query", top_k=top_k)
+
+
+@pytest.mark.parametrize("top_k", [1, 100, 200])
+def test_top_k_accepts_expanded_public_contract(tmp_path, top_k):
+    store = _make_store(tmp_path)
+    outcome = store.search_by_text(
+        "query",
+        top_k=top_k,
+        translate_vietnamese=False,
+    )
+    assert 1 <= len(outcome.results) <= min(top_k, 3)
+    assert not outcome.query.translation_enabled
 
 
 def test_invalid_date_filter_is_rejected(tmp_path):
