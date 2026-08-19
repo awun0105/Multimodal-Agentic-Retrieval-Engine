@@ -53,6 +53,21 @@ def test_prepare_runtime_copies_verified_artifacts(tmp_path, monkeypatch):
     assert runtime.sqlite_file.read_bytes() == b"sqlite"
 
 
+def test_default_runtime_models_are_pinned_to_multilingual_clip_and_nllb():
+    assert database_utils.DEFAULTS["MODEL_ID"] == (
+        "sentence-transformers/clip-ViT-B-32-multilingual-v1"
+    )
+    assert database_utils.DEFAULTS["MODEL_REVISION"] == (
+        "58edf8cada9e398793dca955574a48cbb7f18be2"
+    )
+    assert database_utils.DEFAULTS["TRANSLATION_MODEL_ID"] == (
+        "facebook/nllb-200-distilled-600M"
+    )
+    assert database_utils.DEFAULTS["TRANSLATION_MODEL_REVISION"] == (
+        "f8d333a098d19b4fd9a8b18f94170487ad3f821d"
+    )
+
+
 def test_prepare_runtime_repairs_corrupt_cached_file(tmp_path, monkeypatch):
     release = _write_release(tmp_path)
     monkeypatch.setenv("DATA_ROOT", str(release))

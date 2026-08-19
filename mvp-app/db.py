@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
+
 from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from schemas import KeyframeDetails, SearchFilters, SearchOutcome, SearchResult
@@ -113,14 +115,23 @@ class SearchMechanism:
     def search_by_text(
         self,
         query: str,
-        top_k: int = 20,
+        top_k: int = 100,
         query_language: str = "auto",
         filters: SearchFilters | None = None,
+        *,
+        translate_vietnamese: bool | None = None,
     ) -> SearchOutcome:
         top_k = int(top_k)
-        if top_k < 1 or top_k > 100:
-            raise ValueError("top_k must be in [1, 100]")
-        prepared = self.translator.prepare(query, query_language)
+        if top_k < 1 or top_k > 200:
+            raise ValueError("top_k must be in [1, 200]")
+        if translate_vietnamese is None:
+            prepared = self.translator.prepare(query, query_language)
+        else:
+            prepared = self.translator.prepare(
+                query,
+                query_language,
+                translate_vietnamese=translate_vietnamese,
+            )
         query_vector = _normalize_query_vector(
             self.clip_searcher.get_text_features(prepared.clip_query),
             self.embeddings.shape[1],
@@ -226,7 +237,7 @@ class SearchMechanism:
         query = f"""
             SELECT k.vector_id, k.keyframe_id, k.video_id, k.collection_id,
                    k.keyframe_no, k.image_relpath, k.pts_time_sec, k.frame_idx,
-                   k.fps, k.width, k.height, v.title
+                   k.fps, k.width, k.height, v.title, v.author
             FROM keyframes k
             JOIN videos v ON v.video_id = k.video_id
             WHERE k.vector_id IN ({placeholders})
@@ -256,6 +267,7 @@ class SearchMechanism:
                     width=int(row["width"]),
                     height=int(row["height"]),
                     title=str(row["title"]),
+                    author=str(row["author"]),
                 )
             )
         return results

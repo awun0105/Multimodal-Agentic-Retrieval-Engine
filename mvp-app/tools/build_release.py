@@ -652,7 +652,10 @@ def validate_model(
     from clip import CLIPSearcher
 
     videos = discover_raw_videos(raw_root)
-    searcher = CLIPSearcher(model_id=model_id, revision=model_revision)
+    searcher = CLIPSearcher(
+        image_model_id=model_id,
+        image_model_revision=model_revision,
+    )
     similarities = []
     samples = list(iter_sample_images(videos, sample_count))
     for start in range(0, len(samples), 4):

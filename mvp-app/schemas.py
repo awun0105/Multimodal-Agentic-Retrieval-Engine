@@ -48,6 +48,7 @@ class SearchResult:
     width: int
     height: int
     title: str
+    author: str
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -63,6 +64,7 @@ class PreparedQuery:
     detected_language: str
     translated: bool = False
     warning: str | None = None
+    translation_enabled: bool = True
 
 
 @dataclass(frozen=True)
