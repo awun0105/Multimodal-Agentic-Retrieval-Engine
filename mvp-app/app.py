@@ -36,25 +36,50 @@ from translation import QueryTranslator
 logger = logging.getLogger(__name__)
 
 APP_CSS = """
-body { overflow-y: auto !important; }
+body {
+    overflow-y: auto !important;
+}
+
+/* Gallery phải tự giãn theo nội dung */
 #keyframe-gallery {
-    height: 320px !important;
     margin-top: 0.25rem;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
 }
+
+/* Gradio đặt scroll ở wrapper bên trong */
 #keyframe-gallery .grid-wrap {
-    height: calc(100% - 1.75rem) !important;
-    overflow-y: hidden !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow-y: visible !important;
+    overflow-x: visible !important;
 }
+
+/* Grid tự lấy chiều cao của 2 hàng */
 #keyframe-gallery .grid-container {
-    height: 100% !important;
-    grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
-    grid-auto-rows: minmax(0, 1fr) !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    align-content: start !important;
 }
-#selected-keyframe { min-height: 400px; }
-#selected-keyframe img { object-fit: contain !important; }
+
+#selected-keyframe {
+    min-height: 400px;
+}
+
+#selected-keyframe img {
+    object-fit: contain !important;
+}
+
 @media (max-width: 600px) {
-    #app-title { margin-top: 3.5rem; }
-    #selected-keyframe { min-height: 260px; }
+    #app-title {
+        margin-top: 3.5rem;
+    }
+
+    #selected-keyframe {
+        min-height: 260px;
+    }
 }
 """
 
@@ -775,7 +800,7 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 10) -> gr.B
             show_label=True,
             columns=5,
             rows=2,
-            height=320,
+            height="auto",
             object_fit="contain",
             allow_preview=False,
             preview=False,
@@ -1062,17 +1087,20 @@ def create_app() -> gr.Blocks:
         page_size=int(runtime.environment["RESULTS_PER_PAGE"]),
     )
 
+demo = create_app()
+
 
 def main() -> None:
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    webui = create_app()
+
     if _keyframes_root is None:
         raise RuntimeError("Keyframe data root has not been initialized")
-    webui.queue(default_concurrency_limit=2)
-    webui.launch(
+
+    demo.queue(default_concurrency_limit=2)
+    demo.launch(
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", "7860")),
         ssr_mode=False,
