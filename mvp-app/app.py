@@ -138,6 +138,9 @@ def _detail_markdown(details) -> str:
         "Channel": video.get("channel_id") or "N/A",
         "Published": video.get("publish_date_iso") or video.get("publish_date_raw") or "N/A",
     }
+    ocr_text = getattr(details, "ocr_text", None)
+    if ocr_text:
+        values["OCR Text"] = ocr_text
     rows = [f"| {label} | {html.escape(str(value))} |" for label, value in values.items()]
     return "\n".join(["| Field | Value |", "|---|---|", *rows, f"| Source | {watch_link} |"])
 
@@ -235,6 +238,8 @@ class SearchController:
         publish_date_to,
         *,
         translate_vietnamese: bool | None = None,
+        search_mode: str = "hybrid",
+        ocr_weight: float = 0.5,
     ) -> tuple[list[dict], str]:
         filters = self._search_filters(
             collections,
@@ -252,6 +257,8 @@ class SearchController:
             str(query_language).lower(),
             filters,
             translate_vietnamese=translate_vietnamese,
+            search_mode=search_mode,
+            ocr_weight=ocr_weight,
         )
         rows = [result.to_dict() for result in outcome.results]
         if not outcome.query.translation_enabled:
@@ -342,6 +349,8 @@ class SearchController:
         author,
         publish_date_from,
         publish_date_to,
+        search_mode="clip",
+        ocr_weight=0.0,
     ):
         try:
             rows, status = self._run_search(
@@ -356,6 +365,8 @@ class SearchController:
                 author,
                 publish_date_from,
                 publish_date_to,
+                search_mode=search_mode,
+                ocr_weight=float(ocr_weight),
             )
             gallery, _page_rows, page, label, previous_update, next_update = (
                 self.page_payload(rows, 0)
@@ -400,6 +411,8 @@ class SearchController:
         author,
         publish_date_from,
         publish_date_to,
+        search_mode="hybrid",
+        ocr_weight=0.5,
     ):
         try:
             rows, status = self._run_search(
@@ -415,6 +428,8 @@ class SearchController:
                 publish_date_from,
                 publish_date_to,
                 translate_vietnamese=bool(translate_vietnamese),
+                search_mode=search_mode,
+                ocr_weight=float(ocr_weight),
             )
             gallery, page_rows, page, label, previous_update, next_update = (
                 self.page_payload(rows, 0)
@@ -586,7 +601,32 @@ class SearchController:
             return None, "Selected result is no longer available", []
         row = page_rows[local_index]
         details = self.search_mechanism.get_keyframe_details(row["keyframe_id"])
-        return row["image_path"], _detail_markdown(details), _detection_rows(details)
+        image_path = row["image_path"]
+        width = int(row.get("width") or 1280)
+        height = int(row.get("height") or 720)
+        
+        annotations = []
+        
+        # Add OCR boxes (if available)
+        ocr_boxes = getattr(details, "ocr_boxes", ())
+        for box in ocr_boxes:
+            xmin = int(float(box["xmin"]) * width)
+            ymin = int(float(box["ymin"]) * height)
+            xmax = int(float(box["xmax"]) * width)
+            ymax = int(float(box["ymax"]) * height)
+            annotations.append(((xmin, ymin, xmax, ymax), f"OCR: {box['text']}"))
+            
+        # Fallback to Object Detections if no OCR text
+        if not annotations:
+            for d in getattr(details, "detections", ()):
+                xmin = int(float(d["xmin"]) * width)
+                ymin = int(float(d["ymin"]) * height)
+                xmax = int(float(d["xmax"]) * width)
+                ymax = int(float(d["ymax"]) * height)
+                annotations.append(((xmin, ymin, xmax, ymax), d["class_label"]))
+                
+        annotated_value = (image_path, annotations)
+        return annotated_value, _detail_markdown(details), _detection_rows(details)
 
     def details_api(self, keyframe_id: str):
         details = self.search_mechanism.get_keyframe_details(keyframe_id)
@@ -646,6 +686,8 @@ def search_keyframes_gpu_v2(
     author,
     publish_date_from,
     publish_date_to,
+    search_mode,
+    ocr_weight,
 ):
     """Run the boolean-translation search flow on ZeroGPU."""
     if _search_controller is None:
@@ -662,6 +704,8 @@ def search_keyframes_gpu_v2(
         author,
         publish_date_from,
         publish_date_to,
+        search_mode=search_mode,
+        ocr_weight=ocr_weight,
     )
 
 
@@ -700,6 +744,30 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 10) -> gr.B
                 value=100,
                 scale=2,
             )
+
+        with gr.Row(equal_height=True):
+            search_mode = gr.Radio(
+                label="Search Mode",
+                choices=[("CLIP (Semantic)", "clip"), ("OCR (Text)", "ocr"), ("Hybrid (CLIP + OCR)", "hybrid")],
+                value="hybrid",
+                scale=5,
+            )
+            ocr_weight = gr.Slider(
+                label="OCR Weight (in Hybrid)",
+                minimum=0.0,
+                maximum=1.0,
+                step=0.05,
+                value=0.5,
+                scale=5,
+                visible=True,
+            )
+        
+        search_mode.change(
+            fn=lambda m: gr.update(visible=m == "hybrid"),
+            inputs=[search_mode],
+            outputs=[ocr_weight],
+            queue=False,
+        )
 
         with gr.Accordion("Filters", open=False):
             with gr.Row():
@@ -817,9 +885,8 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 10) -> gr.B
 
         with gr.Row(equal_height=False):
             with gr.Column(scale=3):
-                detail_image = gr.Image(
+                detail_image = gr.AnnotatedImage(
                     label="Selected keyframe",
-                    interactive=False,
                     height=420,
                     elem_id="selected-keyframe",
                 )
@@ -881,6 +948,8 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 10) -> gr.B
             author,
             publish_date_from,
             publish_date_to,
+            search_mode,
+            ocr_weight,
         ]
         search_outputs_v2 = [
             gallery,

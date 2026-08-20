@@ -62,6 +62,34 @@ def write_sqlite(sqlite_path: Path, tables: dict[str, pd.DataFrame]) -> None:
             CREATE VIRTUAL TABLE text_documents_fts USING fts5(document_id UNINDEXED, normalized_text, normalized_no_diacritics, tokenize='unicode61');
             INSERT INTO text_documents_fts(document_id, normalized_text, normalized_no_diacritics)
             SELECT document_id, normalized_text, normalized_no_diacritics FROM text_documents;
+
+            -- OCR Specific Schema Support
+            CREATE TABLE IF NOT EXISTS ocr_texts (
+                keyframe_id TEXT PRIMARY KEY,
+                video_id TEXT NOT NULL,
+                full_text TEXT NOT NULL,
+                FOREIGN KEY (keyframe_id) REFERENCES keyframes (keyframe_id)
+            );
+            CREATE TABLE IF NOT EXISTS ocr_boxes (
+                box_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                keyframe_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                score REAL NOT NULL,
+                ymin REAL NOT NULL,
+                xmin REAL NOT NULL,
+                ymax REAL NOT NULL,
+                xmax REAL NOT NULL,
+                FOREIGN KEY (keyframe_id) REFERENCES keyframes (keyframe_id)
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS ocr_fts USING fts5(
+                keyframe_id UNINDEXED,
+                full_text
+            );
+            INSERT OR IGNORE INTO ocr_texts (keyframe_id, video_id, full_text)
+            SELECT entity_id, video_id, raw_text FROM text_documents
+            WHERE entity_type = 'keyframe' AND source_type = 'ocr';
+            INSERT OR IGNORE INTO ocr_fts (keyframe_id, full_text)
+            SELECT keyframe_id, full_text FROM ocr_texts;
             """
         )
 

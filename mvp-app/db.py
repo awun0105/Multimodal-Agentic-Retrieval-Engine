@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import re
+import logging
 from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
@@ -14,6 +16,9 @@ from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from schemas import KeyframeDetails, SearchFilters, SearchOutcome, SearchResult
 from translation import QueryTranslator
+
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_query_vector(vector: np.ndarray, expected_dimension: int) -> np.ndarray:
@@ -37,6 +42,49 @@ def _validate_iso_date(value: str | None, field: str) -> str | None:
             raise ValueError(f"{field} must use YYYY-MM-DD format") from exc
     return normalized
 
+def initialize_ocr_tables(sqlite_file: str | Path) -> None:
+    """Ensure the OCR tables exist in the runtime database."""
+    db_path = Path(sqlite_file)
+    if not db_path.is_file():
+        return
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ocr_texts (
+                keyframe_id TEXT PRIMARY KEY,
+                video_id TEXT NOT NULL,
+                full_text TEXT NOT NULL,
+                FOREIGN KEY (keyframe_id) REFERENCES keyframes (keyframe_id)
+            );
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ocr_boxes (
+                box_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                keyframe_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                score REAL NOT NULL,
+                ymin REAL NOT NULL,
+                xmin REAL NOT NULL,
+                ymax REAL NOT NULL,
+                xmax REAL NOT NULL,
+                FOREIGN KEY (keyframe_id) REFERENCES keyframes (keyframe_id)
+            );
+            """
+        )
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ocr_fts'"
+        ).fetchone()
+        if not exists:
+            connection.execute(
+                "CREATE VIRTUAL TABLE ocr_fts USING fts5(keyframe_id UNINDEXED, full_text);"
+            )
+            connection.execute(
+                "INSERT INTO ocr_fts(keyframe_id, full_text) SELECT keyframe_id, full_text FROM ocr_texts;"
+            )
+        connection.commit()
+
 
 class SearchMechanism:
     """Coordinate translation, CLIP, metadata filters, FAISS, and exact cosine."""
@@ -57,6 +105,7 @@ class SearchMechanism:
         self.data_root = Path(data_root)
         if not self.sqlite_file.is_file():
             raise FileNotFoundError(f"Runtime metadata database not found: {self.sqlite_file}")
+        initialize_ocr_tables(self.sqlite_file)
         self.embeddings = np.load(Path(embeddings_file), mmap_mode="r", allow_pickle=False)
         if self.embeddings.ndim != 2:
             raise ValueError("Runtime embeddings must be a two-dimensional matrix")
@@ -112,6 +161,33 @@ class SearchMechanism:
             "authors": authors,
         }
 
+    def _search_ocr_fts(self, query_text: str) -> dict[str, float]:
+        """Perform FTS5 BM25 search on the ocr_fts table."""
+        sanitized = re.sub(r'[^\w\s]', ' ', query_text).strip()
+        if not sanitized:
+            return {}
+        sql = "SELECT keyframe_id, bm25(ocr_fts) FROM ocr_fts WHERE ocr_fts MATCH ?"
+        with self._connect() as connection:
+            try:
+                rows = connection.execute(sql, (sanitized,)).fetchall()
+            except sqlite3.OperationalError as exc:
+                logger.warning("FTS5 query failed: %s. Retrying with simple quote query.", exc)
+                try:
+                    rows = connection.execute(sql, (f'"{sanitized}"',)).fetchall()
+                except sqlite3.OperationalError:
+                    return {}
+        return {row[0]: -float(row[1]) for row in rows}
+
+    def _map_keyframe_ids_to_vectors(self, keyframe_ids: list[str]) -> dict[str, int]:
+        """Map a list of keyframe_ids to their corresponding vector_ids from the database."""
+        if not keyframe_ids:
+            return {}
+        placeholders = ",".join("?" for _ in keyframe_ids)
+        sql = f"SELECT keyframe_id, vector_id FROM keyframes WHERE keyframe_id IN ({placeholders})"
+        with self._connect() as connection:
+            rows = connection.execute(sql, keyframe_ids).fetchall()
+        return {row[0]: int(row[1]) for row in rows}
+
     def search_by_text(
         self,
         query: str,
@@ -120,6 +196,8 @@ class SearchMechanism:
         filters: SearchFilters | None = None,
         *,
         translate_vietnamese: bool | None = None,
+        search_mode: str = "hybrid",
+        ocr_weight: float = 0.5,
     ) -> SearchOutcome:
         top_k = int(top_k)
         if top_k < 1 or top_k > 200:
@@ -137,13 +215,116 @@ class SearchMechanism:
             self.embeddings.shape[1],
         )
         filters = filters or SearchFilters()
-        if filters.active:
-            eligible_ids = self._eligible_vector_ids(filters)
-            scores, vector_ids = self._search_filtered(query_vector, eligible_ids, top_k)
+
+        if search_mode == "ocr":
+            # 1. OCR only
+            ocr_results = self._search_ocr_fts(query)
+            if not ocr_results:
+                return SearchOutcome((), prepared)
+            
+            kf_to_vec = self._map_keyframe_ids_to_vectors(list(ocr_results.keys()))
+            eligible_vector_ids = None
+            if filters.active:
+                eligible_vector_ids = set(self._eligible_vector_ids(filters))
+            
+            filtered_candidates = []
+            for kf_id, ocr_score in ocr_results.items():
+                vec_id = kf_to_vec.get(kf_id)
+                if vec_id is not None:
+                    if eligible_vector_ids is None or vec_id in eligible_vector_ids:
+                        filtered_candidates.append((vec_id, ocr_score))
+            
+            filtered_candidates.sort(key=lambda x: x[1], reverse=True)
+            top_candidates = filtered_candidates[:top_k]
+            
+            if not top_candidates:
+                return SearchOutcome((), prepared)
+            
+            vector_ids = np.array([x[0] for x in top_candidates], dtype=np.int64)
+            scores = np.array([x[1] for x in top_candidates], dtype=np.float32)
+            results = self._results_for_ids(vector_ids, scores)
+            return SearchOutcome(tuple(results), prepared)
+
+        elif search_mode == "hybrid":
+            # 2. Hybrid search (CLIP + OCR)
+            clip_pool_size = max(top_k * 5, 200)
+            if filters.active:
+                eligible_ids = self._eligible_vector_ids(filters)
+                if eligible_ids.size == 0:
+                    return SearchOutcome((), prepared)
+                clip_scores, clip_vector_ids = self._search_filtered(query_vector, eligible_ids, clip_pool_size)
+            else:
+                clip_scores, clip_vector_ids = self.image_indexer.search(query_vector, clip_pool_size)
+                
+            clip_results = {int(vec_id): float(score) for vec_id, score in zip(clip_vector_ids, clip_scores)}
+            ocr_results = self._search_ocr_fts(query)
+            
+            # If no OCR results found, fallback to CLIP search
+            if not ocr_results:
+                results = self._results_for_ids(clip_vector_ids[:top_k], clip_scores[:top_k])
+                return SearchOutcome(tuple(results), prepared)
+            
+            kf_to_vec = self._map_keyframe_ids_to_vectors(list(ocr_results.keys()))
+            ocr_results_by_vec = {}
+            for kf_id, ocr_score in ocr_results.items():
+                vec_id = kf_to_vec.get(kf_id)
+                if vec_id is not None:
+                    ocr_results_by_vec[vec_id] = ocr_score
+            
+            union_vector_ids = set(clip_results.keys()).union(ocr_results_by_vec.keys())
+            if filters.active:
+                eligible_vector_ids = set(eligible_ids)
+                union_vector_ids = union_vector_ids.intersection(eligible_vector_ids)
+            
+            if not union_vector_ids:
+                return SearchOutcome((), prepared)
+            
+            # MinMax normalize CLIP scores in candidates
+            clip_scores_vals = [clip_results[v] for v in union_vector_ids if v in clip_results]
+            max_clip = max(clip_scores_vals) if clip_scores_vals else 1.0
+            min_clip = min(clip_scores_vals) if clip_scores_vals else 0.0
+            clip_span = max_clip - min_clip
+            
+            # MinMax normalize OCR scores in candidates
+            ocr_scores_vals = [ocr_results_by_vec[v] for v in union_vector_ids if v in ocr_results_by_vec]
+            max_ocr = max(ocr_scores_vals) if ocr_scores_vals else 1.0
+            min_ocr = min(ocr_scores_vals) if ocr_scores_vals else 0.0
+            ocr_span = max_ocr - min_ocr
+            
+            combined_candidates = []
+            for vec_id in union_vector_ids:
+                c_score = clip_results.get(vec_id, 0.0)
+                if vec_id in clip_results:
+                    norm_c = (c_score - min_clip) / clip_span if clip_span > 0 else 1.0
+                else:
+                    norm_c = 0.0
+                
+                o_score = ocr_results_by_vec.get(vec_id, 0.0)
+                if vec_id in ocr_results_by_vec:
+                    norm_o = (o_score - min_ocr) / ocr_span if ocr_span > 0 else 1.0
+                else:
+                    norm_o = 0.0
+                
+                fusion_score = (1.0 - ocr_weight) * norm_c + ocr_weight * norm_o
+                combined_candidates.append((vec_id, fusion_score))
+            
+            combined_candidates.sort(key=lambda x: x[1], reverse=True)
+            top_candidates = combined_candidates[:top_k]
+            
+            vector_ids = np.array([x[0] for x in top_candidates], dtype=np.int64)
+            scores = np.array([x[1] for x in top_candidates], dtype=np.float32)
+            results = self._results_for_ids(vector_ids, scores)
+            return SearchOutcome(tuple(results), prepared)
+        
         else:
-            scores, vector_ids = self.image_indexer.search(query_vector, top_k)
-        results = self._results_for_ids(vector_ids, scores)
-        return SearchOutcome(tuple(results), prepared)
+            # 3. CLIP only (Standard)
+            if filters.active:
+                eligible_ids = self._eligible_vector_ids(filters)
+                scores, vector_ids = self._search_filtered(query_vector, eligible_ids, top_k)
+            else:
+                scores, vector_ids = self.image_indexer.search(query_vector, top_k)
+            results = self._results_for_ids(vector_ids, scores)
+            return SearchOutcome(tuple(results), prepared)
 
     def _eligible_vector_ids(self, filters: SearchFilters) -> np.ndarray:
         mode = filters.object_match_mode.strip().lower()
@@ -293,10 +474,33 @@ class SearchMechanism:
                 """,
                 (keyframe_id,),
             ).fetchall()
+            
+            # Query OCR text
+            try:
+                ocr_text_row = connection.execute(
+                    "SELECT full_text FROM ocr_texts WHERE keyframe_id = ?",
+                    (keyframe_id,),
+                ).fetchone()
+                ocr_text = ocr_text_row[0] if ocr_text_row is not None else None
+            except sqlite3.OperationalError:
+                ocr_text = None
+
+            # Query OCR boxes
+            try:
+                ocr_box_rows = connection.execute(
+                    "SELECT text, score, ymin, xmin, ymax, xmax FROM ocr_boxes WHERE keyframe_id = ?",
+                    (keyframe_id,),
+                ).fetchall()
+                ocr_boxes = tuple(dict(row) for row in ocr_box_rows)
+            except sqlite3.OperationalError:
+                ocr_boxes = ()
+
         keyframe = dict(keyframe_row)
         keyframe["image_path"] = str(self.data_root / keyframe["image_relpath"])
         return KeyframeDetails(
             keyframe=keyframe,
             video=dict(video_row) if video_row is not None else {},
             detections=tuple(dict(row) for row in detection_rows),
+            ocr_text=ocr_text,
+            ocr_boxes=ocr_boxes,
         )
