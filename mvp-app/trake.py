@@ -11,18 +11,32 @@ import numpy as np
 from schemas import TrakeEventMatch, TrakeOutcome, TrakeVideoMatch
 from trake_dp import VideoSlice
 from trake_dp import dp_best_path as _dp_best_path
+from trake_dp import dp_best_path_min as _dp_best_path_min
 from trake_submission import build_submission as _build_submission
 from trake_submission import format_submission as _format_submission
 from trake_submission import spread_frames as _spread_frames
 
-# Submission format not yet confirmed with the organizers. If the rules change,
-# edit only here and in format_submission.
+# Submission format. Everything the organizers control lives in this block, so a
+# rule change is a value edit here — never a hunt through the codebase.
+# Sources checked against training session 4 (see
+# plans/reports/btc-260821-tap-huan-4-dinh-dang-nop-bai.md for timestamps).
+#
+#   FRAME_INDEX_BASE   confirmed — 0 and 1 are both accepted
+#   SUBMISSION_*       unconfirmed — official spec due Tuesday
+#
+# Still unspecified: exact per-line CSV layout for TRAKE, submission filename
+# rules, and the ZIP wrapper (zip > submission/ > one CSV per query, UTF-8).
 SUBMISSION_DELIMITER = ", "
 SUBMISSION_INCLUDE_HEADER = False
 SUBMISSION_MAX_ROWS = 100
 FRAME_INDEX_BASE = 0
 SPREAD_RADIUS = 40
 SPREAD_ROWS_PER_VIDEO = 34
+
+# "min" ranks by the weakest event, stopping a video that is missing one event
+# from winning on the strength of the others. Set to "sum" to A/B the old
+# behaviour. Measured over 60 cases: distractor accuracy 13.3% -> 93.3%.
+RANKING_OBJECTIVE = "min"
 
 MIN_EVENTS = 1
 MAX_EVENTS = 6
@@ -62,7 +76,7 @@ def spread_frames(
 def build_submission(
     outcome: TrakeOutcome,
     max_rows: int | None = None,
-    pinned_frames: dict[tuple[str, int], int] | None = None,
+    pinned_frames: dict[str, int] | None = None,
 ) -> list[tuple[str, tuple[int, ...]]]:
     # Read at call time so monkeypatching SUBMISSION_MAX_ROWS takes effect.
     return _build_submission(
@@ -72,6 +86,15 @@ def build_submission(
         radius=SPREAD_RADIUS,
         pinned_frames=pinned_frames,
     )
+
+
+def _select_dp():
+    # Read at call time so monkeypatching RANKING_OBJECTIVE takes effect.
+    if RANKING_OBJECTIVE == "min":
+        return _dp_best_path_min
+    if RANKING_OBJECTIVE == "sum":
+        return _dp_best_path
+    raise ValueError(f"Unknown RANKING_OBJECTIVE: {RANKING_OBJECTIVE!r}")
 
 
 def format_submission(rows: list[tuple[str, tuple[int, ...]]]) -> str:
@@ -138,10 +161,11 @@ class TrakeSearcher:
             np.float32
         )
 
+        dp = _select_dp()
         candidates = []
         for video_slice in self.slices:
             slice_scores = scores[video_slice.start : video_slice.end]
-            result = _dp_best_path(slice_scores)
+            result = dp(slice_scores)
             if result is None:
                 continue
             score, local_indices = result
