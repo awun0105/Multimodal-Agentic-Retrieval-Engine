@@ -444,6 +444,77 @@ person riding a motorbike
 
 You should see keyframe results.
 
+## TRAKE Mode
+
+The second tab, **TRAKE**, answers a different question type. Where the first tab
+finds *one* keyframe for *one* description, TRAKE takes a **sequence of events in
+time order** and finds the single video that contains all of them — plus one
+keyframe per event.
+
+Example: `athlete runs up` -> `athlete takes off` -> `athlete clears the bar` ->
+`athlete lands`.
+
+### How to use it
+
+1. Open the **TRAKE** tab.
+2. Fill in the event boxes top to bottom, in the order the events happen.
+   Three boxes show by default; **Add event** / **Remove event** adjust between
+   2 and 6.
+3. Press **Search event chain**.
+4. Results are ranked by video. Each row of the gallery is one video's event
+   chain, left to right. The text below lists keyframe number, frame index,
+   timestamp, fps, and per-event score.
+5. Press **Export submission file** to download the answer file.
+
+The picked keyframes are always in strictly increasing time order — that is
+enforced by the search itself, not by filtering afterwards.
+
+### Two things that look like bugs but are not
+
+**Scores of 0.30-0.35 are normal.** That is the usual cosine range for
+`clip-ViT-B-32-multilingual-v1`. A good match and a mediocre one differ by a few
+hundredths, not by whole points. Use the "best single score" lines in the status
+box to compare: if one event scores clearly lower than the others, that event's
+content is probably not in the archive at all.
+
+**Long videos ranking near the top is correct.** A 40-minute news roundup really
+does contain more kinds of scenes than a 30-second clip, so it genuinely matches
+a 3-event chain more often. This was tested: normalising the score by video
+length (log, sqrt, or per-video z-score) made results *worse*, not better. The
+ranking uses the raw sum on purpose.
+
+### How the submission file is built
+
+A keyframe is only sampled every ~2 seconds, but the organisers accept an answer
+only if the submitted frame lands inside a window under 10 frames wide. Submitting
+the keyframe's own frame index hits that window about 18% of the time.
+
+So each answer row jitters the frames instead: for every event, a random offset
+within +/-40 frames of the chosen keyframe. The first row of each video is always
+the unshifted chain. Offsets are seeded from the video id, so re-running gives the
+same file. Measured against the real keyframe-gap distribution and the official
+R@{1,5,20,50,100} rule, this scores ~0.35 versus ~0.24 for shifting every event by
+the same amount.
+
+The 100-row budget goes to the top-ranked videos first, `SPREAD_ROWS_PER_VIDEO`
+rows each — roughly the top three videos.
+
+### Submission format is not confirmed yet
+
+The exact format the organisers expect (separator, header row, whether frames are
+numbered from 0 or 1) has **not** been confirmed. Everything format-related lives
+in one block at the top of `trake.py`:
+
+```python
+SUBMISSION_DELIMITER = ", "
+SUBMISSION_INCLUDE_HEADER = False
+SUBMISSION_MAX_ROWS = 100
+FRAME_INDEX_BASE = 0        # set to 1 if the organisers count frames from 1
+```
+
+If the rules turn out different, change these constants — no other code needs to
+move.
+
 ## Startup Behavior
 
 At startup, the app checks the release files and copies these files to the local
@@ -472,6 +543,8 @@ When the app is running, Gradio exposes:
 - `/search_keyframes_v2` for the boolean `translate_vietnamese` contract used
   by the current UI
 - `/get_keyframe_details`
+- `/search_trake` for the TRAKE tab: `(translate_vietnamese, event_1 … event_6)`,
+  where unused event slots are empty strings
 
 Use the browser UI first. Use the API only if you need script access.
 

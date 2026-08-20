@@ -82,3 +82,43 @@ class KeyframeDetails:
     keyframe: dict
     video: dict
     detections: tuple[dict, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class TrakeEventMatch:
+    """A single event's matched keyframe within a TRAKE video sequence."""
+
+    keyframe_id: str
+    video_id: str
+    keyframe_no: int
+    frame_idx: int
+    pts_time_sec: float
+    fps: float
+    image_path: str
+    image_relpath: str
+    score: float
+    event_index: int
+
+
+@dataclass(frozen=True)
+class TrakeVideoMatch:
+    """A ranked video with one matched keyframe per event, in order."""
+
+    video_id: str
+    collection_id: str
+    title: str
+    author: str
+    total_score: float
+    events: tuple[TrakeEventMatch, ...]
+    max_frame_idx: int = 0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TrakeOutcome:
+    """TRAKE search results together with per-event query diagnostics."""
+
+    videos: tuple[TrakeVideoMatch, ...]
+    queries: tuple[PreparedQuery, ...]
