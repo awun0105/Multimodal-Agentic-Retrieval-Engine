@@ -11,6 +11,7 @@ from app import (
     _timestamp,
     build_app,
     create_search_mechanism,
+    create_trake_searcher,
     search_keyframes_gpu,
     search_keyframes_gpu_v2,
 )
@@ -18,6 +19,10 @@ from schemas import KeyframeDetails, SearchResult
 
 
 class FakeSearchMechanism:
+    def __init__(self):
+        self.clip_searcher = object()
+        self.translator = object()
+
     def filter_options(self):
         return {
             "collections": ["C01"],
@@ -28,6 +33,10 @@ class FakeSearchMechanism:
 
     def get_keyframe_details(self, _keyframe_id):
         return KeyframeDetails({}, {})
+
+
+class FakeTrakeSearcher:
+    """Stand-in for TrakeSearcher — build_trake_tab only wires callbacks, never calls it."""
 
 
 def test_build_app_exposes_keyframe_endpoints_and_filters():
@@ -71,7 +80,7 @@ def test_build_app_exposes_keyframe_endpoints_and_filters():
     assert components_by_label["Top K"]["maximum"] == 200
     assert components_by_label["Keyframes"]["columns"] == 5
     assert components_by_label["Keyframes"]["rows"] == 2
-    assert components_by_label["Keyframes"]["height"] == 320
+    assert components_by_label["Keyframes"]["height"] == "auto"
     assert components_by_label["Keyframes"]["allow_preview"] is False
     assert components_by_label["Keyframes"]["object_fit"] == "contain"
     assert components_by_label["Selected keyframe"]["height"] == 420
@@ -80,7 +89,7 @@ def test_build_app_exposes_keyframe_endpoints_and_filters():
         component["props"].get("elem_id") == "app-title" for component in config["components"]
     )
     assert "#keyframe-gallery .grid-wrap" in config["css"]
-    assert "overflow-y: hidden !important" in config["css"]
+    assert "overflow-y: visible !important" in config["css"]
     assert "@media (max-width: 600px)" in config["css"]
 
     component_ids = {
@@ -165,6 +174,53 @@ def test_runtime_preloads_only_multilingual_text_model():
     translator_class.return_value._ensure_loaded.assert_not_called()
     indexer_class.assert_called_once_with("index.faiss", nprobe=16)
     assert result is mechanism_class.return_value
+
+
+def test_build_app_without_trake_searcher_keeps_single_tab():
+    app = build_app(FakeSearchMechanism())
+    config = app.get_config_file()
+    tabs = [component for component in config["components"] if component["type"] == "tabitem"]
+    assert len(tabs) == 1
+
+
+def test_build_app_with_trake_searcher_adds_second_tab():
+    app = build_app(FakeSearchMechanism(), trake_searcher=FakeTrakeSearcher())
+    config = app.get_config_file()
+    tabs = [component for component in config["components"] if component["type"] == "tabitem"]
+    assert len(tabs) == 2
+    tab_labels = {tab["props"].get("label") for tab in tabs}
+    assert "TRAKE" in tab_labels
+
+
+def test_trake_tab_does_not_change_kis_endpoints():
+    without_trake = build_app(FakeSearchMechanism())
+    with_trake = build_app(FakeSearchMechanism(), trake_searcher=FakeTrakeSearcher())
+
+    endpoints_without = set(without_trake.get_api_info()["named_endpoints"])
+    endpoints_with = set(with_trake.get_api_info()["named_endpoints"])
+
+    assert endpoints_with - endpoints_without == {"/search_trake"}
+    assert endpoints_without <= endpoints_with
+
+
+def test_create_trake_searcher_reuses_loaded_models():
+    search_mechanism = FakeSearchMechanism()
+    runtime = SimpleNamespace(
+        sqlite_file="runtime.sqlite",
+        embeddings_file="embeddings.npy",
+        data_root="release",
+    )
+    with patch("app.TrakeSearcher") as trake_searcher_class:
+        result = create_trake_searcher(runtime, search_mechanism)
+
+    trake_searcher_class.assert_called_once_with(
+        clip_searcher=search_mechanism.clip_searcher,
+        translator=search_mechanism.translator,
+        sqlite_file="runtime.sqlite",
+        embeddings_file="embeddings.npy",
+        data_root="release",
+    )
+    assert result is trake_searcher_class.return_value
 
 
 def test_allowed_file_directory_is_limited_to_keyframes(tmp_path):
