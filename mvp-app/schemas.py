@@ -82,6 +82,9 @@ class KeyframeDetails:
     keyframe: dict
     video: dict
     detections: tuple[dict, ...] = field(default_factory=tuple)
+    ocr_text: str | None = None
+    ocr_boxes: tuple[dict, ...] = field(default_factory=tuple)
+
 
 
 @dataclass(frozen=True)

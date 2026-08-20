@@ -710,6 +710,29 @@ def build_app(
                         scale=2,
                     )
 
+                with gr.Row(equal_height=True):
+                    search_mode = gr.Radio(
+                        label="Search Mode",
+                        choices=[("CLIP (Semantic)", "clip"), ("OCR (Text)", "ocr"), ("Hybrid (CLIP + OCR)", "hybrid")],
+                        value="hybrid",
+                        scale=5,
+                    )
+                    ocr_weight = gr.Slider(
+                        label="OCR Weight (in Hybrid)",
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.05,
+                        value=0.5,
+                        scale=5,
+                        visible=True,
+                    )
+                search_mode.change(
+                    fn=lambda m: gr.update(visible=m == "hybrid"),
+                    inputs=[search_mode],
+                    outputs=[ocr_weight],
+                    api_name=False,
+                )
+
                 with gr.Accordion("Filters", open=False):
                     with gr.Row():
                         collections = gr.Dropdown(
@@ -826,17 +849,16 @@ def build_app(
 
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=3):
-                        detail_image = gr.Image(
+                        detail_image = gr.AnnotatedImage(
                             label="Selected keyframe",
-                            interactive=False,
                             height=420,
                             elem_id="selected-keyframe",
                         )
                     with gr.Column(scale=2):
                         detail_metadata = gr.Markdown("Select a keyframe to view metadata")
                 detections = gr.Dataframe(
-                    headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
-                    datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
+                    headers=["Label", "Score", "ymin", "xmin", "ymax", "xmax"],
+                    datatype=["str", "number", "number", "number", "number", "number"],
                     label="Detected objects",
                     interactive=False,
                 )
@@ -890,6 +912,8 @@ def build_app(
                     author,
                     publish_date_from,
                     publish_date_to,
+                    search_mode,
+                    ocr_weight,
                 ]
                 search_outputs_v2 = [
                     gallery,
