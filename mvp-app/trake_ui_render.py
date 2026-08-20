@@ -66,3 +66,18 @@ def build_status_markdown(outcome: TrakeOutcome, elapsed_seconds: float) -> str:
         if best is not None:
             lines.append(f"Event {event_index + 1} best single score: {best:.4f}")
     return "\n\n".join(lines)
+
+def render_video_player(video_id: str, video_path: str, pts_time_sec: float, fps: float = 25.0) -> str:
+    """Render an HTML5 video player auto-seeked to the given timestamp without autoplay, and a live frame indicator."""
+    return f"""
+    <div style="text-align: center; margin-top: 1rem; border: 1px solid #ddd; padding: 10px; border-radius: 8px;">
+        <h3>Video Player: {html.escape(video_id)}</h3>
+        <p style="font-size: 1.1em; font-weight: bold; color: #d00;">
+            Current Timestamp: <span id="trake-time-display">{pts_time_sec:.3f}</span>s
+            | Approx Frame: <span id="trake-frame-display">{round(pts_time_sec * fps)}</span>
+        </p>
+        <video id="trake-player" src="/gradio_api/file={video_path}#t={pts_time_sec}" controls style="width: 100%; max-height: 60vh;"
+        ontimeupdate="document.getElementById('trake-time-display').innerText = this.currentTime.toFixed(3); document.getElementById('trake-frame-display').innerText = Math.round(this.currentTime * {fps});"
+        ></video>
+    </div>
+    """

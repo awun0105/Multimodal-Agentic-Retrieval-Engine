@@ -24,7 +24,7 @@ FRAME_INDEX_BASE = 0
 SPREAD_RADIUS = 40
 SPREAD_ROWS_PER_VIDEO = 34
 
-MIN_EVENTS = 2
+MIN_EVENTS = 1
 MAX_EVENTS = 6
 
 
@@ -60,7 +60,9 @@ def spread_frames(
 
 
 def build_submission(
-    outcome: TrakeOutcome, max_rows: int | None = None
+    outcome: TrakeOutcome,
+    max_rows: int | None = None,
+    pinned_frames: dict[tuple[str, int], int] | None = None,
 ) -> list[tuple[str, tuple[int, ...]]]:
     # Read at call time so monkeypatching SUBMISSION_MAX_ROWS takes effect.
     return _build_submission(
@@ -68,6 +70,7 @@ def build_submission(
         SUBMISSION_MAX_ROWS if max_rows is None else max_rows,
         rows_per_video=SPREAD_ROWS_PER_VIDEO,
         radius=SPREAD_RADIUS,
+        pinned_frames=pinned_frames,
     )
 
 

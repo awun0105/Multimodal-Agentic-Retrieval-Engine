@@ -400,9 +400,9 @@ def _make_searcher(
     )
 
 
-def test_search_rejects_fewer_than_two_events():
+def test_search_rejects_fewer_than_one_event():
     with pytest.raises(ValueError):
-        trake.encode_events(["only one"], FakeTranslator(), FakeClipSearcher({}))
+        trake.encode_events(["   ", ""], FakeTranslator(), FakeClipSearcher({}))
 
 
 def test_search_rejects_more_than_six_events():

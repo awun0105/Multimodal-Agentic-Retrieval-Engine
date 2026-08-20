@@ -64,7 +64,7 @@ def test_add_event_keeps_text_already_typed():
 
 def test_export_submission_without_results_returns_message_not_error():
     controller = TrakeController(trake_searcher=None)
-    file_path, message = controller.export_submission(None)
+    file_path, message = controller.export_submission(None, pinned_frames={})
     assert file_path is None
     assert "No search results" in message
 

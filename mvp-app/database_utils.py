@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import dotenv_values
+from dotenv import load_dotenv
 
 DEFAULTS = {
     "DATA_ROOT": "/data/releases/aic25-b1-v1",
@@ -43,10 +43,11 @@ class RuntimePaths:
 
 def load_environment(dotenv_path: str | Path = ".env") -> dict[str, str]:
     """Load defaults, optional dotenv values, then real environment variables."""
-    values = dict(DEFAULTS)
     path = Path(dotenv_path)
     if path.exists():
-        values.update({key: value for key, value in dotenv_values(path).items() if value})
+        load_dotenv(path)
+    
+    values = dict(DEFAULTS)
     for key in DEFAULTS:
         if os.environ.get(key):
             values[key] = os.environ[key]

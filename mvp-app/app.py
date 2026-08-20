@@ -1129,12 +1129,17 @@ def main() -> None:
     if _keyframes_root is None:
         raise RuntimeError("Keyframe data root has not been initialized")
 
+    video_root = os.environ.get("VIDEO_ROOT")
+    allowed_paths = [str(_keyframes_root)]
+    if video_root:
+        allowed_paths.append(str(video_root))
+
     demo.queue(default_concurrency_limit=2)
     demo.launch(
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", "7860")),
         ssr_mode=False,
-        allowed_paths=[str(_keyframes_root)],
+        allowed_paths=allowed_paths,
     )
 
 

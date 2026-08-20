@@ -62,12 +62,25 @@ def build_submission(
     max_rows: int,
     rows_per_video: int,
     radius: int,
+    pinned_frames: dict[tuple[str, int], int] | None = None,
 ) -> list[tuple[str, tuple[int, ...]]]:
+    if pinned_frames is None:
+        pinned_frames = {}
+    
     rows: list[tuple[str, tuple[int, ...]]] = []
     for video in outcome.videos:
         if len(rows) >= max_rows:
             break
-        frames = [event.frame_idx for event in video.events]
+        
+        # Merge pinned frames with algorithmic frames
+        frames = []
+        for i, event in enumerate(video.events):
+            pinned = pinned_frames.get((video.video_id, i))
+            if pinned is not None:
+                frames.append(pinned)
+            else:
+                frames.append(event.frame_idx)
+        
         # Fall back to the last matched frame only when the video length is unknown.
         max_frame_idx = video.max_frame_idx or max(frames)
         spread = spread_frames(
