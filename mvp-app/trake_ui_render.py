@@ -81,3 +81,55 @@ def render_video_player(video_id: str, video_path: str, pts_time_sec: float, fps
         ></video>
     </div>
     """
+
+
+PREVIEW_SPREAD_SAMPLE = 8
+
+
+def _frames_text(frames: tuple[int, ...], frame_index_base: int = 0) -> str:
+    return ", ".join(str(frame + frame_index_base) for frame in frames)
+
+
+def build_submission_preview_markdown(
+    rows: list[tuple[str, tuple[int, ...]]],
+    primary_count: int,
+    pinned_counts: dict[str, int],
+    frame_index_base: int = 0,
+) -> str:
+    """Rows 0..primary_count-1 are the real answers, one per video, best first.
+    Everything after is jitter around them — labelled so nobody mistakes it for a result."""
+    if not rows:
+        return "Chưa có kết quả để xem trước."
+
+    remainder = rows[primary_count:]
+    lines = [
+        "### Xem trước file nộp bài",
+        "",
+        f"Tổng **{len(rows)}** dòng — **{primary_count}** đáp án, "
+        f"{len(remainder)} dòng rải tham khảo.",
+        "",
+        f"**Đáp án sẽ nộp** (dòng 1 là kết quả tốt nhất, {primary_count} video khác nhau):",
+        "",
+        "| # | Video | Frame | |",
+        "|---|---|---|---|",
+    ]
+    for position, (video_id, frames) in enumerate(rows[:primary_count], start=1):
+        pinned = pinned_counts.get(video_id, 0)
+        marker = f"{pinned}/{len(frames)} chốt tay" if pinned else ""
+        lines.append(
+            f"| {position} | {html.escape(video_id)} | {_frames_text(frames, frame_index_base)} | {marker} |"
+        )
+
+    if remainder:
+        lines += [
+            "",
+            f"**Dòng rải tham khảo** ({len(remainder)} dòng, lệch vài frame quanh đáp án trên):",
+            "",
+            "```csv",
+        ]
+        shown = remainder[:PREVIEW_SPREAD_SAMPLE]
+        lines += [f"{video_id}, {_frames_text(frames, frame_index_base)}" for video_id, frames in shown]
+        if len(remainder) > len(shown):
+            lines.append(f"... còn {len(remainder) - len(shown)} dòng")
+        lines.append("```")
+    return "\n".join(lines)

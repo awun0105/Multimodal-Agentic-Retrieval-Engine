@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import tempfile
 import time
 from pathlib import Path
@@ -28,13 +29,23 @@ except ImportError:
 
 import gradio as gr
 
+import trake
 from schemas import TrakeOutcome
-from trake import MAX_EVENTS, MIN_EVENTS, build_submission, format_submission
+from trake import (
+    MAX_EVENTS,
+    MIN_EVENTS,
+    SPREAD_RADIUS,
+    build_submission,
+    format_submission,
+)
+from trake_submission import build_submission as build_submission_rows
+from trake_submission import parse_pin_key, pin_key
 from video_locator import get_video_path
 from trake_ui_render import (
     render_video_player,
     build_gallery_items,
     build_status_markdown,
+    build_submission_preview_markdown,
     build_video_blocks,
 )
 
@@ -87,32 +98,145 @@ class TrakeController:
         gallery_update = gr.update(value=gallery_items, columns=max(1, len(events)))
         return gallery_update, blocks_markdown, status_markdown, outcome
 
+    @staticmethod
+    def _build_rows(
+        outcome: TrakeOutcome, pinned_frames: dict
+    ) -> tuple[list[tuple[str, tuple[int, ...]]], int]:
+        """One answer per video first, jitter after. The organizers take a single
+        answer per query, so the row people actually submit must come first.
+
+        SUBMISSION_MAX_ROWS counts every row, and with ~34 jittered rows per video
+        the cap is reached after two or three videos. Collecting the answers with
+        rows_per_video=1 first keeps the rest of the ranking reachable."""
+        primary = build_submission_rows(
+            outcome,
+            max_rows=len(outcome.videos),
+            rows_per_video=1,
+            radius=SPREAD_RADIUS,
+            pinned_frames=pinned_frames,
+        )
+        answered = {video_id for video_id, _frames in primary}
+        spread = [
+            row
+            for row in build_submission(outcome, pinned_frames=pinned_frames)
+            if row not in primary and row[0] in answered
+        ]
+        return primary + spread, len(primary)
 
     def preview_submission(
         self, outcome: TrakeOutcome | None, pinned_frames: dict
     ) -> Any:
         if not outcome:
             return gr.update(value="No search results to preview.")
-        from trake import build_submission, format_submission
-
-        rows = build_submission(
-            outcome,
-            max_rows=34,  # preview 34 rows (1 full video)
-            pinned_frames=pinned_frames,
+        rows, primary_count = self._build_rows(outcome, pinned_frames)
+        pinned_counts: dict[str, int] = {}
+        for key in pinned_frames or {}:
+            parsed = parse_pin_key(key)
+            if parsed is None:
+                continue
+            video_id, _event_index = parsed
+            pinned_counts[video_id] = pinned_counts.get(video_id, 0) + 1
+        # Read at call time, exactly like format_submission does, so the preview can
+        # never drift from the file it is previewing.
+        markdown = build_submission_preview_markdown(
+            rows, primary_count, pinned_counts, trake.FRAME_INDEX_BASE
         )
-        csv_text = format_submission(rows)
-        md = "### Bản xem trước (Preview) kết quả nộp bài cho Top 1 Video:\n```csv\n" + csv_text + "\n```"
-        return gr.update(value=md)
+        return gr.update(value=markdown)
 
     def export_submission(self, outcome: TrakeOutcome | None, pinned_frames: dict):
         if outcome is None or not outcome.videos:
             return None, "No search results to export yet."
-        rows = build_submission(outcome, pinned_frames=pinned_frames)
+        rows, primary_count = self._build_rows(outcome, pinned_frames)
         content = format_submission(rows)
         timestamp = time.strftime("%y%m%d-%H%M")
         out_path = Path(tempfile.gettempdir()) / f"trake_submission_{timestamp}.csv"
         out_path.write_text(content, encoding="utf-8")
-        return str(out_path), f"Exported {len(rows)} rows."
+        return str(out_path), (
+            f"Đã ghi {out_path.name} — {len(rows)} dòng "
+            f"({primary_count} đáp án + {len(rows) - primary_count} dòng rải). "
+            f"Lưu tại {out_path.parent}. Chưa đóng gói ZIP — chờ mô tả chính thức từ BTC."
+        )
+
+
+PINNED_HEADING = "**Danh sách các Frame đã chốt (Pinned):**"
+PINNED_EMPTY_MARKDOWN = f"{PINNED_HEADING}\n*Chưa có frame nào.*"
+
+
+def render_pinned_frames(pinned_frames: dict) -> str:
+    if not pinned_frames:
+        return PINNED_EMPTY_MARKDOWN
+    lines = [PINNED_HEADING]
+    for key, frame_id in pinned_frames.items():
+        parsed = parse_pin_key(key)
+        if parsed is None:
+            continue
+        video_id, event_index = parsed
+        lines.append(
+            f"- **{html.escape(video_id)}**: Event {event_index + 1} -> Frame {frame_id}"
+        )
+    return "\n".join(lines) if len(lines) > 1 else PINNED_EMPTY_MARKDOWN
+
+
+def _selected_event(outcome, gallery_index: int):
+    """Map a gallery position back to its event. build_gallery_items drops events
+    whose image is missing, so the same filter has to run here or the indices skew."""
+    position = 0
+    for video in outcome.videos:
+        for event in video.events:
+            if not Path(event.image_path).is_file():
+                continue
+            if position == gallery_index:
+                return video, event
+            position += 1
+    return None
+
+
+def _pinned_frame_id(c_time, fps, kf_frame) -> int | None:
+    """Player time wins when it is readable; otherwise the keyframe's own frame_idx
+    already is the answer."""
+    try:
+        return round(float(c_time) * float(fps))
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(kf_frame)
+    except (TypeError, ValueError):
+        return None
+
+
+def process_pin(c_time, pinned_frames, v_id, e_idx, fps, kf_frame):
+    """Pin the frame under review. The video player is optional: pinning falls back
+    to the keyframe, so it works with or without a proxy video on disk."""
+    pinned_frames = dict(pinned_frames or {})
+    frame_id = _pinned_frame_id(c_time, fps, kf_frame) if v_id else None
+    if frame_id is not None:
+        pinned_frames[pin_key(v_id, int(e_idx))] = frame_id
+
+    # Report this click's outcome, not whether the dict happens to be non-empty.
+    status = (
+        f"**Đã chốt frame {frame_id}.**"
+        if frame_id is not None
+        else "Chưa chốt được — hãy chọn một ảnh trong kết quả trước."
+    )
+    return (
+        pinned_frames,
+        gr.update(value=status),
+        gr.update(value=render_pinned_frames(pinned_frames)),
+    )
+
+
+def clear_pins():
+    return (
+        {},
+        gr.update(value="Đã gỡ hết frame đã chốt."),
+        gr.update(value=PINNED_EMPTY_MARKDOWN),
+    )
+
+
+def reset_pins_for_new_search():
+    """Same reset as clear_pins, minus the status line — the search result just
+    wrote there and must stay visible."""
+    return {}, gr.update(value=PINNED_EMPTY_MARKDOWN)
 
 
 @spaces.GPU(duration=120)
@@ -168,14 +292,17 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         prev_btn = gr.Button("Prev Frame", interactive=False)
         next_btn = gr.Button("Next Frame", interactive=False)
         pin_btn = gr.Button("Chốt Frame (Pin)", interactive=False, variant="primary")
-    
-    pinned_frames_markdown = gr.Markdown("**Danh sách các Frame đã chốt (Pinned):**\n*Chưa có frame nào.*")
-    
+        clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
+
+    pinned_frames_markdown = gr.Markdown(PINNED_EMPTY_MARKDOWN)
+
     # Hidden elements for JS to Python communication
     current_time_box = gr.Textbox(visible=False, elem_id="trake-current-time")
     current_fps_box = gr.Number(visible=False, elem_id="trake-current-fps", value=25.0)
     current_video_id_box = gr.Textbox(visible=False, elem_id="trake-current-video-id")
     current_event_idx_box = gr.Number(visible=False, elem_id="trake-current-event-idx", value=0)
+    # Keyframe's own frame_idx — the fallback answer when no video is available.
+    current_kf_frame_box = gr.Number(visible=False, elem_id="trake-current-kf-frame", value=0)
     sync_btn = gr.Button("Sync", visible=False, elem_id="trake-sync-btn")
 
     results = gr.Markdown("")
@@ -202,16 +329,29 @@ def build_trake_tab(trake_searcher: Any) -> dict:
 
     search_inputs = [translate_vietnamese, *event_boxes]
     search_outputs = [gallery, results, status, outcome_state]
+    # Pins name a video and an event slot, not a query — carrying them into the next
+    # search would silently rewrite the new answer's frames.
+    pin_reset_outputs = [pinned_frames_state, pinned_frames_markdown]
     search_button.click(
         search_trake_gpu,
         inputs=search_inputs,
         outputs=search_outputs,
         api_name="search_trake",
+    ).then(
+        reset_pins_for_new_search,
+        inputs=[],
+        outputs=pin_reset_outputs,
+        api_name=False,
     )
     event_boxes[-1].submit(
         search_trake_gpu,
         inputs=search_inputs,
         outputs=search_outputs,
+        api_name=False,
+    ).then(
+        reset_pins_for_new_search,
+        inputs=[],
+        outputs=pin_reset_outputs,
         api_name=False,
     )
 
@@ -248,83 +388,87 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         return fps;
     }"""
     
-    pin_js = """(fps, pinned, vid, eidx) => {
+    # Order must match process_pin's signature exactly — Gradio validates the count
+    # of `inputs` against the handler, and the JS return replaces those values.
+    pin_js = """(c_time, pinned, vid, eidx, fps, kf_frame) => {
         const video = document.getElementById('trake-player');
-        const c_time = video ? video.currentTime.toString() : "";
-        return [c_time, pinned, vid, eidx, fps];
+        const t = video ? video.currentTime.toString() : "";
+        return [t, pinned, vid, eidx, fps, kf_frame];
     }"""
 
     next_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_step_js)
     prev_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_prev_js)
 
-    def process_pin(c_time, pinned_frames, v_id, e_idx, fps):
-        if v_id and c_time is not None and c_time != "":
-            try:
-                frame_id = round(float(c_time) * float(fps))
-                pinned_frames[(v_id, int(e_idx))] = frame_id
-            except ValueError:
-                pass
-                
-        if not pinned_frames:
-            text = "**Danh sách các Frame đã chốt (Pinned):**\n*Chưa có frame nào.*"
-        else:
-            text = "**Danh sách các Frame đã chốt (Pinned):**\n"
-            for (vid, e_idx_iter), fid in pinned_frames.items():
-                text += f"- **{vid}**: Event {e_idx_iter + 1} -> Frame {fid}\n"
-                
-        return pinned_frames, gr.update(value="**Chốt thành công!**"), gr.update(value=text)
-        
     pin_btn.click(
-        process_pin, 
-        inputs=[current_fps_box, pinned_frames_state, current_video_id_box, current_event_idx_box], 
-        outputs=[pinned_frames_state, status, pinned_frames_markdown], 
+        process_pin,
+        inputs=[
+            current_time_box,
+            pinned_frames_state,
+            current_video_id_box,
+            current_event_idx_box,
+            current_fps_box,
+            current_kf_frame_box,
+        ],
+        outputs=[pinned_frames_state, status, pinned_frames_markdown],
         js=pin_js,
+        api_name=False,
+    )
+
+    clear_pins_btn.click(
+        clear_pins,
+        inputs=[],
+        outputs=[pinned_frames_state, status, pinned_frames_markdown],
         api_name=False,
     )
     
     def on_gallery_select(evt: gr.SelectData, outcome):
+        unchanged = (gr.update(),) * 8
         if not outcome or not outcome.videos:
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
-        
-        # Determine which video and event was clicked
-        idx = evt.index
-        # idx maps to the flat list of images in gallery
-        # we iterate over outcome.videos and their events to find the matching flat idx
-        flat_idx = 0
-        for video in outcome.videos:
-            for ev in video.events:
-                # We skip missing files in trake_ui_render, but here we assume the index matches
-                # Actually trake_ui_render filters out missing files. Let's do the same logic to match indices.
-                import os
-                if not os.path.isfile(ev.image_path):
-                    continue
-                if flat_idx == idx:
-                    v_path = get_video_path(video.video_id)
-                    if v_path:
-                        html_str = render_video_player(video.video_id, v_path, ev.pts_time_sec, ev.fps)
-                        return (
-                            gr.update(value=html_str), 
-                            gr.update(interactive=True), 
-                            gr.update(interactive=True), 
-                            gr.update(interactive=True),
-                            ev.fps,
-                            video.video_id,
-                            ev.event_index
-                        )
-                    else:
-                        return (
-                            gr.update(value=f"<p>Proxy video not found for {video.video_id}</p>"),
-                            gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False),
-                            25.0, video.video_id, ev.event_index
-                        )
-                flat_idx += 1
-                
-        return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
-        
+            return unchanged
+
+        selected = _selected_event(outcome, evt.index)
+        if selected is None:
+            return unchanged
+        video, event = selected
+
+        video_path = get_video_path(video.video_id)
+        if video_path:
+            player = render_video_player(
+                video.video_id, video_path, event.pts_time_sec, event.fps
+            )
+            step_enabled = gr.update(interactive=True)
+        else:
+            player = (
+                f"<p>Chưa có video cho {html.escape(video.video_id)} — "
+                "vẫn chốt được frame từ ảnh keyframe.</p>"
+            )
+            step_enabled = gr.update(interactive=False)
+
+        # Pinning never depends on the player: the keyframe already carries frame_idx.
+        return (
+            gr.update(value=player),
+            step_enabled,
+            step_enabled,
+            gr.update(interactive=True),
+            event.fps,
+            video.video_id,
+            event.event_index,
+            event.frame_idx,
+        )
+
     gallery.select(
         on_gallery_select,
         inputs=[outcome_state],
-        outputs=[video_player_html, prev_btn, next_btn, pin_btn, current_fps_box, current_video_id_box, current_event_idx_box],
+        outputs=[
+            video_player_html,
+            prev_btn,
+            next_btn,
+            pin_btn,
+            current_fps_box,
+            current_video_id_box,
+            current_event_idx_box,
+            current_kf_frame_box,
+        ],
         api_name=False,
     )
 
