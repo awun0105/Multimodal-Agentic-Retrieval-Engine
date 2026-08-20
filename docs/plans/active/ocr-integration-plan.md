@@ -28,8 +28,10 @@ Tài liệu này đề xuất thiết kế và kế hoạch chi tiết để tí
    - Tiến trình OCR sẽ quét trực tiếp trên **tập hợp keyframe gốc (raw keyframes)** thay vì chỉ quét trên các keyframe đã được rút gọn/nén của release.
    - *Cơ chế liên kết*: Dữ liệu chữ quét từ các keyframe gốc sẽ được nhóm hoặc ánh xạ (mapping) sang keyframe đại diện tương ứng trong cơ sở dữ liệu runtime để bộ máy tìm kiếm có thể truy vấn chính xác.
 5. **Trực quan hóa Bounding Box**:
-   - Nếu dữ liệu OCR đầu vào có đi kèm tọa độ khung chữ, hệ thống sẽ hỗ trợ vẽ trực tiếp lên ảnh chi tiết bằng `gr.AnnotatedImage`. Nếu dữ liệu thô chỉ có chữ, hệ thống sẽ chỉ hiển thị nội dung chữ dưới dạng text.
-6. **Đẩy và cập nhật dữ liệu (Push & Data Updates)**:
+   - Nếu dữ liệu OCR đầu vào có đi kèm tọa độ khung chữ (ví dụ từ EasyOCR/PaddleOCR), hệ thống sẽ hỗ trợ vẽ trực tiếp lên ảnh chi tiết bằng `gr.AnnotatedImage`. Nếu dữ liệu thô chỉ có chữ (như trích xuất trực tiếp từ Vintern-1B-v3_5 chat), hệ thống sẽ chỉ hiển thị nội dung chữ dưới dạng text và vẽ vật thể của `detections` lên ảnh.
+6. **Mô hình OCR (OCR Engine Model)**:
+   - Sử dụng mô hình Vision-Language **Vintern-1B-v3_5** (phát triển bởi 5CD-AI) làm mô hình chính để trích xuất văn bản từ hình ảnh keyframe do có độ chính xác tiếng Việt vượt trội (WER = 0.34).
+7. **Đẩy và cập nhật dữ liệu (Push & Data Updates)**:
    - *Mã nguồn (Code)*: Sẽ được commit trên nhánh `monolith-mvp-app-with-ocr` và push lên remote origin (GitHub) sau khi hoàn tất kiểm thử.
    - *Dữ liệu lớn (Large Data)*: Các tệp cơ sở dữ liệu SQLite cập nhật hoặc dữ liệu chữ quét được (OCR text) sẽ được lưu trữ và cập nhật trực tiếp tại local workspace (ở thư mục data/cache) hoặc đẩy lên kho lưu trữ chia sẻ Hugging Face (`AIC26_release` / `AIC26_raw` Dataset) theo quy chuẩn của dự án, hoàn toàn **không** commit các tệp cơ sở dữ liệu này lên Git để tránh quá tải repository.
 
