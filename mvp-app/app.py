@@ -31,6 +31,8 @@ from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
 from db import SearchMechanism
 from schemas import SearchFilters
+from trake import TrakeSearcher
+from trake_ui import build_trake_tab
 from translation import QueryTranslator
 
 logger = logging.getLogger(__name__)
@@ -665,7 +667,12 @@ def search_keyframes_gpu_v2(
     )
 
 
-def build_app(search_mechanism: SearchMechanism, *, page_size: int = 10) -> gr.Blocks:
+def build_app(
+    search_mechanism: SearchMechanism,
+    *,
+    page_size: int = 10,
+    trake_searcher: TrakeSearcher | None = None,
+) -> gr.Blocks:
     """Construct the Gradio UI and bind it to a prepared search mechanism."""
     global _search_controller
 
@@ -675,380 +682,386 @@ def build_app(search_mechanism: SearchMechanism, *, page_size: int = 10) -> gr.B
 
     with gr.Blocks(css=APP_CSS) as webui:
         gr.Markdown("## AIoU Keyframe Retrieval", elem_id="app-title")
-        original_results_state = gr.State([])
-        visible_results_state = gr.State([])
-        page_rows_state = gr.State([])
-        page_state = gr.State(0)
+        with gr.Tabs():
+            with gr.Tab("Tìm khung hình"):
+                original_results_state = gr.State([])
+                visible_results_state = gr.State([])
+                page_rows_state = gr.State([])
+                page_state = gr.State(0)
 
-        with gr.Row(equal_height=True):
-            query = gr.Textbox(
-                label="Query",
-                placeholder="Describe the keyframe you want to find",
-                scale=5,
-            )
-            translate_vietnamese = gr.Checkbox(
-                label="Translate Vietnamese query to English",
-                value=True,
-                info="Off: direct multilingual search. On: NLLB translation before search.",
-                scale=2,
-            )
-            top_k = gr.Slider(
-                label="Top K",
-                minimum=1,
-                maximum=200,
-                step=1,
-                value=100,
-                scale=2,
-            )
+                with gr.Row(equal_height=True):
+                    query = gr.Textbox(
+                        label="Query",
+                        placeholder="Describe the keyframe you want to find",
+                        scale=5,
+                    )
+                    translate_vietnamese = gr.Checkbox(
+                        label="Translate Vietnamese query to English",
+                        value=True,
+                        info="Off: direct multilingual search. On: NLLB translation before search.",
+                        scale=2,
+                    )
+                    top_k = gr.Slider(
+                        label="Top K",
+                        minimum=1,
+                        maximum=200,
+                        step=1,
+                        value=100,
+                        scale=2,
+                    )
 
-        with gr.Accordion("Filters", open=False):
-            with gr.Row():
-                collections = gr.Dropdown(
-                    label="Collections",
-                    choices=options["collections"],
-                    multiselect=True,
-                )
-                video_id = gr.Dropdown(
-                    label="Video ID",
-                    choices=[("All videos", ""), *options["videos"]],
-                    value="",
-                    filterable=True,
-                )
-                author = gr.Dropdown(
-                    label="Author / Channel",
-                    choices=[("All authors", ""), *options["authors"]],
-                    value="",
-                    filterable=True,
-                )
-            with gr.Row():
-                object_entities = gr.Dropdown(
-                    label="Objects",
-                    choices=options["objects"],
-                    multiselect=True,
-                    filterable=True,
-                    scale=4,
-                )
-                object_match_mode = gr.Radio(
-                    label="Object match",
-                    choices=[("Any", "any"), ("All", "all")],
-                    value="any",
-                    scale=1,
-                )
-                minimum_object_confidence = gr.Slider(
-                    label="Minimum confidence",
-                    minimum=0.3,
-                    maximum=1.0,
-                    step=0.05,
-                    value=0.3,
-                    scale=2,
-                )
-            with gr.Row():
-                publish_date_from = gr.Textbox(label="Published from", placeholder="YYYY-MM-DD")
-                publish_date_to = gr.Textbox(label="Published to", placeholder="YYYY-MM-DD")
+                with gr.Accordion("Filters", open=False):
+                    with gr.Row():
+                        collections = gr.Dropdown(
+                            label="Collections",
+                            choices=options["collections"],
+                            multiselect=True,
+                        )
+                        video_id = gr.Dropdown(
+                            label="Video ID",
+                            choices=[("All videos", ""), *options["videos"]],
+                            value="",
+                            filterable=True,
+                        )
+                        author = gr.Dropdown(
+                            label="Author / Channel",
+                            choices=[("All authors", ""), *options["authors"]],
+                            value="",
+                            filterable=True,
+                        )
+                    with gr.Row():
+                        object_entities = gr.Dropdown(
+                            label="Objects",
+                            choices=options["objects"],
+                            multiselect=True,
+                            filterable=True,
+                            scale=4,
+                        )
+                        object_match_mode = gr.Radio(
+                            label="Object match",
+                            choices=[("Any", "any"), ("All", "all")],
+                            value="any",
+                            scale=1,
+                        )
+                        minimum_object_confidence = gr.Slider(
+                            label="Minimum confidence",
+                            minimum=0.3,
+                            maximum=1.0,
+                            step=0.05,
+                            value=0.3,
+                            scale=2,
+                        )
+                    with gr.Row():
+                        publish_date_from = gr.Textbox(label="Published from", placeholder="YYYY-MM-DD")
+                        publish_date_to = gr.Textbox(label="Published to", placeholder="YYYY-MM-DD")
 
-        search_button = gr.Button("Search", variant="primary")
-        status = gr.Textbox(label="Status", value="Ready", interactive=False)
+                search_button = gr.Button("Search", variant="primary")
+                status = gr.Textbox(label="Status", value="Ready", interactive=False)
 
-        with gr.Accordion("Refine current Top K results", open=False):
-            with gr.Row(equal_height=True):
-                within_results_query = gr.Textbox(
-                    label="Search within results",
-                    placeholder="Filter the current Top K results",
-                    scale=5,
-                )
-                within_results_field = gr.Dropdown(
-                    label="Field",
-                    choices=RESULT_FIELD_CHOICES,
-                    value="all",
-                    scale=2,
-                )
-                filter_results_button = gr.Button("Filter", scale=1)
-                clear_within_button = gr.Button("Clear", scale=1)
+                with gr.Accordion("Refine current Top K results", open=False):
+                    with gr.Row(equal_height=True):
+                        within_results_query = gr.Textbox(
+                            label="Search within results",
+                            placeholder="Filter the current Top K results",
+                            scale=5,
+                        )
+                        within_results_field = gr.Dropdown(
+                            label="Field",
+                            choices=RESULT_FIELD_CHOICES,
+                            value="all",
+                            scale=2,
+                        )
+                        filter_results_button = gr.Button("Filter", scale=1)
+                        clear_within_button = gr.Button("Clear", scale=1)
 
-            refine_status = gr.Markdown("Refine current Top K results | 0 results")
-            with gr.Row():
-                refine_collections = gr.Dropdown(
-                    label="Result collections",
-                    choices=[],
-                    multiselect=True,
-                )
-                refine_videos = gr.Dropdown(
-                    label="Result video IDs",
-                    choices=[],
-                    multiselect=True,
-                    filterable=True,
-                )
-                refine_authors = gr.Dropdown(
-                    label="Result authors",
-                    choices=[],
-                    multiselect=True,
-                    filterable=True,
-                )
-            with gr.Row():
-                minimum_result_score = gr.Slider(
-                    label="Minimum similarity score",
-                    minimum=-1.0,
-                    maximum=1.0,
-                    step=0.01,
-                    value=-1.0,
-                    scale=4,
-                )
-                clear_refinements_button = gr.Button("Clear all refinements", scale=1)
+                    refine_status = gr.Markdown("Refine current Top K results | 0 results")
+                    with gr.Row():
+                        refine_collections = gr.Dropdown(
+                            label="Result collections",
+                            choices=[],
+                            multiselect=True,
+                        )
+                        refine_videos = gr.Dropdown(
+                            label="Result video IDs",
+                            choices=[],
+                            multiselect=True,
+                            filterable=True,
+                        )
+                        refine_authors = gr.Dropdown(
+                            label="Result authors",
+                            choices=[],
+                            multiselect=True,
+                            filterable=True,
+                        )
+                    with gr.Row():
+                        minimum_result_score = gr.Slider(
+                            label="Minimum similarity score",
+                            minimum=-1.0,
+                            maximum=1.0,
+                            step=0.01,
+                            value=-1.0,
+                            scale=4,
+                        )
+                        clear_refinements_button = gr.Button("Clear all refinements", scale=1)
 
-        gallery = gr.Gallery(
-            label="Keyframes",
-            show_label=True,
-            columns=5,
-            rows=2,
-            height="auto",
-            object_fit="contain",
-            allow_preview=False,
-            preview=False,
-            elem_id="keyframe-gallery",
-        )
-        with gr.Row():
-            previous_button = gr.Button("Previous", interactive=False)
-            page_label = gr.Textbox(
-                value="Page 1 / 1 | 0 results",
-                show_label=False,
-                interactive=False,
-            )
-            next_button = gr.Button("Next", interactive=False)
+                gallery = gr.Gallery(
+                    label="Keyframes",
+                    show_label=True,
+                    columns=5,
+                    rows=2,
+                    height="auto",
+                    object_fit="contain",
+                    allow_preview=False,
+                    preview=False,
+                    elem_id="keyframe-gallery",
+                )
+                with gr.Row():
+                    previous_button = gr.Button("Previous", interactive=False)
+                    page_label = gr.Textbox(
+                        value="Page 1 / 1 | 0 results",
+                        show_label=False,
+                        interactive=False,
+                    )
+                    next_button = gr.Button("Next", interactive=False)
 
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=3):
-                detail_image = gr.Image(
-                    label="Selected keyframe",
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=3):
+                        detail_image = gr.Image(
+                            label="Selected keyframe",
+                            interactive=False,
+                            height=420,
+                            elem_id="selected-keyframe",
+                        )
+                    with gr.Column(scale=2):
+                        detail_metadata = gr.Markdown("Select a keyframe to view metadata")
+                detections = gr.Dataframe(
+                    headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
+                    datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
+                    label="Detected objects",
                     interactive=False,
-                    height=420,
-                    elem_id="selected-keyframe",
                 )
-            with gr.Column(scale=2):
-                detail_metadata = gr.Markdown("Select a keyframe to view metadata")
-        detections = gr.Dataframe(
-            headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
-            datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
-            label="Detected objects",
-            interactive=False,
-        )
 
-        with gr.Column(visible=False):
-            legacy_query_language = gr.Dropdown(
-                label="Language",
-                choices=[("Auto", "auto"), ("English", "english"), ("Vietnamese", "vietnamese")],
-                value="auto",
-            )
-            legacy_search_button = gr.Button("Legacy Search API")
-            api_keyframe_id = gr.Textbox()
-            api_details = gr.JSON()
-            api_details_button = gr.Button("Metadata API")
+                with gr.Column(visible=False):
+                    legacy_query_language = gr.Dropdown(
+                        label="Language",
+                        choices=[("Auto", "auto"), ("English", "english"), ("Vietnamese", "vietnamese")],
+                        value="auto",
+                    )
+                    legacy_search_button = gr.Button("Legacy Search API")
+                    api_keyframe_id = gr.Textbox()
+                    api_details = gr.JSON()
+                    api_details_button = gr.Button("Metadata API")
 
-        legacy_search_outputs = [
-            gallery,
-            original_results_state,
-            page_state,
-            status,
-            page_label,
-            previous_button,
-            next_button,
-            detail_image,
-            detail_metadata,
-            detections,
-        ]
-        legacy_search_inputs = [
-            query,
-            top_k,
-            legacy_query_language,
-            collections,
-            video_id,
-            object_entities,
-            object_match_mode,
-            minimum_object_confidence,
-            author,
-            publish_date_from,
-            publish_date_to,
-        ]
+                legacy_search_outputs = [
+                    gallery,
+                    original_results_state,
+                    page_state,
+                    status,
+                    page_label,
+                    previous_button,
+                    next_button,
+                    detail_image,
+                    detail_metadata,
+                    detections,
+                ]
+                legacy_search_inputs = [
+                    query,
+                    top_k,
+                    legacy_query_language,
+                    collections,
+                    video_id,
+                    object_entities,
+                    object_match_mode,
+                    minimum_object_confidence,
+                    author,
+                    publish_date_from,
+                    publish_date_to,
+                ]
 
-        search_inputs_v2 = [
-            query,
-            top_k,
-            translate_vietnamese,
-            collections,
-            video_id,
-            object_entities,
-            object_match_mode,
-            minimum_object_confidence,
-            author,
-            publish_date_from,
-            publish_date_to,
-        ]
-        search_outputs_v2 = [
-            gallery,
-            original_results_state,
-            visible_results_state,
-            page_rows_state,
-            page_state,
-            status,
-            page_label,
-            previous_button,
-            next_button,
-            detail_image,
-            detail_metadata,
-            detections,
-            refine_collections,
-            refine_videos,
-            refine_authors,
-            minimum_result_score,
-            within_results_query,
-            within_results_field,
-            refine_status,
-        ]
-        search_button.click(
-            fn=search_keyframes_gpu_v2,
-            inputs=search_inputs_v2,
-            outputs=search_outputs_v2,
-            api_name="search_keyframes_v2",
-        )
-        query.submit(
-            fn=search_keyframes_gpu_v2,
-            inputs=search_inputs_v2,
-            outputs=search_outputs_v2,
-            api_name=False,
-        )
+                search_inputs_v2 = [
+                    query,
+                    top_k,
+                    translate_vietnamese,
+                    collections,
+                    video_id,
+                    object_entities,
+                    object_match_mode,
+                    minimum_object_confidence,
+                    author,
+                    publish_date_from,
+                    publish_date_to,
+                ]
+                search_outputs_v2 = [
+                    gallery,
+                    original_results_state,
+                    visible_results_state,
+                    page_rows_state,
+                    page_state,
+                    status,
+                    page_label,
+                    previous_button,
+                    next_button,
+                    detail_image,
+                    detail_metadata,
+                    detections,
+                    refine_collections,
+                    refine_videos,
+                    refine_authors,
+                    minimum_result_score,
+                    within_results_query,
+                    within_results_field,
+                    refine_status,
+                ]
+                search_button.click(
+                    fn=search_keyframes_gpu_v2,
+                    inputs=search_inputs_v2,
+                    outputs=search_outputs_v2,
+                    api_name="search_keyframes_v2",
+                )
+                query.submit(
+                    fn=search_keyframes_gpu_v2,
+                    inputs=search_inputs_v2,
+                    outputs=search_outputs_v2,
+                    api_name=False,
+                )
 
-        legacy_search_button.click(
-            fn=search_keyframes_gpu,
-            inputs=legacy_search_inputs,
-            outputs=legacy_search_outputs,
-            api_name="search_keyframes",
-        )
+                legacy_search_button.click(
+                    fn=search_keyframes_gpu,
+                    inputs=legacy_search_inputs,
+                    outputs=legacy_search_outputs,
+                    api_name="search_keyframes",
+                )
 
-        refine_inputs = [
-            original_results_state,
-            visible_results_state,
-            within_results_query,
-            within_results_field,
-            refine_collections,
-            refine_videos,
-            refine_authors,
-            minimum_result_score,
-        ]
-        refine_outputs = [
-            gallery,
-            visible_results_state,
-            page_rows_state,
-            page_state,
-            page_label,
-            previous_button,
-            next_button,
-            detail_image,
-            detail_metadata,
-            detections,
-            refine_status,
-        ]
-        filter_results_button.click(
-            controller.refine_results,
-            inputs=refine_inputs,
-            outputs=refine_outputs,
-            queue=False,
-            api_name=False,
-        )
-        within_results_query.submit(
-            controller.refine_results,
-            inputs=refine_inputs,
-            outputs=refine_outputs,
-            queue=False,
-            api_name=False,
-        )
-        for component in (
-            within_results_field,
-            refine_collections,
-            refine_videos,
-            refine_authors,
-        ):
-            component.input(
-                controller.refine_results,
-                inputs=refine_inputs,
-                outputs=refine_outputs,
-                queue=False,
-                api_name=False,
-            )
-        minimum_result_score.release(
-            controller.refine_results,
-            inputs=refine_inputs,
-            outputs=refine_outputs,
-            queue=False,
-            api_name=False,
-        )
+                refine_inputs = [
+                    original_results_state,
+                    visible_results_state,
+                    within_results_query,
+                    within_results_field,
+                    refine_collections,
+                    refine_videos,
+                    refine_authors,
+                    minimum_result_score,
+                ]
+                refine_outputs = [
+                    gallery,
+                    visible_results_state,
+                    page_rows_state,
+                    page_state,
+                    page_label,
+                    previous_button,
+                    next_button,
+                    detail_image,
+                    detail_metadata,
+                    detections,
+                    refine_status,
+                ]
+                filter_results_button.click(
+                    controller.refine_results,
+                    inputs=refine_inputs,
+                    outputs=refine_outputs,
+                    queue=False,
+                    api_name=False,
+                )
+                within_results_query.submit(
+                    controller.refine_results,
+                    inputs=refine_inputs,
+                    outputs=refine_outputs,
+                    queue=False,
+                    api_name=False,
+                )
+                for component in (
+                    within_results_field,
+                    refine_collections,
+                    refine_videos,
+                    refine_authors,
+                ):
+                    component.input(
+                        controller.refine_results,
+                        inputs=refine_inputs,
+                        outputs=refine_outputs,
+                        queue=False,
+                        api_name=False,
+                    )
+                minimum_result_score.release(
+                    controller.refine_results,
+                    inputs=refine_inputs,
+                    outputs=refine_outputs,
+                    queue=False,
+                    api_name=False,
+                )
 
-        clear_within_button.click(
-            controller.clear_within_results,
-            inputs=[
-                original_results_state,
-                visible_results_state,
-                within_results_field,
-                refine_collections,
-                refine_videos,
-                refine_authors,
-                minimum_result_score,
-            ],
-            outputs=[within_results_query, *refine_outputs],
-            queue=False,
-            api_name=False,
-        )
-        clear_refinements_button.click(
-            controller.clear_all_refinements,
-            inputs=[original_results_state],
-            outputs=[
-                *refine_outputs,
-                within_results_query,
-                within_results_field,
-                refine_collections,
-                refine_videos,
-                refine_authors,
-                minimum_result_score,
-            ],
-            queue=False,
-            api_name=False,
-        )
+                clear_within_button.click(
+                    controller.clear_within_results,
+                    inputs=[
+                        original_results_state,
+                        visible_results_state,
+                        within_results_field,
+                        refine_collections,
+                        refine_videos,
+                        refine_authors,
+                        minimum_result_score,
+                    ],
+                    outputs=[within_results_query, *refine_outputs],
+                    queue=False,
+                    api_name=False,
+                )
+                clear_refinements_button.click(
+                    controller.clear_all_refinements,
+                    inputs=[original_results_state],
+                    outputs=[
+                        *refine_outputs,
+                        within_results_query,
+                        within_results_field,
+                        refine_collections,
+                        refine_videos,
+                        refine_authors,
+                        minimum_result_score,
+                    ],
+                    queue=False,
+                    api_name=False,
+                )
 
-        page_outputs = [
-            gallery,
-            page_rows_state,
-            page_state,
-            page_label,
-            previous_button,
-            next_button,
-            detail_image,
-            detail_metadata,
-            detections,
-        ]
-        previous_button.click(
-            controller.previous_page,
-            inputs=[visible_results_state, original_results_state, page_state],
-            outputs=page_outputs,
-            queue=False,
-            api_name=False,
-        )
-        next_button.click(
-            controller.next_page,
-            inputs=[visible_results_state, original_results_state, page_state],
-            outputs=page_outputs,
-            queue=False,
-            api_name=False,
-        )
-        gallery.select(
-            controller.select_keyframe,
-            inputs=[page_rows_state],
-            outputs=[detail_image, detail_metadata, detections],
-            api_name=False,
-        )
-        api_details_button.click(
-            controller.details_api,
-            inputs=[api_keyframe_id],
-            outputs=[api_details],
-            api_name="get_keyframe_details",
-        )
+                page_outputs = [
+                    gallery,
+                    page_rows_state,
+                    page_state,
+                    page_label,
+                    previous_button,
+                    next_button,
+                    detail_image,
+                    detail_metadata,
+                    detections,
+                ]
+                previous_button.click(
+                    controller.previous_page,
+                    inputs=[visible_results_state, original_results_state, page_state],
+                    outputs=page_outputs,
+                    queue=False,
+                    api_name=False,
+                )
+                next_button.click(
+                    controller.next_page,
+                    inputs=[visible_results_state, original_results_state, page_state],
+                    outputs=page_outputs,
+                    queue=False,
+                    api_name=False,
+                )
+                gallery.select(
+                    controller.select_keyframe,
+                    inputs=[page_rows_state],
+                    outputs=[detail_image, detail_metadata, detections],
+                    api_name=False,
+                )
+                api_details_button.click(
+                    controller.details_api,
+                    inputs=[api_keyframe_id],
+                    outputs=[api_details],
+                    api_name="get_keyframe_details",
+                )
+
+            if trake_searcher is not None:
+                with gr.Tab("TRAKE"):
+                    build_trake_tab(trake_searcher)
 
     return webui
 
@@ -1076,15 +1089,32 @@ def create_search_mechanism(runtime: RuntimePaths) -> SearchMechanism:
     )
 
 
+def create_trake_searcher(runtime: RuntimePaths, search_mechanism: SearchMechanism) -> TrakeSearcher:
+    """Reuse the already loaded CLIP and translator instances."""
+    return TrakeSearcher(
+        clip_searcher=search_mechanism.clip_searcher,
+        translator=search_mechanism.translator,
+        sqlite_file=runtime.sqlite_file,
+        embeddings_file=runtime.embeddings_file,
+        data_root=runtime.data_root,
+    )
+
+
 def create_app() -> gr.Blocks:
     global _keyframes_root
 
     runtime = prepare_runtime()
     _keyframes_root = _keyframe_directory(runtime.data_root)
     search_mechanism = create_search_mechanism(runtime)
+    try:
+        trake_searcher = create_trake_searcher(runtime, search_mechanism)
+    except Exception:
+        logger.warning("Failed to initialize TRAKE searcher; TRAKE tab disabled", exc_info=True)
+        trake_searcher = None
     return build_app(
         search_mechanism,
         page_size=int(runtime.environment["RESULTS_PER_PAGE"]),
+        trake_searcher=trake_searcher,
     )
 
 demo = create_app()
