@@ -2,11 +2,12 @@
 """Build TRAKE ground truth from consecutive keyframes in the same video."""
 
 import json
+import random
 import sqlite3
 from pathlib import Path
 from typing import TypedDict
+
 import numpy as np
-import random
 
 # Fixed seed for reproducibility
 random.seed(42)
