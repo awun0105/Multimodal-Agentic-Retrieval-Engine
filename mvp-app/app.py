@@ -1096,7 +1096,7 @@ def build_app(
                 )
                 clear_refinements_button.click(
                     controller.clear_all_refinements,
-                    inputs=[original_results_state, pinned_frames_state],
+                    inputs=[original_results_state],
                     outputs=[
                         *refine_outputs,
                         within_results_query,
