@@ -126,20 +126,21 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
     from trake_submission import format_submission
     
     submission_rows = []
-    pinned_videos = set(pinned.keys())
     
-    # 1. Promote pinned videos to the top
+    # 1. Promote pinned frames to the top
     for vid_id, frame_idx in pinned.items():
         submission_rows.append((vid_id, (frame_idx,)))
         
-    # 2. Append remaining AI predictions, skipping ONLY the first occurrence of pinned videos
-    skipped_first = set()
+    # 2. Append remaining AI predictions
     for r in rows:
         video_id = r["video_id"]
-        if video_id in pinned_videos and video_id not in skipped_first:
-            skipped_first.add(video_id)
-        else:
-            submission_rows.append((video_id, (r["frame_idx"],)))
+        frame_idx = r["frame_idx"]
+        
+        # If this EXACT frame was pinned, skip it (we already put it at the top)
+        if pinned.get(video_id) == frame_idx:
+            continue
+            
+        submission_rows.append((video_id, (frame_idx,)))
             
     # Ensure we don't exceed the original result count if capped
     submission_rows = submission_rows[:max(100, len(rows))]
