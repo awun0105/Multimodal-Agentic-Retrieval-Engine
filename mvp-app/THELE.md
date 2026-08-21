@@ -2,7 +2,6 @@
 
 Nguồn: `https://sotuyenaic.oj.io.vn/`  
 Tiêu đề trang: **AIC26 — Trang chủ**  
-Ghi chú: Đồng hồ đếm ngược trên trang là nội dung động; trong bản Markdown này chỉ giữ thông tin vòng gần nhất và thời gian đóng nếu có trong HTML.
 
 ---
 
@@ -302,6 +301,342 @@ Mỗi gói truy vấn, các đội được phép nộp kết quả tối đa **
 > - Khi nộp sai định dạng vẫn tính là 01 lần nộp
 > - Đội cần lưu ý chọn lựa kết quả nào để nộp lần cuối cùng
 > - Khuyến nghị kiểm tra kỹ format CSV trước khi nộp để tránh lỗi parse
+
+---
+
+
+## Bổ sung từ tài liệu “Thông tin vòng Sơ tuyển AIC2026”
+
+Tài liệu bổ sung mô tả chi tiết hơn về **nội dung truy vấn**, **cách tính điểm** và **dữ liệu vòng sơ tuyển — đợt 1**.
+
+---
+
+# Thông tin vòng Sơ tuyển AIC2026
+
+## 1. Nội dung các truy vấn vòng sơ tuyển
+
+### 1.1. Textual Known Item Search — Textual KIS
+
+Đây là nhiệm vụ **tìm kiếm sự kiện dựa trên mô tả bằng văn bản**.
+
+**Nội dung truy vấn**:
+
+- Ban giám khảo cung cấp một mô tả bằng ngôn ngữ tự nhiên về một sự kiện.
+- Đội dự thi cần định vị chính xác đoạn video chứa sự kiện.
+- Kết quả được xác định bằng cách chỉ ra **một khung hình bất kỳ thuộc đoạn video đó**.
+- Ở vòng sơ tuyển, nội dung đoạn mô tả được cung cấp sẵn và trọn vẹn.
+
+**Ví dụ**:
+
+> Truy vấn: “Tìm video về một diễn giả mặc áo đỏ phát biểu tại một cuộc họp báo ngoài trời, phía sau có nhiều cây xanh.”  
+> Kết quả nộp: `video_id = video_abc(.mp4)`, `frame_id = 1500`.
+
+### 1.2. Q&A — Visual Question Answering
+
+Đây là nhiệm vụ **tìm kiếm sự kiện và trích xuất thông tin cụ thể từ video**.
+
+**Nội dung truy vấn**:
+
+- Ban giám khảo cung cấp một mô tả bằng ngôn ngữ tự nhiên của một sự kiện.
+- Kèm theo đó là một câu hỏi về thông tin trong sự kiện này.
+- Đội dự thi cần tìm đúng khoảnh khắc liên quan và trả lời câu hỏi.
+- Câu trả lời có thể bằng tiếng Việt hoặc tiếng Anh.
+
+**Ví dụ**:
+
+> Truy vấn: “Trong video về lễ trao giải thưởng âm nhạc, có bao nhiêu người lên sân khấu để nhận giải thưởng lớn nhất?”  
+> Kết quả nộp: `video_id = video_xyz(.mp4)`, `frame_id = 3450`, `answer = "5"` hoặc `"Năm"`.
+
+### 1.3. TRAKE — Temporal Retrieval and Alignment of Key Events
+
+Đây là nhiệm vụ phức hợp, đòi hỏi độ chính xác cao trong cả **truy xuất video** và **căn chỉnh thời gian của các khoảnh khắc quan trọng**.
+
+TRAKE đánh giá khả năng của hệ thống trong việc hiểu nội dung video một cách toàn diện: từ bối cảnh chung cho đến từng khoảnh khắc chi tiết. Hệ thống không chỉ cần tìm đúng video, mà còn phải xác định chính xác các **semantic keyframe** của một chuỗi sự kiện có cấu trúc bên trong video đó.
+
+Nhiệm vụ TRAKE gồm 2 giai đoạn:
+
+1. **Retrieval — Truy xuất**: từ thư viện video lớn, tìm ra **một video duy nhất** chứa chuỗi sự kiện khớp nhất với truy vấn.
+2. **Alignment — Căn chỉnh**: trong video đã truy xuất, xác định chính xác **một khung hình ngữ nghĩa duy nhất** cho mỗi giai đoạn của chuỗi sự kiện.
+
+**Lưu ý về semantic keyframe**:
+
+> “Khung hình ngữ nghĩa” là khoảnh khắc mang ý nghĩa về nội dung, khác với “I-Frame” là khung hình kỹ thuật trong các thuật toán nén video đã được cung cấp cho các đội thi.
+
+**Ví dụ hành động “Nhảy cao”** — chuỗi sự kiện gồm 4 khoảnh khắc:
+
+1. **Event 1 — Chạy đà (Approach)**: khoảnh khắc bàn chân đầu tiên chạm đất và bước qua khỏi vạch xuất phát.
+2. **Event 2 — Giậm nhảy (Take-off)**: khoảnh khắc đầu tiên bàn chân của chân giậm nhảy rời hoàn toàn khỏi mặt đất.
+3. **Event 3 — Bay qua xà (Clearance)**: khoảnh khắc phần hông của vận động viên ở vị trí cao nhất so với xà ngang.
+4. **Event 4 — Tiếp đất (Landing)**: khoảnh khắc đầu tiên bất kỳ bộ phận nào của lưng, từ vai đến hông, bắt đầu chạm vào đệm.
+
+---
+
+## 2. Phương pháp đánh giá vòng sơ tuyển
+
+Đối với mỗi truy vấn, đội thi được gửi tối đa **100 câu trả lời**. Mỗi câu trả lời được chấm một điểm gọi là **Điểm Tương Quan (R-Score)**.
+
+**R-Score** là thang đo độ chính xác từ `0` đến `1`:
+
+- `1`: hoàn toàn chính xác.
+- `0`: không chính xác.
+- Giá trị trung gian, ví dụ `0.7`: chính xác một phần.
+
+Điểm cuối cùng cho mỗi truy vấn không chỉ dựa trên một câu trả lời duy nhất, mà là trung bình của những câu trả lời tốt nhất ở nhiều vị trí xếp hạng khác nhau.
+
+### 2.1. R-Score theo từng loại truy vấn
+
+#### 2.1.1. R-Score cho Textual KIS
+
+**Định dạng trả lời**:
+
+```csv
+<video_id>,<frame_id>
+```
+
+Câu trả lời được xem là chính xác nếu:
+
+1. `video_id` nộp khớp với video đúng của BTC.
+2. `frame_id` nằm trong khoảng frame đáp án đúng `[s, e]`.
+
+Công thức:
+
+```text
+R-Score(r_i) = I(v_i = GT_v AND id_i ∈ [s, e])
+```
+
+Trong đó `I(...)` là hàm chỉ thị:
+
+- Trả về `1` nếu điều kiện đúng.
+- Trả về `0` nếu điều kiện sai.
+
+**Ví dụ**:
+
+Đáp án đúng của BTC: video `L01_V001`, khung hình từ `500` đến `510`.
+
+| Câu trả lời | Kết quả | R-Score |
+|---|---|---:|
+| `L01_V001,505` | Đúng video, frame nằm trong `[500,510]` | `1` |
+| `L01_V001,600` | Đúng video nhưng sai khoảng frame | `0` |
+| `L02_V003,505` | Sai video | `0` |
+
+#### 2.1.2. R-Score cho Q&A
+
+**Định dạng trả lời**:
+
+```csv
+<video_id>,<frame_id>,<answer>
+```
+
+Câu trả lời được xem là chính xác nếu:
+
+1. `video_id` nộp khớp với video đúng của BTC.
+2. `frame_id` nằm trong khoảng frame đáp án đúng `[s, e]`.
+3. `answer` khớp với đáp án về mặt ngữ nghĩa.
+
+Công thức:
+
+```text
+R-Score(r_i) = I(v_i = GT_v AND id_i ∈ [s, e] AND a_i = GT_a)
+```
+
+**Ví dụ**:
+
+Đáp án đúng của BTC: video `L05_V005`, khung hình `800` đến `900`, answer là `màu xanh`.
+
+| Câu trả lời | Kết quả | R-Score |
+|---|---|---:|
+| `L05_V005,888,màu xanh` | Đúng video, đúng frame, đúng answer | `1` |
+| `L05_V005,888,màu trắng` | Sai answer | `0` |
+| `L06_V007,888,màu xanh` | Sai video | `0` |
+
+#### 2.1.3. R-Score cho TRAKE
+
+**Định dạng trả lời**:
+
+```csv
+<video_id>,<frame_id_1>,...,<frame_id_N>
+```
+
+Điều kiện tiên quyết:
+
+- Nếu `video_id` nộp **không khớp** với video đáp án của BTC, câu trả lời nhận `0` điểm ngay lập tức.
+- Nếu đúng video, điểm được tính bằng **tỉ lệ khung hình khớp với đáp án**.
+
+Với `N` là tổng số khoảnh khắc trong truy vấn, công thức:
+
+```text
+Nếu v_i = GT_v:
+R-Score(r_i) = (1 / N) * Σ[j=1..N] I(id_i,j ∈ [s_j, e_j])
+
+Nếu v_i ≠ GT_v:
+R-Score(r_i) = 0
+```
+
+Với mỗi khoảnh khắc thứ `j`, đáp án quy định một đoạn khung hình `[s_j, e_j]` tương ứng với khoảnh khắc ngữ nghĩa đó. Đoạn này thường rất ngắn, thông thường **dưới 10 frame**. Một frame nộp `id_i,j` được coi là khớp nếu nằm trong đoạn `[s_j, e_j]`.
+
+**Ví dụ TRAKE 4 khoảnh khắc**:
+
+Đáp án đúng của BTC: video `L10_V010`, với các đoạn frame:
+
+| Khoảnh khắc | Đoạn đáp án |
+|---|---|
+| 1 — Giậm nhảy | `[95,105]` |
+| 2 — Bay qua xà | `[145,155]` |
+| 3 — Tiếp đất | `[195,205]` |
+| 4 — Đứng dậy | `[245,255]` |
+
+Câu trả lời của đội thi:
+
+```csv
+L10_V010,101,156,203,251
+```
+
+Đánh giá:
+
+| Thành phần | Kết quả |
+|---|---|
+| Video | Đúng `L10_V010` |
+| Khoảnh khắc 1 | `101 ∈ [95,105]` → Đúng |
+| Khoảnh khắc 2 | `156 ∉ [145,155]` → Sai |
+| Khoảnh khắc 3 | `203 ∈ [195,205]` → Đúng |
+| Khoảnh khắc 4 | `251 ∈ [245,255]` → Đúng |
+
+Kết quả: khớp `3/4` khoảnh khắc, nên:
+
+```text
+R-Score = 3/4 = 0.75
+```
+
+### 2.2. Final Score cho mỗi truy vấn
+
+Điểm cuối cùng của mỗi truy vấn được tính dựa trên các câu trả lời tốt nhất ở các mốc xếp hạng khác nhau.
+
+Với mỗi ngưỡng:
+
+```text
+k ∈ {1, 5, 20, 50, 100}
+```
+
+Hệ thống xác định **Top-k R-Score**, ký hiệu `R@k`, là điểm R-Score cao nhất trong `k` câu trả lời đầu tiên.
+
+Công thức:
+
+```text
+R@k = max_{1 ≤ i ≤ k} R-Score(r_i)
+```
+
+Final Score là trung bình cộng của 5 giá trị `R@k`:
+
+```text
+Final Score = (R@1 + R@5 + R@20 + R@50 + R@100) / 5
+```
+
+hoặc:
+
+```text
+Final Score = (1/5) * Σ_{k ∈ {1,5,20,50,100}} R@k
+```
+
+**Ví dụ**:
+
+Đội thi nộp 100 câu trả lời cho một truy vấn:
+
+- Câu trả lời đầu tiên có `R-Score = 0.5`.
+- Câu trả lời ở vị trí số 3 có `R-Score = 0.8`, là câu cao nhất trong 100 câu.
+- Câu trả lời ở vị trí số 15 có `R-Score = 0.6`.
+- Các câu còn lại thấp hơn.
+
+Khi đó:
+
+| Mốc | Giá trị |
+|---|---:|
+| `R@1` | `0.5` |
+| `R@5` | `0.8` |
+| `R@20` | `0.8` |
+| `R@50` | `0.8` |
+| `R@100` | `0.8` |
+
+Final Score:
+
+```text
+Final Score = (0.5 + 0.8 + 0.8 + 0.8 + 0.8) / 5 = 0.74
+```
+
+Cách tính này khuyến khích đội thi không chỉ tìm ra câu trả lời đúng, mà còn phải **xếp nó ở những vị trí đầu tiên trong danh sách trả lời**.
+
+### Ý nghĩa chiến thuật của cách tính điểm
+
+Vì Final Score lấy trung bình ở các mốc `1`, `5`, `20`, `50`, `100`, thứ tự dòng trong file CSV rất quan trọng:
+
+- Dòng 1 ảnh hưởng trực tiếp tới `R@1`.
+- Top 5 ảnh hưởng tới `R@5`.
+- Top 20 ảnh hưởng tới `R@20`.
+- Top 50 ảnh hưởng tới `R@50`.
+- Top 100 ảnh hưởng tới `R@100`.
+
+Do đó không nên xuất kết quả ngẫu nhiên. Nên sắp xếp các dòng theo độ tin cậy giảm dần:
+
+```text
+rank 1    = kết quả tự tin nhất
+rank 2-5  = nhóm rất mạnh
+rank 6-20 = nhóm mở rộng có khả năng đúng
+rank 21-50 = nhóm dự phòng
+rank 51-100 = nhóm coverage rộng
+```
+
+---
+
+## 3. Thông tin dữ liệu vòng sơ tuyển — Đợt 1
+
+Dữ liệu cung cấp cho các đội thi để làm quen với bài toán là một phần dữ liệu từ cuộc thi AIC 2026, gồm các thành phần sau:
+
+### 3.1. Videos
+
+Chứa video được cung cấp.
+
+### 3.2. Keyframes
+
+Chứa tất cả keyframe được trích xuất từ video.
+
+- Keyframe được lưu trong thư mục tương ứng với tên file video.
+- Ví dụ: keyframe của video `L01_V001.mp4` được lưu trong thư mục `L01_V001`.
+- Tên file keyframe được đặt theo thứ tự tăng dần.
+- Vị trí `frame index` tương ứng của mỗi keyframe được ghi trong file metadata.
+
+### 3.3. Objects
+
+Chứa file JSON liệt kê tất cả vật thể được phát hiện từ mô hình **Faster R-CNN pretrained trên OpenImages V4**.
+
+- Tên file JSON tương ứng với tên file keyframe.
+- Ví dụ: keyframe `L01_V001/0000.jpg` sẽ có file JSON object là `L01_V001/0000.json`.
+
+### 3.4. CLIP features
+
+Chứa CLIP features được trích xuất từ mô hình **clip-ViT-B-32** của tất cả keyframe.
+
+- Toàn bộ CLIP features của keyframe được lưu trong một file `.npy` duy nhất.
+- Thứ tự vector feature tăng dần tương ứng với chỉ số của keyframe.
+
+### 3.5. Metadata
+
+Metadata là thông tin metadata của video lấy từ YouTube của kênh cung cấp dữ liệu.
+
+- Metadata của mỗi video là một file JSON có tên tương ứng với tên file video.
+- Ví dụ: video `L01_V001.mp4` có file metadata `L01_V001.json`.
+- Một số video trong dữ liệu cung cấp có thể không có file metadata tương ứng.
+
+### 3.6. Link download dữ liệu
+
+```text
+https://docs.google.com/spreadsheets/d/1rfn1fieTThS_Ki3SIoJ6uXOx2AhMq7wGCak6W4jZyZM/edit?usp=sharing
+```
+
+### 3.7. Lưu ý về dữ liệu
+
+- **Dữ liệu thi chính thức là Video**.
+- Các thành phần còn lại gồm **Keyframes, Objects, CLIP features, Metadata** chỉ nhằm mục đích cung cấp thêm thông tin hoặc hỗ trợ xây dựng giải pháp mẫu cho thí sinh.
+- Đây cũng là dữ liệu **batch 1 của AIC 2025**.
+- Dữ liệu đầy đủ của vòng sơ tuyển AIC 2026 sẽ bao gồm thêm **batch 2**, dự kiến được thông báo cho các đội thi trong thời gian tới.
 
 ---
 
