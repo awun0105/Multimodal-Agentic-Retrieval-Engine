@@ -1,4 +1,4 @@
-"""Adaptive multilingual CLIP text and compatible CLIP image encoding."""
+﻿"""Adaptive multilingual CLIP text and compatible CLIP image encoding."""
 
 from __future__ import annotations
 
@@ -167,3 +167,5 @@ class CLIPSearcher:
 
     def get_image_features(self, image: Any) -> np.ndarray:
         return self.get_image_batch_features([image])
+
+
