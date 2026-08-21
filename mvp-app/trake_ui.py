@@ -316,11 +316,6 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     search_button = gr.Button("Search event chain", variant="primary")
     status = gr.Markdown("Ready")
 
-    with gr.Row():
-        prev_vid_btn = gr.Button("◄ Video trước", interactive=False)
-        vid_label = gr.Markdown("### Video 0 / 0", elem_classes="text-center")
-        next_vid_btn = gr.Button("Video sau ►", interactive=False)
-
     gallery = gr.Gallery(
         label="Event keyframes",
         show_label=True,
@@ -330,6 +325,14 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         allow_preview=False,
         preview=False,
     )
+    with gr.Row():
+        prev_btn_pg = gr.Button("Previous", interactive=False)
+        page_label = gr.Textbox(
+            value="Page 1 / 1 | 0 results",
+            show_label=False,
+            interactive=False,
+        )
+        next_btn_pg = gr.Button("Next", interactive=False)
     
     # --- PHASE 3: Alignment Video Player ---
     video_player_html = gr.HTML("")
