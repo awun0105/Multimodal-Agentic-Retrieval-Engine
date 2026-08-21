@@ -502,15 +502,40 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         api_name=False,
     )
     
-    def on_gallery_select(evt: gr.SelectData, outcome, idx: int):
+    def on_gallery_select(evt: gr.SelectData, outcome, page_idx: int):
+        from pathlib import Path
+        import html
         unchanged = (gr.update(),) * 8
         if not outcome or not outcome.videos:
             return unchanged
             
-        video = outcome.videos[idx]
-        if evt.index >= len(video.events):
+        total_videos = len(outcome.videos)
+        num_events = len(outcome.videos[0].events) if total_videos > 0 else 1
+        per_page = 1 if num_events >= 5 else 2 if num_events >= 3 else 4 if num_events == 2 else 10
+        
+        start_idx = page_idx * per_page
+        page_videos = outcome.videos[start_idx : start_idx + per_page]
+        
+        target_video = None
+        target_event = None
+        c = 0
+        for video in page_videos:
+            for event in video.events:
+                if not Path(event.image_path).is_file():
+                    continue
+                if c == evt.index:
+                    target_video = video
+                    target_event = event
+                    break
+                c += 1
+            if target_video:
+                break
+                
+        if not target_video or not target_event:
             return unchanged
-        event = video.events[evt.index]
+            
+        video = target_video
+        event = target_event
 
         video_path = get_video_path(video.video_id)
         if video_path:
