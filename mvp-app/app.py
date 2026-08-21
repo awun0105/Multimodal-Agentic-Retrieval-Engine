@@ -132,14 +132,16 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
     for vid_id, frame_idx in pinned.items():
         submission_rows.append((vid_id, (frame_idx,)))
         
-    # 2. Append remaining AI predictions
+    # 2. Append remaining AI predictions, skipping ONLY the first occurrence of pinned videos
+    skipped_first = set()
     for r in rows:
         video_id = r["video_id"]
-        if video_id not in pinned_videos:
+        if video_id in pinned_videos and video_id not in skipped_first:
+            skipped_first.add(video_id)
+        else:
             submission_rows.append((video_id, (r["frame_idx"],)))
             
     # Ensure we don't exceed the original result count if capped
-    # Usually we want 100 results total
     submission_rows = submission_rows[:max(100, len(rows))]
     
     return format_submission(submission_rows, delimiter=", ", include_header=False, frame_index_base=0)
