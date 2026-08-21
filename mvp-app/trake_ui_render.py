@@ -163,7 +163,6 @@ def build_submission_preview_markdown(
 
 
 def build_gallery_items_slice(videos: list, start_rank: int) -> list[tuple[str, str]]:
-    import html
     from pathlib import Path
     items: list[tuple[str, str]] = []
     for rank, video in enumerate(videos, start=start_rank):

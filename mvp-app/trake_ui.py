@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -29,7 +28,6 @@ except ImportError:
 
 import gradio as gr
 
-import trake
 from schemas import TrakeOutcome
 from trake import (
     MAX_EVENTS,
@@ -39,15 +37,12 @@ from trake import (
     format_submission,
 )
 from trake_submission import build_submission as build_submission_rows
-from trake_submission import parse_pin_key, pin_key, export_csv_file
-from video_locator import get_video_path
+from trake_submission import export_csv_file, parse_pin_key, pin_key
 from trake_ui_render import (
-    render_video_player,
-    build_gallery_items,
     build_status_markdown,
-    build_submission_preview_markdown,
-    build_video_blocks,
+    render_video_player,
 )
+from video_locator import get_video_path
 
 _trake_controller: TrakeController | None = None
 
@@ -85,7 +80,6 @@ class TrakeController:
         )
 
     def search_events(self, translate_vietnamese: bool, *event_texts: str):
-        import time
         events = [e for e in event_texts if e and e.strip()]
         started = time.perf_counter()
         outcome = self.trake_searcher.search(
@@ -99,8 +93,10 @@ class TrakeController:
 
 
     def _render_video_page(self, outcome, page_idx: int):
-        import gradio as gr
         import math
+
+        import gradio as gr
+
         from trake_ui_render import build_gallery_items_slice, build_video_blocks_slice
         if not outcome or not outcome.videos:
             return gr.update(value=[]), "No matching video sequences found.", "Page 1 / 1 | 0 results", gr.update(interactive=False), gr.update(interactive=False)
@@ -182,7 +178,7 @@ class TrakeController:
     ) -> Any:
         if not outcome:
             return gr.update(value="No search results to preview.")
-        rows, primary_count = self._build_rows(outcome, pinned_frames)
+        rows, _ = self._build_rows(outcome, pinned_frames)
         pinned_counts: dict[str, int] = {}
         for key in pinned_frames or {}:
             parsed = parse_pin_key(key)
@@ -351,7 +347,7 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     current_event_idx_box = gr.Number(visible=False, elem_id="trake-current-event-idx", value=0)
     # Keyframe's own frame_idx — the fallback answer when no video is available.
     current_kf_frame_box = gr.Number(visible=False, elem_id="trake-current-kf-frame", value=0)
-    sync_btn = gr.Button("Sync", visible=False, elem_id="trake-sync-btn")
+    # sync_btn removed
 
     with gr.Accordion("Log thông tin kết quả (Chi tiết)", open=False):
         results = gr.Markdown("")
@@ -503,8 +499,8 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     )
     
     def on_gallery_select(evt: gr.SelectData, outcome, page_idx: int):
-        from pathlib import Path
         import html
+        from pathlib import Path
         unchanged = (gr.update(),) * 8
         if not outcome or not outcome.videos:
             return unchanged
