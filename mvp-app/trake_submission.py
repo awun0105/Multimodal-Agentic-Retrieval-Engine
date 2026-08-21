@@ -22,7 +22,9 @@ def spread_frames(
 ) -> list[tuple[int, ...]]:
     seed = zlib.crc32(video_id.encode())
     rng = np.random.RandomState(seed)
-    result: list[tuple[int, ...]] = [tuple(frame_idx)]
+    # Hand-pinned frames arrive here unordered, so the submitted row needs the same
+    # clamp the jittered ones get — a decreasing or out-of-range row is invalid.
+    result: list[tuple[int, ...]] = [_clamp_increasing(list(frame_idx), max_frame_idx)]
     seen = {result[0]}
     # A short video clamps every jitter back onto the same frames, so cap the
     # attempts instead of looping until `rows` distinct sets exist.
@@ -57,30 +59,48 @@ def _clamp_increasing(frames: list[int], max_frame_idx: int) -> tuple[int, ...]:
     return tuple(forward)
 
 
+PIN_KEY_SEPARATOR = "|"
+
+
+def pin_key(video_id: str, event_index: int) -> str:
+    """Pinned frames travel through gr.State to the browser, so keys must survive
+    JSON — a (video_id, event_index) tuple raises TypeError there."""
+    return f"{video_id}{PIN_KEY_SEPARATOR}{int(event_index)}"
+
+
+def parse_pin_key(key: str) -> tuple[str, int] | None:
+    """None for anything that is not a key we wrote — a malformed entry in the
+    browser-held state must not take down the whole preview."""
+    video_id, separator, event_index = key.rpartition(PIN_KEY_SEPARATOR)
+    if not separator or not video_id:
+        return None
+    try:
+        return video_id, int(event_index)
+    except ValueError:
+        return None
+
+
 def build_submission(
     outcome: TrakeOutcome,
     max_rows: int,
     rows_per_video: int,
     radius: int,
-    pinned_frames: dict[tuple[str, int], int] | None = None,
+    pinned_frames: dict[str, int] | None = None,
 ) -> list[tuple[str, tuple[int, ...]]]:
     if pinned_frames is None:
         pinned_frames = {}
-    
+
     rows: list[tuple[str, tuple[int, ...]]] = []
     for video in outcome.videos:
         if len(rows) >= max_rows:
             break
-        
-        # Merge pinned frames with algorithmic frames
-        frames = []
-        for i, event in enumerate(video.events):
-            pinned = pinned_frames.get((video.video_id, i))
-            if pinned is not None:
-                frames.append(pinned)
-            else:
-                frames.append(event.frame_idx)
-        
+
+        # A hand-picked frame overrides whatever the search matched.
+        frames = [
+            pinned_frames.get(pin_key(video.video_id, i), event.frame_idx)
+            for i, event in enumerate(video.events)
+        ]
+
         # Fall back to the last matched frame only when the video length is unknown.
         max_frame_idx = video.max_frame_idx or max(frames)
         spread = spread_frames(
