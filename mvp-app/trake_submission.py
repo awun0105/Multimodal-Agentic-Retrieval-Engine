@@ -90,8 +90,16 @@ def build_submission(
     if pinned_frames is None:
         pinned_frames = {}
 
+    pinned_vids = {k.split(":")[0] for k in pinned_frames.keys()}
+    
+    # 1. Promote videos with pinned frames to the top
+    sorted_videos = sorted(
+        outcome.videos,
+        key=lambda v: 0 if v.video_id in pinned_vids else 1
+    )
+
     rows: list[tuple[str, tuple[int, ...]]] = []
-    for video in outcome.videos:
+    for video in sorted_videos:
         if len(rows) >= max_rows:
             break
 

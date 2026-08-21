@@ -124,11 +124,24 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
     if not rows:
         return "Chưa có kết quả để xem trước."
     from trake_submission import format_submission
+    
     submission_rows = []
+    pinned_videos = set(pinned.keys())
+    
+    # 1. Promote pinned videos to the top
+    for vid_id, frame_idx in pinned.items():
+        submission_rows.append((vid_id, (frame_idx,)))
+        
+    # 2. Append remaining AI predictions
     for r in rows:
         video_id = r["video_id"]
-        frame_idx = pinned.get(video_id, r["frame_idx"])
-        submission_rows.append((video_id, (frame_idx,)))
+        if video_id not in pinned_videos:
+            submission_rows.append((video_id, (r["frame_idx"],)))
+            
+    # Ensure we don't exceed the original result count if capped
+    # Usually we want 100 results total
+    submission_rows = submission_rows[:max(100, len(rows))]
+    
     return format_submission(submission_rows, delimiter=", ", include_header=False, frame_index_base=0)
 
 
