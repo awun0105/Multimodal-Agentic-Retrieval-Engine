@@ -131,9 +131,10 @@ import tempfile
 from pathlib import Path
 import time
 
-def export_csv_file(content: str, filename: str) -> tuple[str | None, str]:
+import gradio as gr
+def export_csv_file(content: str, filename: str):
     if not content.strip():
-        return None, "No data to export."
+        return gr.update(value=None, visible=False), "No data to export."
     
     # Use a secure temp directory
     out_dir = Path(tempfile.gettempdir()) / "aic26_submissions"
@@ -150,4 +151,4 @@ def export_csv_file(content: str, filename: str) -> tuple[str | None, str]:
     out_path = out_dir / safe_name
     out_path.write_text(content, encoding="utf-8")
     
-    return str(out_path), f"Đã lưu thành công {safe_name} tại {out_path}."
+    return gr.update(value=str(out_path), visible=True), f"Đã lưu thành công {safe_name} tại {out_path}."
