@@ -145,7 +145,7 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
     # Ensure we don't exceed the original result count if capped
     submission_rows = submission_rows[:max(100, len(rows))]
     
-    return format_submission(submission_rows, delimiter=", ", include_header=False, frame_index_base=0)
+    return format_submission(submission_rows, delimiter=",", include_header=False, frame_index_base=0)
 
 
 def _detail_markdown(details) -> str:
