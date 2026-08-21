@@ -890,7 +890,7 @@ def build_app(
                                 with gr.Row():
                                     prev_btn = gr.Button("Prev Frame", interactive=False)
                                     next_btn = gr.Button("Next Frame", interactive=False)
-                                    pin_btn = gr.Button("Chốt Frame (Pin)", interactive=False, variant="primary")
+                                    pin_btn = gr.Button("Chốt Frame (Đẩy lên Top)", interactive=False, variant="primary")
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
                                 pinned_frames_state = gr.State({})
 
