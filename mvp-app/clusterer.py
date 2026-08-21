@@ -1,4 +1,4 @@
-"""Read-only FAISS index used by the Space runtime."""
+﻿"""Read-only FAISS index used by the Space runtime."""
 
 from __future__ import annotations
 
@@ -45,3 +45,5 @@ class ImageIndexer:
             scores, ids = self.index.search(matrix, top_k)
         valid = ids[0] >= 0
         return scores[0][valid], ids[0][valid].astype(np.int64, copy=False)
+
+
