@@ -1,197 +1,167 @@
+"""OCR keyframes bang Vintern-1B-v3_5, ho tro gop lo va chia viec 2 GPU.
+
+CUDA_VISIBLE_DEVICES phai duoc dat TRUOC khi torch duoc import (torch khoi tao CUDA
+context ngay luc import), nen argparse chay o dau file, import torch (truc tiep hoac
+qua ocr_batch_runner) nam sau do.
+"""
+import argparse
 import os
 import sys
 import sqlite3
-import torch
-import torchvision.transforms as T
-from PIL import Image
-from torchvision.transforms.functional import InterpolationMode
-import numpy as np
 import time
 from pathlib import Path
-from tqdm import tqdm
-from transformers import AutoModel, AutoTokenizer
 
-# Standard ImageNet normalization parameters
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD = (0.229, 0.224, 0.225)
 
-def build_transform(input_size):
-    return T.Compose([
-        T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-        T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
-        T.ToTensor(),
-        T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
-    ])
-
-def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_size):
-    best_ratio_diff = float('inf')
-    best_ratio = (1, 1)
-    area = width * height
-    for ratio in target_ratios:
-        target_aspect_ratio = ratio[0] / ratio[1]
-        ratio_diff = abs(aspect_ratio - target_aspect_ratio)
-        if ratio_diff < best_ratio_diff:
-            best_ratio_diff = ratio_diff
-            best_ratio = ratio
-        elif ratio_diff == best_ratio_diff:
-            if area > 0.5 * image_size * image_size * ratio[0] * ratio[1]:
-                best_ratio = ratio
-    return best_ratio
-
-def dynamic_preprocess(image, min_num=1, max_num=6, image_size=448, use_thumbnail=False):
-    orig_width, orig_height = image.size
-    aspect_ratio = orig_width / orig_height
-    target_ratios = set(
-        (i, j) for n in range(min_num, max_num + 1)
-        for i in range(1, n + 1) for j in range(1, n + 1)
-        if i * j <= max_num and i * j >= min_num
+def parse_args():
+    parser = argparse.ArgumentParser(description="OCR keyframes bang Vintern-1B-v3_5")
+    parser.add_argument("--gpu-id", type=int, default=0, help="ID GPU tien trinh nay dung")
+    parser.add_argument("--num-gpus", type=int, default=1, help="Tong so GPU chia viec")
+    parser.add_argument(
+        "--batch-size", type=int, default=4,
+        # Uoc tinh an toan: Vintern-1B fp16 ~1.9GB + lo 4 anh x 3 tile con du bo nho tren T4 16GB.
+        # Chua chay kaggle_ocr_bench.ipynb (pha 01) nen chua co so do that - chot lai sau.
+        help="So anh moi lo goi batch_chat (mac dinh 4, xem comment code de biet nguon goc)",
     )
-    target_ratios = sorted(list(target_ratios), key=lambda x: x[0] * x[1])
-    target_aspect_ratio = find_closest_aspect_ratio(
-        aspect_ratio, target_ratios, orig_width, orig_height, image_size
-    )
-    target_width = image_size * target_aspect_ratio[0]
-    target_height = image_size * target_aspect_ratio[1]
-    blocks = target_aspect_ratio[0] * target_aspect_ratio[1]
-    
-    resized_img = image.resize((target_width, target_height))
-    processed_images = []
-    for i in range(blocks):
-        box = (
-            (i % target_aspect_ratio[0]) * image_size,
-            (i // target_aspect_ratio[0]) * image_size,
-            ((i % target_aspect_ratio[0]) + 1) * image_size,
-            ((i // target_aspect_ratio[0]) + 1) * image_size
+    parser.add_argument("--db-in", type=str, required=True, help="Duong dan runtime.sqlite doc keyframe")
+    parser.add_argument("--db-out", type=str, default=None, help="Duong dan file sqlite ghi ket qua OCR (mac dinh ocr_part{gpu-id}.sqlite)")
+    parser.add_argument("--data-root", type=str, required=True, help="Thu muc goc chua anh keyframe")
+    return parser.parse_args()
+
+
+ARGS = parse_args()
+os.environ["CUDA_VISIBLE_DEVICES"] = str(ARGS.gpu_id)
+
+import torch
+
+from ocr_batch_runner import load_model, chuan_bi_lo, chay_mot_lo
+
+
+def init_output_db(db_path):
+    """Tao ocr_texts / ocr_boxes / ocr_fts dung nguyen van schema mvp-app/db.py:53-70."""
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ocr_texts (
+                keyframe_id TEXT PRIMARY KEY,
+                video_id TEXT NOT NULL,
+                full_text TEXT NOT NULL,
+                FOREIGN KEY (keyframe_id) REFERENCES keyframes (keyframe_id)
+            );
+            """
         )
-        processed_images.append(resized_img.crop(box))
-    if use_thumbnail and len(processed_images) > 1:
-        thumbnail_img = image.resize((image_size, image_size))
-        processed_images.append(thumbnail_img)
-    return processed_images
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ocr_boxes (
+                box_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                keyframe_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                score REAL NOT NULL,
+                ymin REAL NOT NULL,
+                xmin REAL NOT NULL,
+                ymax REAL NOT NULL,
+                xmax REAL NOT NULL,
+                FOREIGN KEY (keyframe_id) REFERENCES keyframes (keyframe_id)
+            );
+            """
+        )
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ocr_fts'"
+        ).fetchone()
+        if not exists:
+            conn.execute(
+                "CREATE VIRTUAL TABLE ocr_fts USING fts5(keyframe_id UNINDEXED, full_text);"
+            )
+        conn.commit()
 
-def load_image(image_file, input_size=448, max_num=6):
-    image = Image.open(image_file).convert('RGB')
-    transform = build_transform(input_size=input_size)
-    images = dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
-    pixel_values = [transform(img) for img in images]
-    pixel_values = torch.stack(pixel_values)
-    return pixel_values
 
 def main():
-    # Setup paths
-    sqlite_file = Path("mvp-app/tmp/aiou-cache/aic25-b1-v1/runtime.sqlite")
-    data_root = Path("mvp-app/data/releases/aic25-b1-v1")
-    
-    if not sqlite_file.exists():
-        # Fallback to source release database if cache is missing
-        sqlite_file = Path("mvp-app/data/releases/aic25-b1-v1/metadata/runtime.sqlite")
-        
-    if not sqlite_file.exists():
-        print(f"Error: Database not found at {sqlite_file}")
-        sys.exit(1)
-        
-    # Check GPU availability
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Running OCR extraction on device: {device.upper()}")
-    
-    # Load model
-    print("Loading Vintern-1B-v3_5 model...")
-    try:
-        vintern_model = AutoModel.from_pretrained(
-            "5CD-AI/Vintern-1B-v3_5",
-            torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
-            low_cpu_mem_usage=True,
-            trust_remote_code=True
-        ).eval().to(device)
-        vintern_tokenizer = AutoTokenizer.from_pretrained(
-            "5CD-AI/Vintern-1B-v3_5", 
-            trust_remote_code=True, 
-            use_fast=False
-        )
-        print("Vintern-1B-v3_5 loaded successfully!")
-    except Exception as e:
-        print(f"Failed to load Vintern model: {e}")
+    args = ARGS
+    db_in = Path(args.db_in)
+    data_root = Path(args.data_root)
+    db_out = Path(args.db_out) if args.db_out else Path(f"ocr_part{args.gpu_id}.sqlite")
+
+    if not db_in.exists():
+        print(f"Error: Database not found at {db_in}")
         sys.exit(1)
 
-    # Connect to SQLite and fetch keyframes
-    conn = sqlite3.connect(sqlite_file)
-    conn.row_factory = sqlite3.Row
-    
-    # Fetch keyframes that do not already have OCR processed (supports resuming)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"GPU {args.gpu_id}/{args.num_gpus} - device: {device.upper()} - batch_size: {args.batch_size}")
+
+    model, tokenizer = load_model(device)
+
+    conn_in = sqlite3.connect(f"file:{db_in}?mode=ro", uri=True)
+    conn_in.row_factory = sqlite3.Row
     query_keyframes = """
-        SELECT k.keyframe_id, k.video_id, k.image_relpath 
+        SELECT k.keyframe_id, k.video_id, k.image_relpath
         FROM keyframes k
         LEFT JOIN ocr_texts o ON k.keyframe_id = o.keyframe_id
         WHERE o.keyframe_id IS NULL
+        ORDER BY k.keyframe_id
     """
-    keyframes = conn.execute(query_keyframes).fetchall()
-    print(f"Found {len(keyframes)} keyframes to process.")
-    
+    all_keyframes = conn_in.execute(query_keyframes).fetchall()
+    conn_in.close()
+
+    keyframes = []
+    for idx, kf in enumerate(all_keyframes):
+        if idx % args.num_gpus != args.gpu_id:
+            continue
+        img_path = data_root / kf["image_relpath"]
+        if not img_path.exists():
+            img_path = Path(kf["image_relpath"])
+        keyframes.append({
+            "keyframe_id": kf["keyframe_id"],
+            "video_id": kf["video_id"],
+            "img_path": str(img_path),
+        })
+
+    print(f"Found {len(keyframes)} keyframe can xu ly (GPU {args.gpu_id}).")
     if not keyframes:
-        print("All keyframes are already processed. Exiting.")
-        conn.close()
+        print("0 keyframe can xu ly. Exiting.")
         return
 
-    # Process keyframes
+    init_output_db(db_out)
+    conn_out = sqlite3.connect(db_out)
+
     inserted_count = 0
+    error_count = 0
     start_time = time.time()
-    
+
     try:
-        for idx, kf in enumerate(tqdm(keyframes, desc="OCR processing")):
-            kf_id = kf["keyframe_id"]
-            video_id = kf["video_id"]
-            img_path = data_root / kf["image_relpath"]
-            
-            if not img_path.exists():
-                # Check absolute path fallback
-                img_path = Path(kf["image_relpath"])
-                
-            if not img_path.exists():
-                print(f"Warning: Image file not found: {img_path}")
-                continue
-                
-            try:
-                # Load and preprocess image
-                pixel_values = load_image(str(img_path), max_num=6).to(
-                    torch.bfloat16 if device == "cuda" else torch.float32
-                ).to(device)
-                
-                # Chat inference
-                question = "<image>\nHãy trích xuất toàn bộ văn bản xuất hiện trong hình ảnh này. Chỉ trả về văn bản thô nhận dạng được, không thêm bớt giải thích gì khác."
-                generation_config = dict(max_new_tokens=512, do_sample=False, num_beams=1)
-                
-                with torch.no_grad():
-                    response = vintern_model.chat(vintern_tokenizer, pixel_values, question, generation_config)
-                
-                extracted_text = response.strip()
-                
-                # Ghi dữ liệu vào SQLite
+        for lo in chuan_bi_lo(keyframes, args.batch_size):
+            ket_qua = chay_mot_lo(model, tokenizer, device, lo)
+            xu_ly_trong_lo = {id(kf): kf for kf in lo}
+            for kf, text in ket_qua:
+                extracted_text = text.strip() if text else ""
                 if extracted_text:
-                    conn.execute(
+                    conn_out.execute(
                         "INSERT OR REPLACE INTO ocr_texts (keyframe_id, video_id, full_text) VALUES (?, ?, ?)",
-                        (kf_id, video_id, extracted_text)
+                        (kf["keyframe_id"], kf["video_id"], extracted_text)
                     )
-                    conn.execute(
+                    conn_out.execute(
                         "INSERT OR REPLACE INTO ocr_fts (keyframe_id, full_text) VALUES (?, ?)",
-                        (kf_id, extracted_text)
+                        (kf["keyframe_id"], extracted_text)
                     )
                     inserted_count += 1
-                    
-                    # Commit periodically every 50 insertions
                     if inserted_count % 50 == 0:
-                        conn.commit()
-                        
-            except Exception as e:
-                print(f"Error processing keyframe {kf_id}: {e}")
-                continue
-                
+                        conn_out.commit()
+                xu_ly_trong_lo.pop(id(kf), None)
+            error_count += len(xu_ly_trong_lo)
+
+            if inserted_count % 500 < args.batch_size:
+                elapsed = time.time() - start_time
+                rate = inserted_count / elapsed if elapsed > 0 else 0
+                print(f"Progress: {inserted_count}/{len(keyframes)} - {rate:.2f} anh/giay")
     finally:
-        conn.commit()
-        conn.close()
-        
+        conn_out.commit()
+        conn_out.close()
+
     duration = time.time() - start_time
-    print(f"\nOCR extraction completed in {duration:.2f} seconds.")
-    print(f"Successfully processed and saved OCR text for {inserted_count} keyframes.")
+    rate = inserted_count / duration if duration > 0 else 0
+    print("\n=== Tong ket ===")
+    print(f"Da xu ly: {inserted_count}")
+    print(f"Loi/bo qua: {error_count}")
+    print(f"Thoi gian: {duration:.2f}s ({rate:.2f} anh/giay)")
+
 
 if __name__ == "__main__":
     main()
