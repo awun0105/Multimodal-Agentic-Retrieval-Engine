@@ -36,6 +36,7 @@ from trake import (
     MIN_EVENTS,
     SPREAD_RADIUS,
     build_submission,
+    export_csv_file,
     format_submission,
 )
 from trake_submission import build_submission as build_submission_rows
@@ -136,26 +137,10 @@ class TrakeController:
                 continue
             video_id, _event_index = parsed
             pinned_counts[video_id] = pinned_counts.get(video_id, 0) + 1
-        # Read at call time, exactly like format_submission does, so the preview can
-        # never drift from the file it is previewing.
-        markdown = build_submission_preview_markdown(
-            rows, primary_count, pinned_counts, trake.FRAME_INDEX_BASE
-        )
-        return gr.update(value=markdown)
+        content = format_submission(rows, delimiter=",", include_header=False, frame_index_base=trake.FRAME_INDEX_BASE)
+        return gr.update(value=content)
 
-    def export_submission(self, outcome: TrakeOutcome | None, pinned_frames: dict):
-        if outcome is None or not outcome.videos:
-            return None, "No search results to export yet."
-        rows, primary_count = self._build_rows(outcome, pinned_frames)
-        content = format_submission(rows)
-        timestamp = time.strftime("%y%m%d-%H%M")
-        out_path = Path(tempfile.gettempdir()) / f"trake_submission_{timestamp}.csv"
-        out_path.write_text(content, encoding="utf-8")
-        return str(out_path), (
-            f"Đã ghi {out_path.name} — {len(rows)} dòng "
-            f"({primary_count} đáp án + {len(rows) - primary_count} dòng rải). "
-            f"Lưu tại {out_path.parent}. Chưa đóng gói ZIP — chờ mô tả chính thức từ BTC."
-        )
+
 
 
 PINNED_HEADING = "**Danh sách các Frame đã chốt (Pinned):**"
@@ -309,10 +294,11 @@ def build_trake_tab(trake_searcher: Any) -> dict:
 
     with gr.Row():
         preview_button = gr.Button("Xem trước kết quả (Preview)")
+        export_filename = gr.Textbox(label="Tên file export", value="query-4-trake.csv", max_lines=1)
         export_button = gr.Button("Export submission file")
         submission_file = gr.File(label="Submission file", interactive=False)
     
-    preview_markdown = gr.Markdown("")
+    preview_markdown = gr.Textbox(label="Nội dung file nộp (Có thể chỉnh sửa thủ công)", lines=15, max_lines=50)
 
     add_button.click(
         controller.add_event,
@@ -363,8 +349,8 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     )
     
     export_button.click(
-        controller.export_submission,
-        inputs=[outcome_state, pinned_frames_state],
+        export_csv_file,
+        inputs=[preview_markdown, export_filename],
         outputs=[submission_file, status],
         api_name=False,
     )

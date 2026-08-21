@@ -126,3 +126,28 @@ def format_submission(
         shifted = [str(f + frame_index_base) for f in frames]
         lines.append(delimiter.join([video_id, *shifted]))
     return "\n".join(lines)
+
+import tempfile
+from pathlib import Path
+import time
+
+def export_csv_file(content: str, filename: str) -> tuple[str | None, str]:
+    if not content.strip():
+        return None, "No data to export."
+    
+    # Use a secure temp directory
+    out_dir = Path(tempfile.gettempdir()) / "aic26_submissions"
+    out_dir.mkdir(exist_ok=True)
+    
+    # Clean up filename, defaulting if empty
+    safe_name = filename.strip()
+    if not safe_name:
+        timestamp = time.strftime("%y%m%d-%H%M")
+        safe_name = f"submission_{timestamp}.csv"
+    if not safe_name.endswith(".csv"):
+        safe_name += ".csv"
+        
+    out_path = out_dir / safe_name
+    out_path.write_text(content, encoding="utf-8")
+    
+    return str(out_path), f"Đã lưu thành công {safe_name} tại {out_path}."

@@ -33,7 +33,9 @@ from db import SearchMechanism
 from schemas import SearchFilters
 from trake import TrakeSearcher
 from trake_ui import build_trake_tab
+from trake_ui_render import render_video_player
 from translation import QueryTranslator
+from video_locator import get_video_path
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,19 @@ def _watch_at(url: str, seconds: float) -> str:
 
 def _keyframe_directory(data_root: Path) -> Path:
     return (data_root / "keyframes").resolve()
+
+
+
+def _generate_preview_text(rows: list[dict]):
+    if not rows:
+        return "Chưa có kết quả để xem trước."
+    from trake_submission import format_submission
+    submission_rows = []
+    for r in rows:
+        video_id = r["video_id"]
+        frame_idx = r["frame_idx"]
+        submission_rows.append((video_id, (frame_idx,)))
+    return format_submission(submission_rows, delimiter=",", include_header=False, frame_index_base=0)
 
 
 def _detail_markdown(details) -> str:
@@ -371,6 +386,7 @@ class SearchController:
                 previous_update,
                 next_update,
                 None,
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
                 "Select a keyframe to view metadata",
                 [],
             )
@@ -385,6 +401,7 @@ class SearchController:
                 gr.update(interactive=False),
                 gr.update(interactive=False),
                 None,
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
                 "Select a keyframe to view metadata",
                 [],
             )
@@ -433,6 +450,7 @@ class SearchController:
                 previous_update,
                 next_update,
                 None,
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
                 "Select a keyframe to view metadata",
                 [],
                 collection_update,
@@ -457,6 +475,7 @@ class SearchController:
                 gr.update(interactive=False),
                 gr.update(interactive=False),
                 None,
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
                 "Select a keyframe to view metadata",
                 [],
                 empty_update,
@@ -510,8 +529,9 @@ class SearchController:
             previous_update,
             next_update,
             None,
-            "Select a keyframe to view metadata",
-            [],
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                "Select a keyframe to view metadata",
+                [],
             message,
         )
 
@@ -554,8 +574,9 @@ class SearchController:
             previous_update,
             next_update,
             None,
-            "Select a keyframe to view metadata",
-            [],
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                "Select a keyframe to view metadata",
+                [],
             f"Refine current Top K results | {len(rows)} results",
             "",
             "all",
@@ -576,19 +597,29 @@ class SearchController:
         return (
             *payload,
             None,
-            "Select a keyframe to view metadata",
-            [],
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                "Select a keyframe to view metadata",
+                [],
         )
 
     def select_keyframe(self, page_rows, evt: gr.SelectData):
         if not page_rows or evt.index is None:
-            return None, "Select a keyframe to view metadata", []
+            return None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>", "Select a keyframe to view metadata", []
         local_index = int(evt.index[0] if isinstance(evt.index, tuple) else evt.index)
         if local_index < 0 or local_index >= len(page_rows):
-            return None, "Selected result is no longer available", []
+            return None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>", "Selected result is no longer available", []
         row = page_rows[local_index]
         details = self.search_mechanism.get_keyframe_details(row["keyframe_id"])
-        return row["image_path"], _detail_markdown(details), _detection_rows(details)
+        
+        video_html = "<p style='color: #666; font-style: italic;'>Video file not found in VIDEO_ROOT.</p>"
+        video_id = details.keyframe["video_id"]
+        pts = float(details.keyframe["pts_time_sec"])
+        fps = float(details.video.get("fps", 25.0))
+        video_path = get_video_path(video_id)
+        if video_path:
+            video_html = render_video_player(video_id, video_path, pts, fps)
+            
+        return row["image_path"], video_html, _detail_markdown(details), _detection_rows(details)
 
     def details_api(self, keyframe_id: str):
         details = self.search_mechanism.get_keyframe_details(keyframe_id)
@@ -683,7 +714,7 @@ def build_app(
     with gr.Blocks(css=APP_CSS) as webui:
         gr.Markdown("## AIoU Keyframe Retrieval", elem_id="app-title")
         with gr.Tabs():
-            with gr.Tab("Tìm khung hình"):
+            with gr.Tab("Query Text"):
                 original_results_state = gr.State([])
                 visible_results_state = gr.State([])
                 page_rows_state = gr.State([])
@@ -826,12 +857,19 @@ def build_app(
 
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=3):
-                        detail_image = gr.Image(
-                            label="Selected keyframe",
-                            interactive=False,
-                            height=420,
-                            elem_id="selected-keyframe",
-                        )
+                        with gr.Tabs():
+                            with gr.Tab("Image Details"):
+                                detail_image = gr.Image(
+                                    label="Selected keyframe",
+                                    interactive=False,
+                                    height=420,
+                                    elem_id="selected-keyframe",
+                                )
+                            with gr.Tab("Video Player"):
+                                detail_video = gr.HTML(
+                                    value="<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                                    elem_id="query-text-player-container",
+                                )
                     with gr.Column(scale=2):
                         detail_metadata = gr.Markdown("Select a keyframe to view metadata")
                 detections = gr.Dataframe(
@@ -852,6 +890,14 @@ def build_app(
                     api_details = gr.JSON()
                     api_details_button = gr.Button("Metadata API")
 
+                gr.Markdown("---")
+                gr.Markdown("### Xem trước file nộp bài (Textual KIS)")
+                with gr.Row():
+                    export_filename = gr.Textbox(label="Tên file export", value="query-1-kis.csv", max_lines=1)
+                    export_button = gr.Button("Export submission file")
+                    submission_file = gr.File(label="Submission file", interactive=False)
+                preview_textbox = gr.Textbox(label="Nội dung file nộp (Có thể chỉnh sửa thủ công)", lines=15, max_lines=50)
+
                 legacy_search_outputs = [
                     gallery,
                     original_results_state,
@@ -861,6 +907,7 @@ def build_app(
                     previous_button,
                     next_button,
                     detail_image,
+                    detail_video,
                     detail_metadata,
                     detections,
                 ]
@@ -902,6 +949,7 @@ def build_app(
                     previous_button,
                     next_button,
                     detail_image,
+                    detail_video,
                     detail_metadata,
                     detections,
                     refine_collections,
@@ -922,6 +970,21 @@ def build_app(
                     fn=search_keyframes_gpu_v2,
                     inputs=search_inputs_v2,
                     outputs=search_outputs_v2,
+                    api_name=False,
+                )
+
+
+                original_results_state.change(
+                    fn=_generate_preview_text,
+                    inputs=[original_results_state],
+                    outputs=[preview_textbox],
+                    api_name=False,
+                )
+                from trake_submission import export_csv_file
+                export_button.click(
+                    fn=export_csv_file,
+                    inputs=[preview_textbox, export_filename],
+                    outputs=[submission_file, status],
                     api_name=False,
                 )
 
@@ -951,6 +1014,7 @@ def build_app(
                     previous_button,
                     next_button,
                     detail_image,
+                    detail_video,
                     detail_metadata,
                     detections,
                     refine_status,
@@ -1029,6 +1093,7 @@ def build_app(
                     previous_button,
                     next_button,
                     detail_image,
+                    detail_video,
                     detail_metadata,
                     detections,
                 ]
@@ -1049,7 +1114,7 @@ def build_app(
                 gallery.select(
                     controller.select_keyframe,
                     inputs=[page_rows_state],
-                    outputs=[detail_image, detail_metadata, detections],
+                    outputs=[detail_image, detail_video, detail_metadata, detections],
                     api_name=False,
                 )
                 api_details_button.click(
@@ -1060,7 +1125,7 @@ def build_app(
                 )
 
             if trake_searcher is not None:
-                with gr.Tab("TRAKE"):
+                with gr.Tab("Query TRAKE"):
                     build_trake_tab(trake_searcher)
 
     return webui
