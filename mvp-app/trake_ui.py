@@ -98,30 +98,58 @@ class TrakeController:
         return gal_up, blocks_md, status_markdown, outcome, 0, label, prev_up, next_up
 
 
-    def _render_video_page(self, outcome, idx: int):
+    def _render_video_page(self, outcome, page_idx: int):
         import gradio as gr
-        from trake_ui_render import build_single_gallery_items, build_single_video_block
+        import math
+        from trake_ui_render import build_gallery_items_slice, build_video_blocks_slice
         if not outcome or not outcome.videos:
-            return gr.update(value=[]), "No matching video sequences found.", "### Video 0 / 0", gr.update(interactive=False), gr.update(interactive=False)
+            return gr.update(value=[]), "No matching video sequences found.", "Page 1 / 1 | 0 results", gr.update(interactive=False), gr.update(interactive=False)
         
-        total = len(outcome.videos)
-        idx = max(0, min(idx, total - 1))
-        video = outcome.videos[idx]
+        total_videos = len(outcome.videos)
+        num_events = len(outcome.videos[0].events)
         
-        gallery_items = build_single_gallery_items(video, idx + 1)
-        block_md = build_single_video_block(video, idx + 1)
-        label = f"### Video {idx + 1} / {total}"
+        if num_events == 1:
+            per_page = 10
+            columns = 5
+        elif num_events == 2:
+            per_page = 4
+            columns = 4
+        elif num_events == 3:
+            per_page = 2
+            columns = 3
+        elif num_events == 4:
+            per_page = 2
+            columns = 4
+        else:
+            per_page = 1
+            columns = num_events
+            
+        total_pages = max(1, math.ceil(total_videos / per_page))
+        page_idx = max(0, min(page_idx, total_pages - 1))
+        start_idx = page_idx * per_page
+        end_idx = start_idx + per_page
+        videos_page = outcome.videos[start_idx:end_idx]
         
-        # update gallery to have len(video.events) columns
-        gallery_update = gr.update(value=gallery_items, columns=max(1, len(video.events)))
+        gallery_items = build_gallery_items_slice(videos_page, start_idx + 1)
+        block_md = build_video_blocks_slice(videos_page, start_idx + 1)
         
-        return gallery_update, block_md, label, gr.update(interactive=idx > 0), gr.update(interactive=idx < total - 1)
+        label = f"Page {page_idx + 1} / {total_pages} | {total_videos} videos"
+        gallery_update = gr.update(value=gallery_items, columns=columns)
+        
+        return gallery_update, block_md, label, gr.update(interactive=page_idx > 0), gr.update(interactive=page_idx < total_pages - 1)
 
-    def change_video_page(self, outcome, idx: int, delta: int):
+    def change_video_page(self, outcome, page_idx: int, delta: int):
         if not outcome or not outcome.videos:
             return 0, *self._render_video_page(outcome, 0)
-        new_idx = idx + delta
-        new_idx = max(0, min(new_idx, len(outcome.videos) - 1))
+        
+        total_videos = len(outcome.videos)
+        num_events = len(outcome.videos[0].events)
+        per_page = 10 if num_events == 1 else (4 if num_events == 2 else (2 if num_events <= 4 else 1))
+        
+        import math
+        total_pages = max(1, math.ceil(total_videos / per_page))
+        new_idx = page_idx + delta
+        new_idx = max(0, min(new_idx, total_pages - 1))
         return new_idx, *self._render_video_page(outcome, new_idx)
 
     @staticmethod
@@ -263,7 +291,7 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     _trake_controller = controller
 
     outcome_state = gr.State(None)
-    current_video_idx = gr.State(0)
+    current_page_idx = gr.State(0)
     visible_count_state = gr.State(1)
     pinned_frames_state = gr.State({})
 
@@ -348,21 +376,21 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     )
 
     search_inputs = [translate_vietnamese, *event_boxes]
-    search_outputs = [gallery, results, status, outcome_state, current_video_idx, vid_label, prev_vid_btn, next_vid_btn]
+    search_outputs = [gallery, results, status, outcome_state, current_page_idx, page_label, prev_btn_pg, next_btn_pg]
     # Pins name a video and an event slot, not a query — carrying them into the next
     # search would silently rewrite the new answer's frames.
     pin_reset_outputs = [pinned_frames_state, pinned_frames_markdown]
 
-    prev_vid_btn.click(
+    prev_btn_pg.click(
         lambda o, i: controller.change_video_page(o, i, -1),
-        inputs=[outcome_state, current_video_idx],
-        outputs=[current_video_idx, gallery, results, vid_label, prev_vid_btn, next_vid_btn],
+        inputs=[outcome_state, current_page_idx],
+        outputs=[current_page_idx, gallery, results, page_label, prev_btn_pg, next_btn_pg],
         api_name=False
     )
-    next_vid_btn.click(
+    next_btn_pg.click(
         lambda o, i: controller.change_video_page(o, i, 1),
-        inputs=[outcome_state, current_video_idx],
-        outputs=[current_video_idx, gallery, results, vid_label, prev_vid_btn, next_vid_btn],
+        inputs=[outcome_state, current_page_idx],
+        outputs=[current_page_idx, gallery, results, page_label, prev_btn_pg, next_btn_pg],
         api_name=False
     )
 
@@ -498,7 +526,7 @@ def build_trake_tab(trake_searcher: Any) -> dict:
 
     gallery.select(
         on_gallery_select,
-        inputs=[outcome_state, current_video_idx],
+        inputs=[outcome_state, current_page_idx],
         outputs=[
             video_player_html,
             prev_btn,
