@@ -521,3 +521,127 @@ def test_trake_module_imports_without_gradio_or_torch():
     source = Path(trake.__file__).read_text(encoding="utf-8")
     assert "import gradio" not in source
     assert "import torch" not in source
+
+
+# ---------------------------------------------------------------------------
+# Dynamic programming (min objective)
+# ---------------------------------------------------------------------------
+
+
+def _dp_min(s):
+    from trake_dp import dp_best_path_min
+
+    return dp_best_path_min(s)
+
+
+def test_dp_min_returns_weakest_link_score():
+    """Score is the weakest event on the path, not the total."""
+    s = np.asarray([[0.9, 0.0], [0.0, 0.2]], dtype=np.float32)
+    result = _dp_min(s)
+    assert result is not None
+    score, indices = result
+    assert indices == [0, 1]
+    assert score == pytest.approx(0.2, abs=1e-6)
+
+
+def test_dp_min_prefers_balanced_path_over_lopsided_one():
+    """A video missing one event must not win on the strength of the other two.
+
+    Rows 0-2 are a balanced match (0.60 each): total 1.80, weakest 0.60.
+    Rows 3-5 have two strong events and one nearly absent (0.29): total 2.19,
+    weakest 0.29 — this is the video that should NOT win.
+    """
+    s = np.asarray(
+        [
+            [0.60, 0.00, 0.00],
+            [0.00, 0.60, 0.00],
+            [0.00, 0.00, 0.60],
+            [0.95, 0.00, 0.00],
+            [0.00, 0.95, 0.00],
+            [0.00, 0.00, 0.29],
+        ],
+        dtype=np.float32,
+    )
+    _sum_score, sum_indices = _dp_best_path(s)
+    assert sum_indices == [3, 4, 5]
+
+    min_score, min_indices = _dp_min(s)
+    assert min_indices == [0, 1, 2]
+    assert min_score == pytest.approx(0.60, abs=1e-6)
+
+
+def test_dp_min_returns_none_when_fewer_rows_than_events():
+    assert _dp_min(np.zeros((2, 3), dtype=np.float32)) is None
+
+
+def test_dp_min_indices_are_strictly_increasing():
+    rng = np.random.RandomState(20260821)
+    s = rng.rand(12, 4).astype(np.float32)
+    _score, indices = _dp_min(s)
+    assert indices == sorted(indices)
+    assert len(set(indices)) == 4
+
+
+def test_dp_min_handles_single_event():
+    s = np.asarray([[1.0], [5.0], [3.0]], dtype=np.float32)
+    score, indices = _dp_min(s)
+    assert indices == [1]
+    assert score == pytest.approx(5.0)
+
+
+def test_dp_min_matches_brute_force_on_random_matrices():
+    import itertools
+
+    rng = np.random.RandomState(4242)
+    for _ in range(30):
+        length = int(rng.randint(3, 8))
+        events = int(rng.randint(2, 4))
+        if length < events:
+            continue
+        s = rng.rand(length, events).astype(np.float32)
+        best = max(
+            min(s[i, j] for j, i in enumerate(combo))
+            for combo in itertools.combinations(range(length), events)
+        )
+        score, _indices = _dp_min(s)
+        assert score == pytest.approx(best, abs=1e-6)
+
+
+def test_dp_min_negative_scores_do_not_break_backtracking():
+    s = np.asarray([[-0.5, -0.9], [-0.9, -0.2]], dtype=np.float32)
+    score, indices = _dp_min(s)
+    assert indices == [0, 1]
+    assert score == pytest.approx(-0.5, abs=1e-6)
+    assert np.isfinite(score)
+
+
+# --- Ranking objective switch ---
+
+
+def test_ranking_objective_defaults_to_min():
+    import trake
+
+    assert trake.RANKING_OBJECTIVE == "min"
+
+
+def test_unknown_ranking_objective_raises(monkeypatch):
+    import trake
+
+    monkeypatch.setattr(trake, "RANKING_OBJECTIVE", "bogus")
+    with pytest.raises(ValueError, match="bogus"):
+        trake._select_dp()
+
+
+def test_select_dp_returns_min_by_default():
+    import trake
+    from trake_dp import dp_best_path_min
+
+    assert trake._select_dp() is dp_best_path_min
+
+
+def test_select_dp_honours_sum_objective(monkeypatch):
+    import trake
+    from trake_dp import dp_best_path
+
+    monkeypatch.setattr(trake, "RANKING_OBJECTIVE", "sum")
+    assert trake._select_dp() is dp_best_path
