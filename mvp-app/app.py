@@ -119,16 +119,17 @@ def _keyframe_directory(data_root: Path) -> Path:
 
 
 
-def _generate_preview_text(rows: list[dict]):
+def _generate_preview_text(rows: list[dict], pinned: dict = None):
+    pinned = pinned or {}
     if not rows:
         return "Chưa có kết quả để xem trước."
     from trake_submission import format_submission
     submission_rows = []
     for r in rows:
         video_id = r["video_id"]
-        frame_idx = r["frame_idx"]
+        frame_idx = pinned.get(video_id, r["frame_idx"])
         submission_rows.append((video_id, (frame_idx,)))
-    return format_submission(submission_rows, delimiter=",", include_header=False, frame_index_base=0)
+    return format_submission(submission_rows, delimiter=", ", include_header=False, frame_index_base=0)
 
 
 def _detail_markdown(details) -> str:
@@ -617,9 +618,12 @@ class SearchController:
         fps = float(details.video.get("fps", 25.0))
         video_path = get_video_path(video_id)
         if video_path:
-            video_html = render_video_player(video_id, video_path, pts, fps)
+            video_html = render_video_player(video_id, video_path, pts, fps, player_id="query-text-player")
             
-        return row["image_path"], video_html, _detail_markdown(details), _detection_rows(details)
+        import gradio as gr
+        return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
+                gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)),
+                fps, video_id, int(details.keyframe["frame_idx"]))
 
     def details_api(self, keyframe_id: str):
         details = self.search_mechanism.get_keyframe_details(keyframe_id)
@@ -870,6 +874,13 @@ def build_app(
                                     value="<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
                                     elem_id="query-text-player-container",
                                 )
+                                with gr.Row():
+                                    prev_btn = gr.Button("Prev Frame", interactive=False)
+                                    next_btn = gr.Button("Next Frame", interactive=False)
+                                    pin_btn = gr.Button("Chốt Frame (Pin)", interactive=False, variant="primary")
+                                    clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
+                                pinned_frames_state = gr.State({})
+
                     with gr.Column(scale=2):
                         detail_metadata = gr.Markdown("Select a keyframe to view metadata")
                 detections = gr.Dataframe(
@@ -889,6 +900,12 @@ def build_app(
                     api_keyframe_id = gr.Textbox()
                     api_details = gr.JSON()
                     api_details_button = gr.Button("Metadata API")
+
+                    current_time_box = gr.Textbox(visible=False, elem_id="qt-current-time")
+                    current_fps_box = gr.Number(visible=False, elem_id="qt-current-fps", value=25.0)
+                    current_video_id_box = gr.Textbox(visible=False, elem_id="qt-current-video-id")
+                    current_kf_frame_box = gr.Number(visible=False, elem_id="qt-current-kf-frame", value=0)
+
 
                 gr.Markdown("---")
                 gr.Markdown("### Xem trước file nộp bài (Textual KIS)")
@@ -974,9 +991,17 @@ def build_app(
                 )
 
 
+
+                pinned_frames_state.change(
+                    fn=_generate_preview_text,
+                    inputs=[original_results_state, pinned_frames_state],
+                    outputs=[preview_textbox],
+                    api_name=False,
+                )
+
                 original_results_state.change(
                     fn=_generate_preview_text,
-                    inputs=[original_results_state],
+                    inputs=[original_results_state, pinned_frames_state],
                     outputs=[preview_textbox],
                     api_name=False,
                 )
@@ -1071,7 +1096,7 @@ def build_app(
                 )
                 clear_refinements_button.click(
                     controller.clear_all_refinements,
-                    inputs=[original_results_state],
+                    inputs=[original_results_state, pinned_frames_state],
                     outputs=[
                         *refine_outputs,
                         within_results_query,
@@ -1114,9 +1139,53 @@ def build_app(
                 gallery.select(
                     controller.select_keyframe,
                     inputs=[page_rows_state],
-                    outputs=[detail_image, detail_video, detail_metadata, detections],
+                    outputs=[
+                        detail_image, detail_video, detail_metadata, detections,
+                        prev_btn, next_btn, pin_btn,
+                        current_fps_box, current_video_id_box, current_kf_frame_box
+                    ],
                     api_name=False,
                 )
+
+                frame_step_js = """(fps) => {
+                    const video = document.getElementById('query-text-player');
+                    if (video) {
+                        video.pause();
+                        video.currentTime += (1.0 / fps);
+                    }
+                    return fps;
+                }"""
+                frame_prev_js = """(fps) => {
+                    const video = document.getElementById('query-text-player');
+                    if (video) {
+                        video.pause();
+                        video.currentTime -= (1.0 / fps);
+                    }
+                    return fps;
+                }"""
+                pin_js = """(c_time, pinned, vid, fps, kf_frame) => {
+                    const video = document.getElementById('query-text-player');
+                    const t = video ? video.currentTime.toString() : "";
+                    return [t, pinned, vid, fps, kf_frame];
+                }"""
+                
+                next_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_step_js)
+                prev_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_prev_js)
+                
+                pin_btn.click(
+                    process_pin_kis,
+                    inputs=[current_time_box, pinned_frames_state, current_video_id_box, current_fps_box, current_kf_frame_box],
+                    outputs=[pinned_frames_state, status],
+                    js=pin_js,
+                    api_name=False
+                )
+                clear_pins_btn.click(
+                    clear_pins_kis,
+                    inputs=[],
+                    outputs=[pinned_frames_state, status],
+                    api_name=False
+                )
+
                 api_details_button.click(
                     controller.details_api,
                     inputs=[api_keyframe_id],
@@ -1129,6 +1198,25 @@ def build_app(
                     build_trake_tab(trake_searcher)
 
     return webui
+
+
+
+def process_pin_kis(current_time, current_pins, video_id, fps, kf_frame):
+    if not video_id:
+        return current_pins, "Không có video nào được chọn."
+    
+    try:
+        current_time = float(current_time)
+        new_frame = round(current_time * fps)
+    except (ValueError, TypeError):
+        new_frame = kf_frame
+
+    current_pins = current_pins or {}
+    current_pins[video_id] = new_frame
+    return current_pins, f"Đã chốt frame {new_frame} cho video {video_id}."
+
+def clear_pins_kis():
+    return {}, "Đã gỡ bỏ toàn bộ frame chốt tay."
 
 
 def create_search_mechanism(runtime: RuntimePaths) -> SearchMechanism:
