@@ -483,12 +483,22 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         outputs=[pinned_frames_state, status, pinned_frames_markdown],
         js=pin_js,
         api_name=False,
+    ).then(
+        controller.preview_submission,
+        inputs=[outcome_state, pinned_frames_state],
+        outputs=[preview_markdown],
+        api_name=False,
     )
 
     clear_pins_btn.click(
         clear_pins,
         inputs=[],
         outputs=[pinned_frames_state, status, pinned_frames_markdown],
+        api_name=False,
+    ).then(
+        controller.preview_submission,
+        inputs=[outcome_state, pinned_frames_state],
+        outputs=[preview_markdown],
         api_name=False,
     )
     
