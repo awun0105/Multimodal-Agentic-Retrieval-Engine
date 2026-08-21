@@ -136,7 +136,7 @@ class TrakeController:
                 continue
             video_id, _event_index = parsed
             pinned_counts[video_id] = pinned_counts.get(video_id, 0) + 1
-        content = format_submission(rows, delimiter=", ", include_header=False, frame_index_base=trake.FRAME_INDEX_BASE)
+        content = format_submission(rows)
         return gr.update(value=content)
 
 
