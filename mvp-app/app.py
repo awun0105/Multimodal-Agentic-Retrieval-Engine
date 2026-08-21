@@ -912,7 +912,7 @@ def build_app(
                 with gr.Row():
                     export_filename = gr.Textbox(label="Tên file export", value="query-1-kis.csv", max_lines=1)
                     export_button = gr.Button("Export submission file")
-                    submission_file = gr.File(label="Submission file", interactive=False)
+                    submission_file = gr.File(label="Submission file", interactive=False, height=80)
                 preview_textbox = gr.Textbox(label="Nội dung file nộp (Có thể chỉnh sửa thủ công)", lines=15, max_lines=50)
 
                 legacy_search_outputs = [

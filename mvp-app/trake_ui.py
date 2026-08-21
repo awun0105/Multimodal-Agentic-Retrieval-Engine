@@ -292,11 +292,12 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     with gr.Accordion("Log thông tin kết quả (Chi tiết)", open=False):
         results = gr.Markdown("")
 
+    gr.Markdown("---")
+    gr.Markdown("### Xem trước file nộp bài (Query TRAKE)")
     with gr.Row():
-        preview_button = gr.Button("Xem trước kết quả (Preview)")
         export_filename = gr.Textbox(label="Tên file export", value="query-4-trake.csv", max_lines=1)
         export_button = gr.Button("Export submission file")
-        submission_file = gr.File(label="Submission file", interactive=False)
+        submission_file = gr.File(label="Submission file", interactive=False, height=80)
     
     preview_markdown = gr.Textbox(label="Nội dung file nộp (Có thể chỉnh sửa thủ công)", lines=15, max_lines=50)
 
@@ -341,7 +342,13 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         api_name=False,
     )
 
-    preview_button.click(
+    outcome_state.change(
+        controller.preview_submission,
+        inputs=[outcome_state, pinned_frames_state],
+        outputs=[preview_markdown],
+        api_name=False,
+    )
+    pinned_frames_state.change(
         controller.preview_submission,
         inputs=[outcome_state, pinned_frames_state],
         outputs=[preview_markdown],
