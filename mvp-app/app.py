@@ -716,7 +716,7 @@ def build_app(
     _search_controller = controller
 
     with gr.Blocks(css=APP_CSS) as webui:
-        gr.Markdown("## AIoU Keyframe Retrieval", elem_id="app-title")
+        gr.Markdown("## AIOU", elem_id="app-title")
         with gr.Tabs():
             with gr.Tab("Query Text"):
                 original_results_state = gr.State([])

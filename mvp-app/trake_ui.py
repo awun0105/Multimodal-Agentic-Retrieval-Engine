@@ -289,7 +289,8 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     current_kf_frame_box = gr.Number(visible=False, elem_id="trake-current-kf-frame", value=0)
     sync_btn = gr.Button("Sync", visible=False, elem_id="trake-sync-btn")
 
-    results = gr.Markdown("")
+    with gr.Accordion("Log thông tin kết quả (Chi tiết)", open=False):
+        results = gr.Markdown("")
 
     with gr.Row():
         preview_button = gr.Button("Xem trước kết quả (Preview)")
