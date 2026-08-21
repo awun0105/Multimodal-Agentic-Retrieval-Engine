@@ -36,11 +36,10 @@ from trake import (
     MIN_EVENTS,
     SPREAD_RADIUS,
     build_submission,
-    export_csv_file,
     format_submission,
 )
 from trake_submission import build_submission as build_submission_rows
-from trake_submission import parse_pin_key, pin_key
+from trake_submission import parse_pin_key, pin_key, export_csv_file
 from video_locator import get_video_path
 from trake_ui_render import (
     render_video_player,
