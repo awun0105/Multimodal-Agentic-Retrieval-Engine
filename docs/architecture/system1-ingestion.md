@@ -8,17 +8,18 @@ Canonical for offline preprocessing. System 1 produces the app-ready contract in
 
 System 1 is required because organizer input is not app-ready runtime data. The
 organizer provides videos, optional metadata, and baseline support artifacts,
-but the accepted project policy consumes only the videos and metadata. System 1
-regenerates every derived retrieval signal under one mapping/provenance
-contract. System 2 reads only SQLite, FTS5 tables, FAISS indexes, and logical
-media refs produced by this system.
+but the accepted project policy consumes only the videos and organizer
+metadata. System 1 creates canonical metadata for every video and regenerates
+every derived retrieval signal under one mapping/provenance contract. System 2
+reads only SQLite, FTS5 tables, FAISS indexes, and logical media refs produced
+by this system.
 
 ```text
-official videos + optional metadata
+official videos + optional organizer metadata
   -> dataset registration
-  -> video identity and decoded frame timeline
   -> media discovery
-  -> optional metadata normalization
+  -> ffprobe facts + canonical metadata for every video
+  -> video identity and decoded frame timeline
   -> structure artifact per video
   -> feature artifact per video
   -> merge structural + feature artifacts
@@ -34,9 +35,9 @@ official videos + optional metadata
 | Stage | Required Output | Notes |
 | --- | --- | --- |
 | Dataset registration | `datasets` row and build manifest | Assign stable `dataset_id`, source version, build time, and source roots. |
-| Dataset mapping | input manifest | Use the raw video filename stem as `video_id`; fail on duplicate video stems; record missing metadata as optional evidence absence. |
+| Dataset mapping | input manifest | Use the raw video filename stem as `video_id`; fail on duplicate video stems; record missing organizer metadata before canonical metadata generation. |
 | Media discovery | `videos`, discovered media manifest | Discover videos from configurable roots; do not hardcode personal paths or filename regexes. |
-| Metadata normalization | normalized staging tables | Preserve raw metadata when present; normalize title, author/channel, duration, publish date, keywords, description, watch URL, and thumbnail URL. Missing metadata must not remove the video. |
+| Metadata normalization | `metadata/{video_id}.json` and normalized staging fields | Create one versioned canonical JSON per video. Normalize the ten observed organizer fields, retain source reference/checksum when available, use null/empty values when absent, and attach `ffprobe` media facts and provenance. Do not upload a duplicate organizer metadata tree. Missing organizer metadata must not remove the video. |
 | Video probing | probed media facts | Probe fps, duration, dimensions, codec/container facts; last-year evidence suggests 25 fps, but actual fps must be persisted per video. |
 | Timeline mapping | `frame_timeline` staging rows or equivalent mapping proof | Persist enough timing metadata to map timestamps to frame ids safely, especially for VFR or unreliable FPS metadata. |
 | Shot detection | `shots` rows | Production Phase01 uses TransNet V2 only. A successful no-cut result is one valid full-video shot; model/inference failure after bounded retry fails the video instead of invoking a silent fallback. |
@@ -75,7 +76,7 @@ Preprocessing must be runnable from batch CLI scripts. Minimum interface:
 aic-prepare build \
   --dataset-id aic2026 \
   --raw-video-dir ${AIC_DATA_ROOT}/raw/videos \
-  --metadata-dir ${AIC_DATA_ROOT}/raw/organizer_metadata \
+  --metadata-dir ${AIC_DATA_ROOT}/raw/metadata \
   --data-root ${AIC_DATA_ROOT} \
   --runtime-root ${AIC_RUNTIME_ROOT} \
   --report ${AIC_DATA_ROOT}/staging/reports/aic2026-validation.json
@@ -101,6 +102,7 @@ CLI rules:
 
 ```text
 ${AIC_DATA_ROOT}/raw/videos/{video_id}.mp4
+${AIC_DATA_ROOT}/raw/metadata/{video_id}.json
 ${AIC_DATA_ROOT}/processed/media/keyframes/{video_id}/{video_id}_f{frame_id:07d}.jpg
 ${AIC_DATA_ROOT}/processed/media/thumbnails/{video_id}/{video_id}_f{frame_id:07d}.webp
 ${AIC_DATA_ROOT}/staging/frame_timeline/{video_id}.parquet
@@ -134,21 +136,40 @@ The inventory carries:
 - `canonical_revision`
 - `canonical_prefix`
 - `canonical_video_path`
-- `canonical_metadata_path` when metadata exists, otherwise null with
-  `metadata_missing` recorded in raw audit manifests
+- `canonical_metadata_path` for the required canonical JSON
+- `canonical_frame_timeline_path`
+- `frame_timeline_status`
+- `frame_timeline_row_count`
+- `frame_timeline_size_bytes`
+- `metadata_schema_version`
+- `organizer_metadata_present`
+- `metadata_generated`
 - `duration_sec`
 - `fps`
 - `frame_count`
+- `width`
+- `height`
+- `is_vfr`
 - `file_size_bytes`
+- `probe_status`
+- `probe_attempts`
 
-For Phase00 inventory, `frame_count` may come from `ffprobe -count_packets` /
-`nb_read_packets`; header `nb_frames` and duration/FPS math remain diagnostic
-fallbacks. They do not replace the decoded frame timeline required by
-production Notebook 01.
+For production Phase00 inventory, `frame_count` comes from the required decoded
+timeline row count. `ffprobe -count_packets` / `nb_read_packets`, header
+`nb_frames`, and duration/FPS math remain compatibility diagnostics. They do not
+replace the decoded frame timeline required by production Notebook 01.
 
 Canonical HF ingest consumes that inventory by default and does not download
-`raw_videos/*.mp4` solely for media probing unless
-`AIC_ALLOW_HF_VIDEO_DOWNLOAD_FOR_PROBE=1` is set.
+`raw_videos/*.mp4` solely to repeat media probing or timeline decoding.
+Notebook 00B/00C generate the decoded timeline while the video is already in
+bounded stream scratch. Production HF ingest downloads and validates the
+compact raw timeline Parquet and copies it into Phase00. Inventory facts without
+that matching Parquet do not satisfy the Notebook 01 exact-frame contract.
+
+Raw upload retries `ffprobe` at most three times. After exhausted retries,
+unknown technical values remain nullable and the inventory/canonical JSON carry
+matching `probe_status` and `probe_attempts`; HF ingest rejects any drift
+between the two records.
 
 ## Hugging Face Shared Storage Contract
 
@@ -159,12 +180,14 @@ AIC26_raw
 AIC26_release
 ```
 
-`AIC26_raw` is the canonical raw dataset repo. It contains only standardized
-raw videos, metadata when available, and raw-level import/inventory manifests:
+`AIC26_raw` is the canonical raw dataset repo. It contains standardized raw
+videos, one canonical metadata JSON and one decoded timeline per video, plus
+raw-level import/inventory manifests:
 
 ```text
 AIC26_raw/canonical_raw_vXXX/raw_videos/
-AIC26_raw/canonical_raw_vXXX/organizer_metadata/
+AIC26_raw/canonical_raw_vXXX/metadata/
+AIC26_raw/canonical_raw_vXXX/frame_timeline/{video_id}.parquet
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_file_manifest.jsonl
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_import_report.json
 AIC26_raw/canonical_raw_vXXX/manifests/canonical_video_inventory.parquet
@@ -214,6 +237,11 @@ AIC26_release/canonical_release_vXXX/phase00_ingestion/manifests/batch_*.txt
 AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/
 ```
 
+The Phase00 `media_store_manifest.parquet` retains normalized canonical video,
+metadata, and frame-timeline paths plus the canonical raw prefix. This keeps
+the raw provenance complete while `frame_timeline_manifest.parquet` separately
+records Phase00 timeline availability and row counts.
+
 `missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
 manifests in `AIC26_raw`. The release repo may also snapshot them under
 `phase00_ingestion/reports/` for a particular release run. Their authoritative
@@ -239,10 +267,11 @@ scratch area. It is not the primary shared storage contract.
 
 Notebook 00B uses the streaming path for Colab free CPU runs: it scans zip
 members to build an official-source import plan, extracts bounded video and
-available support-artifact batches into local scratch, probes local videos,
-uploads each batch to `AIC26_raw` with the same batched HF commit helper as
-canonical raw upload, records per-video progress, and cleans the scratch batch
-before moving on. It does not materialize a full standardized raw tree on Drive.
+organizer-metadata pairs into local scratch, probes each local video, creates
+and validates its canonical metadata JSON and decoded timeline Parquet, uploads
+each batch to `AIC26_raw`, records per-video progress, and cleans the scratch
+batch before moving on. It does not materialize a full standardized raw tree on
+Drive.
 
 The streaming path exposes the same disk-safe option family as archive
 standardization: `--min-free-gb`, `--drive-sync-sleep-seconds`,
@@ -255,6 +284,13 @@ The source is a local downloaded zip folder, so the notebook skips Google Drive
 mount/remount and `drive-shadow`, then continues with HF raw upload, canonical
 HF ingest, batch assignment, and `phase00_ingestion` sync.
 
+Phase00 sync is an exact-prefix reconciliation. It compares SHA-256 plus size
+against the previous complete manifest, skips unchanged files, batches add and
+delete operations with bounded transient retries, deletes stale files only
+inside `<release_id>/phase00_ingestion/`, and uploads
+`reports/phase00_sync_manifest.json` last. A missing completion marker means the
+remote snapshot must not be treated as complete.
+
 ## Validation Gate
 
 System 1 must prove:
@@ -262,9 +298,13 @@ System 1 must prove:
 - No duplicate `video_id` and no duplicate `(video_id, frame_id)`.
 - Every raw video has a unique canonical `video_id` derived from its filename
   stem.
-- Metadata JSON files, when present, match exactly one raw video by filename
-  stem. Missing metadata is recorded as optional evidence absence and must not
-  exclude a valid video.
+- Every raw video has one schema-valid `metadata/{video_id}.json`.
+- Organizer JSON, when present in source storage, matches exactly one video,
+  sets `organizer_metadata_present=true`, and contributes a source
+  reference/checksum when available without being copied to a second HF tree.
+- Missing organizer metadata is audited before canonical generation; its
+  canonical organizer fields are null/empty and it remains a valid video.
+- Canonical metadata and inventory provenance/probe fields agree.
 - Organizer keyframe, object, CLIP, map-keyframes, and media-info artifacts are
   not imported into the release.
 - Every video has probed fps; non-25 fps is reported against the planning/default expected value until current-year FPS is confirmed.

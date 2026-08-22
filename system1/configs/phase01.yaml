@@ -1,0 +1,138 @@
+schema_version: phase01_pipeline_v1
+pipeline_id: phase01_production_v1
+
+execution:
+  video_order: batch_manifest
+  max_concurrent_videos: 1
+  require_phase00_frame_timeline: true
+  checkpoint_after_each_stage: true
+  continue_after_retryable_video_failure: true
+  gpu_heavy_models_resident: 1
+  release_gpu_objects_before_empty_cache: true
+  min_scratch_free_gb: 5
+
+stages:
+  order:
+    - shots
+    - keyframes
+    - asr
+    - shot_captions
+    - shot_transcript_links
+    - scenes
+    - scene_summaries
+    - package
+    - sync
+  dependencies:
+    shots: []
+    keyframes: [shots]
+    asr: []
+    shot_captions: [keyframes]
+    shot_transcript_links: [shots, asr]
+    scenes: [shots, keyframes, shot_captions, shot_transcript_links]
+    scene_summaries: [scenes, keyframes, shot_captions, shot_transcript_links]
+    package:
+      - shots
+      - keyframes
+      - asr
+      - shot_captions
+      - shot_transcript_links
+      - scenes
+      - scene_summaries
+    sync: [package]
+
+shot_detection:
+  model_key: shot_detection
+  boundary_convention: "[start_frame, end_frame)"
+  no_cut_status: transnet_v2_no_cut
+  production_fallback: null
+
+asr:
+  model_key: asr
+  no_audio_status: no_audio
+  no_speech_status: no_speech
+  exhausted_oom_status: failed_retryable
+  continue_next_video_after_exhausted_oom: true
+
+api:
+  max_concurrency_per_video: 2
+  request_cache_backend: stage_local
+  total_attempts: 4
+  timeout_seconds: 120
+  backoff_initial_seconds: 2
+  backoff_max_seconds: 30
+  jitter: true
+  retryable_http_statuses: [408, 429, 500, 502, 503, 504]
+  terminal_http_statuses: [400, 401, 403, 404]
+  schema_repair_prompt_version: schema_repair_v1
+
+retry:
+  local_model_total_attempts: 2
+  schema_repair_attempts: 1
+
+scene_grouping:
+  focus_gap_count: 8
+  context_shots_each_side: 4
+  stride: 6
+  boundary_threshold: 0.67
+  non_boundary_threshold: 0.33
+  dense_boundary_count: 2
+  dense_boundary_gap_window: 3
+  strong_disagreement_min_votes: 2
+  strong_disagreement_requires_both_labels: true
+  max_consistency_review_rounds: 1
+  scene_confidence_aggregation: null_v1
+
+scene_summary:
+  max_representative_images: 12
+  image_sampling: evenly_spaced_shots
+
+manual_review:
+  sample_size: 12
+  sampling: deterministic_stratified
+  kinds: [shot_caption, scene_boundary, scene_summary]
+
+schemas:
+  resolved_config: resolved_config_v1
+  checkpoint_state: phase01_checkpoint_state_v1
+  shots: shots_v1
+  keyframes: keyframes_v2
+  asr_segments: asr_segments_v1
+  shot_captions: shot_captions_v1
+  shot_transcript_links: shot_transcript_links_v1
+  scenes: scenes_v1
+  scene_transcript_links: scene_transcript_links_v1
+  scene_summaries: scene_summaries_v1
+
+production_readiness:
+  required_non_null_paths:
+    - models.shot_detection.model_revision
+    - models.shot_detection.source_sha256
+    - models.shot_detection.weights_sha256
+    - models.asr.model_revision
+    - models.shot_caption.model_id
+    - models.shot_caption.model_revision
+    - models.scene_boundary.model_id
+    - models.scene_boundary.model_revision
+    - models.scene_summary.model_id
+    - models.scene_summary.model_revision
+    - media.keyframe.encoding.jpeg_quality
+    - media.keyframe.quality.resize_width
+    - media.keyframe.quality.resize_height
+    - media.keyframe.quality.near_black_luma_threshold
+    - media.keyframe.quality.near_black_pixel_ratio_threshold
+    - media.keyframe.quality.near_white_luma_threshold
+    - media.keyframe.quality.near_white_pixel_ratio_threshold
+    - media.thumbnail.encoding.webp_quality
+    - phase01.api.total_attempts
+    - phase01.api.timeout_seconds
+    - phase01.api.backoff_initial_seconds
+    - phase01.api.backoff_max_seconds
+    - phase01.api.schema_repair_prompt_version
+    - phase01.retry.local_model_total_attempts
+    - phase01.retry.schema_repair_attempts
+    - phase01.scene_grouping.dense_boundary_count
+    - phase01.scene_grouping.dense_boundary_gap_window
+    - phase01.scene_grouping.strong_disagreement_min_votes
+    - phase01.scene_grouping.max_consistency_review_rounds
+    - phase01.scene_grouping.scene_confidence_aggregation
+    - storage.checkpoint.repo_id

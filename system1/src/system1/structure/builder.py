@@ -8,15 +8,19 @@ from typing import Any
 
 import pandas as pd
 
+from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.artifacts.package import write_artifact_zip
 from system1.artifacts.reports import utc_now, write_worker_report
-from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.config import ProviderPlan, load_provider_plan
 from system1.features.providers import MockTextProvider, RealProviderUnavailable
 from system1.ingest.discovery import read_metadata
 from system1.keyframes.extractor import extract_keyframe_and_thumbnail
 from system1.release.types import config_dir, release_root
-from system1.structure.providers import TimelineAwareFallbackProvider, TimelineContext, TimelineFrame
+from system1.structure.providers import (
+    TimelineAwareFallbackProvider,
+    TimelineContext,
+    TimelineFrame,
+)
 from system1.text.builder import metadata_text
 
 STRUCTURE_PARQUET_FILES = (
@@ -36,9 +40,9 @@ def process_structure_batch(
     *,
     input_dir: Path | str | None = None,
     batch_id: str,
-    mode: str = "debug_small_sample",
     providers: str = "mock",
     worker_id: str = "worker_000",
+    require_frame_timeline: bool = False,
 ) -> Path:
     started_at = utc_now()
     release_dir = release_root(output_dir)
@@ -90,11 +94,11 @@ def process_structure_batch(
                 video=video,
                 mapping=mapping,
                 input_dir=input_dir,
-                mode=mode,
                 providers=providers,
                 provider_plan=provider_plan,
                 batch_id=batch_id,
                 worker_id=worker_id,
+                require_frame_timeline=require_frame_timeline,
             )
             errors.extend(video_errors)
             _write_batch_debug_copy(batch_debug_dir / f"{video_id}.json", video_id=video_id, tables=video_tables)
@@ -140,11 +144,11 @@ def _write_video_structure_artifact(
     video: dict[str, Any],
     mapping: dict[str, Any],
     input_dir: Path | str | None,
-    mode: str,
     providers: str,
     provider_plan: ProviderPlan,
     batch_id: str,
     worker_id: str,
+    require_frame_timeline: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     video_id = str(video["video_id"])
     errors: list[dict[str, Any]] = []
@@ -155,6 +159,11 @@ def _write_video_structure_artifact(
     normalized_text = metadata_text(video_id, metadata)
     text_provider = _text_provider_for_plan(provider_plan)
     timeline, timeline_errors = _load_timeline_context(release_dir, video)
+    if require_frame_timeline and not timeline.available:
+        details = timeline_errors[0]["message"] if timeline_errors else "timeline is empty"
+        raise ValueError(
+            f"decoded frame timeline is required for production video_id={video_id}: {details}"
+        )
     errors.extend(timeline_errors)
     structure_provider = TimelineAwareFallbackProvider()
     frame_count = _int_or_none(video.get("frame_count"))
@@ -282,8 +291,10 @@ def _write_video_structure_artifact(
             "scene_id": scene_id,
             "keyframe_ref": keyframe_ref,
             "thumbnail_ref": thumbnail_ref,
-            "keyframe_role": "representative",
+            "keyframe_role": "middle",
+            "quality_score": 0.0,
             "is_representative": True,
+            "selection_reason": "debug_single_keyframe",
             "selection_method": f"{keyframe_selection.selection_method}:{selection_method}",
             "provider": "KeyframeSelectionProvider",
             "status": keyframe_selection.status if keyframe_path.exists() and thumbnail_path.exists() else "degraded",
@@ -343,7 +354,6 @@ def _write_video_structure_artifact(
             "counts": {name.replace(".parquet", ""): 1 for name in STRUCTURE_PARQUET_FILES},
             "provider": providers,
             "provider_plan": provider_plan.__dict__,
-            "mode": mode,
             "batch_id": batch_id,
             "worker_id": worker_id,
             "created_at": "1970-01-01T00:00:00Z" if providers == "mock" else "runtime",
@@ -474,7 +484,7 @@ def _read_metadata_or_empty(path: Path | None, errors: list[dict[str, Any]], vid
 
 
 def _text_provider_for_plan(provider_plan: ProviderPlan) -> MockTextProvider | RealProviderUnavailable:
-    if provider_plan.mode == "mock":
+    if provider_plan.uses_only_mock_providers:
         return MockTextProvider()
     return RealProviderUnavailable("mixed_real_unavailable")
 

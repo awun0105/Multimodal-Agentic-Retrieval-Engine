@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.env
+.pytest_cache/
+.ruff_cache/
+.venv/
+hf_cache/
+*.zip
+*.part
+build/
+releases/
+.upload-state.json
+model-validation.json

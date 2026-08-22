@@ -2,8 +2,8 @@
 
 ## Status
 
-Repository snapshot refreshed after the Notebook 01 production-contract sync
-on 2026-08-05.
+Repository snapshot refreshed during Notebook 01 production implementation on
+2026-08-16.
 
 ## Implemented And Observed
 
@@ -17,7 +17,9 @@ on 2026-08-05.
 
 | Area | State | Evidence |
 | --- | --- | --- |
-| Production Phase01 semantic algorithms | partial | Timeline-aware provider interfaces and explicit debug/fallback artifacts exist. The accepted target is TransNet V2, 20%/50%/80% keyframes, faster-whisper large-v3, Gemini bilingual captions, multimodal context-focus scene grouping, and Gemini bilingual scene summaries. Production providers and their real-video proof remain unfinished; see `docs/architecture/system1-notebook01-production-pipeline.md`. |
+| Canonical per-video metadata in Notebook 00B/00C | implemented and locally validated | Both raw upload package paths generate schema 1.0 JSON for every video, retain organizer source reference/checksum without a duplicate HF tree, retry `ffprobe`, project the same facts into inventory, and propagate provenance through canonical HF ingest. Notebook gates and automated tests cover the contract; a live full-dataset `canonical_raw_v009` upload has not yet been run. |
+| Production Phase00 decoded frame timeline from canonical HF raw | implemented and locally validated | Notebook 00B/00C create each decoded timeline while the video is already in bounded upload scratch. The raw inventory and progress record its path/status/row count; required resume backfills older missing timelines; canonical HF ingest downloads and validates only the compact Parquet, not the MP4. Automated tests cover the workflow, while a live full-dataset `canonical_raw_v009` rehearsal remains pending. |
+| Production Phase01 semantic algorithms | implemented, externally blocked from live proof | The public `process-batch` path and thin Notebook 01 implement batch-scoped checksum-resumable Phase00 restore, deterministic resolved config, private per-video/per-stage checkpoints with grouped output commits, dependency invalidation, TransNet V2 subprocess inference, one-pass bounded-RAM search-band keyframes, faster-whisper large-v3 OOM recovery, Gemini Interactions structured captions/boundaries/summaries with stage-local request cache/retry/concurrency controls, strict package validation, sync verification, and QA/worker reports. The complete local suite passes 247 tests. A live run still requires the one-time verified TransNet artifact/checksum, private checkpoint repo, credentials, and real-provider acceptance proof; see `docs/plans/active/notebook01-production-pipeline.md`. |
 | Production Phase02 enrichment and dual visual indexes | partial/debug only | Current code builds a single debug visual embedding/index path. The accepted target is Gemini OCR, configured object detection, and separate SigLIP and BEiT3 FAISS indexes over Notebook 01 keyframes with shared `embeddings_meta`/`vector_map`; it is not implemented yet. |
 | System 2 backend | scaffold only | `system2/backend/pyproject.toml` and package placeholders |
 | System 2 frontend | scaffold only | minimal `system2/frontend/package.json` and no application source |
@@ -26,7 +28,8 @@ on 2026-08-05.
 ## Interpretation Rule
 
 Treat System 1 debug/mock behavior as implemented only where code and tests
-provide evidence. Do not describe unfinished production providers or System 2
-target architecture as running behavior. Product and architecture decisions
-remain normative targets; implementation status belongs here and in
+provide evidence. Do not describe the implemented Phase01 adapters as
+production-validated until real-provider acceptance passes, and do not describe
+System 2 target architecture as running behavior. Product and architecture
+decisions remain normative targets; implementation status belongs here and in
 `docs/validation/test-matrix.md`.

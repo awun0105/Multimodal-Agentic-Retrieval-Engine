@@ -1,12 +1,48 @@
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-REQUIRED_CONFIGS = ("artifact.yaml", "dataset.yaml", "frame.yaml", "media.yaml", "models.yaml", "preprocessing.yaml", "release.yaml")
+from system1.runtime.environment import detect_environment
+
+REQUIRED_CONFIGS = (
+    "artifact.yaml",
+    "dataset.yaml",
+    "frame.yaml",
+    "media.yaml",
+    "models.yaml",
+    "phase01.yaml",
+    "preprocessing.yaml",
+    "release.yaml",
+    "storage.yaml",
+)
+
+_PHASE01_USER_SETTING_KEYS = {
+    "batch_id",
+    "checkpoint_prefix",
+    "checkpoint_revision",
+    "hf_checkpoint_repo",
+    "hf_release_prefix",
+    "hf_release_repo",
+    "hf_repo_type",
+    "hf_release_revision",
+    "release_id_override",
+    "scratch_dir",
+    "worker_id",
+}
+_PHASE01_REQUIRED_USER_SETTINGS = {"batch_id", "worker_id"}
+_SECRET_SETTING_KEYS = {
+    "aic_hf_token",
+    "gemini_api_key",
+    "hf_token",
+    "huggingface_hub_token",
+}
 
 
 @dataclass(frozen=True)
@@ -19,9 +55,32 @@ class ProviderPlan:
     scene_summary: str
 
     @property
-    def mode(self) -> str:
+    def uses_only_mock_providers(self) -> bool:
         values = {self.asr, self.ocr, self.embedding, self.object_detection, self.shot_caption, self.scene_summary}
-        return "mock" if values == {"mock"} else "mixed"
+        return values == {"mock"}
+
+
+@dataclass(frozen=True)
+class ResolvedPhase01Config:
+    """Secret-free, deterministic Phase01 runtime configuration."""
+
+    payload: dict[str, Any]
+    config_hash: str
+    stage_config_hashes: dict[str, str]
+    unresolved_required_fields: tuple[str, ...]
+
+    @property
+    def production_ready(self) -> bool:
+        return not self.unresolved_required_fields
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **copy.deepcopy(self.payload),
+            "config_hash": self.config_hash,
+            "stage_config_hashes": dict(self.stage_config_hashes),
+            "production_ready": self.production_ready,
+            "unresolved_required_fields": list(self.unresolved_required_fields),
+        }
 
 
 def load_configs(config_dir: Path | str) -> dict[str, dict[str, Any]]:
@@ -38,12 +97,12 @@ def load_configs(config_dir: Path | str) -> dict[str, dict[str, Any]]:
     return configs
 
 
-def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPlan:
+def load_provider_plan(config_dir: Path | str, provider_profile: str) -> ProviderPlan:
     configs = load_configs(config_dir)
     provider_defaults = configs["models"].get("providers", {})
-    if provider_mode == "mock":
+    if provider_profile == "mock":
         return ProviderPlan(**{key: "mock" for key in _provider_keys()})
-    if provider_mode == "real":
+    if provider_profile == "real":
         return ProviderPlan(
             asr="whisper",
             ocr="paddleocr",
@@ -52,7 +111,7 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             shot_caption="vlm",
             scene_summary="llm",
         )
-    if provider_mode == "rule_based":
+    if provider_profile == "rule_based":
         return ProviderPlan(
             asr=provider_defaults.get("asr", "mock"),
             ocr=provider_defaults.get("ocr", "mock"),
@@ -61,7 +120,7 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             shot_caption="rule_based",
             scene_summary="rule_based",
         )
-    if provider_mode == "vlm":
+    if provider_profile == "vlm":
         return ProviderPlan(
             asr=provider_defaults.get("asr", "mock"),
             ocr=provider_defaults.get("ocr", "mock"),
@@ -70,9 +129,229 @@ def load_provider_plan(config_dir: Path | str, provider_mode: str) -> ProviderPl
             shot_caption="vlm",
             scene_summary="llm",
         )
-    if provider_mode == "config":
+    if provider_profile == "config":
+        phase01_models = configs["models"].get("phase01", {})
+        if phase01_models:
+            return ProviderPlan(
+                asr=str(phase01_models.get("asr", {}).get("provider", "unconfigured")),
+                ocr="unconfigured",
+                embedding="unconfigured",
+                object_detection="unconfigured",
+                shot_caption=str(
+                    phase01_models.get("shot_caption", {}).get("provider", "unconfigured")
+                ),
+                scene_summary=str(
+                    phase01_models.get("scene_summary", {}).get("provider", "unconfigured")
+                ),
+            )
         return ProviderPlan(**{key: str(provider_defaults.get(key, "mock")) for key in _provider_keys()})
-    raise ValueError(f"unsupported provider mode: {provider_mode}")
+    raise ValueError(f"unsupported provider profile: {provider_profile}")
+
+
+def resolve_phase01_config(
+    config_dir: Path | str,
+    *,
+    user_settings: dict[str, Any],
+    phase00_release_id: str | None,
+    environment: str | None = None,
+) -> ResolvedPhase01Config:
+    """Merge repository policy with minimal operator/runtime settings.
+
+    Phase00 discovery happens outside this pure merge function. Its result is
+    passed as ``phase00_release_id``; a non-empty user override wins.
+    """
+
+    normalized_settings = dict(user_settings)
+    lowered_keys = {str(key).lower() for key in normalized_settings}
+    secret_keys = sorted(lowered_keys & _SECRET_SETTING_KEYS)
+    if secret_keys:
+        raise ValueError(
+            "secret values are not valid Phase01 config fields; use the runtime secret store: "
+            + ", ".join(secret_keys)
+        )
+
+    unknown = sorted(set(normalized_settings) - _PHASE01_USER_SETTING_KEYS)
+    if unknown:
+        raise ValueError(f"unsupported Phase01 user settings: {', '.join(unknown)}")
+    missing = sorted(
+        key for key in _PHASE01_REQUIRED_USER_SETTINGS if not str(normalized_settings.get(key, "")).strip()
+    )
+    if missing:
+        raise ValueError(f"missing Phase01 user settings: {', '.join(missing)}")
+
+    release_override = str(normalized_settings.get("release_id_override") or "").strip()
+    discovered_release = str(phase00_release_id or "").strip()
+    release_id = release_override or discovered_release
+    if not release_id:
+        raise ValueError(
+            "Phase00 release could not be resolved; supply phase00_release_id "
+            "or an explicit release_id_override"
+        )
+
+    configs = load_configs(config_dir)
+    storage = copy.deepcopy(configs["storage"])
+    release_storage = storage.setdefault("release", {})
+    checkpoint_storage = storage.setdefault("checkpoint", {})
+    model_artifact_storage = storage.setdefault("model_artifacts", {})
+    for target, overrides in (
+        (
+            release_storage,
+            {
+                "repo_id": normalized_settings.get("hf_release_repo"),
+                "repo_type": normalized_settings.get("hf_repo_type"),
+                "revision": normalized_settings.get("hf_release_revision"),
+                "prefix": normalized_settings.get("hf_release_prefix"),
+            },
+        ),
+        (
+            checkpoint_storage,
+            {
+                "repo_id": normalized_settings.get("hf_checkpoint_repo"),
+                "repo_type": normalized_settings.get("hf_repo_type"),
+                "revision": normalized_settings.get("checkpoint_revision"),
+                "prefix": normalized_settings.get("checkpoint_prefix"),
+            },
+        ),
+    ):
+        for key, value in overrides.items():
+            if value is not None:
+                target[key] = value
+    if normalized_settings.get("scratch_dir") is not None:
+        storage["scratch"]["root_override"] = str(normalized_settings["scratch_dir"])
+    # The project-owned TransNet bundle lives in the checkpoint repository by
+    # default. A repository/revision override must therefore move both stores;
+    # their independent prefixes remain versioned in storage.yaml.
+    for key, setting in (
+        ("repo_id", "hf_checkpoint_repo"),
+        ("repo_type", "hf_repo_type"),
+        ("revision", "checkpoint_revision"),
+    ):
+        if normalized_settings.get(setting) is not None:
+            model_artifact_storage[key] = normalized_settings[setting]
+
+    payload: dict[str, Any] = {
+        "schema_version": "resolved_config_v1",
+        "phase01": copy.deepcopy(configs["phase01"]),
+        "models": copy.deepcopy(configs["models"].get("phase01", {})),
+        "media": copy.deepcopy(configs["media"]),
+        "artifact": copy.deepcopy(configs["artifact"]),
+        "storage": storage,
+        "runtime": {
+            "environment": environment or detect_environment(),
+            "release_id": release_id,
+            "release_id_source": "user_override" if release_override else "phase00_auto_resolve",
+            "batch_id": str(normalized_settings["batch_id"]),
+            "worker_id": str(normalized_settings["worker_id"]),
+        },
+    }
+    required_paths = payload["phase01"].get("production_readiness", {}).get(
+        "required_non_null_paths", []
+    )
+    unresolved = tuple(
+        sorted(path for path in required_paths if _value_at_path(payload, str(path)) is None)
+    )
+    digest = _sha256_json(payload)
+    stage_config_hashes = _stage_config_hashes(payload)
+    return ResolvedPhase01Config(
+        payload=payload,
+        config_hash=digest,
+        stage_config_hashes=stage_config_hashes,
+        unresolved_required_fields=unresolved,
+    )
+
+
+def require_phase01_production_ready(config: ResolvedPhase01Config) -> None:
+    if config.production_ready:
+        return
+    raise ValueError(
+        "Phase01 production config has unresolved required fields: "
+        + ", ".join(config.unresolved_required_fields)
+    )
+
+
+def persist_resolved_phase01_config(config: ResolvedPhase01Config, path: Path | str) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.partial")
+    temporary.write_text(
+        json.dumps(config.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+    return target
+
+
+def _value_at_path(payload: dict[str, Any], dotted_path: str) -> Any:
+    value: Any = payload
+    for component in dotted_path.split("."):
+        if not isinstance(value, dict) or component not in value:
+            return None
+        value = value[component]
+    return value
+
+
+def _sha256_json(payload: Any) -> str:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
+    """Hash only policy relevant to a stage so independent work stays reusable."""
+
+    phase01 = payload["phase01"]
+    models = payload["models"]
+    schemas = phase01["schemas"]
+    stage_payloads: dict[str, Any] = {
+        "shots": {
+            "model": models["shot_detection"],
+            "policy": phase01["shot_detection"],
+            "schema": schemas["shots"],
+        },
+        "keyframes": {
+            "media": payload["media"],
+            "schema": schemas["keyframes"],
+        },
+        "asr": {
+            "model": models["asr"],
+            "policy": phase01["asr"],
+            "retry": phase01["retry"],
+            "schema": schemas["asr_segments"],
+        },
+        "shot_captions": {
+            "model": models["shot_caption"],
+            "api": phase01["api"],
+            "retry": phase01["retry"],
+            "schema": schemas["shot_captions"],
+        },
+        "shot_transcript_links": {
+            "schema": schemas["shot_transcript_links"],
+        },
+        "scenes": {
+            "model": models["scene_boundary"],
+            "api": phase01["api"],
+            "retry": phase01["retry"],
+            "grouping": phase01["scene_grouping"],
+            "schemas": [schemas["scenes"], schemas["scene_transcript_links"]],
+        },
+        "scene_summaries": {
+            "model": models["scene_summary"],
+            "api": phase01["api"],
+            "retry": phase01["retry"],
+            "policy": phase01["scene_summary"],
+            "schema": schemas["scene_summaries"],
+        },
+        "package": {
+            "artifact": payload["artifact"]["package"],
+            "schemas": schemas,
+            "batch_id": payload["runtime"]["batch_id"],
+            "worker_id": payload["runtime"]["worker_id"],
+        },
+        "sync": {
+            "release": payload["storage"]["release"],
+            "artifact": payload["artifact"]["package"],
+        },
+    }
+    return {stage: _sha256_json(value) for stage, value in stage_payloads.items()}
 
 
 def _provider_keys() -> tuple[str, ...]:

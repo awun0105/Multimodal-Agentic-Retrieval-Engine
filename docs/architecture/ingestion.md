@@ -86,8 +86,9 @@ The ingestion pipeline should prepare:
 
 Input layout must stay flexible at the file-extension level. The organizer
 publishes videos and baseline support artifacts, but this project's canonical
-input policy consumes official videos plus metadata when available and
-regenerates all derived evidence.
+input policy consumes official videos plus organizer metadata when available,
+creates one canonical metadata JSON for every video, and regenerates all
+derived evidence.
 
 Required organizer inputs:
 
@@ -96,6 +97,15 @@ Required organizer inputs:
 Optional organizer input:
 
 - metadata JSON files matched to videos by stem when available
+
+Required project-owned raw output:
+
+- `metadata/{video_id}.json` for every video, normalized from the ten observed
+  organizer fields plus `ffprobe` media facts and provenance according to ADR
+  0016
+- organizer source archive/member reference and checksum when available; no
+  duplicate organizer metadata tree in the HF raw prefix
+- pre-generation missing/unmatched organizer metadata audit manifests
 
 Explicitly unused organizer support material:
 
@@ -127,7 +137,7 @@ Ingestion validation should catch:
 
 1. Scan dataset inputs.
 2. Import/stage in DuckDB.
-3. Normalize metadata in DuckDB when present.
+3. Normalize canonical per-video metadata and retain organizer provenance.
 4. Produce runtime SQLite tables.
 5. Build SQLite FTS5 tables.
 6. Build/load separate SigLIP and BEiT3 FAISS indexes.

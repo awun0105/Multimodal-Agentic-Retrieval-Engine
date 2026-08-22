@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-from typing import Any, Sequence
 import json
 import os
 import shutil
 import tempfile
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 if os.environ.get("AIC_HF_PROGRESS", "0") != "1":
     os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
     os.environ.setdefault("HF_HUB_VERBOSITY", "error")
 
-from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
+from huggingface_hub import (
+    CommitOperationAdd,
+    CommitOperationDelete,
+    HfApi,
+    RepoFile,
+    hf_hub_download,
+)
 
 try:
     from huggingface_hub.utils import (
@@ -147,16 +154,57 @@ class HuggingFaceDatasetArtifactStore:
         )
         return [self.path(relative_path) for relative_path in relative_paths]
 
-    def download_file(self, relative_path: str | Path, target: Path, *, cache_dir: Path | str | None = None) -> Path:
-        remote_path = self._remote_path(relative_path)
-        cached_path = hf_hub_download(
+    def sync_files(
+        self,
+        files: Sequence[tuple[Path, str | Path]],
+        *,
+        delete_paths: Sequence[str | Path] = (),
+        commit_message: str,
+        num_threads: int = 2,
+    ) -> list[Path]:
+        operations: list[CommitOperationAdd | CommitOperationDelete] = []
+        relative_paths: list[str | Path] = []
+        for source, relative_path in files:
+            if not source.exists():
+                raise FileNotFoundError(source)
+            if not source.is_file():
+                raise ValueError(f"Source must be a file: {source}")
+            operations.append(
+                CommitOperationAdd(
+                    path_in_repo=self._remote_path(relative_path),
+                    path_or_fileobj=str(source),
+                )
+            )
+            relative_paths.append(relative_path)
+        for relative_path in delete_paths:
+            operations.append(
+                CommitOperationDelete(path_in_repo=self._remote_path(relative_path))
+            )
+        if not operations:
+            return []
+        HfApi(token=self.token).create_commit(
             repo_id=self.repo_id,
+            operations=operations,
+            commit_message=commit_message,
             repo_type=self.repo_type,
             revision=self.revision,
-            filename=remote_path,
-            token=self.token,
-            cache_dir=str(cache_dir) if cache_dir is not None else None,
+            num_threads=num_threads,
         )
+        return [self.path(relative_path) for relative_path in relative_paths]
+
+    def download_file(self, relative_path: str | Path, target: Path, *, cache_dir: Path | str | None = None) -> Path:
+        remote_path = self._remote_path(relative_path)
+        try:
+            cached_path = hf_hub_download(
+                repo_id=self.repo_id,
+                repo_type=self.repo_type,
+                revision=self.revision,
+                filename=remote_path,
+                token=self.token,
+                cache_dir=str(cache_dir) if cache_dir is not None else None,
+            )
+        except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
+            raise FileNotFoundError(remote_path) from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         temp_path = target.with_name(f".{target.name}.tmp.{os.getpid()}")
         shutil.copyfile(cached_path, temp_path)
@@ -184,11 +232,26 @@ class HuggingFaceDatasetArtifactStore:
     def list_files(self, prefix: str | Path = "") -> list[Path]:
         prefix_value = _normalize_relative_path(prefix)
         remote_prefix = self._remote_path(prefix_value)
-        files = HfApi(token=self.token).list_repo_files(
-            repo_id=self.repo_id,
-            repo_type=self.repo_type,
-            revision=self.revision,
-        )
+        api = HfApi(token=self.token)
+        list_repo_tree = getattr(api, "list_repo_tree", None)
+        if list_repo_tree is not None and remote_prefix:
+            try:
+                entries = list_repo_tree(
+                    repo_id=self.repo_id,
+                    path_in_repo=remote_prefix,
+                    recursive=True,
+                    repo_type=self.repo_type,
+                    revision=self.revision,
+                )
+                files = [entry.path for entry in entries if isinstance(entry, RepoFile)]
+            except EntryNotFoundError:
+                return []
+        else:
+            files = api.list_repo_files(
+                repo_id=self.repo_id,
+                repo_type=self.repo_type,
+                revision=self.revision,
+            )
         store_prefix = _normalize_relative_path(self.prefix)
         results: list[Path] = []
         for file_path in files:

@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resolved_config_v1",
+  "title": "Resolved Phase01 Config",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "phase01",
+    "models",
+    "media",
+    "artifact",
+    "storage",
+    "runtime",
+    "config_hash",
+    "stage_config_hashes",
+    "production_ready",
+    "unresolved_required_fields"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "resolved_config_v1"
+    },
+    "phase01": {
+      "type": "object"
+    },
+    "models": {
+      "type": "object"
+    },
+    "media": {
+      "type": "object"
+    },
+    "artifact": {
+      "type": "object"
+    },
+    "storage": {
+      "type": "object"
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "environment",
+        "release_id",
+        "release_id_source",
+        "batch_id",
+        "worker_id"
+      ],
+      "properties": {
+        "environment": {
+          "enum": [
+            "local",
+            "colab",
+            "kaggle"
+          ]
+        },
+        "release_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "release_id_source": {
+          "enum": [
+            "phase00_auto_resolve",
+            "user_override"
+          ]
+        },
+        "batch_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worker_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "config_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stage_config_hashes": {
+      "type": "object",
+      "minProperties": 9,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "production_ready": {
+      "type": "boolean"
+    },
+    "unresolved_required_fields": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}

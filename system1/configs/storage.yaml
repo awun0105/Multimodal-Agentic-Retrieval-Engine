@@ -1,0 +1,47 @@
+schema_version: phase01_storage_v1
+
+release:
+  required: true
+  backend: hf_dataset
+  repo_id: 1thesudden/AIC26_release
+  repo_type: dataset
+  revision: main
+  prefix: ""
+  verify_remote_checksum: true
+
+checkpoint:
+  required: true
+  backend: hf_dataset
+  repo_id: 1thesudden/AIC26_checkpoints
+  repo_type: dataset
+  revision: main
+  prefix: ""
+  require_private: true
+  verify_remote_checksum: true
+
+model_artifacts:
+  backend: hf_dataset
+  repo_id: 1thesudden/AIC26_checkpoints
+  repo_type: dataset
+  revision: main
+  prefix: model_artifacts
+
+scratch:
+  persistent: false
+  cleanup_after_each_stage: false
+  cleanup_after_each_video: true
+  atomic_temp_suffix: .partial
+
+model_cache:
+  persistent_checkpoint: false
+  environment_variables:
+    - HF_HOME
+    - HF_HUB_CACHE
+  reuse_within_runtime: true
+
+secrets:
+  persist: false
+  accepted_environment_names:
+    - HF_TOKEN
+    - AIC_HF_TOKEN
+    - GEMINI_API_KEY

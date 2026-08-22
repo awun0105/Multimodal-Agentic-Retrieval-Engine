@@ -5,6 +5,8 @@ import json
 import logging
 import math
 import subprocess
+import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,9 +45,21 @@ def probe_video(path: Path) -> VideoProbe:
     return _build_probe_from_stream(path, stream, timeline_rows=None)
 
 
+def probe_video_header(path: Path) -> VideoProbe:
+    """Read stream metadata without the expensive full packet-count scan."""
+    try:
+        payload = _run_ffprobe_stream(path, count_packets=False)
+        stream = _first_stream(payload)
+    except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
+        return VideoProbe(None, "ffprobe_failed", None, True, "unavailable", None, None, None, None)
+    return _build_probe_from_stream(path, stream, timeline_rows=None)
+
+
 def probe_video_with_timeline(path: Path, *, video_id: str) -> VideoProbeWithTimeline:
     try:
-        payload = _run_ffprobe_stream(path)
+        # The decoded-frame query below already scans the full stream and gives
+        # the exact row count. Avoid a second full `-count_packets` pass here.
+        payload = _run_ffprobe_stream(path, count_packets=False)
         stream = _first_stream(payload)
     except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
         return VideoProbeWithTimeline(
@@ -63,17 +77,79 @@ def probe_video_with_timeline(path: Path, *, video_id: str) -> VideoProbeWithTim
     )
 
 
-def _run_ffprobe_stream(path: Path) -> dict[str, Any]:
+def iter_frame_timeline_rows(
+    path: Path,
+    *,
+    video_id: str,
+) -> Iterator[dict[str, float | int | str | None]]:
+    """Yield decoded-frame timestamps from ffprobe without buffering its CSV output."""
     command = [
         "ffprobe",
         "-v",
         "error",
         "-select_streams",
         "v:0",
-        "-count_packets",
         "-show_entries",
-        "stream=avg_frame_rate,r_frame_rate,nb_frames,nb_read_packets,width,height,duration",
+        "frame=best_effort_timestamp_time,duration_time,pkt_duration_time",
+        "-of",
+        "csv=p=0",
+        str(path),
     ]
+    stderr_handle = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+    try:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=stderr_handle, text=True)
+    except OSError:
+        stderr_handle.close()
+        raise
+    try:
+        if process.stdout is None:
+            raise RuntimeError("ffprobe stdout pipe is unavailable")
+        frame_id = 0
+        for fields in csv.reader(process.stdout):
+            row = _frame_timeline_row_from_fields(
+                fields,
+                video_id=video_id,
+                frame_id=frame_id,
+            )
+            if row is None:
+                continue
+            yield row
+            frame_id += 1
+        returncode = process.wait()
+        stderr_handle.seek(0)
+        stderr = stderr_handle.read()
+        if returncode:
+            raise subprocess.CalledProcessError(
+                returncode,
+                command,
+                stderr=stderr,
+            )
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        if process.stdout is not None:
+            process.stdout.close()
+        stderr_handle.close()
+
+
+def _run_ffprobe_stream(path: Path, *, count_packets: bool = True) -> dict[str, Any]:
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+    ]
+    stream_fields = "avg_frame_rate,r_frame_rate,nb_frames,width,height,duration"
+    if count_packets:
+        command.append("-count_packets")
+        stream_fields += ",nb_read_packets"
+    command.extend(["-show_entries", f"stream={stream_fields}"])
     command.extend(["-of", "json", str(path)])
     completed = subprocess.run(command, check=True, capture_output=True, text=True)
     return json.loads(completed.stdout)
@@ -149,21 +225,37 @@ def _build_probe_from_stream(
 def _frame_timeline_rows_from_csv(text: str, *, video_id: str) -> list[dict[str, float | int | str | None]]:
     rows: list[dict[str, float | int | str | None]] = []
     for fields in csv.reader(text.splitlines()):
-        if not fields:
-            continue
-        pts_time = _first_float(fields[0] if len(fields) > 0 else None)
-        duration_time = _first_float(fields[1] if len(fields) > 1 else None, fields[2] if len(fields) > 2 else None)
-        if pts_time is None:
-            continue
-        rows.append(
-            {
-                "video_id": video_id,
-                "frame_id": len(rows),
-                "pts_time": pts_time,
-                "duration_time": duration_time,
-            }
+        row = _frame_timeline_row_from_fields(
+            fields,
+            video_id=video_id,
+            frame_id=len(rows),
         )
+        if row is not None:
+            rows.append(row)
     return rows
+
+
+def _frame_timeline_row_from_fields(
+    fields: list[str],
+    *,
+    video_id: str,
+    frame_id: int,
+) -> dict[str, float | int | str | None] | None:
+    if not fields:
+        return None
+    pts_time = _first_float(fields[0] if len(fields) > 0 else None)
+    duration_time = _first_float(
+        fields[1] if len(fields) > 1 else None,
+        fields[2] if len(fields) > 2 else None,
+    )
+    if pts_time is None:
+        return None
+    return {
+        "video_id": video_id,
+        "frame_id": frame_id,
+        "pts_time": pts_time,
+        "duration_time": duration_time,
+    }
 
 
 def _detect_vfr(rows: list[dict[str, float | int | str | None]] | None) -> bool | None:
