@@ -1,0 +1,70 @@
+# Pipeline Configuration for System 1 (Vietnamese Video Focus)
+
+pipeline:
+  name: "system1-vietnamese-video-pipeline"
+  version: "1.0.0"
+  device: "cuda" # "cuda" or "cpu"
+  use_dual_gpu: true
+
+# Video decoding & Frame alignment
+frame_alignment:
+  use_packet_counting: true
+  target_fps: null # null means keep original video fps
+
+# Shot boundary detection (TransNet V2)
+shot_detection:
+  model_name: "transnetv2"
+  threshold: 0.5
+  min_shot_frames: 5
+
+# Smart Keyframe Extraction
+keyframe_extraction:
+  mode: "adaptive" # "adaptive" or "fixed_bands"
+  fixed_bands: [0.2, 0.5, 0.8]
+  adaptive:
+    min_keyframes_per_shot: 1
+    max_keyframes_per_shot: 5
+    sample_interval_sec: 2.0 # for long shots in cooking/lectures
+    motion_difference_threshold: 0.15 # pixel difference threshold
+  quality_filter:
+    enable_laplacian_filter: true
+    min_laplacian_variance: 50.0 # prune blurry frames
+    min_brightness: 15.0 # prune dark transition frames
+    max_brightness: 245.0 # prune over-exposed white frames
+  thumbnail:
+    width: 128
+    height: 128
+    format: "webp"
+    quality: 65
+
+# Automatic Speech Recognition (ASR)
+asr:
+  model_size: "large-v3" # "large-v3", "medium", "small"
+  device: "cuda"
+  compute_type: "float16" # or "int8_float16" on T4 GPU
+  language: "vi"
+  initial_prompt: "Đây là video tin tức thời sự HTV, VTV, phóng sự, talkshow, nấu ăn và bài giảng trực tuyến bằng tiếng Việt."
+
+# Optical Character Recognition (OCR)
+ocr:
+  engine: "easyocr" # "easyocr" or "vintern-1b"
+  languages: ["vi", "en"]
+  gpu: true
+  confidence_threshold: 0.4
+  detect_regions:
+    lower_third: true # scan news tickers / captions at bottom 25% of screen
+    slide_full: true # scan entire slide for lecture videos
+
+# Multimodal Vector Embeddings
+embeddings:
+  model_name: "google/siglip-base-patch16-224"
+  batch_size: 64
+  normalize_l2: true
+  embedding_dim: 768
+
+# Database & Index Export
+export:
+  sqlite_filename: "runtime.sqlite"
+  faiss_index_filename: "siglip.faiss"
+  faiss_quantization: "SQ8" # "SQ8", "IVFPQ", or "FlatIP"
+  output_zip_name: "release_artifacts.zip"
