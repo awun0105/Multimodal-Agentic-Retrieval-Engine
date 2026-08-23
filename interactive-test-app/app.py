@@ -803,9 +803,16 @@ def render_side_by_side_comparison(selected_video: str, duration_mode: str = "60
                 # Đa tag phân loại cho BTC (Multi-Badge Display)
                 btc_badges = []
                 b_is_low_info = bool(b.get("is_btc_low_info", False))
+                b_is_virtual = bool(b.get("is_semantic_virtual", False) or (b.get("border_color") == "violet"))
                 b_notice = b.get("btc_notice", "")
+                b_diff = TimelineSynchronizer.clean_text_field(b.get("semantic_difference", ""))
+                b_delta_tag = TimelineSynchronizer.clean_text_field(b.get("delta_time_tag", ""))
 
-                if b_img is not None:
+                if b_is_virtual:
+                    btc_card_border = "border: 3px solid #bd93f9; border-left: 6px solid #bd93f9; box-shadow: 0 0 14px rgba(189,147,249,0.7); outline: 1px solid #ff79c6;"
+                    btc_badges.append(f'<span style="background: #bd93f9; color: #1e1e2e; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 10px;">[Frame Cắt Nghĩa {b_delta_tag}]</span>')
+                    btc_title_color = "#bd93f9"
+                elif b_img is not None:
                     try:
                         b_arr = np.array(b_img)
                         b_std = float(np.std(b_arr))
@@ -827,14 +834,17 @@ def render_side_by_side_comparison(selected_video: str, duration_mode: str = "60
                 elif b_is_low_info:
                     btc_badges.append(f'<span style="background: #ff5555; color: #1e1e2e; padding: 1px 6px; border-radius: 3px; font-weight: bold; font-size: 9px; margin-left: 4px;">[{b_notice or "BTC-xu ly: Mat do thong tin thap"}]</span>')
 
-                if b_is_low_info:
+                if b_is_virtual:
+                    pass
+                elif b_is_low_info:
                     btc_card_border = "border: 2px solid #ff5555; border-left: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
-                    btc_badges_html = f'<div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">{"".join(btc_badges)}</div>'
                     btc_title_color = "#ff5555"
                 else:
                     btc_card_border = "border: 2px solid #8be9fd; border-left: 5px solid #8be9fd; box-shadow: 0 0 12px rgba(139,233,253,0.4);"
-                    btc_badges_html = ""  # Không cần tag BTC thừa vì cột đã ghi rõ Ban Tổ Chức
                     btc_title_color = "#8be9fd"
+
+                btc_badges_html = f'<div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">{"".join(btc_badges)}</div>'
+                b_diff_html = f'<div style="color: #bd93f9; font-weight: bold; font-size: 10px; background: rgba(189,147,249,0.18); border: 1px solid rgba(189,147,249,0.4); padding: 2px 5px; border-radius: 4px; margin: 3px 0;">Khác biệt: {b_diff} ({b_delta_tag})</div>' if b_diff and b_is_virtual else ""
 
                 btc_cards_html.append(f"""
                 <div style="display: flex; gap: 10px; align-items: flex-start; background-color: #242933; {btc_card_border} padding: 8px; border-radius: 6px; margin-bottom: 8px;">
@@ -845,6 +855,7 @@ def render_side_by_side_comparison(selected_video: str, duration_mode: str = "60
                             {btc_badges_html}
                         </div>
                         <div style="color: #eceff4; margin: 1px 0;">Moc: <b style="color: #ebcb8b;">{b_tstr}</b> ({b_pts:.2f}s)</div>
+                        {b_diff_html}
                         <div style="color: #a3be8c; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{b_obj_counts}">Vat the: {b_obj_counts}</div>
                         <div style="color: #88c0d0;">Boi canh: <b>{b_scene}</b></div>
                         <div style="color: #d8dee9;">Y nghia: <b>{b_meaning}</b></div>
@@ -883,6 +894,8 @@ def render_side_by_side_comparison(selected_video: str, duration_mode: str = "60
                 is_sharpened = bool(s.get("is_sharpened_fallback", False))
                 is_bumper = bool("Chuyen Canh" in s_meaning or "Tieu De" in s_meaning or text_density >= 15.0)
                 delta_tag = TimelineSynchronizer.clean_text_field(s.get("delta_time_tag", ""))
+                s_diff = TimelineSynchronizer.clean_text_field(s.get("semantic_difference", ""))
+                s_anchor_id = s.get("anchor_frame_idx", "")
 
                 # Thu thập toàn bộ các tag phân loại hợp lệ (Multi-Badge Display)
                 s_badges = []
@@ -913,6 +926,7 @@ def render_side_by_side_comparison(selected_video: str, duration_mode: str = "60
                     title_color = "#a3be8c"
 
                 status_badges_html = f'<div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center; justify-content: flex-end;">{"".join(s_badges)}</div>'
+                s_diff_html = f'<div style="color: #bd93f9; font-weight: bold; font-size: 10px; background: rgba(189,147,249,0.18); border: 1px solid rgba(189,147,249,0.4); padding: 2px 5px; border-radius: 4px; margin: 3px 0; text-align: right;">Khác biệt vs Anchor #{s_anchor_id}: {s_diff} ({delta_tag})</div>' if s_diff and is_virtual else ""
 
                 s_tstr = format_timestamp(s_pts)
                 s_img = get_self_extracted_image(selected_video, s_sid, s_fidx)
@@ -929,6 +943,7 @@ def render_side_by_side_comparison(selected_video: str, duration_mode: str = "60
                             {status_badges_html}
                         </div>
                         <div style="color: #eceff4; margin: 1px 0;">Moc: <b style="color: #ebcb8b;">{s_tstr}</b> ({s_pts:.2f}s) | Dai {s_dur:.1f}s</div>
+                        {s_diff_html}
                         <div style="color: #a3be8c; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{s_obj_counts}">Vat the: {s_obj_counts}</div>
                         <div style="color: #88c0d0;">Boi canh: <b>{s_scene}</b></div>
                         <div style="color: #d8dee9;">Y nghia: <b>{s_meaning}</b></div>

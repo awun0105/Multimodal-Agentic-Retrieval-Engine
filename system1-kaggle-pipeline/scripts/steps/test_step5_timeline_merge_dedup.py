@@ -199,7 +199,7 @@ def test_step5_timeline_synchronization_and_deduplication():
     ]
     test_self = [
         {"video_id": "L21_V001", "shot_id": 10, "keyframe_frame_idx": 105, "pts_time_sec": 10.5, "sharpness_score": 450.0, "scene_environment": "Thi Giac / Trong Nha", "dominant_color": "Xanh Dương (Blue)", "detected_classes": ["person"]},
-        {"video_id": "L21_V001", "shot_id": 11, "keyframe_frame_idx": 110, "pts_time_sec": 11.2, "sharpness_score": 440.0, "scene_environment": "Thi Giac / Trong Nha", "dominant_color": "Xanh Dương (Blue)", "detected_classes": ["person"]}, # Trung visual -> Frame Cat Nghia
+        {"video_id": "L21_V001", "shot_id": 11, "keyframe_frame_idx": 110, "pts_time_sec": 11.2, "sharpness_score": 440.0, "scene_environment": "Thi Giac / Trong Nha", "dominant_color": "Xanh Dương (Blue)", "detected_classes": ["person", "dog"], "ocr_text": "Bản tin 19h"}, # Khac biet y nghia -> Frame Cat Nghia
         {"video_id": "L21_V001", "shot_id": 12, "keyframe_frame_idx": 115, "pts_time_sec": 11.8, "sharpness_score": 25.0, "scene_environment": "Thi Giac / Trong Nha", "dominant_color": "Xanh Dương (Blue)", "detected_classes": ["person"]} # Mo -> De Xuat Loc Bo
     ]
 
@@ -232,6 +232,53 @@ def test_step5_timeline_synchronization_and_deduplication():
     assert has_proposed_del_red, "Phai kich hoat duoc De Xuat Loc Bo vien do"
     print("  -> DAT: Kich hoat hoan hao Frame Cat Nghia vien tim, De Xuat Loc Bo vien do va Tag BTC-xu ly.")
 
+    # 9. KIỂM THỬ BÓC TÁCH KHÁC BIỆT Ý NGHĨA ĐÁNG KỂ (SEMANTIC DIFFERENCE & INTERPRETIVE FRAMES)
+    print(f"\n[TEST 9] Kiem tra phan tich su khac biet y nghia dang ke (compute_semantic_difference):")
+    anchor_sample = {
+        "video_id": "L21_V001", "frame_idx": 500, "pts_time_sec": 20.0,
+        "objects_dict": {"person": 1}, "ocr_text": "Bản tin sáng",
+        "scene_environment": "Trường quay Thời sự / Studio",
+        "shot_contextual_meaning": "Dẫn bản tin trường quay thời sự"
+    }
+
+    # Case A: Frame có thêm vật thể mới (Chó x 1, Cờ x 2)
+    sample_diff_objs = {
+        "video_id": "L21_V001", "frame_idx": 505, "pts_time_sec": 20.8,
+        "objects_dict": {"person": 1, "dog": 1, "flag": 2}, "ocr_text": "Bản tin sáng",
+        "scene_environment": "Trường quay Thời sự / Studio",
+        "shot_contextual_meaning": "Dẫn bản tin trường quay thời sự"
+    }
+    has_diff_a, desc_a, _ = TimelineSynchronizer.compute_semantic_difference(anchor_sample, sample_diff_objs)
+    print(f"  - Case A (Them vat the): has_diff={has_diff_a} | Mo ta: '{desc_a}'")
+    assert has_diff_a is True
+    assert "Chó x 1" in desc_a
+    assert "Cờ x 2" in desc_a
+
+    # Case B: Frame có chữ OCR mới
+    sample_diff_ocr = {
+        "video_id": "L21_V001", "frame_idx": 510, "pts_time_sec": 21.2,
+        "objects_dict": {"person": 1}, "ocr_text": "Thời sự 19h tối nay phát sóng trực tiếp",
+        "scene_environment": "Trường quay Thời sự / Studio",
+        "shot_contextual_meaning": "Dẫn bản tin trường quay thời sự"
+    }
+    has_diff_b, desc_b, _ = TimelineSynchronizer.compute_semantic_difference(anchor_sample, sample_diff_ocr)
+    print(f"  - Case B (Chu OCR moi): has_diff={has_diff_b} | Mo ta: '{desc_b}'")
+    assert has_diff_b is True
+    assert "Chữ mới" in desc_b
+
+    # Case C: Frame trùng lặp hoàn toàn cùng mốc ngắn (không có vật thể/chữ mới, dt < 0.3s)
+    sample_dup = {
+        "video_id": "L21_V001", "frame_idx": 502, "pts_time_sec": 20.15,
+        "objects_dict": {"person": 1}, "ocr_text": "Bản tin sáng",
+        "scene_environment": "Trường quay Thời sự / Studio",
+        "shot_contextual_meaning": "Dẫn bản tin trường quay thời sự"
+    }
+    has_diff_c, desc_c, _ = TimelineSynchronizer.compute_semantic_difference(anchor_sample, sample_dup)
+    print(f"  - Case C (Trung lap hoan toan): has_diff={has_diff_c} | Mo ta: '{desc_c}'")
+    assert has_diff_c is False
+
+    print("  -> DAT: Thuat toan compute_semantic_difference phan dinh chinh xac 100% giua Frame Cat Nghia va Frame Trung Lap.")
+
     print("=" * 75)
     print("KET QUA: TOAN BO TEST CASES STEP 5 DEU DAT 100% CHUAN XAC!")
     print("=" * 75)
@@ -239,6 +286,7 @@ def test_step5_timeline_synchronization_and_deduplication():
 
 if __name__ == "__main__":
     test_step5_timeline_synchronization_and_deduplication()
+
 
 
 

@@ -713,6 +713,138 @@ class TimelineSynchronizer:
 
             enriched_self.append(item)
 
+    @classmethod
+    def compute_semantic_difference(
+        cls,
+        anchor_item: dict[str, Any],
+        curr_item: dict[str, Any]
+    ) -> tuple[bool, str, dict[str, Any]]:
+        """
+        Phân tích sự khác biệt ý nghĩa đáng kể giữa frame hiện tại và Anchor trong cùng Time Window:
+        - delta_objects: Những vật thể mới xuất hiện hoặc có số lượng biến thiên.
+        - delta_ocr: Chuỗi chữ / OCR mới xuất hiện (với Jaccard similarity < 0.60).
+        - delta_action: Sự biến chuyển hành động / bối cảnh / góc quay.
+        
+        Trả về:
+        - (has_significant_diff, difference_description, details_dict)
+        """
+        diff_parts = []
+        details = {}
+        
+        # 1. Bóc tách khác biệt Vật thể
+        anchor_objs = cls.safe_extract_object_keys(anchor_item)
+        curr_objs = cls.safe_extract_object_keys(curr_item)
+        
+        anchor_dict = anchor_item.get("objects_dict")
+        if not isinstance(anchor_dict, dict):
+            _, anchor_dict = cls.format_object_counts(list(anchor_objs))
+            
+        curr_dict = curr_item.get("objects_dict")
+        if not isinstance(curr_dict, dict):
+            _, curr_dict = cls.format_object_counts(list(curr_objs))
+            
+        added_objs = []
+        for obj, count in curr_dict.items():
+            prev_cnt = anchor_dict.get(obj, 0)
+            if count > prev_cnt:
+                vn_label = cls.LABEL_TRANSLATIONS.get(obj.lower(), obj)
+                added_objs.append(f"+{vn_label} x {count - prev_cnt}")
+                
+        if added_objs:
+            diff_parts.append(", ".join(added_objs))
+            details["added_objects"] = added_objs
+            
+        # 2. Bóc tách khác biệt Chữ / OCR
+        anchor_ocr = cls.clean_text_field(anchor_item.get("ocr_text"))
+        curr_ocr = cls.clean_text_field(curr_item.get("ocr_text"))
+        if curr_ocr:
+            ocr_sim = cls.compute_jaccard_text_similarity(anchor_ocr, curr_ocr)
+            if ocr_sim < 0.60:
+                kw = cls.extract_text_keywords(curr_ocr, max_keywords=2)
+                if kw:
+                    diff_parts.append(f'Chữ mới: "{" ".join(kw)}"')
+                else:
+                    diff_parts.append(f'Chữ mới: "{curr_ocr[:20]}"')
+                details["new_ocr"] = curr_ocr
+                
+        # 3. Bóc tách khác biệt Bối cảnh & Hành động
+        anchor_scene = cls.clean_text_field(anchor_item.get("scene_environment"))
+        curr_scene = cls.clean_text_field(curr_item.get("scene_environment"))
+        if curr_scene and curr_scene != "Unknown (Chưa xác định)" and curr_scene != anchor_scene:
+            diff_parts.append(f"Bối cảnh: {curr_scene}")
+            details["scene_change"] = curr_scene
+            
+        anchor_meaning = cls.clean_text_field(anchor_item.get("shot_contextual_meaning"))
+        curr_meaning = cls.clean_text_field(curr_item.get("shot_contextual_meaning"))
+        if curr_meaning and curr_meaning != anchor_meaning and not added_objs and "Chữ mới" not in str(diff_parts):
+            diff_parts.append(f"Ý nghĩa: {curr_meaning}")
+            details["meaning_change"] = curr_meaning
+
+        # 4. Kiểm tra độ lệch thời gian và biến chuyển góc lia (chỉ tính khi dt >= 1.0s)
+        anchor_pts = cls.safe_float(anchor_item.get("pts_time_sec", anchor_item.get("pts_time", 0.0)), 0.0)
+        curr_pts = cls.safe_float(curr_item.get("pts_time_sec", curr_item.get("pts_time", 0.0)), 0.0)
+        dt = abs(curr_pts - anchor_pts)
+        
+        if not diff_parts and dt >= 1.0:
+            diff_parts.append("Góc lia / Biến chuyển cú máy")
+            details["motion"] = "angle_pan"
+            
+        has_diff = len(diff_parts) > 0
+        diff_str = " | ".join(diff_parts) if diff_parts else "Trùng lặp góc máy & bối cảnh"
+        return has_diff, diff_str, details
+
+    @classmethod
+    def merge_and_deduplicate_timeline(
+        cls,
+        btc_keyframes: list[dict[str, Any]],
+        self_keyframes: list[dict[str, Any]],
+        visual_sim_threshold: float = 0.92,
+        ocr_jaccard_diff_threshold: float = 0.60,
+        exact_match_threshold_sec: float = 0.05,
+        video_title: str = ""
+    ) -> list[dict[str, Any]]:
+        """
+        Quy trình chuẩn hóa khử trùng lặp sau khi hợp nhất trên trục thời gian:
+        1. Làm giàu dữ liệu BTC với ngữ cảnh cú máy (enrich_btc_with_shot_context).
+        2. Tính toán Ý nghĩa toàn cú máy cho các frame System 1 (infer_shot_contextual_meaning).
+        3. Hợp nhất 100% keyframe BTC và System 1 lên trục thời gian chung tăng dần.
+        4. Gộp các frame trùng mốc thời gian (|Δt| <= 0.05s).
+        5. Kiểm duyệt nghiêm ngặt trên Time Window (±2.5s):
+           - Chọn Anchor Frame tối ưu cho từng Window.
+           - Với các frame lân cận:
+             * Nếu có sự khác biệt ý nghĩa đáng kể (vật thể mới, chữ mới, hành động) -> Kích hoạt Frame Cắt Nghĩa (viền tím Neon) kèm chuỗi mô tả khác biệt.
+             * Nếu trùng lặp hoàn toàn và nét kém -> Đề Xuất Lọc Bỏ (viền đỏ Đậm).
+        """
+        # 1. Làm giàu dữ liệu cho cả hai nguồn
+        enriched_btc = [cls.enrich_btc_with_shot_context(b, self_keyframes) for b in btc_keyframes if isinstance(b, dict)]
+        
+        enriched_self = []
+        for s in self_keyframes:
+            if not isinstance(s, dict):
+                continue
+            item = dict(s)
+            item["source"] = "self"
+            item["is_btc"] = False
+            raw_classes = list(cls.safe_extract_object_keys(item))
+            
+            if not cls.clean_text_field(item.get("scene_environment")):
+                dom_col = cls.clean_text_field(item.get("dominant_color", "Đa Sắc"))
+                t_dens = cls.safe_float(item.get("text_density_pct"), 0.0)
+                item["scene_environment"] = cls.detect_scene_environment(dom_col, raw_classes, t_dens)
+
+            if not cls.clean_text_field(item.get("objects_and_counts")) and raw_classes:
+                obj_str, obj_dict = cls.format_object_counts(raw_classes)
+                item["objects_and_counts"] = obj_str
+                item["objects_dict"] = obj_dict
+            elif not cls.clean_text_field(item.get("objects_and_counts")):
+                item["objects_and_counts"] = "Không phát hiện vật thể lớn"
+                item["objects_dict"] = {}
+
+            if not cls.clean_text_field(item.get("shot_contextual_meaning")):
+                item["shot_contextual_meaning"] = cls.infer_shot_contextual_meaning(item, video_title=video_title)
+
+            enriched_self.append(item)
+
         # 2. Gộp trục thời gian và xử lý trùng mốc <= 0.05s
         merged_raw = cls.merge_and_sort_timeline(enriched_btc, enriched_self, exact_match_threshold_sec=exact_match_threshold_sec)
 
@@ -727,31 +859,15 @@ class TimelineSynchronizer:
                 i += 1
                 continue
 
+            # Gom cụm theo Time Window (các frame lân cận trong phạm vi <= 2.5s)
             cluster_indices = [i]
-            for j in range(i + 1, min(i + 3, n)):
+            base_pts = cls.safe_float(merged_raw[i].get("pts_time_sec", merged_raw[i].get("pts_time", 0.0)), 0.0)
+            
+            for j in range(i + 1, min(i + 4, n)):
                 if visited[j]:
                     continue
-
-                prev_item = merged_raw[cluster_indices[-1]]
-                curr_item = merged_raw[j]
-
-                # Đo tương đồng thị giác đa phương thức (Vector SigLIP, Histogram HSV, Heuristic không-thời gian)
-                visual_sim = cls.compute_image_pair_similarity(prev_item, curr_item)
-                hist_sim = cls.safe_float(curr_item.get("hist_corr", visual_sim), visual_sim)
-                is_visual_duplicate = (visual_sim >= visual_sim_threshold) or (hist_sim >= 0.88)
-
-                # Ngoại lệ OCR
-                ocr_prev = cls.clean_text_field(prev_item.get("ocr_text"))
-                ocr_curr = cls.clean_text_field(curr_item.get("ocr_text"))
-                ocr_sim = cls.compute_jaccard_text_similarity(ocr_prev, ocr_curr)
-                has_distinct_ocr = bool((ocr_prev or ocr_curr) and (ocr_sim < ocr_jaccard_diff_threshold))
-
-                # Kiểm tra biến thiên vật thể an toàn tuyệt đối
-                prev_objs = cls.safe_extract_object_keys(prev_item)
-                curr_objs = cls.safe_extract_object_keys(curr_item)
-                has_distinct_objects = bool(prev_objs != curr_objs and len(prev_objs.symmetric_difference(curr_objs)) > 0)
-
-                if is_visual_duplicate and not has_distinct_ocr and not has_distinct_objects:
+                curr_pts = cls.safe_float(merged_raw[j].get("pts_time_sec", merged_raw[j].get("pts_time", 0.0)), 0.0)
+                if curr_pts - base_pts <= 2.5:
                     cluster_indices.append(j)
                 else:
                     break
@@ -761,7 +877,6 @@ class TimelineSynchronizer:
                 item["is_semantic_virtual"] = False
                 item["delta_time_sec"] = 0.0
                 if item.get("is_btc"):
-                    # Kiểm tra xem frame BTC có mật độ thông tin thấp / đơn sắc không
                     btc_sharp = cls.safe_float(item.get("sharpness_score", item.get("sharpness", 450.0)), 450.0)
                     btc_color = cls.clean_text_field(item.get("dominant_color"))
                     is_low_info = bool(btc_sharp < 25.0 or "đơn sắc" in btc_color.lower() or "đen / tối" in btc_color.lower() or "trắng / sáng" in btc_color.lower())
@@ -783,14 +898,18 @@ class TimelineSynchronizer:
             else:
                 cluster_items = [(idx, merged_raw[idx]) for idx in cluster_indices]
                 
-                # Ưu tiên Anchor là frame BTC hoặc frame có Info Value Score cao nhất
-                best_idx, best_item = max(
-                    cluster_items,
-                    key=lambda x: (
-                        1 if x[1].get("is_btc") or x[1].get("is_btc_synced") else 0,
-                        cls.compute_information_value_score(x[1])
-                    )
-                )
+                # Ưu tiên Anchor là frame BTC (nếu không phải low-info) hoặc frame có Info Value Score cao nhất
+                def info_priority(x):
+                    item_dict = x[1]
+                    sharp = cls.safe_float(item_dict.get("sharpness_score", item_dict.get("sharpness", 450.0)), 450.0)
+                    color = cls.clean_text_field(item_dict.get("dominant_color")).lower()
+                    is_low = bool(sharp < 25.0 or "đơn sắc" in color or "đen / tối" in color or "trắng / sáng" in color)
+                    if is_low:
+                        return (0, 0, cls.compute_information_value_score(item_dict))
+                    is_btc = 1 if item_dict.get("is_btc") or item_dict.get("is_btc_synced") else 0
+                    return (1, is_btc, cls.compute_information_value_score(item_dict))
+
+                best_idx, best_item = max(cluster_items, key=info_priority)
 
                 anchor_pts = cls.safe_float(best_item.get("pts_time_sec", best_item.get("pts_time", 0.0)), 0.0)
                 anchor_id = best_item.get("frame_idx", best_idx)
@@ -801,7 +920,15 @@ class TimelineSynchronizer:
                 anchor_record["is_anchor"] = True
                 anchor_record["delta_time_sec"] = 0.0
                 if anchor_record.get("is_btc"):
-                    anchor_record["border_color"] = "cyan"
+                    btc_sharp = cls.safe_float(anchor_record.get("sharpness_score", anchor_record.get("sharpness", 450.0)), 450.0)
+                    btc_color = cls.clean_text_field(anchor_record.get("dominant_color"))
+                    is_low_info = bool(btc_sharp < 25.0 or "đơn sắc" in btc_color.lower() or "đen / tối" in btc_color.lower() or "trắng / sáng" in btc_color.lower())
+                    if is_low_info:
+                        anchor_record["border_color"] = "red"
+                        anchor_record["is_btc_low_info"] = True
+                        anchor_record["btc_notice"] = "BTC-xử lý: Mật độ thông tin thấp"
+                    else:
+                        anchor_record["border_color"] = "cyan"
                 else:
                     anchor_record["border_color"] = "normal"
                 anchor_record["cluster_size"] = len(cluster_indices)
@@ -816,32 +943,59 @@ class TimelineSynchronizer:
                     delta_t = round(item_pts - anchor_pts, 2)
                     delta_tag = f"+{delta_t}s" if delta_t > 0 else f"{delta_t}s"
 
-                    virtual_record["is_semantic_virtual"] = True
-                    virtual_record["is_anchor"] = False
+                    # Phân tích sự khác biệt ý nghĩa đáng kể so với Anchor
+                    has_diff, diff_desc, details = cls.compute_semantic_difference(best_item, item)
+
                     virtual_record["anchor_frame_idx"] = anchor_id
                     virtual_record["anchor_image_file"] = best_item.get("keyframe_file", "")
                     virtual_record["anchor_thumbnail_file"] = best_item.get("thumbnail_file", "")
                     virtual_record["delta_time_sec"] = delta_t
                     virtual_record["delta_time_tag"] = delta_tag
-                    virtual_record["semantic_role"] = "Frame Cắt Nghĩa (Virtual Reference)"
+                    virtual_record["semantic_difference"] = diff_desc
                     
                     item_sharp = cls.safe_float(item.get("sharpness_score", item.get("sharpness", 450.0)), 450.0)
                     best_sharp = cls.safe_float(best_item.get("sharpness_score", best_item.get("sharpness", 450.0)), 450.0)
                     
-                    # Phân loại lý do đề xuất lọc bỏ chi tiết
-                    if item_sharp < 30.0 and not item.get("is_sharpened_fallback"):
-                        virtual_record["border_color"] = "red"
-                        virtual_record["is_proposed_deletion"] = True
-                        virtual_record["deletion_reason"] = "Độ nét thấp < 30.0 (Ảnh mờ)"
-                        virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
-                    elif item_sharp < best_sharp * 0.75:
-                        virtual_record["border_color"] = "red"
-                        virtual_record["is_proposed_deletion"] = True
-                        virtual_record["deletion_reason"] = f"Độ nét kém hơn Anchor #{anchor_id}"
-                        virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
-                    else:
+                    if item.get("is_btc"):
+                        # Frame BTC lân cận Anchor
+                        btc_sharp = item_sharp
+                        btc_color = cls.clean_text_field(item.get("dominant_color"))
+                        is_low_info = bool(btc_sharp < 25.0 or "đơn sắc" in btc_color.lower() or "đen / tối" in btc_color.lower() or "trắng / sáng" in btc_color.lower())
+                        if is_low_info:
+                            virtual_record["border_color"] = "red"
+                            virtual_record["is_btc_low_info"] = True
+                            virtual_record["btc_notice"] = "BTC-xử lý: Mật độ thông tin thấp"
+                        elif has_diff:
+                            virtual_record["is_semantic_virtual"] = True
+                            virtual_record["border_color"] = "violet"
+                            virtual_record["semantic_role"] = f"Frame Cắt Nghĩa ({diff_desc})"
+                            virtual_record["border_css"] = "border: 3px solid #bd93f9; border-left: 6px solid #bd93f9; box-shadow: 0 0 14px rgba(189,147,249,0.7); outline: 1px solid #ff79c6;"
+                        else:
+                            virtual_record["border_color"] = "cyan"
+                    elif has_diff and (item_sharp >= 30.0 or item.get("is_sharpened_fallback")):
+                        # Có khác biệt ý nghĩa đáng kể -> Frame Cắt Nghĩa viền tím Neon!
+                        virtual_record["is_semantic_virtual"] = True
+                        virtual_record["is_anchor"] = False
                         virtual_record["border_color"] = "violet"
+                        virtual_record["semantic_role"] = f"Frame Cắt Nghĩa ({diff_desc})"
                         virtual_record["border_css"] = "border: 3px solid #bd93f9; border-right: 6px solid #bd93f9; box-shadow: 0 0 14px rgba(189,147,249,0.7); outline: 1px solid #ff79c6;"
+                    else:
+                        # Không có khác biệt ý nghĩa -> Đề Xuất Lọc Bỏ
+                        if item_sharp < 30.0 and not item.get("is_sharpened_fallback"):
+                            virtual_record["border_color"] = "red"
+                            virtual_record["is_proposed_deletion"] = True
+                            virtual_record["deletion_reason"] = "Độ nét thấp < 30.0 (Ảnh mờ)"
+                            virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
+                        elif item_sharp < best_sharp * 0.85:
+                            virtual_record["border_color"] = "red"
+                            virtual_record["is_proposed_deletion"] = True
+                            virtual_record["deletion_reason"] = f"Độ nét kém hơn Anchor #{anchor_id}"
+                            virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
+                        else:
+                            virtual_record["border_color"] = "red"
+                            virtual_record["is_proposed_deletion"] = True
+                            virtual_record["deletion_reason"] = "Trùng góc máy & không có thông tin mới"
+                            virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
 
                     final_timeline.append(virtual_record)
 
