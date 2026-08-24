@@ -66,6 +66,7 @@ class HuggingFaceDatasetArtifactStore:
     revision: str = "main"
     token: str | None = None
     prefix: str = ""
+    cache_dir: Path | str | None = None
 
     def __post_init__(self) -> None:
         _normalize_relative_path(self.prefix)
@@ -102,6 +103,7 @@ class HuggingFaceDatasetArtifactStore:
                     revision=self.revision,
                     filename=remote_path,
                     token=self.token,
+                    cache_dir=str(self.cache_dir) if self.cache_dir is not None else None,
                 )
             return True
         except (EntryNotFoundError, LocalEntryNotFoundError):
@@ -192,8 +194,15 @@ class HuggingFaceDatasetArtifactStore:
         )
         return [self.path(relative_path) for relative_path in relative_paths]
 
-    def download_file(self, relative_path: str | Path, target: Path, *, cache_dir: Path | str | None = None) -> Path:
+    def download_file(
+        self,
+        relative_path: str | Path,
+        target: Path,
+        *,
+        cache_dir: Path | str | None = None,
+    ) -> Path:
         remote_path = self._remote_path(relative_path)
+        effective_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         try:
             cached_path = hf_hub_download(
                 repo_id=self.repo_id,
@@ -201,7 +210,11 @@ class HuggingFaceDatasetArtifactStore:
                 revision=self.revision,
                 filename=remote_path,
                 token=self.token,
-                cache_dir=str(cache_dir) if cache_dir is not None else None,
+                cache_dir=(
+                    str(effective_cache_dir)
+                    if effective_cache_dir is not None
+                    else None
+                ),
             )
         except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
             raise FileNotFoundError(remote_path) from exc

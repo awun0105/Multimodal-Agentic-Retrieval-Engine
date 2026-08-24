@@ -168,6 +168,26 @@ def test_download_file_uses_hf_hub_download_and_copies(monkeypatch, tmp_path: Pa
     assert calls["cache_dir"] == str(cache_dir)
 
 
+def test_download_file_uses_store_default_cache_dir(monkeypatch, tmp_path: Path) -> None:
+    cached = tmp_path / "cached.bin"
+    cached.write_bytes(b"payload")
+    calls = {}
+
+    def fake_download(**kwargs):
+        calls.update(kwargs)
+        return str(cached)
+
+    monkeypatch.setattr("system1.artifacts.hf_store.hf_hub_download", fake_download)
+    cache_dir = tmp_path / "bounded-cache"
+    store = HuggingFaceDatasetArtifactStore(
+        repo_id="org/repo", cache_dir=cache_dir
+    )
+
+    store.download_file("checkpoints/a.zip", tmp_path / "copy.bin")
+
+    assert calls["cache_dir"] == str(cache_dir)
+
+
 def test_exists_returns_true_when_download_succeeds(monkeypatch) -> None:
     monkeypatch.setattr("system1.artifacts.hf_store.hf_hub_download", lambda **kwargs: "/tmp/file")
     store = HuggingFaceDatasetArtifactStore(repo_id="org/repo")

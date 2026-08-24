@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -59,33 +60,46 @@ def run_phase01_pipeline(
     ):
         if user_settings.get(setting) is not None:
             release_storage[key] = user_settings[setting]
-    release_store = _hf_store(release_storage)
-    selected = resolve_phase00_release(
-        discover_phase00_candidates(release_store),
-        release_id_override=str(user_settings.get("release_id_override") or "") or None,
-    )
+    discovery_cache = output_root.resolve().parent / ".phase01_hf_cache" / "discovery"
+    try:
+        release_store = _hf_store(release_storage, cache_dir=discovery_cache)
+        selected = resolve_phase00_release(
+            discover_phase00_candidates(release_store),
+            release_id_override=str(user_settings.get("release_id_override") or "") or None,
+        )
+    finally:
+        shutil.rmtree(discovery_cache, ignore_errors=True)
     resolved = resolve_phase01_config(
         config_dir,
         user_settings=user_settings,
         phase00_release_id=selected.release_id,
     )
     require_phase01_production_ready(resolved)
+    scratch_root = _scratch_root(resolved.payload["storage"], output_root)
     if validate_remote:
-        run_phase01_storage_preflight(resolved)
+        preflight_cache = scratch_root / ".hf_cache" / "storage_preflight"
+        try:
+            run_phase01_storage_preflight(resolved, cache_dir=preflight_cache)
+        finally:
+            shutil.rmtree(preflight_cache, ignore_errors=True)
     release_id = str(resolved.payload["runtime"]["release_id"])
     release_dir = output_root.resolve() / release_id
     if restore_phase00:
-        _restore_phase00_if_needed(
-            output_root=output_root,
-            release_id=release_id,
-            batch_id=str(resolved.payload["runtime"]["batch_id"]),
-            storage=resolved.payload["storage"]["release"],
-            selected_manifest=selected.manifest,
-        )
+        restore_cache = scratch_root / ".hf_cache" / "phase00_restore"
+        try:
+            _restore_phase00_if_needed(
+                output_root=output_root,
+                release_id=release_id,
+                batch_id=str(resolved.payload["runtime"]["batch_id"]),
+                storage=resolved.payload["storage"]["release"],
+                selected_manifest=selected.manifest,
+                cache_dir=restore_cache,
+            )
+        finally:
+            shutil.rmtree(restore_cache, ignore_errors=True)
     resolved_path = persist_resolved_phase01_config(
         resolved, release_dir / "manifests" / "phase01" / "resolved_config.json"
     )
-    scratch_root = _scratch_root(resolved.payload["storage"], output_root)
     transnet = materialize_transnet_artifact(
         model_config=resolved.payload["models"]["shot_detection"],
         storage_config=resolved.payload["storage"]["model_artifacts"],
@@ -133,6 +147,7 @@ def _restore_phase00_if_needed(
     batch_id: str,
     storage: dict[str, Any],
     selected_manifest: dict[str, Any],
+    cache_dir: Path | str | None = None,
 ) -> None:
     release_dir = output_root.resolve() / release_id
     marker_path = (
@@ -157,7 +172,7 @@ def _restore_phase00_if_needed(
         ):
             return
 
-    store = _hf_store(storage)
+    store = _hf_store(storage, cache_dir=cache_dir)
     remote_root = phase00_ingestion_remote_prefix(release_id)
     expected_checksums = {
         str(row["relative_path"]): str(row["sha256"])
@@ -312,11 +327,16 @@ def _scratch_root(storage: dict[str, Any], output_root: Path) -> Path:
     return (output_root.resolve().parent / "phase01_scratch").resolve()
 
 
-def _hf_store(config: dict[str, Any]) -> HuggingFaceDatasetArtifactStore:
+def _hf_store(
+    config: dict[str, Any],
+    *,
+    cache_dir: Path | str | None = None,
+) -> HuggingFaceDatasetArtifactStore:
     return HuggingFaceDatasetArtifactStore(
         repo_id=str(config["repo_id"]),
         repo_type=str(config.get("repo_type", "dataset")),
         revision=str(config.get("revision", "main")),
         token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
         prefix=str(config.get("prefix", "")),
+        cache_dir=cache_dir,
     )

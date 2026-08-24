@@ -16,7 +16,7 @@ checkpoint:
   repo_type: dataset
   revision: main
   prefix: ""
-  require_private: true
+  require_private: false
   verify_remote_checksum: true
 
 model_artifacts:

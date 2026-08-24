@@ -31,7 +31,7 @@ class FakeGeminiClient:
 
 
 def test_single_video_production_orchestrator_checkpoints_and_packages(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     video_id = "L21_V001"
     release = tmp_path / "output" / "canonical_release_v001"
@@ -70,7 +70,9 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
 
     checkpoint_store = ArtifactStore((tmp_path / "checkpoint").resolve())
     checkpoint_store.root.mkdir()
-    monkeypatch.setattr(production, "_hf_store", lambda _config: checkpoint_store)
+    monkeypatch.setattr(
+        production, "_hf_store", lambda _config, **_kwargs: checkpoint_store
+    )
     monkeypatch.setattr(production, "load_transnet_artifact", lambda *_args, **_kwargs: object())
 
     def detect(_video, *, output_path, **_kwargs):
@@ -126,6 +128,11 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     )
 
     payload = json.loads(report.read_text(encoding="utf-8"))
+    progress = capsys.readouterr().out
+    assert '"event": "video"' in progress
+    assert '"event": "stage"' in progress
+    assert '"stage": "shots"' in progress
+    assert '"scratch_free_gb":' in progress
     assert payload["counts"]["complete_local"] == 1
     assert payload["videos_failed"] == 0
     assert (release / "artifacts" / "structure" / f"{video_id}_structure.zip").is_file()
@@ -134,6 +141,13 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     )
     assert state["stages"]["package"]["status"] == "complete"
     assert state["stages"]["sync"]["status"] == "pending"
+    assert not (
+        tmp_path
+        / "scratch"
+        / "canonical_release_v001"
+        / "batch_000"
+        / video_id
+    ).exists()
 
     # A second Run All restores every valid stage and makes no semantic API call.
     second_report = production.process_production_batch(
