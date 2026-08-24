@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import shutil
 from pathlib import Path
@@ -16,6 +17,7 @@ from system1.config import (
     require_phase01_production_ready,
     resolve_phase01_config,
 )
+from system1.config.loader import _stage_config_hashes
 from system1.phase01.production import (
     PARQUET_COLUMNS,
     _assemble_package,
@@ -47,6 +49,18 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
+    assert phase01["execution"]["chunk_scheduler"] == {
+        "max_chunk_videos": 4,
+        "max_chunk_raw_bytes": 1610612736,
+        "min_free_disk_gb": 20,
+        "medium_free_disk_gb": 35,
+        "medium_max_chunk_videos": 2,
+        "low_disk_max_chunk_videos": 1,
+    }
+    assert phase01["execution"]["inference_batch_size"] == {
+        "ocr": 1,
+        "shot_captions": 1,
+    }
     assert phase01["api"]["max_concurrency_per_video"] == 2
     assert phase01["api"]["request_cache_backend"] == "stage_local"
     assert phase01["stages"]["order"] == [
@@ -140,6 +154,23 @@ def test_phase01_config_encodes_oom_and_dependency_invalidation_policy() -> None
         "shot_transcript_links",
     }
     assert dependencies["sync"] == ["package"]
+
+
+def test_runtime_chunk_policy_does_not_change_stage_fingerprints() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    modified = copy.deepcopy(resolved.payload)
+    modified["phase01"]["execution"]["chunk_scheduler"]["max_chunk_videos"] = 1
+    modified["phase01"]["execution"]["inference_batch_size"] = {
+        "ocr": 1,
+        "shot_captions": 1,
+    }
+
+    assert _stage_config_hashes(modified) == resolved.stage_config_hashes
 
 
 def test_phase01_config_can_select_nemo_asr_provider() -> None:

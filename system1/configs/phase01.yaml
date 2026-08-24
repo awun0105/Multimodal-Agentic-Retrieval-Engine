@@ -4,6 +4,16 @@ pipeline_id: phase01_production_v1_1
 execution:
   video_order: batch_manifest
   max_concurrent_videos: 1
+  chunk_scheduler:
+    max_chunk_videos: 4
+    max_chunk_raw_bytes: 1610612736
+    min_free_disk_gb: 20
+    medium_free_disk_gb: 35
+    medium_max_chunk_videos: 2
+    low_disk_max_chunk_videos: 1
+  inference_batch_size:
+    ocr: 1
+    shot_captions: 1
   require_phase00_frame_timeline: true
   checkpoint_after_each_stage: true
   continue_after_retryable_video_failure: true

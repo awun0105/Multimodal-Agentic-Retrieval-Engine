@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import gc
 import json
 import os
 import shutil
 import tempfile
+import time
+import weakref
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +33,7 @@ from system1.keyframes import (
 )
 from system1.phase01.checkpoint import CheckpointManager, compute_fingerprint
 from system1.phase01.qa import write_manual_review_report
+from system1.phase01.scheduler import plan_runtime_chunks
 from system1.phase01.validation import validate_phase01_package, validate_rows
 from system1.scenes import group_scenes
 from system1.scenes.gemini_judge import GeminiSceneBoundaryJudge
@@ -58,6 +63,21 @@ PARQUET_COLUMNS: dict[str, list[str]] = {
 }
 
 
+@dataclass
+class _VideoFlow:
+    video_id: str
+    video_index: int
+    scratch: Path
+    manager: CheckpointManager
+    pipeline: Generator[str, Any, dict[str, Any]]
+
+
+_MANAGER_RUNTIME_CONTEXT: weakref.WeakKeyDictionary[
+    CheckpointManager, dict[str, int]
+] = weakref.WeakKeyDictionary()
+_STAGE_TIMERS: dict[tuple[int, str], float] = {}
+
+
 def process_production_batch(
     *,
     release_dir: Path,
@@ -73,11 +93,19 @@ def process_production_batch(
     started_at = utc_now()
     batch_path = release_dir / "manifests" / f"{batch_id}.txt"
     video_ids = [line.strip() for line in batch_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    duplicate_video_ids = sorted(
+        video_id for video_id in set(video_ids) if video_ids.count(video_id) > 1
+    )
+    if duplicate_video_ids:
+        raise ValueError(
+            "Phase01 batch manifest contains duplicate video IDs: "
+            + ", ".join(duplicate_video_ids)
+        )
     videos = pd.read_parquet(release_dir / "tables" / "videos.parquet")
     media = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet")
     videos_by_id = {str(row["video_id"]): row for row in videos.to_dict("records")}
     media_by_id = {str(row["video_id"]): row for row in media.to_dict("records")}
-    results: list[dict[str, Any]] = []
+    result_slots: list[dict[str, Any] | None] = [None] * len(video_ids)
     scratch_root.mkdir(parents=True, exist_ok=True)
     _emit_progress(
         event="batch",
@@ -88,111 +116,242 @@ def process_production_batch(
         video_count=len(video_ids),
     )
 
-    for video_index, video_id in enumerate(video_ids, start=1):
-        video_scratch = scratch_root / release_id / batch_id / video_id
-        if video_scratch.exists():
-            shutil.rmtree(video_scratch)
-        video_scratch.mkdir(parents=True)
-        checkpoint_store = _hf_store(
-            config.payload["storage"]["checkpoint"],
-            cache_dir=video_scratch / "hf_cache" / "checkpoint",
+    raw_bytes_by_video = {
+        video_id: _mapping_raw_bytes(mapping)
+        for video_id, mapping in media_by_id.items()
+    }
+    pending = list(video_ids)
+    video_offsets = {video_id: index for index, video_id in enumerate(video_ids)}
+    chunk_index = 0
+    scheduler_policy = config.payload["phase01"]["execution"]["chunk_scheduler"]
+    while pending:
+        planned = plan_runtime_chunks(
+            pending,
+            raw_bytes_by_video=raw_bytes_by_video,
+            free_disk_gb=_scratch_free_gb(scratch_root),
+            policy=scheduler_policy,
+        )[0]
+        chunk_index += 1
+        chunk_video_ids = list(planned.video_ids)
+        pending = pending[len(chunk_video_ids) :]
+        chunk_size = len(chunk_video_ids)
+        chunk_scratch = (
+            scratch_root
+            / release_id
+            / batch_id
+            / ".runtime_chunks"
+            / f"chunk_{chunk_index:04d}"
         )
-        release_store = _hf_store(
-            config.payload["storage"]["release"],
-            cache_dir=video_scratch / "hf_cache" / "release",
-        )
-        manager = CheckpointManager(
-            checkpoint_store,
-            release_id=release_id,
-            video_id=video_id,
-            config_hash=config.config_hash,
-            stage_config_hashes=config.stage_config_hashes,
-            verify_remote_checksum=bool(
-                config.payload["storage"]["checkpoint"].get("verify_remote_checksum", True)
-            ),
-            root_template=str(config.payload["artifact"]["checkpoint"]["root"]),
-            state_filename=str(
-                config.payload["artifact"]["checkpoint"]["state_filename"]
-            ),
-        )
+        shutil.rmtree(chunk_scratch, ignore_errors=True)
+        chunk_scratch.mkdir(parents=True)
         _emit_progress(
-            event="video",
+            event="chunk",
             status="start",
             scratch=scratch_root,
             release_id=release_id,
             batch_id=batch_id,
-            video_id=video_id,
-            video_index=video_index,
-            video_count=len(video_ids),
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            chunk_raw_bytes=planned.raw_bytes,
         )
-        try:
-            if video_id not in videos_by_id or video_id not in media_by_id:
-                raise ValueError(f"Phase00 batch references unknown video_id={video_id}")
-            result = _process_video(
-                video_id=video_id,
-                video_row=videos_by_id[video_id],
-                mapping=media_by_id[video_id],
-                release_dir=release_dir,
-                scratch=video_scratch,
-                manager=manager,
-                config=config,
-                transnet_artifact_dir=transnet_artifact_dir,
-                release_store=release_store,
-                sync_release=sync_release,
-            )
-        except Exception as exc:  # noqa: BLE001 - isolate failures per video
-            retryable = _retryable_video_error(exc)
-            checkpoint_error: str | None = None
-            try:
-                failed_stage = manager.active_stage
-                manager.mark_failed(
-                    failed_stage,
-                    input_fingerprint=None,
-                    retryable=retryable,
-                    error={
-                        "error_type": type(exc).__name__,
-                        "message": str(exc),
-                        "failed_at": utc_now(),
-                    },
-                )
-            except Exception as checkpoint_exc:  # noqa: BLE001 - retain original error
-                failed_stage = "unknown"
-                checkpoint_error = str(checkpoint_exc)
-            result = {
-                "video_id": video_id,
-                "status": "failed_retryable" if retryable else "failed_terminal",
-                "failed_stage": failed_stage,
-                "error_type": type(exc).__name__,
-                "error": str(exc),
-                "checkpoint_error": checkpoint_error,
-            }
-        finally:
+
+        active: list[_VideoFlow] = []
+        for video_id in chunk_video_ids:
+            video_index = video_offsets[video_id] + 1
+            video_scratch = scratch_root / release_id / batch_id / video_id
             shutil.rmtree(video_scratch, ignore_errors=True)
+            video_scratch.mkdir(parents=True)
+            checkpoint_store = _hf_store(
+                config.payload["storage"]["checkpoint"],
+                cache_dir=video_scratch / "hf_cache" / "checkpoint",
+            )
+            release_store = _hf_store(
+                config.payload["storage"]["release"],
+                cache_dir=video_scratch / "hf_cache" / "release",
+            )
+            manager = CheckpointManager(
+                checkpoint_store,
+                release_id=release_id,
+                video_id=video_id,
+                config_hash=config.config_hash,
+                stage_config_hashes=config.stage_config_hashes,
+                verify_remote_checksum=bool(
+                    config.payload["storage"]["checkpoint"].get(
+                        "verify_remote_checksum", True
+                    )
+                ),
+                root_template=str(
+                    config.payload["artifact"]["checkpoint"]["root"]
+                ),
+                state_filename=str(
+                    config.payload["artifact"]["checkpoint"]["state_filename"]
+                ),
+            )
+            _MANAGER_RUNTIME_CONTEXT[manager] = {
+                "chunk_index": chunk_index,
+                "chunk_size": chunk_size,
+            }
             _emit_progress(
-                event="video_cache_cleanup",
-                status="complete",
+                event="video",
+                status="start",
                 scratch=scratch_root,
                 release_id=release_id,
                 batch_id=batch_id,
                 video_id=video_id,
+                video_index=video_index,
+                video_count=len(video_ids),
+                chunk_index=chunk_index,
+                chunk_size=chunk_size,
             )
-        results.append(result)
-        result_progress = {
-            key: result[key]
-            for key in ("failed_stage", "error_type")
-            if result.get(key) is not None
-        }
+            flow: _VideoFlow | None = None
+            try:
+                if video_id not in videos_by_id or video_id not in media_by_id:
+                    raise ValueError(
+                        f"Phase00 batch references unknown video_id={video_id}"
+                    )
+                pipeline = _process_video_flow(
+                    video_id=video_id,
+                    video_row=videos_by_id[video_id],
+                    mapping=media_by_id[video_id],
+                    release_dir=release_dir,
+                    scratch=video_scratch,
+                    manager=manager,
+                    config=config,
+                    transnet_artifact_dir=transnet_artifact_dir,
+                    release_store=release_store,
+                    sync_release=sync_release,
+                )
+                flow = _VideoFlow(
+                    video_id=video_id,
+                    video_index=video_index,
+                    scratch=video_scratch,
+                    manager=manager,
+                    pipeline=pipeline,
+                )
+                yielded = next(pipeline)
+                if yielded != "ocr":
+                    raise RuntimeError(
+                        f"Phase01 video flow expected ocr, received {yielded!r}"
+                    )
+                active.append(flow)
+            except Exception as exc:  # noqa: BLE001 - isolate failures per video
+                if flow is None:
+                    flow = _VideoFlow(
+                        video_id=video_id,
+                        video_index=video_index,
+                        scratch=video_scratch,
+                        manager=manager,
+                        pipeline=_empty_video_flow(),
+                    )
+                _finish_failed_video(
+                    flow,
+                    exc,
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=len(video_ids),
+                )
+
+        active = _run_chunk_model_stage(
+            active,
+            model_config=config.payload["models"]["ocr"],
+            phase01=config.payload["phase01"],
+            cache=ArtifactStore(chunk_scratch / "ocr_api_cache"),
+            cache_prefix="ocr",
+            expected_yield="shot_captions",
+            caption_chain=False,
+            result_slots=result_slots,
+            scratch_root=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            video_count=len(video_ids),
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+        )
+        active = _run_chunk_model_stage(
+            active,
+            model_config=config.payload["models"]["shot_caption"],
+            phase01=config.payload["phase01"],
+            cache=ArtifactStore(chunk_scratch / "caption_api_cache"),
+            cache_prefix="shot_caption",
+            expected_yield="finalize",
+            caption_chain=True,
+            result_slots=result_slots,
+            scratch_root=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            video_count=len(video_ids),
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+        )
+        for flow in active:
+            try:
+                yielded = next(flow.pipeline)
+            except StopIteration as completed:
+                result = completed.value
+                if not isinstance(result, dict):
+                    _finish_failed_video(
+                        flow,
+                        RuntimeError("Phase01 video flow returned an invalid result"),
+                        result_slots=result_slots,
+                        scratch_root=scratch_root,
+                        release_id=release_id,
+                        batch_id=batch_id,
+                        video_count=len(video_ids),
+                    )
+                    continue
+                _finish_video(
+                    flow,
+                    result,
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=len(video_ids),
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate failures per video
+                _finish_failed_video(
+                    flow,
+                    exc,
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=len(video_ids),
+                )
+            else:
+                _finish_failed_video(
+                    flow,
+                    RuntimeError(
+                        "Phase01 video flow yielded unexpectedly during finalize: "
+                        f"{yielded!r}"
+                    ),
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=len(video_ids),
+                )
+        shutil.rmtree(chunk_scratch, ignore_errors=True)
         _emit_progress(
-            event="video",
-            status=str(result["status"]),
+            event="chunk",
+            status="complete",
             scratch=scratch_root,
             release_id=release_id,
             batch_id=batch_id,
-            video_id=video_id,
-            video_index=video_index,
-            video_count=len(video_ids),
-            **result_progress,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            chunk_raw_bytes=planned.raw_bytes,
         )
+
+    shutil.rmtree(
+        scratch_root / release_id / batch_id / ".runtime_chunks",
+        ignore_errors=True,
+    )
+    if any(result is None for result in result_slots):
+        raise RuntimeError("Phase01 scheduler finished without a result for every video")
+    results = [result for result in result_slots if result is not None]
 
     failed = [row for row in results if not row["status"].startswith("complete")]
     manual_review_path = write_manual_review_report(
@@ -261,7 +420,196 @@ def process_production_batch(
     return report
 
 
-def _process_video(
+def _run_chunk_model_stage(
+    flows: list[_VideoFlow],
+    *,
+    model_config: Mapping[str, Any],
+    phase01: Mapping[str, Any],
+    cache: ArtifactStore,
+    cache_prefix: str,
+    expected_yield: str,
+    caption_chain: bool,
+    result_slots: list[dict[str, Any] | None],
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    video_count: int,
+    chunk_index: int,
+    chunk_size: int,
+) -> list[_VideoFlow]:
+    if not flows:
+        return []
+
+    stage = "shot_captions" if caption_chain else "ocr"
+    lifecycle_callback = _model_lifecycle_callback(
+        scratch_root=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        chunk_index=chunk_index,
+        chunk_size=chunk_size,
+        stage=stage,
+    )
+    try:
+        if caption_chain:
+            client = _caption_client_for_model(
+                model_config,
+                phase01=phase01,
+                cache=cache,
+                lifecycle_callback=lifecycle_callback,
+            )
+        else:
+            client = _structured_client_for_model(
+                model_config,
+                phase01=phase01,
+                cache=cache,
+                cache_prefix=cache_prefix,
+                lifecycle_callback=lifecycle_callback,
+            )
+    except Exception as exc:  # noqa: BLE001 - fail only this chunk stage
+        for flow in flows:
+            flow.manager.active_stage = stage
+            _emit_stage_progress(
+                flow.manager, stage, scratch_root, status="start"
+            )
+            _finish_failed_video(
+                flow,
+                exc,
+                result_slots=result_slots,
+                scratch_root=scratch_root,
+                release_id=release_id,
+                batch_id=batch_id,
+                video_count=video_count,
+            )
+        return []
+
+    survivors: list[_VideoFlow] = []
+    try:
+        for flow in flows:
+            try:
+                yielded = flow.pipeline.send(client)
+                if yielded != expected_yield:
+                    raise RuntimeError(
+                        "Phase01 video flow expected "
+                        f"{expected_yield}, received {yielded!r}"
+                    )
+                survivors.append(flow)
+            except Exception as exc:  # noqa: BLE001 - isolate failures per video
+                _finish_failed_video(
+                    flow,
+                    exc,
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=video_count,
+                )
+    finally:
+        _release_structured_client(client)
+    return survivors
+
+
+def _finish_failed_video(
+    flow: _VideoFlow,
+    exc: Exception,
+    *,
+    result_slots: list[dict[str, Any] | None],
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    video_count: int,
+) -> None:
+    retryable = _retryable_video_error(exc)
+    checkpoint_error: str | None = None
+    failed_stage = flow.manager.active_stage
+    _emit_stage_progress(
+        flow.manager,
+        failed_stage,
+        scratch_root,
+        status="failed_retryable" if retryable else "failed_terminal",
+    )
+    try:
+        flow.manager.mark_failed(
+            failed_stage,
+            input_fingerprint=None,
+            retryable=retryable,
+            error={
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "failed_at": utc_now(),
+            },
+        )
+    except Exception as checkpoint_exc:  # noqa: BLE001 - retain original error
+        failed_stage = "unknown"
+        checkpoint_error = str(checkpoint_exc)
+    result = {
+        "video_id": flow.video_id,
+        "status": "failed_retryable" if retryable else "failed_terminal",
+        "failed_stage": failed_stage,
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+        "checkpoint_error": checkpoint_error,
+    }
+    flow.pipeline.close()
+    _finish_video(
+        flow,
+        result,
+        result_slots=result_slots,
+        scratch_root=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_count=video_count,
+    )
+
+
+def _finish_video(
+    flow: _VideoFlow,
+    result: dict[str, Any],
+    *,
+    result_slots: list[dict[str, Any] | None],
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    video_count: int,
+) -> None:
+    result_slots[flow.video_index - 1] = result
+    shutil.rmtree(flow.scratch, ignore_errors=True)
+    runtime_context = _MANAGER_RUNTIME_CONTEXT.get(flow.manager, {})
+    _emit_progress(
+        event="video_cache_cleanup",
+        status="complete",
+        scratch=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_id=flow.video_id,
+        **runtime_context,
+    )
+    result_progress = {
+        key: result[key]
+        for key in ("failed_stage", "error_type")
+        if result.get(key) is not None
+    }
+    _emit_progress(
+        event="video",
+        status=str(result["status"]),
+        scratch=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_id=flow.video_id,
+        video_index=flow.video_index,
+        video_count=video_count,
+        **runtime_context,
+        **result_progress,
+    )
+    _MANAGER_RUNTIME_CONTEXT.pop(flow.manager, None)
+
+
+def _empty_video_flow() -> Generator[str, Any, dict[str, Any]]:
+    if False:  # pragma: no cover - typed empty generator
+        yield ""
+    return {}
+
+
+def _process_video_flow(
     *,
     video_id: str,
     video_row: dict[str, Any],
@@ -273,11 +621,11 @@ def _process_video(
     transnet_artifact_dir: Path,
     release_store: HuggingFaceDatasetArtifactStore,
     sync_release: bool,
-) -> dict[str, Any]:
+) -> Generator[str, Any, dict[str, Any]]:
     manager.active_stage = "shots"
     _emit_stage_progress(manager, "shots", scratch, status="start")
     stage_dir = scratch / "stages"
-    stage_dir.mkdir()
+    stage_dir.mkdir(exist_ok=True)
     # API responses only need request-level reuse while the current atomic
     # stage is running. Completed canonical tables are the persistent cache via
     # the stage checkpoint, so avoid one HF commit per Gemini request.
@@ -418,6 +766,10 @@ def _process_video(
     asr_rows = pd.read_parquet(asr_path).to_dict("records")
     asr_output_fingerprint = manager.stage_output_fingerprint("asr")
 
+    # The decoded Phase00 timeline can be very large. Release it before this
+    # prepared video waits for the other videos in its runtime chunk.
+    timeline = []
+    ocr_client = yield "ocr"
     manager.active_stage = "ocr"
     _emit_stage_progress(manager, "ocr", scratch, status="start")
     ocr_path = stage_dir / "ocr.parquet"
@@ -425,12 +777,8 @@ def _process_video(
     ocr_fingerprint = _stage_fingerprint(manager, "ocr", keyframes_output_fingerprint)
     ocr_reused = _restore_if_reusable(manager, "ocr", ocr_fingerprint, stage_dir)
     if not ocr_reused:
-        ocr_client = _structured_client_for_model(
-            models["ocr"],
-            phase01=phase01,
-            cache=api_cache,
-            cache_prefix="ocr",
-        )
+        if ocr_client is None:
+            raise RuntimeError("Phase01 OCR stage requires a structured client")
         try:
             ocr_rows = _build_ocr(
                 video_id=video_id,
@@ -465,11 +813,12 @@ def _process_video(
                 schema_version=phase01["schemas"]["ocr"],
             )
         finally:
-            _release_structured_client(ocr_client)
+            pass  # The chunk scheduler owns the shared client lifecycle.
     _emit_stage_progress(manager, "ocr", scratch, status="complete", reused=ocr_reused)
     ocr_rows = pd.read_parquet(ocr_path).to_dict("records")
     ocr_output_fingerprint = manager.stage_output_fingerprint("ocr")
 
+    caption_client = yield "shot_captions"
     manager.active_stage = "shot_captions"
     _emit_stage_progress(manager, "shot_captions", scratch, status="start")
     captions_path = stage_dir / "shot_captions.parquet"
@@ -480,11 +829,10 @@ def _process_video(
         manager, "shot_captions", captions_fingerprint, stage_dir
     )
     if not captions_reused:
-        caption_client = _caption_client_for_model(
-            models["shot_caption"],
-            phase01=phase01,
-            cache=api_cache,
-        )
+        if caption_client is None:
+            raise RuntimeError(
+                "Phase01 shot_captions stage requires a structured client"
+            )
         try:
             caption_rows = _build_captions(
                 video_id=video_id,
@@ -506,7 +854,7 @@ def _process_video(
                 schema_version=phase01["schemas"]["shot_captions"],
             )
         finally:
-            _release_structured_client(caption_client)
+            pass  # The chunk scheduler owns the shared client lifecycle.
     _emit_stage_progress(
         manager,
         "shot_captions",
@@ -517,6 +865,7 @@ def _process_video(
     captions = pd.read_parquet(captions_path).to_dict("records")
     captions_output_fingerprint = manager.stage_output_fingerprint("shot_captions")
 
+    yield "finalize"
     manager.active_stage = "shot_transcript_links"
     _emit_stage_progress(manager, "shot_transcript_links", scratch, status="start")
     links_path = stage_dir / "shot_transcript_links.parquet"
@@ -850,6 +1199,7 @@ def _caption_client_for_model(
     *,
     phase01: Mapping[str, Any],
     cache: ArtifactStore,
+    lifecycle_callback=None,
 ):
     clients = [
         _structured_client_for_model(
@@ -857,6 +1207,7 @@ def _caption_client_for_model(
             phase01=phase01,
             cache=cache,
             cache_prefix=f"{model_config['provider']}/shot_caption",
+            lifecycle_callback=lifecycle_callback,
         )
     ]
     for fallback in model_config.get("fallbacks", []):
@@ -866,6 +1217,7 @@ def _caption_client_for_model(
                 phase01=phase01,
                 cache=cache,
                 cache_prefix=f"{fallback['provider']}/shot_caption",
+                lifecycle_callback=lifecycle_callback,
             )
         )
     return clients[0] if len(clients) == 1 else FallbackStructuredClient(clients)
@@ -877,6 +1229,7 @@ def _structured_client_for_model(
     phase01: Mapping[str, Any],
     cache: ArtifactStore,
     cache_prefix: str,
+    lifecycle_callback=None,
 ):
     provider = str(model_config["provider"])
     if provider == "gemini":
@@ -897,10 +1250,20 @@ def _structured_client_for_model(
             model_revision=str(model_config["model_revision"]),
         )
     if provider in {"qwen_local", "vintern_local"}:
+        inference_stage = (
+            "shot_captions" if "shot_caption" in cache_prefix else "ocr"
+        )
         return LocalVisionStructuredClient(
-            model_config=model_config,
+            model_config={
+                **model_config,
+                "total_attempts": phase01["retry"]["local_model_total_attempts"],
+                "inference_batch_size": phase01["execution"][
+                    "inference_batch_size"
+                ][inference_stage],
+            },
             cache=cache,
             cache_prefix=f"local_vlm/{cache_prefix}",
+            lifecycle_callback=lifecycle_callback,
         )
     raise RuntimeError(f"Unsupported structured provider: {provider}")
 
@@ -1374,14 +1737,10 @@ def _emit_progress(
     scratch: Path,
     **details: Any,
 ) -> None:
-    try:
-        scratch_free_gb = round(shutil.disk_usage(scratch).free / (1024**3), 2)
-    except FileNotFoundError:
-        scratch_free_gb = None
     payload = {
         "event": event,
         "status": status,
-        "scratch_free_gb": scratch_free_gb,
+        **_resource_snapshot(scratch),
         **details,
     }
     print(f"[phase01] {json.dumps(payload, ensure_ascii=False, sort_keys=True)}", flush=True)
@@ -1395,14 +1754,118 @@ def _emit_stage_progress(
     status: str,
     reused: bool | None = None,
 ) -> None:
+    timer_key = (id(manager), stage)
     details: dict[str, Any] = {
         "release_id": manager.release_id,
         "video_id": manager.video_id,
         "stage": stage,
+        **_MANAGER_RUNTIME_CONTEXT.get(manager, {}),
     }
+    if status == "start":
+        _STAGE_TIMERS[timer_key] = time.monotonic()
+    else:
+        started = _STAGE_TIMERS.pop(timer_key, None)
+        if started is not None:
+            details["elapsed_seconds"] = round(time.monotonic() - started, 3)
     if reused is not None:
         details["source"] = "checkpoint" if reused else "computed"
     _emit_progress(event="stage", status=status, scratch=scratch, **details)
+
+
+def _model_lifecycle_callback(
+    *,
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    chunk_index: int,
+    chunk_size: int,
+    stage: str,
+):
+    def emit(payload: Mapping[str, Any]) -> None:
+        details = dict(payload)
+        status = str(details.pop("status"))
+        if "load_seconds" in details:
+            details.setdefault("elapsed_seconds", details["load_seconds"])
+        _emit_progress(
+            event="model",
+            status=status,
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            stage=stage,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            **details,
+        )
+
+    return emit
+
+
+def _resource_snapshot(scratch: Path) -> dict[str, float | None]:
+    snapshot: dict[str, float | None] = {
+        "scratch_free_gb": None,
+        "ram_used_gb": None,
+        "ram_available_gb": None,
+        "gpu_allocated_gb": None,
+        "gpu_reserved_gb": None,
+        "gpu_peak_allocated_gb": None,
+    }
+    try:
+        snapshot["scratch_free_gb"] = _bytes_to_gb(shutil.disk_usage(scratch).free)
+    except (FileNotFoundError, OSError):
+        pass
+    try:
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        total_bytes = page_size * int(os.sysconf("SC_PHYS_PAGES"))
+        available_bytes = page_size * int(os.sysconf("SC_AVPHYS_PAGES"))
+        snapshot["ram_available_gb"] = _bytes_to_gb(available_bytes)
+        snapshot["ram_used_gb"] = _bytes_to_gb(total_bytes - available_bytes)
+    except (AttributeError, OSError, TypeError, ValueError):
+        pass
+    try:
+        import torch
+    except ImportError:
+        return snapshot
+    try:
+        if torch.cuda.is_available():
+            snapshot["gpu_allocated_gb"] = _bytes_to_gb(
+                torch.cuda.memory_allocated()
+            )
+            snapshot["gpu_reserved_gb"] = _bytes_to_gb(
+                torch.cuda.memory_reserved()
+            )
+            snapshot["gpu_peak_allocated_gb"] = _bytes_to_gb(
+                torch.cuda.max_memory_allocated()
+            )
+    except (RuntimeError, TypeError, ValueError):
+        pass
+    return snapshot
+
+
+def _bytes_to_gb(value: float) -> float:
+    return round(float(value) / (1024**3), 3)
+
+
+def _scratch_free_gb(scratch: Path) -> float:
+    return float(shutil.disk_usage(scratch).free) / (1024**3)
+
+
+def _mapping_raw_bytes(mapping: Mapping[str, Any]) -> int | None:
+    value = mapping.get("video_size_bytes")
+    if _present_scalar(value):
+        try:
+            size = int(value)
+        except (TypeError, ValueError):
+            size = -1
+        if size >= 0:
+            return size
+    for key in ("video_local_path", "debug_video_local_path", "source_video_path"):
+        path_value = mapping.get(key)
+        if _present_scalar(path_value):
+            path = Path(str(path_value))
+            if path.is_file():
+                return path.stat().st_size
+    return None
 
 
 def _hf_store(config, *, cache_dir: Path | str | None = None):
@@ -1420,6 +1883,18 @@ def _release_structured_client(client: Any) -> None:
     close = getattr(client, "close", None)
     if callable(close):
         close()
+    # Third-party wrappers do not consistently release cyclic references or
+    # CUDA caches even after their close hook returns.
+    gc.collect()
+    try:
+        import torch
+    except ImportError:
+        return
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except RuntimeError:
+        pass
 
 
 def _materialize_canonical(mapping, key, target_dir):

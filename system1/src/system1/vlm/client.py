@@ -4,7 +4,8 @@ import gc
 import json
 import re
 import threading
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -57,22 +58,35 @@ class FallbackStructuredClient:
         if not clients:
             raise ValueError("at least one structured client is required")
         self.clients = clients
+        self._active_index = 0
+        self._request_lock = threading.Lock()
 
     def request(self, request: GeminiRequest) -> dict[str, Any]:
-        errors: list[str] = []
-        for client in self.clients:
-            try:
-                return client.request(request)
-            except Exception as exc:  # noqa: BLE001 - preserve fallback behavior
-                errors.append(f"{type(exc).__name__}: {exc}")
-                _close_client(client)
-                _release_torch_memory()
-        raise RuntimeError("all structured providers failed: " + " | ".join(errors))
+        with self._request_lock:
+            errors: list[str] = []
+            for index in range(self._active_index, len(self.clients)):
+                client = self.clients[index]
+                try:
+                    response = client.request(request)
+                except Exception as exc:  # noqa: BLE001 - preserve fallback behavior
+                    errors.append(f"{type(exc).__name__}: {exc}")
+                    _close_client(client)
+                    _release_torch_memory()
+                    continue
+                # Stay on the first working fallback for the rest of this
+                # runtime chunk. Retrying an earlier local model here could
+                # load it while the successful fallback is still resident.
+                self._active_index = index
+                return response
+            raise RuntimeError(
+                "all structured providers failed: " + " | ".join(errors)
+            )
 
     def close(self) -> None:
-        for client in self.clients:
-            _close_client(client)
-        _release_torch_memory()
+        with self._request_lock:
+            for client in self.clients:
+                _close_client(client)
+            _release_torch_memory()
 
 
 class LocalVisionStructuredClient:
@@ -82,6 +96,7 @@ class LocalVisionStructuredClient:
         model_config: Mapping[str, Any],
         cache: JsonCache | None = None,
         cache_prefix: str | Path = "cache/local_vlm",
+        lifecycle_callback: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         self.model_config = dict(model_config)
         self.provider_name = str(self.model_config["provider"])
@@ -89,6 +104,12 @@ class LocalVisionStructuredClient:
         self.model_revision = str(self.model_config.get("model_revision") or self.model_id)
         self.cache = cache
         self.cache_prefix = Path(cache_prefix)
+        self.lifecycle_callback = lifecycle_callback
+        self.total_attempts = int(self.model_config.get("total_attempts", 2))
+        if self.total_attempts < 1:
+            raise ValueError("local VLM total_attempts must be positive")
+        if int(self.model_config.get("inference_batch_size", 1)) != 1:
+            raise ValueError("local VLM inference_batch_size must be 1")
         self._cache_lock = threading.Lock()
         self._model_lock = threading.Lock()
         self._loaded: tuple[Any, ...] | None = None
@@ -113,7 +134,25 @@ class LocalVisionStructuredClient:
                         validate(response, request.response_schema)
                         return self._with_metadata(response)
 
-        raw_text = self._call_model(request)
+        raw_text: str | None = None
+        for attempt in range(1, self.total_attempts + 1):
+            try:
+                raw_text = self._call_model(request)
+                break
+            except Exception as exc:
+                if not _is_cuda_oom(exc):
+                    raise
+                self.close()
+                self._emit_lifecycle(
+                    "oom_retry" if attempt < self.total_attempts else "oom_exhausted",
+                    attempt=attempt,
+                    total_attempts=self.total_attempts,
+                    error_type=type(exc).__name__,
+                )
+                if attempt >= self.total_attempts:
+                    raise
+        if raw_text is None:  # pragma: no cover - loop invariant guard
+            raise RuntimeError("local VLM produced no response")
         normalized = _parse_json_object(raw_text, request.response_schema)
         if self.cache is not None:
             with self._cache_lock:
@@ -155,45 +194,54 @@ class LocalVisionStructuredClient:
         except ImportError as exc:  # pragma: no cover - production dependency guard
             raise RuntimeError("qwen-vl-utils is required for qwen_local") from exc
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    *[
-                        {"type": "image", "image": str(path)}
-                        for path in request.image_paths
+        inputs: Any = None
+        generated_ids: Any = None
+        image_inputs: Any = None
+        video_inputs: Any = None
+        try:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        *[
+                            {"type": "image", "image": str(path)}
+                            for path in request.image_paths
+                        ],
+                        {"type": "text", "text": request.prompt},
                     ],
-                    {"type": "text", "text": request.prompt},
-                ],
+                }
+            ]
+            text = processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            image_inputs, video_inputs = process_vision_info(messages)
+            inputs = processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
+            device = _model_device(model)
+            inputs = {
+                key: value.to(device) if hasattr(value, "to") else value
+                for key, value in inputs.items()
             }
-        ]
-        text = processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        image_inputs, video_inputs = process_vision_info(messages)
-        inputs = processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
-        device = _model_device(model)
-        inputs = {
-            key: value.to(device) if hasattr(value, "to") else value
-            for key, value in inputs.items()
-        }
-        generated_ids = model.generate(
-            **inputs,
-            max_new_tokens=int(self.model_config.get("max_new_tokens", 768)),
-            do_sample=False,
-        )
-        input_ids = inputs.get("input_ids")
-        if input_ids is not None:
-            generated_ids = generated_ids[:, input_ids.shape[1] :]
-        return processor.batch_decode(
-            generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )[0]
+            generated_ids = model.generate(
+                **inputs,
+                max_new_tokens=int(self.model_config.get("max_new_tokens", 768)),
+                do_sample=False,
+            )
+            input_ids = inputs.get("input_ids")
+            if input_ids is not None:
+                generated_ids = generated_ids[:, input_ids.shape[1] :]
+            return processor.batch_decode(
+                generated_ids,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )[0]
+        finally:
+            del inputs, generated_ids, image_inputs, video_inputs
 
     def _call_vintern(self, request: GeminiRequest) -> str:
         if len(request.image_paths) != 1:
@@ -201,31 +249,39 @@ class LocalVisionStructuredClient:
         tokenizer, model = self._load_vintern()
         import torch
 
-        pixel_values = _vintern_pixel_values(request.image_paths[0]).to(_model_device(model))
+        pixel_values: Any = None
         try:
-            dtype = next(model.parameters()).dtype
-            pixel_values = pixel_values.to(dtype=dtype)
-        except StopIteration:  # pragma: no cover
-            pass
-        prompt = request.prompt
-        if "<image>" not in prompt:
-            prompt = "<image>\n" + prompt
-        generation_config = {
-            "max_new_tokens": int(self.model_config.get("max_new_tokens", 768)),
-            "do_sample": False,
-        }
-        with torch.no_grad():
-            output = model.chat(tokenizer, pixel_values, prompt, generation_config)
-        if isinstance(output, tuple):
-            output = output[0]
-        if not isinstance(output, str) or not output.strip():
-            raise ValueError("vintern_local returned an empty response")
-        return output
+            pixel_values = _vintern_pixel_values(request.image_paths[0]).to(
+                _model_device(model)
+            )
+            try:
+                dtype = next(model.parameters()).dtype
+                pixel_values = pixel_values.to(dtype=dtype)
+            except StopIteration:  # pragma: no cover
+                pass
+            prompt = request.prompt
+            if "<image>" not in prompt:
+                prompt = "<image>\n" + prompt
+            generation_config = {
+                "max_new_tokens": int(self.model_config.get("max_new_tokens", 768)),
+                "do_sample": False,
+            }
+            with torch.no_grad():
+                output = model.chat(tokenizer, pixel_values, prompt, generation_config)
+            if isinstance(output, tuple):
+                output = output[0]
+            if not isinstance(output, str) or not output.strip():
+                raise ValueError("vintern_local returned an empty response")
+            return output
+        finally:
+            del pixel_values
 
     def _load_qwen(self) -> tuple[Any, Any]:
         with self._model_lock:
             if self._loaded is not None:
                 return self._loaded  # type: ignore[return-value]
+            started = time.monotonic()
+            _reset_cuda_peak_memory()
             try:
                 from transformers import AutoProcessor
                 try:
@@ -234,7 +290,9 @@ class LocalVisionStructuredClient:
                     )
                 except ImportError:
                     try:
-                        from transformers import AutoModelForImageTextToText as AutoModel
+                        from transformers import (
+                            AutoModelForImageTextToText as AutoModel,
+                        )
                     except ImportError:
                         try:
                             from transformers import AutoModelForVision2Seq as AutoModel
@@ -242,54 +300,115 @@ class LocalVisionStructuredClient:
                             from transformers import AutoModel
             except ImportError as exc:  # pragma: no cover - production dependency guard
                 raise RuntimeError("transformers is required for qwen_local") from exc
-            processor = AutoProcessor.from_pretrained(
-                self.model_id,
-                revision=self.model_revision,
-                trust_remote_code=bool(self.model_config.get("trust_remote_code", False)),
+            try:
+                processor = AutoProcessor.from_pretrained(
+                    self.model_id,
+                    revision=self.model_revision,
+                    trust_remote_code=bool(
+                        self.model_config.get("trust_remote_code", False)
+                    ),
+                )
+                model = AutoModel.from_pretrained(
+                    self.model_id,
+                    revision=self.model_revision,
+                    torch_dtype=self.model_config.get("torch_dtype", "auto"),
+                    device_map=self.model_config.get("device_map", "auto"),
+                    low_cpu_mem_usage=bool(
+                        self.model_config.get("low_cpu_mem_usage", True)
+                    ),
+                    trust_remote_code=bool(
+                        self.model_config.get("trust_remote_code", False)
+                    ),
+                )
+                model.eval()
+                self._loaded = (processor, model)
+            except Exception as exc:
+                _release_torch_memory()
+                self._emit_lifecycle(
+                    "load_failed",
+                    load_seconds=round(time.monotonic() - started, 3),
+                    error_type=type(exc).__name__,
+                )
+                raise
+            self._emit_lifecycle(
+                "loaded", load_seconds=round(time.monotonic() - started, 3)
             )
-            model = AutoModel.from_pretrained(
-                self.model_id,
-                revision=self.model_revision,
-                torch_dtype=self.model_config.get("torch_dtype", "auto"),
-                device_map=self.model_config.get("device_map", "auto"),
-                low_cpu_mem_usage=bool(self.model_config.get("low_cpu_mem_usage", True)),
-                trust_remote_code=bool(self.model_config.get("trust_remote_code", False)),
-            )
-            model.eval()
-            self._loaded = (processor, model)
             return processor, model
 
     def _load_vintern(self) -> tuple[Any, Any]:
         with self._model_lock:
             if self._loaded is not None:
                 return self._loaded  # type: ignore[return-value]
+            started = time.monotonic()
+            _reset_cuda_peak_memory()
             try:
                 from transformers import AutoModel, AutoTokenizer
             except ImportError as exc:  # pragma: no cover - production dependency guard
                 raise RuntimeError("transformers is required for vintern_local") from exc
-            tokenizer = AutoTokenizer.from_pretrained(
-                self.model_id,
-                revision=self.model_revision,
-                trust_remote_code=bool(self.model_config.get("trust_remote_code", True)),
-                use_fast=bool(self.model_config.get("use_fast_tokenizer", False)),
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_id,
+                    revision=self.model_revision,
+                    trust_remote_code=bool(
+                        self.model_config.get("trust_remote_code", True)
+                    ),
+                    use_fast=bool(
+                        self.model_config.get("use_fast_tokenizer", False)
+                    ),
+                )
+                model = AutoModel.from_pretrained(
+                    self.model_id,
+                    revision=self.model_revision,
+                    torch_dtype=self.model_config.get("torch_dtype", "auto"),
+                    device_map=self.model_config.get("device_map", "auto"),
+                    low_cpu_mem_usage=bool(
+                        self.model_config.get("low_cpu_mem_usage", True)
+                    ),
+                    trust_remote_code=bool(
+                        self.model_config.get("trust_remote_code", True)
+                    ),
+                    use_flash_attn=bool(
+                        self.model_config.get("use_flash_attn", False)
+                    ),
+                )
+                model.eval()
+                self._loaded = (tokenizer, model)
+            except Exception as exc:
+                _release_torch_memory()
+                self._emit_lifecycle(
+                    "load_failed",
+                    load_seconds=round(time.monotonic() - started, 3),
+                    error_type=type(exc).__name__,
+                )
+                raise
+            self._emit_lifecycle(
+                "loaded", load_seconds=round(time.monotonic() - started, 3)
             )
-            model = AutoModel.from_pretrained(
-                self.model_id,
-                revision=self.model_revision,
-                torch_dtype=self.model_config.get("torch_dtype", "auto"),
-                device_map=self.model_config.get("device_map", "auto"),
-                low_cpu_mem_usage=bool(self.model_config.get("low_cpu_mem_usage", True)),
-                trust_remote_code=bool(self.model_config.get("trust_remote_code", True)),
-                use_flash_attn=bool(self.model_config.get("use_flash_attn", False)),
-            )
-            model.eval()
-            self._loaded = (tokenizer, model)
             return tokenizer, model
 
     def close(self) -> None:
         with self._model_lock:
+            was_loaded = self._loaded is not None
             self._loaded = None
         _release_torch_memory()
+        if was_loaded:
+            self._emit_lifecycle("unloaded")
+
+    def _emit_lifecycle(self, status: str, **details: Any) -> None:
+        if self.lifecycle_callback is None:
+            return
+        try:
+            self.lifecycle_callback(
+                {
+                    "status": status,
+                    "provider": self.provider_name,
+                    "model": self.model_id,
+                    "model_revision": self.model_revision,
+                    **details,
+                }
+            )
+        except Exception:  # noqa: BLE001, S110 - telemetry cannot break inference
+            pass
 
 
 def _close_client(client: Any) -> None:
@@ -304,11 +423,34 @@ def _release_torch_memory() -> None:
         import torch
     except ImportError:  # pragma: no cover - optional runtime dependency guard
         return
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
-        if callable(ipc_collect):
-            ipc_collect()
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+            if callable(ipc_collect):
+                ipc_collect()
+    except RuntimeError:
+        pass
+
+
+def _reset_cuda_peak_memory() -> None:
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - optional runtime dependency guard
+        return
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except RuntimeError:
+        pass
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    return "outofmemory" in name or "cuda out of memory" in message or (
+        "cuda" in message and "out of memory" in message
+    )
 
 
 def _parse_json_object(raw_text: str, schema: dict[str, Any]) -> dict[str, Any]:
