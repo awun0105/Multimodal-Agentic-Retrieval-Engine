@@ -1,0 +1,4 @@
+Read only text that is visibly present in the keyframe image.
+Return raw visible text without paraphrasing. If no readable text is visible,
+return an empty full_text string and an empty ocr_blocks array. Do not infer
+hidden text, names, locations, or meanings that are not visible.

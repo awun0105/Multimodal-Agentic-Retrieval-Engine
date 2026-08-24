@@ -28,6 +28,7 @@ STRUCTURE_PARQUET_FILES = (
     "shots.parquet",
     "scenes.parquet",
     "keyframes.parquet",
+    "ocr.parquet",
     "shot_captions.parquet",
     "shot_transcript_links.parquet",
     "scene_transcript_links.parquet",
@@ -54,6 +55,21 @@ PARQUET_COLUMNS: dict[str, list[str]] = {
     ],
     "shot_transcript_links": ["shot_id", "asr_segment_id", "video_id", "coverage"],
     "scene_transcript_links": ["scene_id", "asr_segment_id", "video_id", "coverage"],
+    "ocr": [
+        "ocr_id",
+        "video_id",
+        "keyframe_id",
+        "shot_id",
+        "frame_id",
+        "text",
+        "raw_text",
+        "provider",
+        "model_name",
+        "model_version",
+        "language",
+        "confidence",
+        "status",
+    ],
 }
 
 
@@ -220,6 +236,8 @@ def _write_video_structure_artifact(
     selection_method = _extract_media(video_path, keyframe_path, thumbnail_path, errors, video_id)
     keyframe_ref = f"media://keyframes/{video_id}/{keyframe_filename}"
     thumbnail_ref = f"media://thumbnails/{video_id}/{thumbnail_filename}"
+    ocr_text = text_provider.read_text(keyframe_path)
+    ocr_status = "empty" if not ocr_text else "pass"
     shot_caption_text = _caption_keyframe(keyframe_path, normalized_text, text_provider, provider_plan, errors, video_id)
     shot_caption_status = "empty" if not shot_caption_text else "pass"
     scene_summary_text = _summarize_scene(
@@ -327,6 +345,21 @@ def _write_video_structure_artifact(
             "provider": "KeyframeSelectionProvider",
             "status": keyframe_selection.status if keyframe_path.exists() and thumbnail_path.exists() else "degraded",
         }],
+        "ocr": [{
+            "ocr_id": f"{keyframe_id}:ocr",
+            "video_id": video_id,
+            "keyframe_id": keyframe_id,
+            "shot_id": shot_id,
+            "frame_id": frame_id,
+            "text": ocr_text,
+            "raw_text": ocr_text,
+            "provider": provider_plan.ocr,
+            "model_name": provider_plan.ocr,
+            "model_version": "debug",
+            "language": "vi",
+            "confidence": None,
+            "status": ocr_status,
+        }],
         "shot_captions": [{
             "shot_caption_id": f"{shot_id}_caption",
             "video_id": video_id,
@@ -336,12 +369,19 @@ def _write_video_structure_artifact(
             "representative_timestamp_sec": keyframe_selection.time_seconds,
             "caption_vi": shot_caption_text,
             "caption_en": shot_caption_text,
+            "objects_vi": [],
+            "objects_en": [],
+            "actions_vi": [],
+            "actions_en": [],
+            "visible_text_summary_vi": ocr_text,
+            "visible_text_summary_en": ocr_text,
+            "scene_type": "unknown",
             "provider": provider_plan.shot_caption,
             "caption_model": provider_plan.shot_caption,
             "model_name": provider_plan.shot_caption,
             "model_version": "debug",
-            "prompt_version": "debug_shot_caption_v1",
-            "schema_version": "1.0.0",
+            "prompt_version": "debug_shot_caption_v2",
+            "schema_version": "shot_caption_response_v2",
             "confidence": 0.0,
             "status": shot_caption_status,
         }],

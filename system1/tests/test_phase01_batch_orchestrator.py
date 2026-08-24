@@ -30,9 +30,41 @@ class FakeGeminiClient:
         raise AssertionError(request.request_kind)
 
 
+class FakeLocalStructuredClient:
+    requests: list[str] = []
+
+    def __init__(self, provider: str) -> None:
+        self.provider = provider
+
+    def request(self, request):
+        self.requests.append(request.request_kind)
+        if request.request_kind == "keyframe_ocr":
+            return {
+                "full_text": "",
+                "ocr_blocks": [],
+                "language": "vi",
+                "confidence": None,
+            }
+        if request.request_kind == "shot_caption":
+            return {
+                "caption_vi": "Một cảnh",
+                "caption_en": "A scene",
+                "objects_vi": ["cảnh"],
+                "objects_en": ["scene"],
+                "actions_vi": [],
+                "actions_en": [],
+                "visible_text_summary_vi": "",
+                "visible_text_summary_en": "",
+                "scene_type": "unknown",
+            }
+        raise AssertionError(request.request_kind)
+
+
 def test_single_video_production_orchestrator_checkpoints_and_packages(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
+    FakeGeminiClient.requests = []
+    FakeLocalStructuredClient.requests = []
     video_id = "L21_V001"
     release = tmp_path / "output" / "canonical_release_v001"
     (release / "manifests").mkdir(parents=True)
@@ -108,6 +140,11 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         lambda *_args, **_kwargs: AsrResult("no_audio", [], None, 0, None),
     )
     monkeypatch.setattr(production, "GeminiStructuredClient", FakeGeminiClient)
+    monkeypatch.setattr(
+        production,
+        "_structured_client_for_model",
+        lambda model_config, **_kwargs: FakeLocalStructuredClient(str(model_config["provider"])),
+    )
     resolved = resolve_phase01_config(
         CONFIG_DIR,
         user_settings={
@@ -158,7 +195,8 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         sync_release=False,
     )
     assert second_report == report
-    assert FakeGeminiClient.requests == ["shot_caption", "scene_summary"]
+    assert FakeLocalStructuredClient.requests == ["keyframe_ocr", "shot_caption"]
+    assert FakeGeminiClient.requests == ["scene_summary"]
 
     before_metadata_change = checkpoint_store.read_json(
         f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
@@ -184,7 +222,8 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         after_metadata_change["stages"]["package"]["input_fingerprint"]
         != before_metadata_change["stages"]["package"]["input_fingerprint"]
     )
-    assert FakeGeminiClient.requests == ["shot_caption", "scene_summary"]
+    assert FakeLocalStructuredClient.requests == ["keyframe_ocr", "shot_caption"]
+    assert FakeGeminiClient.requests == ["scene_summary"]
     artifact = release / "artifacts" / "structure" / f"{video_id}_structure.zip"
     with zipfile.ZipFile(artifact) as archive:
         normalized = json.loads(

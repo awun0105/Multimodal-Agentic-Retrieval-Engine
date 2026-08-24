@@ -43,7 +43,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["pipeline_id"] == "phase01_production_v1"
+    assert phase01["pipeline_id"] == "phase01_production_v1_1"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["api"]["max_concurrency_per_video"] == 2
@@ -52,6 +52,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "shots",
         "keyframes",
         "asr",
+        "ocr",
         "shot_captions",
         "shot_transcript_links",
         "scenes",
@@ -65,11 +66,16 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "shot_detection",
         "asr",
         "asr_providers",
+        "ocr",
         "shot_caption",
         "scene_boundary",
         "scene_summary",
     }
     assert models["phase01"]["asr"]["provider"] == "faster_whisper"
+    assert models["phase01"]["ocr"]["provider"] == "vintern_local"
+    assert models["phase01"]["ocr"]["model_id"] == "5CD-AI/Vintern-1B-v3_5"
+    assert models["phase01"]["shot_caption"]["provider"] == "qwen_local"
+    assert models["phase01"]["shot_caption"]["model_id"] == "Qwen/Qwen2.5-VL-7B-Instruct"
     assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
 
 
@@ -122,10 +128,13 @@ def test_phase01_config_encodes_oom_and_dependency_invalidation_policy() -> None
     }
     assert phase01["asr"]["exhausted_oom_status"] == "failed_retryable"
     assert dependencies["keyframes"] == ["shots"]
+    assert dependencies["ocr"] == ["keyframes"]
+    assert set(dependencies["shot_captions"]) == {"keyframes", "ocr"}
     assert set(dependencies["shot_transcript_links"]) == {"shots", "asr"}
     assert set(dependencies["scenes"]) == {
         "shots",
         "keyframes",
+        "ocr",
         "shot_captions",
         "shot_transcript_links",
     }
@@ -306,6 +315,7 @@ def test_phase01_json_schemas_lock_checkpoint_and_keyframe_contracts() -> None:
         "shots",
         "keyframes",
         "asr",
+        "ocr",
         "shot_captions",
         "shot_transcript_links",
         "scenes",
@@ -359,14 +369,26 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "thumbnail_ref": f"media://thumbnails/{video_id}/{video_id}_f0000000.webp",
             "status": "pass",
         }],
+        "ocr": [{
+            "ocr_id": f"{video_id}:0:ocr", "video_id": video_id,
+            "keyframe_id": f"{video_id}:0", "shot_id": shot_id,
+            "frame_id": 0, "text": "", "raw_text": "",
+            "provider": "vintern_local", "model_name": "5CD-AI/Vintern-1B-v3_5",
+            "model_version": "b98f263eab246eb5269ade64edbdca8a887dc44d",
+            "language": "vi", "confidence": None, "status": "empty",
+        }],
         "shot_captions": [{
             "shot_caption_id": f"{shot_id}_caption", "video_id": video_id,
             "shot_id": shot_id, "representative_keyframe_id": f"{video_id}:0",
             "representative_timestamp_sec": 0.0, "caption_vi": "Một cảnh",
-            "caption_en": "A scene", "provider": "gemini",
-            "model_name": "gemini-3.6-flash", "model_version": "gemini-3.6-flash",
-            "prompt_version": "shot_caption_v1",
-            "schema_version": "shot_caption_response_v1", "confidence": None,
+            "caption_en": "A scene", "objects_vi": ["cảnh"], "objects_en": ["scene"],
+            "actions_vi": [], "actions_en": [], "visible_text_summary_vi": "",
+            "visible_text_summary_en": "", "scene_type": "unknown",
+            "provider": "qwen_local",
+            "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
+            "model_version": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+            "prompt_version": "shot_caption_v2",
+            "schema_version": "shot_caption_response_v2", "confidence": None,
             "status": "pass",
         }],
         "scenes": [{

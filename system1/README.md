@@ -38,13 +38,13 @@ A clean clone will not run E2E until this input directory is prepared.
 Primary shared storage uses exactly two Hugging Face Dataset repos:
 
 ```text
-AIC26_raw
+AIOU26_raw
   canonical raw dataset repo: raw_videos/, required canonical metadata/,
   raw-level manifests and audits; no duplicate organizer_metadata/ tree
   canonical_raw_vXXX/manifests/missing_metadata.json
   canonical_raw_vXXX/manifests/unmatched_metadata.json
 
-AIC26_release
+AIOU26_release
   processed workspace + final release repo:
   phase00_ingestion/, phase01_structure/, phase02_features/,
   phase03_merged/, releases/, checkpoints/, logs/
@@ -57,15 +57,15 @@ Notebook 00 has two upload targets:
 
 ```text
 Canonical raw output
-  -> AIC26_raw/canonical_raw_vXXX/
+  -> AIOU26_raw/canonical_raw_vXXX/
 
 Phase00 ingestion, batch planning, and pipeline reports
-  -> AIC26_release/canonical_release_vXXX/phase00_ingestion/
+  -> AIOU26_release/canonical_release_vXXX/phase00_ingestion/
 ```
 
 `missing_metadata.json` and `unmatched_metadata.json` are raw-level audit
-manifests in `AIC26_raw`. The release repo may also snapshot them under
-`AIC26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
+manifests in `AIOU26_raw`. The release repo may also snapshot them under
+`AIOU26_release/canonical_release_vXXX/phase00_ingestion/reports/` for a
 particular run.
 
 Notebook 00 workflow for Colab/local source preparation:
@@ -78,17 +78,17 @@ organizer Google Drive folder
   -> 00C: local-machine streaming path
   -> stream path extracts one video/organizer-metadata pair at a time,
      probes the video, creates canonical metadata, validates it, and uploads
-     canonical raw files to AIC26_raw
-  -> ingest from AIC26_raw
+     canonical raw files to AIOU26_raw
+  -> ingest from AIOU26_raw
   -> assign-batches
-  -> upload phase00 ingestion outputs to AIC26_release/phase00_ingestion
+  -> upload phase00 ingestion outputs to AIOU26_release/phase00_ingestion
 ```
 
 Use these commands directly only when debugging outside the notebook:
 
 ```bash
 system1 import-canonical-raw \
-  --source-dir /content/drive/MyDrive/AIC2026/raw_dataset \
+  --source-dir /content/drive/MyDrive/AIOU26/raw_dataset \
   --output input \
   --raw-import-id canonical_raw_v003
 
@@ -98,16 +98,16 @@ system1 drive-shadow \
   --report-path output/drive_shadow_report.json
 
 system1 standardize-archives \
-  --source-dir /content/drive/MyDrive/AIC2026/raw_dataset \
+  --source-dir /content/drive/MyDrive/AIOU26/raw_dataset \
   --target-dir input \
   --temp-dir /content/temp_extraction
 
 system1 stream-standardize-upload-raw \
-  --source-dir /content/drive/MyDrive/AIC2026/raw_dataset \
-  --target-hf-repo-id your-org/AIC26_raw \
+  --source-dir /content/drive/MyDrive/AIOU26/raw_dataset \
+  --target-hf-repo-id your-org/AIOU26_raw \
   --raw-import-id canonical_raw_v003 \
   --scratch-dir /content/aic_scratch \
-  --progress-path /content/drive/MyDrive/AIC2026/stream_standardize_upload_progress.jsonl
+  --progress-path /content/drive/MyDrive/AIOU26/stream_standardize_upload_progress.jsonl
 
 system1 ingest \
   --input input \
@@ -119,23 +119,23 @@ system1 assign-batches \
 
 system1 sync-phase00-ingestion \
   --output output \
-  --hf-repo-id your-org/AIC26_release
+  --hf-repo-id your-org/AIOU26_release
 
 system1 restore-phase00-ingestion \
   --release-id canonical_release_v003 \
-  --hf-repo-id your-org/AIC26_release \
+  --hf-repo-id your-org/AIOU26_release \
   --output output
 
 system1 sync-structure-artifacts \
   --output output \
-  --hf-repo-id your-org/AIC26_release \
+  --hf-repo-id your-org/AIOU26_release \
   --release-id canonical_release_v003 \
   --batch-id batch_000 \
   --worker-id worker_local_01
 
 system1 restore-structure-artifacts \
   --output output \
-  --hf-repo-id your-org/AIC26_release \
+  --hf-repo-id your-org/AIOU26_release \
   --release-id canonical_release_v003 \
   --batch-id batch_000
 ```
@@ -183,8 +183,9 @@ reports to and from the Hugging Face `phase01_structure` layout. Notebook 01 is
 the thin worker orchestration for the production `process-batch` path. Package
 code now owns release resolution/restore, persistent per-stage resume,
 TransNet V2, search-band keyframes, default faster-whisper ASR with optional
-pinned NeMo/Parakeet Vietnamese ASR, Gemini captions/grouping/summaries,
-strict packaging, remote checksum verification, and reports.
+pinned NeMo/Parakeet Vietnamese ASR, Vintern OCR, Qwen2.5-VL default shot
+captions, and Gemini scene grouping/summaries, strict packaging, remote
+checksum verification, and reports.
 
 ## Local setup
 
@@ -206,8 +207,8 @@ system1 process-batch \
   --batch-id batch_000 \
   --worker-id worker_000 \
   --release-id-override canonical_release_v001 \
-  --hf-repo-id your-org/AIC26_release \
-  --hf-checkpoint-repo your-org/AIC26_checkpoints \
+  --hf-repo-id your-org/AIOU26_release \
+  --hf-checkpoint-repo your-org/AIOU26_checkpoints \
   --output output \
   --sync
 ```
@@ -330,7 +331,7 @@ Notebook 01 responsibility:
 
 ```text
 setup runtime + package
-  -> restore Phase00 core tables + selected batch manifest from AIC26_release
+  -> restore Phase00 core tables + selected batch manifest from AIOU26_release
   -> restore only frame_timeline files referenced by that batch
   -> read manifests/{batch_id}.txt
   -> resolve versioned config and validate production dependencies
@@ -344,7 +345,7 @@ setup runtime + package
 `process-batch` reuses Phase00 video facts from `tables/videos.parquet`
 and `raw_mapping/media_store_manifest.parquet`, plus
 `frame_timeline/{video_id}.parquet` when available, instead of re-probing every
-video. It may stage only the current video/metadata pair from `AIC26_raw` or a
+video. It may stage only the current video/metadata pair from `AIOU26_raw` or a
 local input directory into scratch, but it must not copy the full raw dataset
 into runtime storage. If a decoded frame timeline is unavailable, the package
 must fail that production video because canonical `frame_id` values require the
@@ -353,9 +354,10 @@ in debug/test profiles and must never be hidden in notebook code.
 
 The Phase01 structure package is semantic structure, not feature enrichment.
 It contains shot rows, selected keyframes, thumbnails, production
-ASR/transcript rows, one canonical bilingual shot-caption row per shot
-generated by Gemini from that shot's representative keyframe, scene rows,
-bilingual Gemini scene summaries, package manifests, checksums, and errors.
+ASR/transcript rows, OCR rows from selected keyframes, one canonical bilingual
+shot-caption row per shot generated from that shot's representative keyframe,
+scene rows, bilingual Gemini scene summaries, package manifests, checksums, and
+errors.
 Production phase01 standardizes on TransNet V2 for shot boundaries and
 keyframes selected from bands centered at 20%/50%/80% of each shot. ASR defaults
 to faster-whisper large-v3; Notebook 01 can opt into the pinned NeMo/Parakeet
@@ -396,7 +398,7 @@ python -m pip install -q -e ".[phase01-production]"
 python -m pip install -q tensorflow torch
 python scripts/prepare_transnetv2_artifact.py \
   --output-dir /content/transnetv2-artifact \
-  --repo-id 1thesudden/AIC26_checkpoints \
+  --repo-id 1thesudden/AIOU26_checkpoints \
   --repo-type dataset \
   --revision main \
   --path-in-repo model_artifacts/transnetv2/85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed
@@ -432,7 +434,7 @@ python scripts/prepare_transnetv2_artifact.py \
   --preconverted-weights-repo-id Sn4kehead/TransNetV2 \
   --preconverted-weights-filename transnetv2-pytorch-weights.pth \
   --expected-weights-sha256 834b10f25ae9e1b4e4f2652fe2843bd2b1388057a435d68b7c52635578fcc04d \
-  --repo-id 1thesudden/AIC26_checkpoints \
+  --repo-id 1thesudden/AIOU26_checkpoints \
   --repo-type dataset \
   --revision main \
   --path-in-repo model_artifacts/transnetv2/85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed
@@ -476,7 +478,7 @@ debug compatibility code and is not production Notebook 02 completion.
 Hugging Face shared target layout:
 
 ```text
-AIC26_release/canonical_release_vXXX/
+AIOU26_release/canonical_release_vXXX/
   phase00_ingestion/
     tables/
     raw_mapping/
@@ -505,7 +507,7 @@ AIC26_release/canonical_release_vXXX/
 release for System 2 lives under:
 
 ```text
-AIC26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/
+AIOU26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/
 ```
 
 Legacy flat paths under

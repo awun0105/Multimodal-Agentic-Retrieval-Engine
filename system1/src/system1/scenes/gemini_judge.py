@@ -27,6 +27,7 @@ class GeminiSceneBoundaryJudge:
         self.diagnostics_dir = diagnostics_dir
         self.model_config = model_config
         self.request_index = 0
+        self._diagnostics: dict[str, dict[str, Any]] = {}
 
     def judge(
         self,
@@ -72,6 +73,12 @@ class GeminiSceneBoundaryJudge:
                         "properties": {
                             "after_shot_id": {"type": "string"},
                             "is_scene_boundary": {"type": "boolean"},
+                            "reason": {"type": "string"},
+                            "confidence": {"type": ["number", "null"]},
+                            "evidence_used": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
                         },
                         "required": ["after_shot_id", "is_scene_boundary"],
                         "additionalProperties": False,
@@ -101,7 +108,15 @@ class GeminiSceneBoundaryJudge:
             if gap_id in result:
                 raise ValueError(f"Gemini duplicated scene gap: {gap_id}")
             result[gap_id] = item["is_scene_boundary"]
+            self._diagnostics[gap_id] = {
+                "reason": str(item.get("reason", "")),
+                "confidence": item.get("confidence"),
+                "evidence_used": item.get("evidence_used", []),
+            }
         return result
+
+    def diagnostics_for(self, gap_id: str) -> Mapping[str, Any]:
+        return self._diagnostics.get(gap_id, {})
 
 
 def _write_contact_sheet(context: Sequence[Mapping[str, Any]], output: Path) -> None:
@@ -169,7 +184,24 @@ def _json_safe_evidence(item: Mapping[str, Any]) -> dict[str, Any]:
         "end_sec": float(item["end_sec"]),
         "caption_vi": str(item.get("caption_vi", "")),
         "caption_en": str(item.get("caption_en", "")),
+        "objects_vi": _string_list(item.get("objects_vi", [])),
+        "objects_en": _string_list(item.get("objects_en", [])),
+        "actions_vi": _string_list(item.get("actions_vi", [])),
+        "actions_en": _string_list(item.get("actions_en", [])),
+        "visible_text_summary_vi": str(item.get("visible_text_summary_vi", "")),
+        "visible_text_summary_en": str(item.get("visible_text_summary_en", "")),
+        "ocr_text": _string_list(item.get("ocr_text", [])),
         "transcript": str(item.get("transcript", "")),
         "has_early_frame": bool(item.get("early_path")),
         "has_late_frame": bool(item.get("late_path")),
     }
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, Sequence):
+        return [str(item) for item in value if str(item).strip()]
+    return []

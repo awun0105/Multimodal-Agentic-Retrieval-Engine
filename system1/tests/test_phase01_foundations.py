@@ -217,6 +217,7 @@ def stage_hashes() -> dict[str, str]:
         "shots",
         "keyframes",
         "asr",
+        "ocr",
         "shot_captions",
         "shot_transcript_links",
         "scenes",

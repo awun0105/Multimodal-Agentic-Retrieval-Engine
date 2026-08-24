@@ -135,7 +135,7 @@ def load_provider_plan(config_dir: Path | str, provider_profile: str) -> Provide
         if phase01_models:
             return ProviderPlan(
                 asr=str(phase01_models.get("asr", {}).get("provider", "unconfigured")),
-                ocr="unconfigured",
+                ocr=str(phase01_models.get("ocr", {}).get("provider", "unconfigured")),
                 embedding="unconfigured",
                 object_detection="unconfigured",
                 shot_caption=str(
@@ -321,8 +321,15 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "retry": phase01["retry"],
             "schema": schemas["asr_segments"],
         },
+        "ocr": {
+            "model": models["ocr"],
+            "policy": phase01["ocr"],
+            "retry": phase01["retry"],
+            "schema": schemas["ocr"],
+        },
         "shot_captions": {
             "model": models["shot_caption"],
+            "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
             "schema": schemas["shot_captions"],
@@ -332,6 +339,7 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
         },
         "scenes": {
             "model": models["scene_boundary"],
+            "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
             "grouping": phase01["scene_grouping"],
@@ -339,6 +347,7 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
         },
         "scene_summaries": {
             "model": models["scene_summary"],
+            "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
             "policy": phase01["scene_summary"],

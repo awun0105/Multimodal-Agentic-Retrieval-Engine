@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1
-pipeline_id: phase01_production_v1
+schema_version: phase01_pipeline_v1_1
+pipeline_id: phase01_production_v1_1
 
 execution:
   video_order: batch_manifest
@@ -16,6 +16,7 @@ stages:
     - shots
     - keyframes
     - asr
+    - ocr
     - shot_captions
     - shot_transcript_links
     - scenes
@@ -26,14 +27,16 @@ stages:
     shots: []
     keyframes: [shots]
     asr: []
-    shot_captions: [keyframes]
+    ocr: [keyframes]
+    shot_captions: [keyframes, ocr]
     shot_transcript_links: [shots, asr]
-    scenes: [shots, keyframes, shot_captions, shot_transcript_links]
-    scene_summaries: [scenes, keyframes, shot_captions, shot_transcript_links]
+    scenes: [shots, keyframes, ocr, shot_captions, shot_transcript_links]
+    scene_summaries: [scenes, keyframes, ocr, shot_captions, shot_transcript_links]
     package:
       - shots
       - keyframes
       - asr
+      - ocr
       - shot_captions
       - shot_transcript_links
       - scenes
@@ -52,6 +55,12 @@ asr:
   no_speech_status: no_speech
   exhausted_oom_status: failed_retryable
   continue_next_video_after_exhausted_oom: true
+
+ocr:
+  model_key: ocr
+  run_on_keyframe_roles: [early, middle, late]
+  empty_status: empty
+  failed_status: failed
 
 api:
   max_concurrency_per_video: 2
@@ -97,7 +106,8 @@ schemas:
   shots: shots_v1
   keyframes: keyframes_v2
   asr_segments: asr_segments_v1
-  shot_captions: shot_captions_v1
+  ocr: ocr_v2
+  shot_captions: shot_captions_v2
   shot_transcript_links: shot_transcript_links_v1
   scenes: scenes_v1
   scene_transcript_links: scene_transcript_links_v1
@@ -109,6 +119,8 @@ production_readiness:
     - models.shot_detection.source_sha256
     - models.shot_detection.weights_sha256
     - models.asr.model_revision
+    - models.ocr.model_id
+    - models.ocr.model_revision
     - models.shot_caption.model_id
     - models.shot_caption.model_revision
     - models.scene_boundary.model_id

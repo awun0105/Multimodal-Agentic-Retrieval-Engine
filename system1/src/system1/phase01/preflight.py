@@ -7,6 +7,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from huggingface_hub import HfApi
 
@@ -50,7 +51,8 @@ def run_phase01_preflight(
     for executable in ("ffmpeg", "ffprobe"):
         if shutil.which(executable) is None:
             raise RuntimeError(f"Required executable is unavailable: {executable}")
-    if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY"):
+    models = config.payload["models"]
+    if _requires_gemini(models) and not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY"):
         raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY is required")
     if not os.environ.get("AIC_HF_TOKEN") and not os.environ.get("HF_TOKEN"):
         raise RuntimeError("AIC_HF_TOKEN or HF_TOKEN is required")
@@ -116,8 +118,15 @@ def run_phase01_preflight(
             raise RuntimeError("nemo_toolkit[asr] is required for configured NeMo ASR")
     else:
         raise RuntimeError(f"Unsupported Phase01 ASR provider: {asr_provider}")
-    if versions["google-genai"] != str(expected["shot_caption"]["sdk_version"]):
+    gemini_versions = [
+        model.get("sdk_version")
+        for key in ("shot_caption", "scene_boundary", "scene_summary")
+        for model in [expected.get(key, {})]
+        if model.get("provider") == "gemini" and model.get("sdk_version") is not None
+    ]
+    if gemini_versions and versions["google-genai"] not in {str(value) for value in gemini_versions}:
         raise RuntimeError("Installed google-genai version differs from resolved config")
+    _validate_local_vlm_dependencies(expected)
     if versions["torch"] == "missing":
         raise RuntimeError("PyTorch is required for TransNet V2")
     return PreflightResult(
@@ -263,6 +272,7 @@ def _validate_prompt_files(config: ResolvedPhase01Config) -> None:
     models = config.payload["models"]
     versions = {
         str(config.payload["phase01"]["api"]["schema_repair_prompt_version"]),
+        str(models["ocr"]["prompt_version"]),
         str(models["shot_caption"]["prompt_version"]),
         str(models["scene_boundary"]["prompt_version"]),
         str(models["scene_boundary"]["focused_prompt_version"]),
@@ -279,3 +289,38 @@ def _validate_prompt_files(config: ResolvedPhase01Config) -> None:
             missing.append(str(path))
     if missing:
         raise RuntimeError("Phase01 prompt files are missing or empty: " + ", ".join(missing))
+
+
+def _requires_gemini(models: dict[str, Any]) -> bool:
+    return any(
+        str(models.get(key, {}).get("provider")) == "gemini"
+        for key in ("shot_caption", "scene_boundary", "scene_summary")
+    )
+
+
+def _validate_local_vlm_dependencies(models: dict[str, Any]) -> None:
+    local_models = [
+        models.get("ocr", {}),
+        models.get("shot_caption", {}),
+        *models.get("shot_caption", {}).get("fallbacks", []),
+    ]
+    if not any(str(model.get("provider")) in {"qwen_local", "vintern_local"} for model in local_models):
+        return
+    required_modules = {
+        "transformers": "transformers",
+        "accelerate": "accelerate",
+        "torch": "torch",
+    }
+    if any(str(model.get("provider")) == "qwen_local" for model in local_models):
+        required_modules["qwen_vl_utils"] = "qwen-vl-utils"
+    missing = [
+        package
+        for module, package in required_modules.items()
+        if importlib.util.find_spec(module) is None
+    ]
+    if missing:
+        raise RuntimeError(
+            "Local VLM dependencies are missing: "
+            + ", ".join(sorted(missing))
+            + ". Install system1[phase01-production]."
+        )

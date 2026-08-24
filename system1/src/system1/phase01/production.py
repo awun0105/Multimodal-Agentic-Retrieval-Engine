@@ -37,6 +37,11 @@ from system1.shots import (
     load_transnet_artifact,
     scenes_to_shot_rows,
 )
+from system1.vlm import (
+    FallbackStructuredClient,
+    LocalVisionStructuredClient,
+    MetadataStructuredClient,
+)
 
 PARQUET_COLUMNS: dict[str, list[str]] = {
     "asr_segments": [
@@ -46,6 +51,10 @@ PARQUET_COLUMNS: dict[str, list[str]] = {
     ],
     "shot_transcript_links": ["video_id", "shot_id", "asr_segment_id", "coverage"],
     "scene_transcript_links": ["video_id", "scene_id", "asr_segment_id", "coverage"],
+    "ocr": [
+        "ocr_id", "video_id", "keyframe_id", "shot_id", "frame_id", "text", "raw_text",
+        "provider", "model_name", "model_version", "language", "confidence", "status",
+    ],
 }
 
 
@@ -409,21 +418,65 @@ def _process_video(
     asr_rows = pd.read_parquet(asr_path).to_dict("records")
     asr_output_fingerprint = manager.stage_output_fingerprint("asr")
 
+    manager.active_stage = "ocr"
+    _emit_stage_progress(manager, "ocr", scratch, status="start")
+    ocr_path = stage_dir / "ocr.parquet"
+    ocr_status_path = stage_dir / "ocr_status.json"
+    ocr_fingerprint = _stage_fingerprint(manager, "ocr", keyframes_output_fingerprint)
+    ocr_reused = _restore_if_reusable(manager, "ocr", ocr_fingerprint, stage_dir)
+    if not ocr_reused:
+        ocr_client = _structured_client_for_model(
+            models["ocr"],
+            phase01=phase01,
+            cache=api_cache,
+            cache_prefix="ocr",
+        )
+        ocr_rows = _build_ocr(
+            video_id=video_id,
+            keyframes=keyframes,
+            stage_dir=stage_dir,
+            client=ocr_client,
+            model_config=models["ocr"],
+            ocr_config=phase01["ocr"],
+        )
+        _write_parquet(ocr_path, ocr_rows, empty_columns=PARQUET_COLUMNS["ocr"])
+        status_counts: dict[str, int] = {}
+        for row in ocr_rows:
+            status = str(row["status"])
+            status_counts[status] = status_counts.get(status, 0) + 1
+        ocr_status = "pass"
+        if status_counts.get("failed") == len(ocr_rows) and ocr_rows:
+            ocr_status = "failed"
+        elif status_counts.get("failed"):
+            ocr_status = "partial"
+        _write_json(ocr_status_path, {
+            "status": ocr_status,
+            "provider": models["ocr"]["provider"],
+            "model_id": models["ocr"]["model_id"],
+            "status_counts": status_counts,
+        })
+        manager.promote_stage(
+            "ocr",
+            input_fingerprint=ocr_fingerprint,
+            outputs=[ocr_path, ocr_status_path],
+            model=models["ocr"],
+            prompt_version=models["ocr"]["prompt_version"],
+            schema_version=phase01["schemas"]["ocr"],
+        )
+    _emit_stage_progress(manager, "ocr", scratch, status="complete", reused=ocr_reused)
+    ocr_rows = pd.read_parquet(ocr_path).to_dict("records")
+    ocr_output_fingerprint = manager.stage_output_fingerprint("ocr")
+
     manager.active_stage = "shot_captions"
     _emit_stage_progress(manager, "shot_captions", scratch, status="start")
-    gemini_client = GeminiStructuredClient(
-        model_id=str(models["shot_caption"]["model_id"]),
-        api_config={
-            **phase01["api"],
-            "schema_repair_attempts": phase01["retry"]["schema_repair_attempts"],
-            "thinking_level": models["shot_caption"]["thinking_level"],
-        },
+    caption_client = _caption_client_for_model(
+        models["shot_caption"],
+        phase01=phase01,
         cache=api_cache,
-        cache_prefix="gemini",
     )
     captions_path = stage_dir / "shot_captions.parquet"
     captions_fingerprint = _stage_fingerprint(
-        manager, "shot_captions", keyframes_output_fingerprint
+        manager, "shot_captions", compute_fingerprint(keyframes_output_fingerprint, ocr_output_fingerprint)
     )
     captions_reused = _restore_if_reusable(
         manager, "shot_captions", captions_fingerprint, stage_dir
@@ -433,8 +486,9 @@ def _process_video(
             video_id=video_id,
             shots=shots,
             keyframes=keyframes,
+            ocr_rows=ocr_rows,
             stage_dir=stage_dir,
-            client=gemini_client,
+            client=caption_client,
             model_config=models["shot_caption"],
             max_concurrency=int(phase01["api"]["max_concurrency_per_video"]),
         )
@@ -497,6 +551,7 @@ def _process_video(
     scenes_fingerprint = compute_fingerprint(
         shots_output_fingerprint,
         keyframes_output_fingerprint,
+        ocr_output_fingerprint,
         captions_output_fingerprint,
         asr_output_fingerprint,
         links_output_fingerprint,
@@ -506,7 +561,7 @@ def _process_video(
         manager, "scenes", scenes_fingerprint, stage_dir
     )
     if not scenes_reused:
-        evidence = _build_scene_evidence(shots, keyframes, captions, asr_rows, links, stage_dir)
+        evidence = _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links, stage_dir)
         boundary_client = GeminiStructuredClient(
             model_id=str(models["scene_boundary"]["model_id"]),
             api_config={
@@ -560,6 +615,7 @@ def _process_video(
     summaries_fingerprint = compute_fingerprint(
         scenes_output_fingerprint,
         keyframes_output_fingerprint,
+        ocr_output_fingerprint,
         asr_output_fingerprint,
         captions_output_fingerprint,
         links_output_fingerprint,
@@ -584,6 +640,7 @@ def _process_video(
             scenes=scenes,
             shots=shots,
             keyframes=keyframes,
+            ocr_rows=ocr_rows,
             captions=captions,
             asr_rows=asr_rows,
             scene_links=scene_links,
@@ -617,6 +674,7 @@ def _process_video(
         shots_output_fingerprint,
         keyframes_output_fingerprint,
         asr_output_fingerprint,
+        ocr_output_fingerprint,
         captions_output_fingerprint,
         links_output_fingerprint,
         scenes_output_fingerprint,
@@ -781,39 +839,274 @@ def _build_keyframes(
     _write_jsonl(output_dir / "keyframe_diagnostics.jsonl", diagnostics)
 
 
-def _build_captions(
-    *, video_id: str, shots: list[dict[str, Any]], keyframes: list[dict[str, Any]],
-    stage_dir: Path, client: GeminiStructuredClient, model_config: Mapping[str, Any],
-    max_concurrency: int,
+def _caption_client_for_model(
+    model_config: Mapping[str, Any],
+    *,
+    phase01: Mapping[str, Any],
+    cache: ArtifactStore,
+):
+    clients = [
+        _structured_client_for_model(
+            model_config,
+            phase01=phase01,
+            cache=cache,
+            cache_prefix=f"{model_config['provider']}/shot_caption",
+        )
+    ]
+    for fallback in model_config.get("fallbacks", []):
+        clients.append(
+            _structured_client_for_model(
+                fallback,
+                phase01=phase01,
+                cache=cache,
+                cache_prefix=f"{fallback['provider']}/shot_caption",
+            )
+        )
+    return clients[0] if len(clients) == 1 else FallbackStructuredClient(clients)
+
+
+def _structured_client_for_model(
+    model_config: Mapping[str, Any],
+    *,
+    phase01: Mapping[str, Any],
+    cache: ArtifactStore,
+    cache_prefix: str,
+):
+    provider = str(model_config["provider"])
+    if provider == "gemini":
+        client = GeminiStructuredClient(
+            model_id=str(model_config["model_id"]),
+            api_config={
+                **phase01["api"],
+                "schema_repair_attempts": phase01["retry"]["schema_repair_attempts"],
+                "thinking_level": model_config.get("thinking_level", "medium"),
+            },
+            cache=cache,
+            cache_prefix=f"gemini/{cache_prefix}",
+        )
+        return MetadataStructuredClient(
+            client,
+            provider_name="gemini",
+            model_id=str(model_config["model_id"]),
+            model_revision=str(model_config["model_revision"]),
+        )
+    if provider in {"qwen_local", "vintern_local"}:
+        return LocalVisionStructuredClient(
+            model_config=model_config,
+            cache=cache,
+            cache_prefix=f"local_vlm/{cache_prefix}",
+        )
+    raise RuntimeError(f"Unsupported structured provider: {provider}")
+
+
+def _build_ocr(
+    *,
+    video_id: str,
+    keyframes: list[dict[str, Any]],
+    stage_dir: Path,
+    client,
+    model_config: Mapping[str, Any],
+    ocr_config: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    if max_concurrency < 1:
-        raise ValueError("Gemini max_concurrency must be positive")
-    representative = {str(row["shot_id"]): row for row in keyframes if row["is_representative"]}
     prompt = (_prompt_dir() / f"{model_config['prompt_version']}.txt").read_text(encoding="utf-8")
     schema = {
         "type": "object",
-        "properties": {"caption_vi": {"type": "string", "minLength": 1}, "caption_en": {"type": "string", "minLength": 1}},
-        "required": ["caption_vi", "caption_en"],
+        "properties": {
+            "full_text": {"type": "string"},
+            "ocr_blocks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "confidence": {"type": ["number", "null"]},
+                    },
+                    "required": ["text"],
+                    "additionalProperties": True,
+                },
+            },
+            "language": {"type": "string"},
+            "confidence": {"type": ["number", "null"]},
+        },
+        "required": ["full_text", "ocr_blocks"],
+        "additionalProperties": False,
+    }
+    rows: list[dict[str, Any]] = []
+    allowed_roles = {str(role) for role in ocr_config.get("run_on_keyframe_roles", [])}
+    selected_keyframes = [
+        keyframe
+        for keyframe in keyframes
+        if not allowed_roles or str(keyframe.get("keyframe_role")) in allowed_roles
+    ]
+    for keyframe in sorted(selected_keyframes, key=lambda row: (str(row["shot_id"]), int(row["frame_id"]))):
+        keyframe_id = str(keyframe["keyframe_id"])
+        image = stage_dir / "keyframes" / Path(str(keyframe["keyframe_ref"])).name
+        try:
+            response = client.request(GeminiRequest(
+                request_kind="keyframe_ocr",
+                video_id=video_id,
+                prompt=prompt,
+                prompt_version=str(model_config["prompt_version"]),
+                response_schema_version=str(model_config["response_schema_version"]),
+                response_schema=schema,
+                image_paths=(image,),
+                identity={"keyframe_id": keyframe_id},
+            ))
+            text = _ocr_text(response)
+            status = "pass" if text else "empty"
+            provider = str(response.get("__provider", model_config["provider"]))
+            model_name = str(response.get("__model_id", model_config["model_id"]))
+            model_version = str(response.get("__model_revision", model_config["model_revision"]))
+            confidence = _nullable_confidence(response.get("confidence"))
+            language = str(response.get("language") or "vi")
+        except Exception:  # noqa: BLE001 - preserve per-keyframe degradation
+            text = ""
+            status = "failed"
+            provider = str(model_config["provider"])
+            model_name = str(model_config["model_id"])
+            model_version = str(model_config["model_revision"])
+            confidence = None
+            language = "vi"
+        rows.append({
+            "ocr_id": f"{keyframe_id}:ocr",
+            "video_id": video_id,
+            "keyframe_id": keyframe_id,
+            "shot_id": str(keyframe["shot_id"]),
+            "frame_id": int(keyframe["frame_id"]),
+            "text": text,
+            "raw_text": text,
+            "provider": provider,
+            "model_name": model_name,
+            "model_version": model_version,
+            "language": language,
+            "confidence": confidence,
+            "status": status,
+        })
+    return rows
+
+
+def _ocr_text(payload: Mapping[str, Any]) -> str:
+    full_text = str(payload.get("full_text", "")).strip()
+    if full_text:
+        return full_text
+    blocks = payload.get("ocr_blocks", [])
+    if not isinstance(blocks, list):
+        return ""
+    return " ".join(
+        str(block.get("text", "")).strip()
+        for block in blocks
+        if isinstance(block, Mapping) and str(block.get("text", "")).strip()
+    )
+
+
+def _ocr_text_by_keyframe(rows: list[dict[str, Any]]) -> dict[str, str]:
+    output: dict[str, str] = {}
+    for row in rows:
+        if str(row.get("status")) == "failed":
+            continue
+        text = str(row.get("text") or row.get("raw_text") or "").strip()
+        if text:
+            output[str(row["keyframe_id"])] = text
+    return output
+
+
+def _nullable_confidence(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(1.0, max(0.0, number))
+
+
+def _string_list(payload: Mapping[str, Any], key: str) -> list[str]:
+    value = payload.get(key, [])
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if not isinstance(value, (list, tuple)):
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        else:
+            return []
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _build_captions(
+    *, video_id: str, shots: list[dict[str, Any]], keyframes: list[dict[str, Any]],
+    ocr_rows: list[dict[str, Any]], stage_dir: Path, client, model_config: Mapping[str, Any],
+    max_concurrency: int,
+) -> list[dict[str, Any]]:
+    if max_concurrency < 1:
+        raise ValueError("caption max_concurrency must be positive")
+    if str(model_config.get("provider")) != "gemini":
+        max_concurrency = 1
+    representative = {str(row["shot_id"]): row for row in keyframes if row["is_representative"]}
+    prompt = (_prompt_dir() / f"{model_config['prompt_version']}.txt").read_text(encoding="utf-8")
+    ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
+    schema = {
+        "type": "object",
+        "properties": {
+            "caption_vi": {"type": "string", "minLength": 1},
+            "caption_en": {"type": "string", "minLength": 1},
+            "objects_vi": {"type": "array", "items": {"type": "string"}},
+            "objects_en": {"type": "array", "items": {"type": "string"}},
+            "actions_vi": {"type": "array", "items": {"type": "string"}},
+            "actions_en": {"type": "array", "items": {"type": "string"}},
+            "visible_text_summary_vi": {"type": "string"},
+            "visible_text_summary_en": {"type": "string"},
+            "scene_type": {"type": "string"},
+        },
+        "required": [
+            "caption_vi",
+            "caption_en",
+            "objects_vi",
+            "objects_en",
+            "actions_vi",
+            "actions_en",
+            "visible_text_summary_vi",
+            "visible_text_summary_en",
+            "scene_type",
+        ],
         "additionalProperties": False,
     }
     def build(shot: dict[str, Any]) -> dict[str, Any]:
         keyframe = representative[str(shot["shot_id"])]
+        keyframe_id = str(keyframe["keyframe_id"])
         image = stage_dir / "keyframes" / Path(str(keyframe["keyframe_ref"])).name
+        ocr_text = ocr_by_keyframe.get(keyframe_id, "")
+        request_prompt = (
+            prompt
+            + "\n\nOCR TEXT DETECTED FOR THIS REPRESENTATIVE KEYFRAME:\n"
+            + (ocr_text if ocr_text else "<none>")
+        )
         response = client.request(GeminiRequest(
-            request_kind="shot_caption", video_id=video_id, prompt=prompt,
+            request_kind="shot_caption", video_id=video_id, prompt=request_prompt,
             prompt_version=str(model_config["prompt_version"]),
             response_schema_version=str(model_config["response_schema_version"]),
             response_schema=schema, image_paths=(image,), identity={"shot_id": shot["shot_id"]},
         ))
         caption_vi = _required_text(response, "caption_vi")
         caption_en = _required_text(response, "caption_en")
+        provider = str(response.get("__provider", model_config["provider"]))
+        model_name = str(response.get("__model_id", model_config["model_id"]))
+        model_version = str(response.get("__model_revision", model_config["model_revision"]))
         return {
             "shot_caption_id": f"{shot['shot_id']}_caption", "video_id": video_id,
-            "shot_id": shot["shot_id"], "representative_keyframe_id": keyframe["keyframe_id"],
+            "shot_id": shot["shot_id"], "representative_keyframe_id": keyframe_id,
             "representative_timestamp_sec": keyframe["timestamp_sec"],
             "caption_vi": caption_vi, "caption_en": caption_en,
-            "provider": "gemini", "model_name": model_config["model_id"],
-            "model_version": model_config["model_revision"], "prompt_version": model_config["prompt_version"],
+            "objects_vi": _string_list(response, "objects_vi"),
+            "objects_en": _string_list(response, "objects_en"),
+            "actions_vi": _string_list(response, "actions_vi"),
+            "actions_en": _string_list(response, "actions_en"),
+            "visible_text_summary_vi": str(response.get("visible_text_summary_vi", "")),
+            "visible_text_summary_en": str(response.get("visible_text_summary_en", "")),
+            "scene_type": str(response.get("scene_type", "")),
+            "provider": provider, "model_name": model_name,
+            "model_version": model_version, "prompt_version": model_config["prompt_version"],
             "schema_version": model_config["response_schema_version"], "confidence": None, "status": "pass",
         }
     rows: list[dict[str, Any]] = []
@@ -840,11 +1133,12 @@ def _build_captions(
     return sorted(rows, key=lambda row: str(row["shot_id"]))
 
 
-def _build_scene_evidence(shots, keyframes, captions, asr_rows, links, stage_dir):
+def _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links, stage_dir):
     by_shot_keyframes: dict[str, list[dict[str, Any]]] = {}
     for row in keyframes:
         by_shot_keyframes.setdefault(str(row["shot_id"]), []).append(row)
     caption_by_shot = {str(row["shot_id"]): row for row in captions}
+    ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
     asr_by_id = {str(row["asr_segment_id"]): row for row in asr_rows}
     links_by_shot: dict[str, list[dict[str, Any]]] = {}
     for row in links:
@@ -879,13 +1173,23 @@ def _build_scene_evidence(shots, keyframes, captions, asr_rows, links, stage_dir
             if str(row["text"]).strip()
         )
         caption = caption_by_shot[shot_id]
+        shot_ocr = [
+            ocr_by_keyframe[str(row["keyframe_id"])]
+            for row in frames
+            if ocr_by_keyframe.get(str(row["keyframe_id"]))
+        ]
         evidence.append({
             "shot_id": shot_id, "start_sec": shot["start_sec"], "end_sec": shot["end_sec"],
             "representative_path": stage_dir
             / "keyframes"
             / Path(str(representative["keyframe_ref"])).name,
             "early_path": role_paths.get("early"), "late_path": role_paths.get("late"),
-            "caption_vi": caption["caption_vi"], "caption_en": caption["caption_en"], "transcript": transcript,
+            "caption_vi": caption["caption_vi"], "caption_en": caption["caption_en"],
+            "objects_vi": _string_list(caption, "objects_vi"), "objects_en": _string_list(caption, "objects_en"),
+            "actions_vi": _string_list(caption, "actions_vi"), "actions_en": _string_list(caption, "actions_en"),
+            "visible_text_summary_vi": caption.get("visible_text_summary_vi", ""),
+            "visible_text_summary_en": caption.get("visible_text_summary_en", ""),
+            "ocr_text": shot_ocr, "transcript": transcript,
         })
     return evidence
 
@@ -903,11 +1207,15 @@ def _build_scene_transcript_links(scenes, asr_rows):
     return rows
 
 
-def _build_scene_summaries(*, video_id, scenes, shots, keyframes, captions, asr_rows, scene_links, stage_dir, client, model_config, summary_config):
+def _build_scene_summaries(*, video_id, scenes, shots, keyframes, ocr_rows, captions, asr_rows, scene_links, stage_dir, client, model_config, summary_config):
     prompt_base = (_prompt_dir() / f"{model_config['prompt_version']}.txt").read_text(encoding="utf-8")
     schema = {"type": "object", "properties": {"summary_vi": {"type": "string", "minLength": 1}, "summary_en": {"type": "string", "minLength": 1}}, "required": ["summary_vi", "summary_en"], "additionalProperties": False}
     captions_by_shot = {str(row["shot_id"]): row for row in captions}
+    ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
     representative = {str(row["shot_id"]): row for row in keyframes if row["is_representative"]}
+    keyframes_by_shot: dict[str, list[dict[str, Any]]] = {}
+    for row in keyframes:
+        keyframes_by_shot.setdefault(str(row["shot_id"]), []).append(row)
     asr_by_id = {str(row["asr_segment_id"]): row for row in asr_rows}
     links_by_scene: dict[str, list[dict[str, Any]]] = {}
     for link in scene_links: links_by_scene.setdefault(str(link["scene_id"]), []).append(link)
@@ -923,7 +1231,27 @@ def _build_scene_summaries(*, video_id, scenes, shots, keyframes, captions, asr_
             / Path(str(representative[str(shot["shot_id"])]["keyframe_ref"])).name
             for shot in sampled_shots
         )
-        evidence = {"shots": [{"shot_id": shot["shot_id"], "caption_vi": captions_by_shot[str(shot["shot_id"])]["caption_vi"], "caption_en": captions_by_shot[str(shot["shot_id"])]["caption_en"]} for shot in scene_shots], "transcript": [asr_by_id[str(link["asr_segment_id"])]["text"] for link in links_by_scene.get(str(scene["scene_id"]), [])], "timeline": [scene["start_sec"], scene["end_sec"]]}
+        shot_evidence = []
+        for shot in scene_shots:
+            shot_id = str(shot["shot_id"])
+            caption = captions_by_shot[shot_id]
+            shot_evidence.append({
+                "shot_id": shot_id,
+                "caption_vi": caption["caption_vi"],
+                "caption_en": caption["caption_en"],
+                "objects_vi": _string_list(caption, "objects_vi"),
+                "objects_en": _string_list(caption, "objects_en"),
+                "actions_vi": _string_list(caption, "actions_vi"),
+                "actions_en": _string_list(caption, "actions_en"),
+                "visible_text_summary_vi": caption.get("visible_text_summary_vi", ""),
+                "visible_text_summary_en": caption.get("visible_text_summary_en", ""),
+                "ocr_text": [
+                    ocr_by_keyframe[str(row["keyframe_id"])]
+                    for row in keyframes_by_shot.get(shot_id, [])
+                    if ocr_by_keyframe.get(str(row["keyframe_id"]))
+                ],
+            })
+        evidence = {"shots": shot_evidence, "transcript": [asr_by_id[str(link["asr_segment_id"])]["text"] for link in links_by_scene.get(str(scene["scene_id"]), [])], "timeline": [scene["start_sec"], scene["end_sec"]]}
         response = client.request(GeminiRequest(request_kind="scene_summary", video_id=video_id, prompt=prompt_base + "\n\nSCENE EVIDENCE:\n" + json.dumps(evidence, ensure_ascii=False), prompt_version=str(model_config["prompt_version"]), response_schema_version=str(model_config["response_schema_version"]), response_schema=schema, image_paths=image_paths, identity={"scene_id": scene["scene_id"]}))
         rows.append({"scene_id": scene["scene_id"], "video_id": video_id, "summary_vi": _required_text(response, "summary_vi"), "summary_en": _required_text(response, "summary_en"), "provider": "gemini", "model_name": model_config["model_id"], "model_version": model_config["model_revision"], "prompt_version": model_config["prompt_version"], "schema_version": model_config["response_schema_version"], "confidence": None, "status": "pass"})
     return rows
@@ -948,12 +1276,12 @@ def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path,
     artifact_dir.mkdir(parents=True)
     metadata = read_metadata(metadata_path)
     _write_json(artifact_dir / "metadata_normalized.json", metadata)
-    for name in ("shots.parquet", "keyframes.parquet", "asr_segments.parquet", "shot_captions.parquet", "shot_transcript_links.parquet", "scenes.parquet", "scene_transcript_links.parquet", "scene_summaries.parquet"):
+    for name in ("shots.parquet", "keyframes.parquet", "asr_segments.parquet", "ocr.parquet", "shot_captions.parquet", "shot_transcript_links.parquet", "scenes.parquet", "scene_transcript_links.parquet", "scene_summaries.parquet"):
         shutil.copy2(stage_dir / name, artifact_dir / name)
     shutil.copytree(stage_dir / "keyframes", artifact_dir / "keyframes")
     shutil.copytree(stage_dir / "thumbnails", artifact_dir / "thumbnails")
     diagnostics = artifact_dir / "diagnostics"; diagnostics.mkdir()
-    for name in ("keyframe_diagnostics.jsonl", "scene_boundary_diagnostics.jsonl", "transnet_predictions.json", "asr_status.json"):
+    for name in ("keyframe_diagnostics.jsonl", "scene_boundary_diagnostics.jsonl", "transnet_predictions.json", "asr_status.json", "ocr_status.json"):
         source = stage_dir / name
         if source.exists(): shutil.copy2(source, diagnostics / name)
     # A complete per-video package has no item-level errors, but retains the

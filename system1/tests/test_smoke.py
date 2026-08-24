@@ -597,7 +597,8 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         if path.name == "01_worker_structure_pipeline.ipynb":
             assert "providers" not in joined
             assert "--providers" not in joined
-            assert "monolith-mvp-app" in joined
+            assert "AIOU26_release" in joined
+            assert "AIOU26_checkpoints" in joined
             assert "phase01_structure" in joined
             assert "list_repo_tree" in joined
         elif path.name == "02_worker_feature_enrichment.ipynb":
@@ -927,6 +928,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
+        "ocr.parquet",
         "shot_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
@@ -950,6 +952,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
             "L21_V001/shots.parquet",
             "L21_V001/scenes.parquet",
             "L21_V001/keyframes.parquet",
+            "L21_V001/ocr.parquet",
             "L21_V001/shot_captions.parquet",
             "L21_V001/shot_transcript_links.parquet",
             "L21_V001/scene_transcript_links.parquet",
@@ -971,6 +974,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
+        "ocr.parquet",
         "shot_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
@@ -1013,6 +1017,13 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "representative_timestamp_sec",
         "caption_vi",
         "caption_en",
+        "objects_vi",
+        "objects_en",
+        "actions_vi",
+        "actions_en",
+        "visible_text_summary_vi",
+        "visible_text_summary_en",
+        "scene_type",
         "provider",
         "model_name",
         "model_version",

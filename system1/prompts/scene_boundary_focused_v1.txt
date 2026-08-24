@@ -1,4 +1,6 @@
 Resolve the specified ambiguous adjacent-shot gap using the wider context.
 Compare the late evidence from the left shot with the early evidence from the
 right shot, while considering neighboring shots, captions, transcripts, and
-timeline. Return one Boolean decision for the requested gap.
+OCR/object/action evidence in the timeline. Return one entry for the requested
+gap with one Boolean decision, a brief reason, confidence from 0 to 1, and
+evidence_used labels.

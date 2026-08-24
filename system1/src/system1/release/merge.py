@@ -17,6 +17,7 @@ STRUCTURE_TABLES = [
     "shots",
     "scenes",
     "keyframes",
+    "ocr",
     "shot_captions",
     "shot_transcript_links",
     "scene_transcript_links",
@@ -24,7 +25,6 @@ STRUCTURE_TABLES = [
 ]
 FEATURE_TABLES = [
     "embeddings_meta",
-    "ocr",
     "objects",
     "text_sources",
 ]
@@ -64,9 +64,13 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
             video_id=video_id,
             artifact_type="features",
         )
+        structure_has_ocr = True
         for table in STRUCTURE_TABLES:
             path = structure_dir / f"{table}.parquet"
             if not path.exists():
+                if table == "ocr":
+                    structure_has_ocr = False
+                    continue
                 raise FileNotFoundError(f"missing structure parquet for {video_id}: {path}")
             merged[table].append(pd.read_parquet(path))
         for table in FEATURE_TABLES:
@@ -74,6 +78,13 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
             if not path.exists():
                 raise FileNotFoundError(f"missing feature parquet for {video_id}: {path}")
             merged[table].append(pd.read_parquet(path))
+        if not structure_has_ocr:
+            feature_ocr = feature_dir / "ocr.parquet"
+            if not feature_ocr.exists():
+                raise FileNotFoundError(
+                    f"missing OCR parquet for {video_id}: {structure_dir / 'ocr.parquet'} or {feature_ocr}"
+                )
+            merged["ocr"].append(pd.read_parquet(feature_ocr))
         structure_manifest = json.loads((structure_dir / "manifest.json").read_text(encoding="utf-8"))
         feature_manifest = json.loads((feature_dir / "feature_manifest.json").read_text(encoding="utf-8"))
         feature_manifests.append(feature_manifest)
@@ -109,6 +120,7 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
 
     structure_text_sources = _build_structure_text_sources(
         pd.concat(merged["asr_segments"], ignore_index=True),
+        pd.concat(merged["ocr"], ignore_index=True),
         pd.concat(merged["shot_captions"], ignore_index=True),
         pd.concat(merged["scene_summaries"], ignore_index=True),
     )
@@ -131,7 +143,13 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
     feature_availability.to_parquet(tables_dir / "feature_availability.parquet", index=False)
     counts["feature_availability"] = len(feature_availability)
 
-    release_capabilities = _build_release_capabilities(feature_availability, counts, feature_manifests)
+    release_capabilities = _build_release_capabilities(
+        feature_availability,
+        counts,
+        feature_manifests,
+        pd.concat(merged["asr_segments"], ignore_index=True),
+        pd.concat(merged["ocr"], ignore_index=True),
+    )
     release_capabilities.to_parquet(tables_dir / "release_capabilities.parquet", index=False)
     capabilities = {str(row["capability"]): str(row["status"]) for row in release_capabilities.to_dict("records")}
 
@@ -158,7 +176,12 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
     return report_path
 
 
-def _build_structure_text_sources(asr: pd.DataFrame, shot_captions: pd.DataFrame, scene_summaries: pd.DataFrame) -> pd.DataFrame:
+def _build_structure_text_sources(
+    asr: pd.DataFrame,
+    ocr: pd.DataFrame,
+    shot_captions: pd.DataFrame,
+    scene_summaries: pd.DataFrame,
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for row in asr.to_dict("records"):
         rows.append(_text_source(
@@ -170,6 +193,20 @@ def _build_structure_text_sources(asr: pd.DataFrame, shot_captions: pd.DataFrame
             str(row.get("provider", row.get("asr_provider", "asr"))),
             str(row.get("status", "pass")),
             str(row.get("language", "und")),
+        ))
+    for row in ocr.to_dict("records"):
+        text = str(row.get("text", row.get("raw_text", ""))).strip()
+        if not text:
+            continue
+        rows.append(_text_source(
+            str(row.get("video_id", "")),
+            "keyframe",
+            str(row.get("keyframe_id", "")),
+            "ocr",
+            text,
+            str(row.get("provider", "ocr")),
+            str(row.get("status", "pass")),
+            str(row.get("language", "vi")),
         ))
     for row in shot_captions.to_dict("records"):
         for language, column in (("vi", "caption_vi"), ("en", "caption_en")):
@@ -183,6 +220,42 @@ def _build_structure_text_sources(asr: pd.DataFrame, shot_captions: pd.DataFrame
                 str(row.get("status", "pass")),
                 language,
             ))
+        for language, column in (
+            ("vi", "visible_text_summary_vi"),
+            ("en", "visible_text_summary_en"),
+        ):
+            text = str(row.get(column, "")).strip()
+            if text:
+                rows.append(_text_source(
+                    str(row.get("video_id", "")),
+                    "shot",
+                    str(row.get("shot_id", "")),
+                    "visible_text_summary",
+                    text,
+                    str(row.get("provider", row.get("caption_model", "shot_caption"))),
+                    str(row.get("status", "pass")),
+                    language,
+                ))
+        for language, columns in (
+            ("vi", ("objects_vi", "actions_vi")),
+            ("en", ("objects_en", "actions_en")),
+        ):
+            text = " ".join(
+                item
+                for column in columns
+                for item in _string_values(row.get(column, []))
+            )
+            if text:
+                rows.append(_text_source(
+                    str(row.get("video_id", "")),
+                    "shot",
+                    str(row.get("shot_id", "")),
+                    "shot_visual_terms",
+                    text,
+                    str(row.get("provider", row.get("caption_model", "shot_caption"))),
+                    str(row.get("status", "pass")),
+                    language,
+                ))
     for row in scene_summaries.to_dict("records"):
         for language, column in (("vi", "summary_vi"), ("en", "summary_en")):
             rows.append(_text_source(
@@ -228,6 +301,18 @@ def _text_source(
         "provider": provider,
         "status": status,
     }
+
+
+def _string_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def _resolve_artifact_dir_for_merge(
@@ -310,6 +395,8 @@ def _build_release_capabilities(
     feature_availability: pd.DataFrame,
     counts: dict[str, int],
     feature_manifests: list[dict[str, Any]],
+    asr: pd.DataFrame,
+    ocr: pd.DataFrame,
 ) -> pd.DataFrame:
     has_embeddings = bool(counts.get("embeddings_meta"))
     has_text = bool(counts.get("text_documents"))
@@ -326,12 +413,24 @@ def _build_release_capabilities(
     enrichment_status = (
         "pass" if availability_complete and not uses_mock_provider else "degraded"
     )
-    asr_provider = str(provider_plan.get("asr", "mock")) if isinstance(provider_plan, dict) else "mock"
-    ocr_provider = str(provider_plan.get("ocr", "mock")) if isinstance(provider_plan, dict) else "mock"
-    # Until real adapters write successful capability evidence, both mock and
-    # unavailable-provider outputs are explicitly non-production.
-    asr_status = "degraded"
-    ocr_status = "degraded"
+    asr_provider = _first_provider(asr, "provider") or (
+        str(provider_plan.get("asr", "mock")) if isinstance(provider_plan, dict) else "mock"
+    )
+    ocr_provider = _first_provider(ocr, "provider") or (
+        str(provider_plan.get("ocr", "mock")) if isinstance(provider_plan, dict) else "mock"
+    )
+    asr_status = _provider_capability_status(
+        asr,
+        provider=asr_provider,
+        row_count_optional=True,
+        implemented_providers={"faster_whisper", "nemo"},
+    )
+    ocr_status = _provider_capability_status(
+        ocr,
+        provider=ocr_provider,
+        row_count_optional=False,
+        implemented_providers={"vintern_local", "qwen_local", "gemini"},
+    )
     rows = [
         {"capability": "core_runtime", "status": "pass", "reason": "merged release tables available"},
         {"capability": "visual_search", "status": "degraded" if has_embeddings else "fail", "reason": "index built later"},
@@ -340,16 +439,12 @@ def _build_release_capabilities(
         {
             "capability": "asr",
             "status": asr_status,
-            "reason": f"{asr_provider} ASR adapter unavailable; emitted schema-valid empty rows"
-            if asr_provider != "mock"
-            else ("mock empty ASR provider" if asr_status == "degraded" else "ASR provider contract emitted schema-valid rows"),
+            "reason": _capability_reason(asr_provider, asr_status, "ASR"),
         },
         {
             "capability": "ocr",
             "status": ocr_status,
-            "reason": f"{ocr_provider} OCR adapter unavailable; emitted schema-valid empty rows"
-            if ocr_provider != "mock"
-            else ("mock empty OCR provider" if ocr_status == "degraded" else "OCR provider contract emitted schema-valid rows"),
+            "reason": _capability_reason(ocr_provider, ocr_status, "OCR"),
         },
         {"capability": "enrichment_overall", "status": enrichment_status, "reason": "feature availability merged"},
         {
@@ -359,6 +454,43 @@ def _build_release_capabilities(
         },
     ]
     return pd.DataFrame(rows)
+
+
+def _first_provider(frame: pd.DataFrame, column: str) -> str | None:
+    if frame.empty or column not in frame.columns:
+        return None
+    for value in frame[column].dropna().astype(str):
+        provider = value.strip()
+        if provider:
+            return provider
+    return None
+
+
+def _provider_capability_status(
+    frame: pd.DataFrame,
+    *,
+    provider: str,
+    row_count_optional: bool,
+    implemented_providers: set[str],
+) -> str:
+    if provider in {"mock", "unconfigured", "unavailable"}:
+        return "degraded"
+    if provider not in implemented_providers:
+        return "degraded"
+    if frame.empty:
+        return "pass" if row_count_optional else "degraded"
+    if "status" not in frame.columns:
+        return "degraded"
+    statuses = {str(value) for value in frame["status"].dropna()}
+    return "degraded" if "failed" in statuses or not statuses else "pass"
+
+
+def _capability_reason(provider: str, status: str, label: str) -> str:
+    if status == "pass":
+        return f"{provider} {label} provider emitted schema-valid rows"
+    if provider == "mock":
+        return f"mock empty {label} provider"
+    return f"{provider} {label} provider emitted incomplete or failed rows"
 
 
 def _first_manifest_value(feature_manifests: list[dict[str, Any]], key: str, default: Any) -> Any:
