@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import re
 import threading
@@ -47,6 +48,9 @@ class MetadataStructuredClient:
         payload.setdefault("__model_revision", self.model_revision)
         return payload
 
+    def close(self) -> None:
+        _close_client(self.client)
+
 
 class FallbackStructuredClient:
     def __init__(self, clients: list[StructuredClient]) -> None:
@@ -61,7 +65,14 @@ class FallbackStructuredClient:
                 return client.request(request)
             except Exception as exc:  # noqa: BLE001 - preserve fallback behavior
                 errors.append(f"{type(exc).__name__}: {exc}")
+                _close_client(client)
+                _release_torch_memory()
         raise RuntimeError("all structured providers failed: " + " | ".join(errors))
+
+    def close(self) -> None:
+        for client in self.clients:
+            _close_client(client)
+        _release_torch_memory()
 
 
 class LocalVisionStructuredClient:
@@ -218,12 +229,17 @@ class LocalVisionStructuredClient:
             try:
                 from transformers import AutoProcessor
                 try:
-                    from transformers import AutoModelForImageTextToText as AutoModel
+                    from transformers import (
+                        Qwen2_5_VLForConditionalGeneration as AutoModel,
+                    )
                 except ImportError:
                     try:
-                        from transformers import AutoModelForVision2Seq as AutoModel
+                        from transformers import AutoModelForImageTextToText as AutoModel
                     except ImportError:
-                        from transformers import AutoModel
+                        try:
+                            from transformers import AutoModelForVision2Seq as AutoModel
+                        except ImportError:
+                            from transformers import AutoModel
             except ImportError as exc:  # pragma: no cover - production dependency guard
                 raise RuntimeError("transformers is required for qwen_local") from exc
             processor = AutoProcessor.from_pretrained(
@@ -236,6 +252,7 @@ class LocalVisionStructuredClient:
                 revision=self.model_revision,
                 torch_dtype=self.model_config.get("torch_dtype", "auto"),
                 device_map=self.model_config.get("device_map", "auto"),
+                low_cpu_mem_usage=bool(self.model_config.get("low_cpu_mem_usage", True)),
                 trust_remote_code=bool(self.model_config.get("trust_remote_code", False)),
             )
             model.eval()
@@ -254,17 +271,44 @@ class LocalVisionStructuredClient:
                 self.model_id,
                 revision=self.model_revision,
                 trust_remote_code=bool(self.model_config.get("trust_remote_code", True)),
+                use_fast=bool(self.model_config.get("use_fast_tokenizer", False)),
             )
             model = AutoModel.from_pretrained(
                 self.model_id,
                 revision=self.model_revision,
                 torch_dtype=self.model_config.get("torch_dtype", "auto"),
                 device_map=self.model_config.get("device_map", "auto"),
+                low_cpu_mem_usage=bool(self.model_config.get("low_cpu_mem_usage", True)),
                 trust_remote_code=bool(self.model_config.get("trust_remote_code", True)),
+                use_flash_attn=bool(self.model_config.get("use_flash_attn", False)),
             )
             model.eval()
             self._loaded = (tokenizer, model)
             return tokenizer, model
+
+    def close(self) -> None:
+        with self._model_lock:
+            self._loaded = None
+        _release_torch_memory()
+
+
+def _close_client(client: Any) -> None:
+    close = getattr(client, "close", None)
+    if callable(close):
+        close()
+
+
+def _release_torch_memory() -> None:
+    gc.collect()
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - optional runtime dependency guard
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+        if callable(ipc_collect):
+            ipc_collect()
 
 
 def _parse_json_object(raw_text: str, schema: dict[str, Any]) -> dict[str, Any]:

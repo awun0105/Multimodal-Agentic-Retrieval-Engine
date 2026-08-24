@@ -10,6 +10,7 @@ execution:
   gpu_heavy_models_resident: 1
   release_gpu_objects_before_empty_cache: true
   min_scratch_free_gb: 5
+  min_model_cache_free_gb: 25
 
 stages:
   order:

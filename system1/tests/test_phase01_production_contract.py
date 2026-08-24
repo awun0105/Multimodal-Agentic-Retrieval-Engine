@@ -46,6 +46,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     assert phase01["pipeline_id"] == "phase01_production_v1_1"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
+    assert phase01["execution"]["min_model_cache_free_gb"] == 25
     assert phase01["api"]["max_concurrency_per_video"] == 2
     assert phase01["api"]["request_cache_backend"] == "stage_local"
     assert phase01["stages"]["order"] == [

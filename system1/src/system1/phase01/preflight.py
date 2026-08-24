@@ -24,6 +24,7 @@ class PreflightResult:
     batch_id: str
     cuda_available: bool
     scratch_free_gb: float
+    model_cache_free_gb: float | None
     versions: dict[str, str]
 
 
@@ -67,6 +68,7 @@ def run_phase01_preflight(
             f"Scratch free space is too low: {scratch_free_gb:.2f} GiB "
             f"< {required_free_gb:.2f} GiB"
         )
+    model_cache_free_gb = _validate_model_cache_free_space(config, models)
 
     shot_model = config.payload["models"]["shot_detection"]
     load_transnet_artifact(
@@ -135,6 +137,7 @@ def run_phase01_preflight(
         batch_id=str(runtime["batch_id"]),
         cuda_available=cuda_available,
         scratch_free_gb=scratch_free_gb,
+        model_cache_free_gb=model_cache_free_gb,
         versions=versions,
     )
 
@@ -324,3 +327,43 @@ def _validate_local_vlm_dependencies(models: dict[str, Any]) -> None:
             + ", ".join(sorted(missing))
             + ". Install system1[phase01-production]."
         )
+
+
+def _validate_model_cache_free_space(
+    config: ResolvedPhase01Config, models: dict[str, Any]
+) -> float | None:
+    if not _uses_local_vlm(models):
+        return None
+    required_free_gb = float(
+        config.payload["phase01"]["execution"].get("min_model_cache_free_gb", 0)
+    )
+    if required_free_gb <= 0:
+        return None
+    cache_root = _hf_model_cache_root()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    free_gb = shutil.disk_usage(cache_root).free / (1024**3)
+    if free_gb < required_free_gb:
+        raise RuntimeError(
+            f"Model cache free space is too low: {free_gb:.2f} GiB "
+            f"< {required_free_gb:.2f} GiB. Set HF_HOME to a larger runtime disk."
+        )
+    return free_gb
+
+
+def _uses_local_vlm(models: dict[str, Any]) -> bool:
+    local_models = [
+        models.get("ocr", {}),
+        models.get("shot_caption", {}),
+        *models.get("shot_caption", {}).get("fallbacks", []),
+    ]
+    return any(
+        str(model.get("provider")) in {"qwen_local", "vintern_local"}
+        for model in local_models
+    )
+
+
+def _hf_model_cache_root() -> Path:
+    explicit = os.environ.get("HF_HOME") or os.environ.get("HF_HUB_CACHE")
+    if explicit:
+        return Path(explicit).expanduser()
+    return Path("~/.cache/huggingface").expanduser()

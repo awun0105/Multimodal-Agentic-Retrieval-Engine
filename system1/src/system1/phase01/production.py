@@ -431,49 +431,47 @@ def _process_video(
             cache=api_cache,
             cache_prefix="ocr",
         )
-        ocr_rows = _build_ocr(
-            video_id=video_id,
-            keyframes=keyframes,
-            stage_dir=stage_dir,
-            client=ocr_client,
-            model_config=models["ocr"],
-            ocr_config=phase01["ocr"],
-        )
-        _write_parquet(ocr_path, ocr_rows, empty_columns=PARQUET_COLUMNS["ocr"])
-        status_counts: dict[str, int] = {}
-        for row in ocr_rows:
-            status = str(row["status"])
-            status_counts[status] = status_counts.get(status, 0) + 1
-        ocr_status = "pass"
-        if status_counts.get("failed") == len(ocr_rows) and ocr_rows:
-            ocr_status = "failed"
-        elif status_counts.get("failed"):
-            ocr_status = "partial"
-        _write_json(ocr_status_path, {
-            "status": ocr_status,
-            "provider": models["ocr"]["provider"],
-            "model_id": models["ocr"]["model_id"],
-            "status_counts": status_counts,
-        })
-        manager.promote_stage(
-            "ocr",
-            input_fingerprint=ocr_fingerprint,
-            outputs=[ocr_path, ocr_status_path],
-            model=models["ocr"],
-            prompt_version=models["ocr"]["prompt_version"],
-            schema_version=phase01["schemas"]["ocr"],
-        )
+        try:
+            ocr_rows = _build_ocr(
+                video_id=video_id,
+                keyframes=keyframes,
+                stage_dir=stage_dir,
+                client=ocr_client,
+                model_config=models["ocr"],
+                ocr_config=phase01["ocr"],
+            )
+            _write_parquet(ocr_path, ocr_rows, empty_columns=PARQUET_COLUMNS["ocr"])
+            status_counts: dict[str, int] = {}
+            for row in ocr_rows:
+                status = str(row["status"])
+                status_counts[status] = status_counts.get(status, 0) + 1
+            ocr_status = "pass"
+            if status_counts.get("failed") == len(ocr_rows) and ocr_rows:
+                ocr_status = "failed"
+            elif status_counts.get("failed"):
+                ocr_status = "partial"
+            _write_json(ocr_status_path, {
+                "status": ocr_status,
+                "provider": models["ocr"]["provider"],
+                "model_id": models["ocr"]["model_id"],
+                "status_counts": status_counts,
+            })
+            manager.promote_stage(
+                "ocr",
+                input_fingerprint=ocr_fingerprint,
+                outputs=[ocr_path, ocr_status_path],
+                model=models["ocr"],
+                prompt_version=models["ocr"]["prompt_version"],
+                schema_version=phase01["schemas"]["ocr"],
+            )
+        finally:
+            _release_structured_client(ocr_client)
     _emit_stage_progress(manager, "ocr", scratch, status="complete", reused=ocr_reused)
     ocr_rows = pd.read_parquet(ocr_path).to_dict("records")
     ocr_output_fingerprint = manager.stage_output_fingerprint("ocr")
 
     manager.active_stage = "shot_captions"
     _emit_stage_progress(manager, "shot_captions", scratch, status="start")
-    caption_client = _caption_client_for_model(
-        models["shot_caption"],
-        phase01=phase01,
-        cache=api_cache,
-    )
     captions_path = stage_dir / "shot_captions.parquet"
     captions_fingerprint = _stage_fingerprint(
         manager, "shot_captions", compute_fingerprint(keyframes_output_fingerprint, ocr_output_fingerprint)
@@ -482,25 +480,33 @@ def _process_video(
         manager, "shot_captions", captions_fingerprint, stage_dir
     )
     if not captions_reused:
-        caption_rows = _build_captions(
-            video_id=video_id,
-            shots=shots,
-            keyframes=keyframes,
-            ocr_rows=ocr_rows,
-            stage_dir=stage_dir,
-            client=caption_client,
-            model_config=models["shot_caption"],
-            max_concurrency=int(phase01["api"]["max_concurrency_per_video"]),
+        caption_client = _caption_client_for_model(
+            models["shot_caption"],
+            phase01=phase01,
+            cache=api_cache,
         )
-        _write_parquet(captions_path, caption_rows)
-        manager.promote_stage(
-            "shot_captions",
-            input_fingerprint=captions_fingerprint,
-            outputs=[captions_path],
-            model=models["shot_caption"],
-            prompt_version=models["shot_caption"]["prompt_version"],
-            schema_version=phase01["schemas"]["shot_captions"],
-        )
+        try:
+            caption_rows = _build_captions(
+                video_id=video_id,
+                shots=shots,
+                keyframes=keyframes,
+                ocr_rows=ocr_rows,
+                stage_dir=stage_dir,
+                client=caption_client,
+                model_config=models["shot_caption"],
+                max_concurrency=int(phase01["api"]["max_concurrency_per_video"]),
+            )
+            _write_parquet(captions_path, caption_rows)
+            manager.promote_stage(
+                "shot_captions",
+                input_fingerprint=captions_fingerprint,
+                outputs=[captions_path],
+                model=models["shot_caption"],
+                prompt_version=models["shot_caption"]["prompt_version"],
+                schema_version=phase01["schemas"]["shot_captions"],
+            )
+        finally:
+            _release_structured_client(caption_client)
     _emit_stage_progress(
         manager,
         "shot_captions",
@@ -1408,6 +1414,12 @@ def _hf_store(config, *, cache_dir: Path | str | None = None):
         prefix=str(config.get("prefix", "")),
         cache_dir=cache_dir,
     )
+
+
+def _release_structured_client(client: Any) -> None:
+    close = getattr(client, "close", None)
+    if callable(close):
+        close()
 
 
 def _materialize_canonical(mapping, key, target_dir):
