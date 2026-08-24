@@ -227,24 +227,6 @@ class CheckpointManager:
             expected = sha256_file(source)
             uploads.append((source, remote_path))
             checksums[remote_path.as_posix()] = expected
-        self.store.upload_files(
-            uploads,
-            commit_message=(
-                f"Promote Phase01 {stage} outputs "
-                f"for {self.release_id}/{self.video_id}"
-            ),
-            num_threads=min(2, len(uploads)),
-        )
-        for source, remote_path in uploads:
-            expected = checksums[remote_path.as_posix()]
-            if self.verify_remote_checksum:
-                with tempfile.TemporaryDirectory(prefix="phase01_checkpoint_upload_") as tmp:
-                    downloaded = Path(tmp) / source.name
-                    self.store.download_file(remote_path, downloaded)
-                    actual = sha256_file(downloaded)
-                if actual != expected:
-                    raise ValueError(f"Remote checkpoint checksum mismatch: {remote_path}")
-
         state = self.load_state()
         changed_record = state["stages"][stage]
         changed_record.update(
@@ -271,7 +253,31 @@ class CheckpointManager:
         state["config_hash"] = self.config_hash
         state["updated_at"] = utc_now()
         _validate_checkpoint_state(state)
-        self.store.write_json(self.state_path, state)
+
+        with tempfile.TemporaryDirectory(prefix="phase01_checkpoint_state_") as tmp:
+            state_source = Path(tmp) / self.state_filename
+            state_source.write_text(
+                json.dumps(state, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            self.store.upload_files(
+                [*uploads, (state_source, self.state_path)],
+                commit_message=(
+                    f"Promote Phase01 {stage} checkpoint "
+                    f"for {self.release_id}/{self.video_id}"
+                ),
+                num_threads=min(2, len(uploads) + 1),
+            )
+        for source, remote_path in uploads:
+            expected = checksums[remote_path.as_posix()]
+            if self.verify_remote_checksum:
+                with tempfile.TemporaryDirectory(prefix="phase01_checkpoint_upload_") as tmp:
+                    downloaded = Path(tmp) / source.name
+                    self.store.download_file(remote_path, downloaded)
+                    actual = sha256_file(downloaded)
+                if actual != expected:
+                    raise ValueError(f"Remote checkpoint checksum mismatch: {remote_path}")
+
         self._state_cache = copy.deepcopy(state)
         return changed_record
 

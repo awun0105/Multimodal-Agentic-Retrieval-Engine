@@ -301,7 +301,11 @@ def test_checkpoint_groups_stage_outputs_into_one_backend_upload(tmp_path: Path)
     assert [source.name for source, _remote in store.upload_batches[0]] == [
         "shots.parquet",
         "transnet_predictions.json",
+        "state.json",
     ]
+    assert str(store.upload_batches[0][-1][1]).endswith(
+        "phase01_checkpoints/canonical_release_v001/L21_V001/state.json"
+    )
 
 
 def test_corrupt_checkpoint_output_is_not_reusable(tmp_path: Path) -> None:
