@@ -270,3 +270,11 @@ scripts/bin/harness.exe
 
 # Local Harness installer backups; recovery history is kept in Git.
 .harness-backup/
+
+# Temporary Office Lock & Local Scratch Files
+~$*
+*.part
+scratch/
+test_output/
+*.blob
+

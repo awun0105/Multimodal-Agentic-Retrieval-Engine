@@ -1,0 +1,16 @@
+model_name,group,dim,load_time_sec,img_extract_sec,en_recall@1,en_recall@5,en_recall@10,en_mrr,en_margin,vi_recall@1,vi_recall@5,vi_recall@10,vi_mrr,vi_margin
+minhnguyent546/ViCLIP-OT,Vietnamese_Dedicated_Group,512,6.5,2.603,10.0,50.0,100.0,0.2929,0.0,10.0,50.0,100.0,0.2929,0.0
+minhnguyent546/ViSigLIP-OT,Vietnamese_Dedicated_Group,768,6.55,2.646,10.0,50.0,100.0,0.2929,0.0,10.0,50.0,100.0,0.2929,0.0
+M-CLIP/XLM-Roberta-Large-Vit-B-32,M_CLIP_Vietnamese_Group,512,25.85,0.151,10.0,40.0,100.0,0.2913,-0.0095,10.0,50.0,100.0,0.2897,-0.0078
+M-CLIP/XLM-Roberta-Large-Vit-L-14,M_CLIP_Vietnamese_Group,768,9.98,0.66,0.0,50.0,100.0,0.2248,-0.0095,10.0,50.0,100.0,0.2929,-0.0202
+sentence-transformers/clip-ViT-B-32-multilingual-v1,Multilingual_SOTA_Group,512,6.07,0.145,10.0,60.0,100.0,0.2771,-0.0218,10.0,50.0,100.0,0.2953,-0.0105
+BAAI/AltCLIP,Multilingual_SOTA_Group,768,8.74,0.695,10.0,60.0,100.0,0.3286,-0.0239,10.0,50.0,100.0,0.2929,-0.0334
+open_clip:ViT-B-16-SigLIP-i18n-256:webli,Multilingual_SOTA_Group,768,18.99,0.281,10.0,50.0,100.0,0.2929,-0.0274,10.0,50.0,100.0,0.2929,-0.0244
+open_clip:ViT-L-16-SigLIP-256:webli,Multilingual_SOTA_Group,1024,30.7,0.602,0.0,60.0,100.0,0.2637,-0.0298,10.0,50.0,100.0,0.2951,-0.011
+jinaai/jina-clip-v1,Multilingual_SOTA_Group,768,13.27,0.677,10.0,50.0,100.0,0.2929,0.0,10.0,50.0,100.0,0.2929,0.0
+open_clip:xlm-roberta-base-ViT-B-32:laion5b_s13b_b90k,Multilingual_SOTA_Group,512,30.16,0.153,10.0,50.0,100.0,0.2929,-0.0384,10.0,50.0,100.0,0.2846,-0.0298
+google/siglip-base-patch16-224,English_Translate_Group,768,6.73,0.239,0.0,40.0,100.0,0.2378,-0.014,10.0,50.0,100.0,0.3179,-0.0252
+openai/clip-vit-base-patch32,English_Translate_Group,512,6.37,0.149,10.0,60.0,100.0,0.3018,-0.0253,10.0,50.0,100.0,0.2929,-0.0196
+facebook/metaclip-b32-400m,English_Translate_Group,512,5.83,0.129,10.0,40.0,100.0,0.284,-0.0193,10.0,50.0,100.0,0.3012,-0.026
+apple/DFN2B-CLIP-ViT-B-16,English_Translate_Group,512,6.03,0.255,10.0,50.0,100.0,0.3036,-0.0167,10.0,50.0,100.0,0.2929,-0.0486
+open_clip:convnext_base_w:laion2b_s13b_b82k_augreg,English_Translate_Group,640,8.04,2.739,10.0,50.0,100.0,0.2972,-0.0166,20.0,50.0,100.0,0.3429,-0.0225
