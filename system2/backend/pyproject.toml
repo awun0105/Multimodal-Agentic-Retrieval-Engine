@@ -1,5 +1,0 @@
-[project]
-name = "mare-system2-backend"
-version = "0.0.0"
-description = "System 2 runtime retrieval backend."
-requires-python = ">=3.11"

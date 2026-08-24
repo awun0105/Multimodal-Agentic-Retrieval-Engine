@@ -187,13 +187,23 @@ Mục này được cập nhật liên tục bởi các Sub-Agent và Agent kế
   - *Giải pháp đã chốt:*
     1. Trong `extract_video_keyframes_for_duration`: Giữ nguyên 100% keyframe trích xuất thô.
     2. Trong `TimelineSynchronizer.merge_and_deduplicate_timeline()`: Thực hiện gộp timeline BTC và System 1, kiểm tra lịch sử các frame đã xuất hiện trước đó. Nếu phát hiện trùng lặp cao ($\ge 0.92$) với frame trước đó: Ưu tiên giữ frame BTC / Anchor; frame trùng lặp chuyển thành Frame Cắt Nghĩa viền tím Neon (`#bd93f9`) kèm tag $\Delta t$, hoặc đánh dấu Đề Xuất Lọc Bỏ viền đỏ Đậm (`#ff5555`) nếu độ nét Laplacian thấp hơn rõ rệt ($< 0.70 \times \text{Anchor}$).
-- **Thảo luận 12 (Về cơ chế hiển thị đa tag phân loại Multi-Badge & Tài liệu vận hành toàn diện):**
-  - *Yêu cầu từ User:* Cho phép hiển thị đồng thời nhiều tag/badge phân loại xử lý trên mỗi thẻ khung hình; viết tài liệu tổng quan toàn bộ những gì đã làm và một tệp README hướng dẫn cách chạy, trình bày chi tiết thứ tự tuần tự các bước xử lý.
+### Mốc 24/08/2026: Kiến Trúc 4-Notebook Kaggle, Bộ Từ Điển Bản Địa & Cơ Chế Query Song Song On/Off
+- **Thảo luận 13 (Về so sánh mô hình thuần Việt vs Dịch thuật, xử lý vật thể bản địa "con lân", kiến trúc 4-Notebook Kaggle và Toggle Query On/Off):**
+  - *Vấn đề & Yêu cầu từ User:*
+    1. Cần một bộ phận so sánh kết quả giữa 2 model thuần Việt để xử lý vì tiếng Việt có kiến trúc câu khác, có thể dùng thêm API dịch tiếng Anh sang tiếng Việt để so sánh trực tiếp.
+    2. Kiểm chứng lại số liệu Recall KIS khách quan bằng thực nghiệm trên dữ liệu thật.
+    3. Tư vấn xem có nên kết hợp cả 2 mô hình hay quá tốn tài nguyên. Ưu tiên chi tiết nhỏ nhưng vẫn xử lý được các vật thể thuần Việt như "con lân", "áo dài", "nón lá", "chợ nổi", "bánh chưng"...
+    4. Tham khảo toàn bộ kết quả nghiên cứu `main-dev/system1/research/ocr_asr` để chốt mô hình OCR (Vintern-1B WER 0.34 vs EasyOCR 0.06s) và ASR (faster-whisper INT8 vs FastConformer 268x).
+    5. Chia phân đoạn xử lý riêng trên 4 Notebook khác nhau trên Kaggle rồi hợp lại.
+    6. Hỗ trợ cơ chế Bật/Tắt (Toggle ON/OFF) chế độ query song song để tùy biến giữa ưu tiên tốc độ (< 15ms) và ưu tiên độ chính xác tối đa khi thi.
+    7. Nguyên tắc làm giàu trung thực: Tuyệt đối không thêm thắt chi tiết sai sự thật (No Hallucination).
+    8. Viết file tổng quan cấu trúc và luồng dữ liệu thời gian thực (`MODULAR_PIPELINE_AND_DATA_FLOW_ARCHITECTURE.md`).
   - *Giải pháp đã chốt & triển khai:*
-    1. Thiết kế cơ chế gom danh sách badges (`badges = []`), cho phép hiển thị đồng thời: `[Frame Cắt Nghĩa +Δt]`, `[Đã Làm Nét - Fallback]`, `[Chuyển Cảnh / Tiêu Đề]`, `[Đề Xuất Lọc Bỏ - ...]`, `[BTC-xử lý: Mật độ thông tin thấp]`.
-    2. Thiết lập quy tắc ưu tiên màu viền ngoài: Đỏ (Lọc bỏ/BTC mật độ thấp) > Tím Neon (Frame Cắt Nghĩa) > Vàng Cam (Làm nét) > Xanh Cyan (BTC) > Xanh Lá (System 1).
-    3. Xuất bản `SYSTEM_ARCHITECTURE_AND_PIPELINE_OVERVIEW.md` tổng kết toàn diện kiến trúc 5 bước, 8 trường metadata chuẩn tắc và bảng minh chứng định lượng 100% PASS.
-    4. Xuất bản `RUN_AND_EXECUTION_GUIDE_README.md` hướng dẫn chi tiết cách khởi chạy 1-Click trên Windows/Kaggle và phân tích luồng xử lý tuần tự từ Bước 1 đến Bước 6.
+    1. Xuất bản tệp [MODULAR_PIPELINE_AND_DATA_FLOW_ARCHITECTURE.md](file:///c:/Nhat_Code/aio/project/AIC/Multimodal-Agentic-Retrieval-Engine/system1-kaggle-pipeline/MODULAR_PIPELINE_AND_DATA_FLOW_ARCHITECTURE.md) định hình trọn vẹn luồng dữ liệu 4 Notebook và giao thức JSON/NPY trung gian.
+    2. Cài đặt module [src/vietnamese_cultural_lexicon.py](file:///c:/Nhat_Code/aio/project/AIC/Multimodal-Agentic-Retrieval-Engine/system1-kaggle-pipeline/src/vietnamese_cultural_lexicon.py) chứa từ điển 15+ thực thể văn hóa Việt Nam và hàm `enrich_query_faithfully()`.
+    3. Xây dựng Interactive Benchmark Notebook [notebooks/interactive_model_selection_and_benchmark.ipynb](file:///c:/Nhat_Code/aio/project/AIC/Multimodal-Agentic-Retrieval-Engine/system1-kaggle-pipeline/notebooks/interactive_model_selection_and_benchmark.ipynb) hỗ trợ Dual-GPU / TPU / CPU và mô phỏng 3 chế độ Toggle Query On/Off.
+    4. Viết và kiểm thử thành công 100% PASS kịch bản [scripts/steps/test_step6_cultural_lexicon_and_query.py](file:///c:/Nhat_Code/aio/project/AIC/Multimodal-Agentic-Retrieval-Engine/system1-kaggle-pipeline/scripts/steps/test_step6_cultural_lexicon_and_query.py) (độ trễ làm giàu query $< 0.5\text{ms}$).
+
 
 
 

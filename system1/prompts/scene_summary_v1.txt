@@ -1,3 +1,0 @@
-Summarize only the evidence present in this final scene. Return one concise
-Vietnamese summary and one semantically equivalent English summary. Do not add
-unsupported names, places, causes, or outcomes.

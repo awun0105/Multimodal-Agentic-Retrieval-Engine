@@ -1,4 +1,0 @@
-Review every requested adjacent-shot gap in this flagged region as one coherent
-sequence. Correct over-segmentation and under-segmentation while preserving a
-genuine short scene when the evidence supports it. Return exactly one Boolean
-decision for every requested gap.

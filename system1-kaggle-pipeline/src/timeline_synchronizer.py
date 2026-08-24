@@ -730,6 +730,8 @@ class TimelineSynchronizer:
         """
         diff_parts = []
         details = {}
+        curr_sharp = cls.safe_float(curr_item.get("sharpness_score", curr_item.get("sharpness", 450.0)), 450.0)
+        is_sharp_ok = bool(curr_sharp >= 30.0 or curr_item.get("is_sharpened_fallback"))
         
         # 1. Bóc tách khác biệt Vật thể
         anchor_objs = cls.safe_extract_object_keys(anchor_item)
@@ -776,16 +778,16 @@ class TimelineSynchronizer:
             
         anchor_meaning = cls.clean_text_field(anchor_item.get("shot_contextual_meaning"))
         curr_meaning = cls.clean_text_field(curr_item.get("shot_contextual_meaning"))
-        if curr_meaning and curr_meaning != anchor_meaning and not added_objs and "Chữ mới" not in str(diff_parts):
+        if curr_meaning and curr_meaning != anchor_meaning and is_sharp_ok and not added_objs and "Chữ mới" not in str(diff_parts):
             diff_parts.append(f"Ý nghĩa: {curr_meaning}")
             details["meaning_change"] = curr_meaning
 
-        # 4. Kiểm tra độ lệch thời gian và biến chuyển góc lia (chỉ tính khi dt >= 1.0s)
+        # 4. Kiểm tra độ lệch thời gian và biến chuyển góc lia (chỉ tính khi dt >= 1.0s và ảnh đủ nét)
         anchor_pts = cls.safe_float(anchor_item.get("pts_time_sec", anchor_item.get("pts_time", 0.0)), 0.0)
         curr_pts = cls.safe_float(curr_item.get("pts_time_sec", curr_item.get("pts_time", 0.0)), 0.0)
         dt = abs(curr_pts - anchor_pts)
         
-        if not diff_parts and dt >= 1.0:
+        if not diff_parts and dt >= 1.0 and is_sharp_ok:
             diff_parts.append("Góc lia / Biến chuyển cú máy")
             details["motion"] = "angle_pan"
             
@@ -954,10 +956,8 @@ class TimelineSynchronizer:
                     virtual_record["semantic_difference"] = diff_desc
                     
                     item_sharp = cls.safe_float(item.get("sharpness_score", item.get("sharpness", 450.0)), 450.0)
-                    best_sharp = cls.safe_float(best_item.get("sharpness_score", best_item.get("sharpness", 450.0)), 450.0)
                     
                     if item.get("is_btc"):
-                        # Frame BTC lân cận Anchor
                         btc_sharp = item_sharp
                         btc_color = cls.clean_text_field(item.get("dominant_color"))
                         is_low_info = bool(btc_sharp < 25.0 or "đơn sắc" in btc_color.lower() or "đen / tối" in btc_color.lower() or "trắng / sáng" in btc_color.lower())
@@ -972,7 +972,7 @@ class TimelineSynchronizer:
                             virtual_record["border_css"] = "border: 3px solid #bd93f9; border-left: 6px solid #bd93f9; box-shadow: 0 0 14px rgba(189,147,249,0.7); outline: 1px solid #ff79c6;"
                         else:
                             virtual_record["border_color"] = "cyan"
-                    elif has_diff and (item_sharp >= 30.0 or item.get("is_sharpened_fallback")):
+                    elif has_diff:
                         # Có khác biệt ý nghĩa đáng kể -> Frame Cắt Nghĩa viền tím Neon!
                         virtual_record["is_semantic_virtual"] = True
                         virtual_record["is_anchor"] = False
@@ -980,22 +980,25 @@ class TimelineSynchronizer:
                         virtual_record["semantic_role"] = f"Frame Cắt Nghĩa ({diff_desc})"
                         virtual_record["border_css"] = "border: 3px solid #bd93f9; border-right: 6px solid #bd93f9; box-shadow: 0 0 14px rgba(189,147,249,0.7); outline: 1px solid #ff79c6;"
                     else:
-                        # Không có khác biệt ý nghĩa -> Đề Xuất Lọc Bỏ
-                        if item_sharp < 30.0 and not item.get("is_sharpened_fallback"):
+                        # Tiêu chuẩn Đánh Giá Lại Nghiêm Ngặt Trước Khi Đề Xuất Lọc Bỏ (Viền Đỏ)
+                        has_ocr = bool(cls.clean_text_field(item.get("ocr_text")))
+                        is_blurry = (item_sharp < 30.0 and not item.get("is_sharpened_fallback") and not has_ocr)
+                        is_exact_time_dup = (abs(delta_t) <= 0.05)
+                        
+                        if is_exact_time_dup:
+                            virtual_record["border_color"] = "red"
+                            virtual_record["is_proposed_deletion"] = True
+                            virtual_record["deletion_reason"] = f"Trùng mốc thời gian (<= 0.05s) với Anchor #{anchor_id}"
+                            virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
+                        elif is_blurry:
                             virtual_record["border_color"] = "red"
                             virtual_record["is_proposed_deletion"] = True
                             virtual_record["deletion_reason"] = "Độ nét thấp < 30.0 (Ảnh mờ)"
                             virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
-                        elif item_sharp < best_sharp * 0.85:
-                            virtual_record["border_color"] = "red"
-                            virtual_record["is_proposed_deletion"] = True
-                            virtual_record["deletion_reason"] = f"Độ nét kém hơn Anchor #{anchor_id}"
-                            virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
                         else:
-                            virtual_record["border_color"] = "red"
-                            virtual_record["is_proposed_deletion"] = True
-                            virtual_record["deletion_reason"] = "Trùng góc máy & không có thông tin mới"
-                            virtual_record["border_css"] = "border: 2px solid #ff5555; border-right: 5px solid #ff5555; box-shadow: 0 0 12px rgba(255,85,85,0.6);"
+                            # Khung hình bình thường hợp lệ -> Giữ nguyên trạng thái tiêu chuẩn
+                            virtual_record["border_color"] = "normal"
+                            virtual_record["is_proposed_deletion"] = False
 
                     final_timeline.append(virtual_record)
 
