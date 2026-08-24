@@ -3,7 +3,7 @@ schema_version: phase01_storage_v1
 release:
   required: true
   backend: hf_dataset
-  repo_id: 1thesudden/AIC26_release
+  repo_id: 1thesudden/AIOU26_release
   repo_type: dataset
   revision: main
   prefix: ""
@@ -12,7 +12,7 @@ release:
 checkpoint:
   required: true
   backend: hf_dataset
-  repo_id: 1thesudden/AIC26_checkpoints
+  repo_id: 1thesudden/AIOU26_checkpoints
   repo_type: dataset
   revision: main
   prefix: ""
@@ -21,7 +21,7 @@ checkpoint:
 
 model_artifacts:
   backend: hf_dataset
-  repo_id: 1thesudden/AIC26_checkpoints
+  repo_id: 1thesudden/AIOU26_checkpoints
   repo_type: dataset
   revision: main
   prefix: model_artifacts
