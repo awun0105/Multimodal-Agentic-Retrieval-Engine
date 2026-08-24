@@ -417,6 +417,12 @@ and tensor references, runs garbage collection, and clears unused CUDA cache.
 Model weights may remain in the runtime's Hugging Face cache, which is separate
 from persistent stage checkpoints.
 
+Raw-media downloads, Phase00 restore, checkpoint restore/verification,
+model-artifact downloads, and release checksum verification use bounded caches
+inside run/video scratch. Those caches are removed after the relevant restore
+or after each video. Structured progress records expose batch/video/stage
+status and remaining scratch space without printing credentials.
+
 Faster-whisper uses CUDA `float16`, retries an OOM with CUDA `int8_float16`, and
 uses CPU `int8`; it does not replace large-v3 with a weaker model. If bounded
 OOM recovery is exhausted, the video becomes `failed_retryable`, its error is
@@ -426,11 +432,16 @@ the current video.
 
 Gemini request-level content-addressed cache entries live in the current
 video's stage scratch. The completed canonical stage is the persistent cache
-and is promoted to the private checkpoint repository. This avoids one Hugging
-Face commit per Gemini request while preserving stage-level resume semantics.
+and is promoted to the configured writable checkpoint repository, which may be
+public or private. This avoids one Hugging Face commit per Gemini request while
+preserving stage-level resume semantics.
 All output files belonging to one checkpoint stage are uploaded in one backend
 commit; the separate `state.json` update remains the final atomic completion
 marker after output checksum verification.
+
+After the worker report commit, Notebook 01 lists the remote
+`{release_id}/phase01_structure` tree and fails unless every completed video
+package plus the report, error log, and manual-review report is present.
 
 ## Validation Sequence
 

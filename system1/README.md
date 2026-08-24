@@ -213,9 +213,11 @@ system1 process-batch \
 
 The override is needed for legacy Phase00 manifests without `completed_at`;
 new manifests are auto-resolved when it is omitted. The checkpoint repository
-must be private. Before the first production run, provision the verified
-TransNet artifact and set its generated `weights_sha256` in `configs/models.yaml`
-as described below.
+may be public or private, but the configured token must have write access and
+the preflight must pass its write/read proof. A public repository exposes its
+intermediate checkpoint artifacts publicly. Before the first production run,
+provision the verified TransNet artifact and set its generated `weights_sha256`
+in `configs/models.yaml` as described below.
 
 The older mock E2E remains a developer test path, injected only through guarded
 test environment variables. It is not a user-facing Notebook 01 choice.

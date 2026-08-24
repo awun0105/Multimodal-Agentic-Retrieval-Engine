@@ -9,6 +9,7 @@ import pytest
 
 from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.store import ArtifactStore
+from system1.config import resolve_phase01_config
 from system1.phase01.checkpoint import (
     CheckpointManager,
     compute_fingerprint,
@@ -19,7 +20,10 @@ from system1.phase01.phase00 import (
     discover_phase00_candidates,
     resolve_phase00_release,
 )
+from system1.phase01.preflight import run_phase01_storage_preflight
 from system1.phase01.runner import _restore_phase00_if_needed
+
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
 
 
 def candidate(release_id: str, timestamp: str | None) -> Phase00Candidate:
@@ -87,6 +91,51 @@ def test_phase00_discovery_accepts_only_complete_matching_manifests(tmp_path: Pa
     ]
 
 
+def test_storage_preflight_accepts_writable_public_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    objects: dict[str, dict] = {}
+
+    class FakeApi:
+        def __init__(self, token=None) -> None:
+            assert token == "token"
+
+        def repo_info(self, **_kwargs):
+            return type("RepoInfo", (), {"private": False})()
+
+    class FakeStore:
+        def __init__(self, **kwargs) -> None:
+            assert kwargs["cache_dir"] == "/tmp/phase01-test-cache"
+
+        def write_json(self, relative_path, payload):
+            objects[str(relative_path)] = payload
+
+        def read_json(self, relative_path):
+            return objects[str(relative_path)]
+
+    monkeypatch.setenv("HF_TOKEN", "token")
+    monkeypatch.setattr("system1.phase01.preflight.HfApi", FakeApi)
+    monkeypatch.setattr(
+        "system1.phase01.preflight.HuggingFaceDatasetArtifactStore", FakeStore
+    )
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings={
+            "batch_id": "batch_000",
+            "worker_id": "worker_000",
+            "hf_release_repo": "org/release",
+        },
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+
+    run_phase01_storage_preflight(
+        resolved, cache_dir="/tmp/phase01-test-cache"
+    )
+
+    assert len(objects) == 1
+
+
 def test_phase00_restore_downloads_only_the_selected_batch_timelines(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -134,7 +183,7 @@ def test_phase00_restore_downloads_only_the_selected_batch_timelines(
         ],
     }
     monkeypatch.setattr(
-        "system1.phase01.runner._hf_store", lambda _storage: store
+        "system1.phase01.runner._hf_store", lambda _storage, **_kwargs: store
     )
 
     output = tmp_path / "output"

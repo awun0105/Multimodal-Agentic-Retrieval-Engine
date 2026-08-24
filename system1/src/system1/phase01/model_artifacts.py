@@ -38,34 +38,39 @@ def materialize_transnet_artifact(
         except (FileNotFoundError, ValueError):
             shutil.rmtree(target)
 
+    download_cache = cache_root / ".hf_download_cache"
     store = HuggingFaceDatasetArtifactStore(
         repo_id=str(storage_config["repo_id"]),
         repo_type=str(storage_config.get("repo_type", "dataset")),
         revision=str(storage_config.get("revision", "main")),
         token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
         prefix=str(storage_config.get("prefix", "")),
+        cache_dir=download_cache,
     )
     cache_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".transnet_restore_", dir=cache_root) as tmp:
-        staged = Path(tmp) / "artifact"
-        staged.mkdir()
-        manifest_path = store.download_file(
-            f"{artifact_subdir}/manifest.json", staged / "manifest.json"
-        )
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        for key in ("source_file", "weights_file"):
-            filename = str(manifest.get(key, ""))
-            if not filename or Path(filename).name != filename:
-                raise ValueError(f"Unsafe or missing TransNet manifest field: {key}")
-            store.download_file(f"{artifact_subdir}/{filename}", staged / filename)
-        load_transnet_artifact(
-            staged,
-            expected_commit=expected_commit,
-            expected_source_sha256=expected_source_sha256,
-            expected_weights_sha256=expected_weights_sha256,
-        )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staged, target)
+    try:
+        with tempfile.TemporaryDirectory(prefix=".transnet_restore_", dir=cache_root) as tmp:
+            staged = Path(tmp) / "artifact"
+            staged.mkdir()
+            manifest_path = store.download_file(
+                f"{artifact_subdir}/manifest.json", staged / "manifest.json"
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for key in ("source_file", "weights_file"):
+                filename = str(manifest.get(key, ""))
+                if not filename or Path(filename).name != filename:
+                    raise ValueError(f"Unsafe or missing TransNet manifest field: {key}")
+                store.download_file(f"{artifact_subdir}/{filename}", staged / filename)
+            load_transnet_artifact(
+                staged,
+                expected_commit=expected_commit,
+                expected_source_sha256=expected_source_sha256,
+                expected_weights_sha256=expected_weights_sha256,
+            )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(staged, target)
+    finally:
+        shutil.rmtree(download_cache, ignore_errors=True)
     return load_transnet_artifact(
         target,
         expected_commit=expected_commit,

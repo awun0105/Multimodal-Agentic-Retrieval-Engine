@@ -68,16 +68,30 @@ def process_production_batch(
     media = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet")
     videos_by_id = {str(row["video_id"]): row for row in videos.to_dict("records")}
     media_by_id = {str(row["video_id"]): row for row in media.to_dict("records")}
-    checkpoint_store = _hf_store(config.payload["storage"]["checkpoint"])
-    release_store = _hf_store(config.payload["storage"]["release"])
     results: list[dict[str, Any]] = []
     scratch_root.mkdir(parents=True, exist_ok=True)
+    _emit_progress(
+        event="batch",
+        status="start",
+        scratch=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_count=len(video_ids),
+    )
 
-    for video_id in video_ids:
+    for video_index, video_id in enumerate(video_ids, start=1):
         video_scratch = scratch_root / release_id / batch_id / video_id
         if video_scratch.exists():
             shutil.rmtree(video_scratch)
         video_scratch.mkdir(parents=True)
+        checkpoint_store = _hf_store(
+            config.payload["storage"]["checkpoint"],
+            cache_dir=video_scratch / "hf_cache" / "checkpoint",
+        )
+        release_store = _hf_store(
+            config.payload["storage"]["release"],
+            cache_dir=video_scratch / "hf_cache" / "release",
+        )
         manager = CheckpointManager(
             checkpoint_store,
             release_id=release_id,
@@ -91,6 +105,16 @@ def process_production_batch(
             state_filename=str(
                 config.payload["artifact"]["checkpoint"]["state_filename"]
             ),
+        )
+        _emit_progress(
+            event="video",
+            status="start",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            video_id=video_id,
+            video_index=video_index,
+            video_count=len(video_ids),
         )
         try:
             if video_id not in videos_by_id or video_id not in media_by_id:
@@ -135,7 +159,31 @@ def process_production_batch(
             }
         finally:
             shutil.rmtree(video_scratch, ignore_errors=True)
+            _emit_progress(
+                event="video_cache_cleanup",
+                status="complete",
+                scratch=scratch_root,
+                release_id=release_id,
+                batch_id=batch_id,
+                video_id=video_id,
+            )
         results.append(result)
+        result_progress = {
+            key: result[key]
+            for key in ("failed_stage", "error_type")
+            if result.get(key) is not None
+        }
+        _emit_progress(
+            event="video",
+            status=str(result["status"]),
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            video_id=video_id,
+            video_index=video_index,
+            video_count=len(video_ids),
+            **result_progress,
+        )
 
     failed = [row for row in results if not row["status"].startswith("complete")]
     manual_review_path = write_manual_review_report(
@@ -174,6 +222,7 @@ def process_production_batch(
     errors_path = release_dir / "manifests" / "phase01" / f"errors_{batch_id}_{worker_id}.jsonl"
     _write_jsonl(errors_path, failed)
     if sync_release:
+        release_store = _hf_store(config.payload["storage"]["release"])
         remote_root = f"{release_id}/phase01_structure"
         release_store.upload_files(
             [
@@ -187,6 +236,15 @@ def process_production_batch(
             commit_message=f"Upload Phase01 worker report {batch_id}/{worker_id}",
             num_threads=2,
         )
+    _emit_progress(
+        event="batch",
+        status="complete" if not failed else "failed",
+        scratch=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_count=len(video_ids),
+        failed_count=len(failed),
+    )
     if failed:
         raise RuntimeError(
             f"Phase01 batch completed with {len(failed)} failed video(s); report={report}"
@@ -208,6 +266,7 @@ def _process_video(
     sync_release: bool,
 ) -> dict[str, Any]:
     manager.active_stage = "shots"
+    _emit_stage_progress(manager, "shots", scratch, status="start")
     stage_dir = scratch / "stages"
     stage_dir.mkdir()
     # API responses only need request-level reuse while the current atomic
@@ -238,7 +297,8 @@ def _process_video(
     shots_fingerprint = compute_fingerprint(
         video_timeline_fingerprint, config.stage_config_hashes["shots"]
     )
-    if not _restore_if_reusable(manager, "shots", shots_fingerprint, stage_dir):
+    shots_reused = _restore_if_reusable(manager, "shots", shots_fingerprint, stage_dir)
+    if not shots_reused:
         artifact = load_transnet_artifact(
             transnet_artifact_dir,
             expected_commit=str(models["shot_detection"]["model_revision"]),
@@ -272,16 +332,23 @@ def _process_video(
             model=models["shot_detection"],
             schema_version=phase01["schemas"]["shots"],
         )
+    _emit_stage_progress(
+        manager, "shots", scratch, status="complete", reused=shots_reused
+    )
     shots = pd.read_parquet(shots_path).to_dict("records")
     shots_output_fingerprint = manager.stage_output_fingerprint("shots")
 
     manager.active_stage = "keyframes"
+    _emit_stage_progress(manager, "keyframes", scratch, status="start")
     keyframes_path = stage_dir / "keyframes.parquet"
     keyframes_bundle = stage_dir / "keyframes.zip"
     keyframes_fingerprint = _stage_fingerprint(
         manager, "keyframes", shots_output_fingerprint
     )
-    if not _restore_keyframes_if_reusable(manager, keyframes_fingerprint, stage_dir):
+    keyframes_reused = _restore_keyframes_if_reusable(
+        manager, keyframes_fingerprint, stage_dir
+    )
+    if not keyframes_reused:
         _build_keyframes(
             video_id=video_id,
             video_path=video_path,
@@ -297,16 +364,21 @@ def _process_video(
             outputs=[keyframes_bundle],
             schema_version=phase01["schemas"]["keyframes"],
         )
+    _emit_stage_progress(
+        manager, "keyframes", scratch, status="complete", reused=keyframes_reused
+    )
     keyframes = pd.read_parquet(keyframes_path).to_dict("records")
     keyframes_output_fingerprint = manager.stage_output_fingerprint("keyframes")
 
     manager.active_stage = "asr"
+    _emit_stage_progress(manager, "asr", scratch, status="start")
     asr_path = stage_dir / "asr_segments.parquet"
     asr_status_path = stage_dir / "asr_status.json"
     asr_fingerprint = compute_fingerprint(
         video_timeline_fingerprint, config.stage_config_hashes["asr"]
     )
-    if not _restore_if_reusable(manager, "asr", asr_fingerprint, stage_dir):
+    asr_reused = _restore_if_reusable(manager, "asr", asr_fingerprint, stage_dir)
+    if not asr_reused:
         asr_config = {**models["asr"], "total_attempts": phase01["retry"]["local_model_total_attempts"]}
         result = transcribe_video(
             video_path,
@@ -328,10 +400,14 @@ def _process_video(
             model=models["asr"],
             schema_version=phase01["schemas"]["asr_segments"],
         )
+    _emit_stage_progress(
+        manager, "asr", scratch, status="complete", reused=asr_reused
+    )
     asr_rows = pd.read_parquet(asr_path).to_dict("records")
     asr_output_fingerprint = manager.stage_output_fingerprint("asr")
 
     manager.active_stage = "shot_captions"
+    _emit_stage_progress(manager, "shot_captions", scratch, status="start")
     gemini_client = GeminiStructuredClient(
         model_id=str(models["shot_caption"]["model_id"]),
         api_config={
@@ -346,7 +422,10 @@ def _process_video(
     captions_fingerprint = _stage_fingerprint(
         manager, "shot_captions", keyframes_output_fingerprint
     )
-    if not _restore_if_reusable(manager, "shot_captions", captions_fingerprint, stage_dir):
+    captions_reused = _restore_if_reusable(
+        manager, "shot_captions", captions_fingerprint, stage_dir
+    )
+    if not captions_reused:
         caption_rows = _build_captions(
             video_id=video_id,
             shots=shots,
@@ -365,17 +444,28 @@ def _process_video(
             prompt_version=models["shot_caption"]["prompt_version"],
             schema_version=phase01["schemas"]["shot_captions"],
         )
+    _emit_stage_progress(
+        manager,
+        "shot_captions",
+        scratch,
+        status="complete",
+        reused=captions_reused,
+    )
     captions = pd.read_parquet(captions_path).to_dict("records")
     captions_output_fingerprint = manager.stage_output_fingerprint("shot_captions")
 
     manager.active_stage = "shot_transcript_links"
+    _emit_stage_progress(manager, "shot_transcript_links", scratch, status="start")
     links_path = stage_dir / "shot_transcript_links.parquet"
     links_fingerprint = compute_fingerprint(
         shots_output_fingerprint,
         asr_output_fingerprint,
         config.stage_config_hashes["shot_transcript_links"],
     )
-    if not _restore_if_reusable(manager, "shot_transcript_links", links_fingerprint, stage_dir):
+    links_reused = _restore_if_reusable(
+        manager, "shot_transcript_links", links_fingerprint, stage_dir
+    )
+    if not links_reused:
         links = build_shot_transcript_links(shots, asr_rows)
         _write_parquet(links_path, links, empty_columns=PARQUET_COLUMNS["shot_transcript_links"])
         manager.promote_stage(
@@ -384,12 +474,20 @@ def _process_video(
             outputs=[links_path],
             schema_version=phase01["schemas"]["shot_transcript_links"],
         )
+    _emit_stage_progress(
+        manager,
+        "shot_transcript_links",
+        scratch,
+        status="complete",
+        reused=links_reused,
+    )
     links = pd.read_parquet(links_path).to_dict("records")
     links_output_fingerprint = manager.stage_output_fingerprint(
         "shot_transcript_links"
     )
 
     manager.active_stage = "scenes"
+    _emit_stage_progress(manager, "scenes", scratch, status="start")
     scenes_path = stage_dir / "scenes.parquet"
     scene_links_path = stage_dir / "scene_transcript_links.parquet"
     scene_diagnostics_path = stage_dir / "scene_boundary_diagnostics.jsonl"
@@ -401,7 +499,10 @@ def _process_video(
         links_output_fingerprint,
         config.stage_config_hashes["scenes"],
     )
-    if not _restore_if_reusable(manager, "scenes", scenes_fingerprint, stage_dir):
+    scenes_reused = _restore_if_reusable(
+        manager, "scenes", scenes_fingerprint, stage_dir
+    )
+    if not scenes_reused:
         evidence = _build_scene_evidence(shots, keyframes, captions, asr_rows, links, stage_dir)
         boundary_client = GeminiStructuredClient(
             model_id=str(models["scene_boundary"]["model_id"]),
@@ -443,11 +544,15 @@ def _process_video(
             prompt_version=models["scene_boundary"]["prompt_version"],
             schema_version=phase01["schemas"]["scenes"],
         )
+    _emit_stage_progress(
+        manager, "scenes", scratch, status="complete", reused=scenes_reused
+    )
     scenes = pd.read_parquet(scenes_path).to_dict("records")
     scene_links = pd.read_parquet(scene_links_path).to_dict("records")
     scenes_output_fingerprint = manager.stage_output_fingerprint("scenes")
 
     manager.active_stage = "scene_summaries"
+    _emit_stage_progress(manager, "scene_summaries", scratch, status="start")
     summaries_path = stage_dir / "scene_summaries.parquet"
     summaries_fingerprint = compute_fingerprint(
         scenes_output_fingerprint,
@@ -457,7 +562,10 @@ def _process_video(
         links_output_fingerprint,
         config.stage_config_hashes["scene_summaries"],
     )
-    if not _restore_if_reusable(manager, "scene_summaries", summaries_fingerprint, stage_dir):
+    summaries_reused = _restore_if_reusable(
+        manager, "scene_summaries", summaries_fingerprint, stage_dir
+    )
+    if not summaries_reused:
         summary_client = GeminiStructuredClient(
             model_id=str(models["scene_summary"]["model_id"]),
             api_config={
@@ -490,9 +598,17 @@ def _process_video(
             prompt_version=models["scene_summary"]["prompt_version"],
             schema_version=phase01["schemas"]["scene_summaries"],
         )
+    _emit_stage_progress(
+        manager,
+        "scene_summaries",
+        scratch,
+        status="complete",
+        reused=summaries_reused,
+    )
     summaries_output_fingerprint = manager.stage_output_fingerprint("scene_summaries")
 
     manager.active_stage = "package"
+    _emit_stage_progress(manager, "package", scratch, status="start")
     package_fingerprint = compute_fingerprint(
         metadata_fingerprint,
         shots_output_fingerprint,
@@ -509,7 +625,10 @@ def _process_video(
     if Path(package_filename).name != package_filename:
         raise ValueError("Phase01 package filename must resolve to a basename")
     package_path = stage_dir / package_filename
-    if not _restore_if_reusable(manager, "package", package_fingerprint, stage_dir):
+    package_reused = _restore_if_reusable(
+        manager, "package", package_fingerprint, stage_dir
+    )
+    if not package_reused:
         artifact_dir = stage_dir / "package" / video_id
         _assemble_package(
             artifact_dir=artifact_dir,
@@ -535,6 +654,9 @@ def _process_video(
             outputs=[package_path],
             schema_version="phase01_structure_v2",
         )
+    _emit_stage_progress(
+        manager, "package", scratch, status="complete", reused=package_reused
+    )
 
     local_artifact = release_dir / "artifacts" / "structure" / package_filename
     local_artifact.parent.mkdir(parents=True, exist_ok=True)
@@ -543,10 +665,12 @@ def _process_video(
         return {"video_id": video_id, "status": "complete_local", "artifact": str(local_artifact)}
 
     manager.active_stage = "sync"
+    _emit_stage_progress(manager, "sync", scratch, status="start")
     sync_fingerprint = compute_fingerprint(
         package_fingerprint, sha256_file(package_path), config.stage_config_hashes["sync"]
     )
-    if not manager.is_reusable("sync", input_fingerprint=sync_fingerprint):
+    sync_reused = manager.is_reusable("sync", input_fingerprint=sync_fingerprint)
+    if not sync_reused:
         remote_root = str(package_config["root"]).format(
             release_id=config.payload["runtime"]["release_id"],
             batch_id=config.payload["runtime"]["batch_id"],
@@ -572,6 +696,9 @@ def _process_video(
             outputs=[receipt_path],
             schema_version="phase01_sync_receipt_v1",
         )
+    _emit_stage_progress(
+        manager, "sync", scratch, status="complete", reused=sync_reused
+    )
     return {"video_id": video_id, "status": "complete", "artifact": str(local_artifact)}
 
 
@@ -886,8 +1013,53 @@ def _safe_extract_zip(bundle: Path, target_dir: Path) -> None:
                 shutil.copyfileobj(source, output)
 
 
-def _hf_store(config):
-    return HuggingFaceDatasetArtifactStore(repo_id=str(config["repo_id"]), repo_type=str(config.get("repo_type", "dataset")), revision=str(config.get("revision", "main")), token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"), prefix=str(config.get("prefix", "")))
+def _emit_progress(
+    *,
+    event: str,
+    status: str,
+    scratch: Path,
+    **details: Any,
+) -> None:
+    try:
+        scratch_free_gb = round(shutil.disk_usage(scratch).free / (1024**3), 2)
+    except FileNotFoundError:
+        scratch_free_gb = None
+    payload = {
+        "event": event,
+        "status": status,
+        "scratch_free_gb": scratch_free_gb,
+        **details,
+    }
+    print(f"[phase01] {json.dumps(payload, ensure_ascii=False, sort_keys=True)}", flush=True)
+
+
+def _emit_stage_progress(
+    manager: CheckpointManager,
+    stage: str,
+    scratch: Path,
+    *,
+    status: str,
+    reused: bool | None = None,
+) -> None:
+    details: dict[str, Any] = {
+        "release_id": manager.release_id,
+        "video_id": manager.video_id,
+        "stage": stage,
+    }
+    if reused is not None:
+        details["source"] = "checkpoint" if reused else "computed"
+    _emit_progress(event="stage", status=status, scratch=scratch, **details)
+
+
+def _hf_store(config, *, cache_dir: Path | str | None = None):
+    return HuggingFaceDatasetArtifactStore(
+        repo_id=str(config["repo_id"]),
+        repo_type=str(config.get("repo_type", "dataset")),
+        revision=str(config.get("revision", "main")),
+        token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
+        prefix=str(config.get("prefix", "")),
+        cache_dir=cache_dir,
+    )
 
 
 def _materialize_canonical(mapping, key, target_dir):
@@ -897,7 +1069,26 @@ def _materialize_canonical(mapping, key, target_dir):
         if _present_scalar(value) and Path(str(value)).is_file(): return Path(str(value))
     target_dir.mkdir(parents=True, exist_ok=True)
     remote_path = str(mapping[key]); target = target_dir / Path(remote_path).name
-    store = HuggingFaceDatasetArtifactStore(repo_id=str(mapping["canonical_repo_id"]), repo_type=str(mapping.get("canonical_repo_type")) if _present_scalar(mapping.get("canonical_repo_type")) else "dataset", revision=str(mapping.get("canonical_revision")) if _present_scalar(mapping.get("canonical_revision")) else "main", token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"), prefix=str(mapping.get("canonical_prefix")) if _present_scalar(mapping.get("canonical_prefix")) else "")
+    store = HuggingFaceDatasetArtifactStore(
+        repo_id=str(mapping["canonical_repo_id"]),
+        repo_type=(
+            str(mapping.get("canonical_repo_type"))
+            if _present_scalar(mapping.get("canonical_repo_type"))
+            else "dataset"
+        ),
+        revision=(
+            str(mapping.get("canonical_revision"))
+            if _present_scalar(mapping.get("canonical_revision"))
+            else "main"
+        ),
+        token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
+        prefix=(
+            str(mapping.get("canonical_prefix"))
+            if _present_scalar(mapping.get("canonical_prefix"))
+            else ""
+        ),
+        cache_dir=target_dir / ".hf_cache",
+    )
     return store.download_file(remote_path, target)
 
 

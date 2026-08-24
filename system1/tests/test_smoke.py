@@ -597,6 +597,9 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         if path.name == "01_worker_structure_pipeline.ipynb":
             assert "providers" not in joined
             assert "--providers" not in joined
+            assert "monolith-mvp-app" in joined
+            assert "phase01_structure" in joined
+            assert "list_repo_tree" in joined
         elif path.name == "02_worker_feature_enrichment.ipynb":
             assert "providers" in joined
         assert "run_cli" in joined
@@ -604,7 +607,6 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert command in joined
         if path.name.startswith(("00B", "00C")):
             assert "canonical_raw_v009" in joined
-            assert "system1-notebook01" in joined
             assert "metadata_schema_version" in joined
             assert "organizer_metadata_present" in joined
             assert "probe_status" in joined
@@ -614,6 +616,10 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "stream_standardize_upload_progress_{raw_import_id}" in joined
             assert "Path(config.stream_progress_path).name" in joined
             assert "required_local_reports.append(Path(config.stream_progress_path)" in joined
+        if path.name.startswith("00B"):
+            assert "monolith-mvp-app" in joined
+        if path.name.startswith("00C"):
+            assert "system1-notebook01" in joined
         if path.name.startswith(("00A", "00B", "00C", "01_")):
             assert "package source preflight: OK" in joined
             assert "help_result" not in joined

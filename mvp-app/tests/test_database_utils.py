@@ -2,8 +2,9 @@ import hashlib
 import json
 from pathlib import Path
 
-import database_utils
 import pytest
+
+import database_utils
 
 
 def _sha256(path: Path) -> str:

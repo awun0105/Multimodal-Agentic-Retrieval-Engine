@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -29,7 +28,6 @@ except ImportError:
 
 import gradio as gr
 
-import trake
 from schemas import TrakeOutcome
 from trake import (
     MAX_EVENTS,
@@ -39,15 +37,12 @@ from trake import (
     format_submission,
 )
 from trake_submission import build_submission as build_submission_rows
-from trake_submission import parse_pin_key, pin_key, export_csv_file
-from video_locator import get_video_path
+from trake_submission import export_csv_file, parse_pin_key, pin_key
 from trake_ui_render import (
-    render_video_player,
-    build_gallery_items,
     build_status_markdown,
-    build_submission_preview_markdown,
-    build_video_blocks,
+    render_video_player,
 )
+from video_locator import get_video_path
 
 _trake_controller: TrakeController | None = None
 
@@ -85,7 +80,6 @@ class TrakeController:
         )
 
     def search_events(self, translate_vietnamese: bool, *event_texts: str):
-        import time
         events = [e for e in event_texts if e and e.strip()]
         started = time.perf_counter()
         outcome = self.trake_searcher.search(
@@ -93,21 +87,23 @@ class TrakeController:
         )
         elapsed = time.perf_counter() - started
         status_markdown = build_status_markdown(outcome, elapsed)
-        
+
         gal_up, blocks_md, label, prev_up, next_up = self._render_video_page(outcome, 0)
         return gal_up, blocks_md, status_markdown, outcome, 0, label, prev_up, next_up
 
 
     def _render_video_page(self, outcome, page_idx: int):
-        import gradio as gr
         import math
+
+        import gradio as gr
+
         from trake_ui_render import build_gallery_items_slice, build_video_blocks_slice
         if not outcome or not outcome.videos:
             return gr.update(value=[]), "No matching video sequences found.", "Page 1 / 1 | 0 results", gr.update(interactive=False), gr.update(interactive=False)
-        
+
         total_videos = len(outcome.videos)
         num_events = len(outcome.videos[0].events)
-        
+
         if num_events == 1:
             per_page = 10
             columns = 5
@@ -123,29 +119,29 @@ class TrakeController:
         else:
             per_page = 1
             columns = num_events
-            
+
         total_pages = max(1, math.ceil(total_videos / per_page))
         page_idx = max(0, min(page_idx, total_pages - 1))
         start_idx = page_idx * per_page
         end_idx = start_idx + per_page
         videos_page = outcome.videos[start_idx:end_idx]
-        
+
         gallery_items = build_gallery_items_slice(videos_page, start_idx + 1)
         block_md = build_video_blocks_slice(videos_page, start_idx + 1)
-        
+
         label = f"Page {page_idx + 1} / {total_pages} | {total_videos} videos"
         gallery_update = gr.update(value=gallery_items, columns=columns)
-        
+
         return gallery_update, block_md, label, gr.update(interactive=page_idx > 0), gr.update(interactive=page_idx < total_pages - 1)
 
     def change_video_page(self, outcome, page_idx: int, delta: int):
         if not outcome or not outcome.videos:
             return 0, *self._render_video_page(outcome, 0)
-        
+
         total_videos = len(outcome.videos)
         num_events = len(outcome.videos[0].events)
         per_page = 10 if num_events == 1 else (4 if num_events == 2 else (2 if num_events <= 4 else 1))
-        
+
         import math
         total_pages = max(1, math.ceil(total_videos / per_page))
         new_idx = page_idx + delta
@@ -182,7 +178,7 @@ class TrakeController:
     ) -> Any:
         if not outcome:
             return gr.update(value="No search results to preview.")
-        rows, primary_count = self._build_rows(outcome, pinned_frames)
+        rows, _ = self._build_rows(outcome, pinned_frames)
         pinned_counts: dict[str, int] = {}
         for key in pinned_frames or {}:
             parsed = parse_pin_key(key)
@@ -333,13 +329,13 @@ def build_trake_tab(trake_searcher: Any) -> dict:
             interactive=False,
         )
         next_btn_pg = gr.Button("Next", interactive=False)
-    
+
     # --- PHASE 3: Alignment Video Player ---
     video_player_html = gr.HTML("")
     with gr.Row():
         prev_btn = gr.Button("Prev Frame", interactive=False)
         next_btn = gr.Button("Next Frame", interactive=False)
-        pin_btn = gr.Button("Chốt Frame (Pin)", interactive=False, variant="primary")
+        pin_btn = gr.Button("Chốt Frame (Đẩy lên Top)", interactive=False, variant="primary")
         clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
 
     pinned_frames_markdown = gr.Markdown(PINNED_EMPTY_MARKDOWN)
@@ -351,7 +347,7 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     current_event_idx_box = gr.Number(visible=False, elem_id="trake-current-event-idx", value=0)
     # Keyframe's own frame_idx — the fallback answer when no video is available.
     current_kf_frame_box = gr.Number(visible=False, elem_id="trake-current-kf-frame", value=0)
-    sync_btn = gr.Button("Sync", visible=False, elem_id="trake-sync-btn")
+    # sync_btn removed
 
     with gr.Accordion("Log thông tin kết quả (Chi tiết)", open=False):
         results = gr.Markdown("")
@@ -362,7 +358,7 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         export_filename = gr.Textbox(label="Tên file export", value="query-4-trake.csv", max_lines=1)
         export_button = gr.Button("Export submission file")
         submission_file = gr.File(label="Submission file", interactive=False, height=80, visible=False)
-    
+
     preview_markdown = gr.Textbox(label="Nội dung file nộp (Có thể chỉnh sửa thủ công)", lines=15, max_lines=50)
 
     add_button.click(
@@ -432,14 +428,14 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         outputs=[preview_markdown],
         api_name=False,
     )
-    
+
     export_button.click(
         export_csv_file,
         inputs=[preview_markdown, export_filename],
         outputs=[submission_file, status],
         api_name=False,
     )
-    
+
     # Custom JS for frame stepping
     frame_step_js = """(fps) => {
         const video = document.getElementById('trake-player');
@@ -449,7 +445,7 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         }
         return fps;
     }"""
-    
+
     frame_prev_js = """(fps) => {
         const video = document.getElementById('trake-player');
         if (video) {
@@ -458,7 +454,7 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         }
         return fps;
     }"""
-    
+
     # Order must match process_pin's signature exactly — Gradio validates the count
     # of `inputs` against the handler, and the JS return replaces those values.
     pin_js = """(c_time, pinned, vid, eidx, fps, kf_frame) => {
@@ -483,6 +479,11 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         outputs=[pinned_frames_state, status, pinned_frames_markdown],
         js=pin_js,
         api_name=False,
+    ).then(
+        controller.preview_submission,
+        inputs=[outcome_state, pinned_frames_state],
+        outputs=[preview_markdown],
+        api_name=False,
     )
 
     clear_pins_btn.click(
@@ -490,17 +491,47 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         inputs=[],
         outputs=[pinned_frames_state, status, pinned_frames_markdown],
         api_name=False,
+    ).then(
+        controller.preview_submission,
+        inputs=[outcome_state, pinned_frames_state],
+        outputs=[preview_markdown],
+        api_name=False,
     )
-    
-    def on_gallery_select(evt: gr.SelectData, outcome, idx: int):
+
+    def on_gallery_select(evt: gr.SelectData, outcome, page_idx: int):
+        import html
+        from pathlib import Path
         unchanged = (gr.update(),) * 8
         if not outcome or not outcome.videos:
             return unchanged
-            
-        video = outcome.videos[idx]
-        if evt.index >= len(video.events):
+
+        total_videos = len(outcome.videos)
+        num_events = len(outcome.videos[0].events) if total_videos > 0 else 1
+        per_page = 1 if num_events >= 5 else 2 if num_events >= 3 else 4 if num_events == 2 else 10
+
+        start_idx = page_idx * per_page
+        page_videos = outcome.videos[start_idx : start_idx + per_page]
+
+        target_video = None
+        target_event = None
+        c = 0
+        for video in page_videos:
+            for event in video.events:
+                if not Path(event.image_path).is_file():
+                    continue
+                if c == evt.index:
+                    target_video = video
+                    target_event = event
+                    break
+                c += 1
+            if target_video:
+                break
+
+        if not target_video or not target_event:
             return unchanged
-        event = video.events[evt.index]
+
+        video = target_video
+        event = target_event
 
         video_path = get_video_path(video.video_id)
         if video_path:

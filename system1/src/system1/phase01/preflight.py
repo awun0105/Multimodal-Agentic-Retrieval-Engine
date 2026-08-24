@@ -73,7 +73,11 @@ def run_phase01_preflight(
         expected_weights_sha256=str(shot_model["weights_sha256"]),
     )
     if validate_remote:
-        run_phase01_storage_preflight(config)
+        storage_cache = scratch_root / ".hf_cache" / "storage_preflight"
+        try:
+            run_phase01_storage_preflight(config, cache_dir=storage_cache)
+        finally:
+            shutil.rmtree(storage_cache, ignore_errors=True)
 
     versions: dict[str, str] = {}
     for package in (
@@ -112,8 +116,12 @@ def run_phase01_preflight(
     )
 
 
-def run_phase01_storage_preflight(config: ResolvedPhase01Config) -> None:
-    """Prove release access and private checkpoint write/read before heavy work."""
+def run_phase01_storage_preflight(
+    config: ResolvedPhase01Config,
+    *,
+    cache_dir: Path | str | None = None,
+) -> None:
+    """Prove release access and checkpoint write/read before heavy work."""
 
     storage = config.payload["storage"]
     token = os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN")
@@ -131,7 +139,9 @@ def run_phase01_storage_preflight(config: ResolvedPhase01Config) -> None:
         revision=checkpoint.get("revision", "main"),
     )
     if checkpoint.get("require_private") and not checkpoint_info.private:
-        raise RuntimeError("Phase01 checkpoint repository must be private")
+        raise RuntimeError(
+            "Phase01 checkpoint repository is public but require_private=true"
+        )
 
     store = HuggingFaceDatasetArtifactStore(
         repo_id=str(checkpoint["repo_id"]),
@@ -139,6 +149,7 @@ def run_phase01_storage_preflight(config: ResolvedPhase01Config) -> None:
         revision=str(checkpoint.get("revision", "main")),
         token=token,
         prefix=str(checkpoint.get("prefix", "")),
+        cache_dir=cache_dir,
     )
     runtime = config.payload["runtime"]
     proof_path = (

@@ -40,6 +40,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     configs = load_configs(CONFIG_DIR)
     phase01 = configs["phase01"]
     models = configs["models"]
+    storage = configs["storage"]
 
     assert phase01["pipeline_id"] == "phase01_production_v1"
     assert phase01["execution"]["max_concurrent_videos"] == 1
@@ -58,6 +59,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "sync",
     ]
     assert "providers" not in models
+    assert storage["checkpoint"]["require_private"] is False
     assert set(models["phase01"]) == {
         "shot_detection",
         "asr",
@@ -179,15 +181,15 @@ def test_checkpoint_repository_override_also_moves_model_artifact_store() -> Non
     resolved = resolve_phase01_config(
         CONFIG_DIR,
         user_settings=user_settings(
-            hf_checkpoint_repo="org/private-checkpoints",
+            hf_checkpoint_repo="org/checkpoints",
             checkpoint_revision="artifacts-v2",
         ),
         phase00_release_id="canonical_release_v001",
         environment="colab",
     )
 
-    assert resolved.payload["storage"]["checkpoint"]["repo_id"] == "org/private-checkpoints"
-    assert resolved.payload["storage"]["model_artifacts"]["repo_id"] == "org/private-checkpoints"
+    assert resolved.payload["storage"]["checkpoint"]["repo_id"] == "org/checkpoints"
+    assert resolved.payload["storage"]["model_artifacts"]["repo_id"] == "org/checkpoints"
     assert resolved.payload["storage"]["model_artifacts"]["revision"] == "artifacts-v2"
 
 
