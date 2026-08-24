@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import importlib.util
 import json
 import os
 import shutil
@@ -71,6 +72,7 @@ def run_phase01_preflight(
         expected_commit=str(shot_model["model_revision"]),
         expected_source_sha256=str(shot_model["source_sha256"]),
         expected_weights_sha256=str(shot_model["weights_sha256"]),
+        expected_conversion_verified=bool(shot_model.get("conversion_verified", True)),
     )
     if validate_remote:
         storage_cache = scratch_root / ".hf_cache" / "storage_preflight"
@@ -100,8 +102,20 @@ def run_phase01_preflight(
     except ImportError:
         versions["torch"] = "missing"
     expected = config.payload["models"]
-    if versions["faster-whisper"] != str(expected["asr"]["package_version"]):
-        raise RuntimeError("Installed faster-whisper version differs from resolved config")
+    asr_model = expected["asr"]
+    asr_provider = str(asr_model.get("provider", "faster_whisper"))
+    if asr_provider == "faster_whisper":
+        if versions["faster-whisper"] != str(asr_model["package_version"]):
+            raise RuntimeError("Installed faster-whisper version differs from resolved config")
+    elif asr_provider == "nemo":
+        try:
+            nemo_available = importlib.util.find_spec("nemo.collections.asr") is not None
+        except ModuleNotFoundError:
+            nemo_available = False
+        if not nemo_available:
+            raise RuntimeError("nemo_toolkit[asr] is required for configured NeMo ASR")
+    else:
+        raise RuntimeError(f"Unsupported Phase01 ASR provider: {asr_provider}")
     if versions["google-genai"] != str(expected["shot_caption"]["sdk_version"]):
         raise RuntimeError("Installed google-genai version differs from resolved config")
     if versions["torch"] == "missing":

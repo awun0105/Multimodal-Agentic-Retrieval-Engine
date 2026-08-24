@@ -23,6 +23,7 @@ def materialize_transnet_artifact(
     expected_commit = str(model_config["model_revision"])
     expected_source_sha256 = str(model_config["source_sha256"])
     expected_weights_sha256 = str(model_config["weights_sha256"])
+    expected_conversion_verified = bool(model_config.get("conversion_verified", True))
     artifact_subdir = str(
         model_config.get("artifact_subdir") or f"transnetv2/{expected_commit}"
     ).strip("/")
@@ -34,6 +35,7 @@ def materialize_transnet_artifact(
                 expected_commit=expected_commit,
                 expected_source_sha256=expected_source_sha256,
                 expected_weights_sha256=expected_weights_sha256,
+                expected_conversion_verified=expected_conversion_verified,
             )
         except (FileNotFoundError, ValueError):
             shutil.rmtree(target)
@@ -66,6 +68,7 @@ def materialize_transnet_artifact(
                 expected_commit=expected_commit,
                 expected_source_sha256=expected_source_sha256,
                 expected_weights_sha256=expected_weights_sha256,
+                expected_conversion_verified=expected_conversion_verified,
             )
             target.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staged, target)
@@ -76,4 +79,5 @@ def materialize_transnet_artifact(
         expected_commit=expected_commit,
         expected_source_sha256=expected_source_sha256,
         expected_weights_sha256=expected_weights_sha256,
+        expected_conversion_verified=expected_conversion_verified,
     )

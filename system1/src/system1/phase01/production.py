@@ -306,6 +306,9 @@ def _process_video(
                 models["shot_detection"]["source_sha256"]
             ),
             expected_weights_sha256=str(models["shot_detection"]["weights_sha256"]),
+            expected_conversion_verified=bool(
+                models["shot_detection"].get("conversion_verified", True)
+            ),
         )
         prediction_path = stage_dir / "transnet_predictions.json"
         predictions = detect_shot_scenes(
@@ -724,7 +727,24 @@ def _build_keyframes(
     decoded_groups = iter_decode_frame_groups(video_path, candidate_groups)
     for shot, decoded in zip(shots, decoded_groups, strict=True):
         selected, candidate_diagnostics = select_keyframes_for_shot(shot, decoded, keyframe_config)
-        diagnostics.extend({"shot_id": shot["shot_id"], **item.__dict__} for item in candidate_diagnostics)
+        selected_roles = sorted(item.role for item in selected)
+        selected_frame_ids = sorted(item.frame_id for item in selected)
+        shot_frame_span = int(shot["end_frame"]) - int(shot["start_frame"])
+        shot_duration_sec = float(shot["end_sec"]) - float(shot["start_sec"])
+        diagnostics.extend(
+            {
+                "shot_id": shot["shot_id"],
+                "shot_frame_span": shot_frame_span,
+                "shot_duration_sec": shot_duration_sec,
+                "selected_roles": selected_roles,
+                "selected_frame_ids": selected_frame_ids,
+                "candidate_count": len(candidate_diagnostics),
+                "valid_candidate_count": sum(1 for item in candidate_diagnostics if item.valid),
+                "long_shot_coverage_warning": shot_duration_sec > 10.0 and len(selected_frame_ids) < 3,
+                **item.__dict__,
+            }
+            for item in candidate_diagnostics
+        )
         for item in selected:
             frame = decoded[item.frame_id]
             keyframe_id = f"{video_id}:{item.frame_id}"

@@ -15,7 +15,7 @@
     "confidence": {"type": ["number", "null"]},
     "avg_logprob": {"type": ["number", "null"]},
     "no_speech_prob": {"type": ["number", "null"]},
-    "provider": {"const": "faster_whisper"},
+    "provider": {"enum": ["faster_whisper", "nemo"]},
     "model_name": {"type": "string", "minLength": 1},
     "model_version": {"type": "string", "minLength": 1},
     "status": {"const": "pass"}

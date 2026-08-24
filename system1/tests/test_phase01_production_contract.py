@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,10 +64,13 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     assert set(models["phase01"]) == {
         "shot_detection",
         "asr",
+        "asr_providers",
         "shot_caption",
         "scene_boundary",
         "scene_summary",
     }
+    assert models["phase01"]["asr"]["provider"] == "faster_whisper"
+    assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
 
 
 def test_canonical_gemini_text_rejects_whitespace_only_values() -> None:
@@ -128,6 +132,25 @@ def test_phase01_config_encodes_oom_and_dependency_invalidation_policy() -> None
     assert dependencies["sync"] == ["package"]
 
 
+def test_phase01_config_can_select_nemo_asr_provider() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings={
+            **user_settings(),
+            "asr_provider": "nemo",
+        },
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    models = resolved.payload["models"]
+    assert models["asr"]["provider"] == "nemo"
+    assert models["asr"]["model_id"] == "nvidia/parakeet-ctc-0.6b-Vietnamese"
+    assert models["asr"]["model_revision"] == "ac8e8de"
+    assert models["asr"]["model_file"] == "parakeet-ctc-0.6b-vi.nemo"
+    assert models["asr"]["segmentation"] == "ffmpeg_silence"
+    assert models["asr"]["max_segment_seconds"] == 12
+
+
 def test_resolved_config_is_stable_secret_free_and_auto_resolves_release(tmp_path: Path) -> None:
     first = resolve_phase01_config(
         CONFIG_DIR,
@@ -150,13 +173,13 @@ def test_resolved_config_is_stable_secret_free_and_auto_resolves_release(tmp_pat
     assert len(first.config_hash) == 64
     assert first.payload["runtime"]["release_id"] == "canonical_release_v001"
     assert first.payload["runtime"]["release_id_source"] == "phase00_auto_resolve"
-    assert first.production_ready is False
-    assert first.unresolved_required_fields == ("models.shot_detection.weights_sha256",)
+    assert first.production_ready is True
+    assert first.unresolved_required_fields == ()
 
     output = persist_resolved_phase01_config(first, tmp_path / "resolved_config.json")
     persisted = json.loads(output.read_text(encoding="utf-8"))
     assert persisted["config_hash"] == first.config_hash
-    assert persisted["production_ready"] is False
+    assert persisted["production_ready"] is True
     assert persisted["storage"]["release"]["repo_id"] == "org/release"
     assert set(persisted["stage_config_hashes"]) == set(
         first.payload["phase01"]["stages"]["order"]
@@ -243,9 +266,21 @@ def test_resolved_config_rejects_pipeline_or_provider_selectors(forbidden_key: s
         )
 
 
-def test_production_readiness_lists_missing_authority_instead_of_guessing() -> None:
+def test_production_readiness_lists_missing_authority_instead_of_guessing(
+    tmp_path: Path,
+) -> None:
+    temp_config_dir = tmp_path / "configs"
+    shutil.copytree(CONFIG_DIR, temp_config_dir)
+    models_yaml = temp_config_dir / "models.yaml"
+    models_yaml.write_text(
+        models_yaml.read_text(encoding="utf-8").replace(
+            "weights_sha256: 834b10f25ae9e1b4e4f2652fe2843bd2b1388057a435d68b7c52635578fcc04d",
+            "weights_sha256: null",
+        ),
+        encoding="utf-8",
+    )
     resolved = resolve_phase01_config(
-        CONFIG_DIR,
+        temp_config_dir,
         user_settings=user_settings(),
         phase00_release_id="canonical_release_v001",
         environment="local",

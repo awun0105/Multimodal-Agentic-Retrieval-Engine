@@ -17,9 +17,13 @@ class CandidateQuality:
     frame_id: int
     role: str
     target_frame: float
+    target_distance: float | None
     quality_score: float
     valid: bool
     invalid_reason: str | None
+    mean_luma: float | None
+    black_ratio: float | None
+    white_ratio: float | None
 
 
 @dataclass(frozen=True)
@@ -223,7 +227,18 @@ def evaluate_candidate(
     quality_config: Mapping[str, Any],
 ) -> CandidateQuality:
     if frame is None or frame.ndim != 3 or frame.shape[2] < 3:
-        return CandidateQuality(frame_id, role, target_frame, 0.0, False, "decode_failure")
+        return CandidateQuality(
+            frame_id,
+            role,
+            target_frame,
+            None,
+            0.0,
+            False,
+            "decode_failure",
+            None,
+            None,
+            None,
+        )
     preview = np.asarray(
         Image.fromarray(frame[:, :, :3].astype(np.uint8), "RGB").resize(
             (int(quality_config["resize_width"]), int(quality_config["resize_height"])),
@@ -232,12 +247,36 @@ def evaluate_candidate(
         dtype=np.float32,
     )
     luma = 0.2126 * preview[:, :, 0] + 0.7152 * preview[:, :, 1] + 0.0722 * preview[:, :, 2]
+    mean_luma = float(np.mean(luma))
     black_ratio = float(np.mean(luma <= float(quality_config["near_black_luma_threshold"])))
     white_ratio = float(np.mean(luma >= float(quality_config["near_white_luma_threshold"])))
+    target_distance = abs(float(frame_id) - float(target_frame))
     if black_ratio >= float(quality_config["near_black_pixel_ratio_threshold"]):
-        return CandidateQuality(frame_id, role, target_frame, 0.0, False, "near_black")
+        return CandidateQuality(
+            frame_id,
+            role,
+            target_frame,
+            target_distance,
+            0.0,
+            False,
+            "near_black",
+            mean_luma,
+            black_ratio,
+            white_ratio,
+        )
     if white_ratio >= float(quality_config["near_white_pixel_ratio_threshold"]):
-        return CandidateQuality(frame_id, role, target_frame, 0.0, False, "near_white")
+        return CandidateQuality(
+            frame_id,
+            role,
+            target_frame,
+            target_distance,
+            0.0,
+            False,
+            "near_white",
+            mean_luma,
+            black_ratio,
+            white_ratio,
+        )
     center = luma[1:-1, 1:-1]
     laplacian = (
         luma[:-2, 1:-1]
@@ -247,7 +286,18 @@ def evaluate_candidate(
         - 4.0 * center
     )
     sharpness = float(np.var(laplacian))
-    return CandidateQuality(frame_id, role, target_frame, sharpness, True, None)
+    return CandidateQuality(
+        frame_id,
+        role,
+        target_frame,
+        target_distance,
+        sharpness,
+        True,
+        None,
+        mean_luma,
+        black_ratio,
+        white_ratio,
+    )
 
 
 def write_keyframe_images(

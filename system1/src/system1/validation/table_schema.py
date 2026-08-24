@@ -32,6 +32,12 @@ class ColumnRequirement:
 
 
 @dataclass(frozen=True)
+class ValueRequirement:
+    column: str
+    allowed_values: tuple[Any, ...]
+
+
+@dataclass(frozen=True)
 class TableSchemaSpec:
     table_name: str
     relative_path: Path
@@ -43,6 +49,7 @@ class TableSchemaSpec:
     integer_columns: tuple[ColumnRequirement, ...] = ()
     text_columns: tuple[ColumnRequirement, ...] = ()
     non_empty_text_columns: tuple[ColumnRequirement, ...] = ()
+    value_columns: tuple[ValueRequirement, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -148,11 +155,42 @@ TABLE_SCHEMA_SPECS: tuple[TableSchemaSpec, ...] = (
         "asr_segments",
         Path("tables/asr_segments.parquet"),
         True,
-        (column("asr_segment_id"), column("video_id"), any_column("start_sec", "start_seconds"), any_column("end_sec", "end_seconds"), column("text")),
-        non_null_columns=(column("asr_segment_id"), column("video_id")),
+        (
+            column("asr_segment_id"),
+            column("video_id"),
+            column("start_sec"),
+            column("end_sec"),
+            column("start_frame"),
+            column("end_frame"),
+            column("text"),
+            column("language"),
+            column("confidence"),
+            column("avg_logprob"),
+            column("no_speech_prob"),
+            column("provider"),
+            column("model_name"),
+            column("model_version"),
+            column("status"),
+        ),
+        non_null_columns=(
+            column("asr_segment_id"),
+            column("video_id"),
+            column("start_sec"),
+            column("end_sec"),
+            column("text"),
+            column("provider"),
+            column("model_name"),
+            column("model_version"),
+            column("status"),
+        ),
         unique_keys=((column("asr_segment_id"),),),
-        numeric_columns=(any_column("start_sec", "start_seconds"), any_column("end_sec", "end_seconds")),
-        text_columns=(column("asr_segment_id"), column("video_id"), column("text")),
+        numeric_columns=(column("start_sec"), column("end_sec"), column("confidence"), column("avg_logprob"), column("no_speech_prob")),
+        text_columns=(column("asr_segment_id"), column("video_id"), column("text"), column("language"), column("provider"), column("model_name"), column("model_version"), column("status")),
+        non_empty_text_columns=(column("text"), column("provider"), column("model_name"), column("model_version"), column("status")),
+        value_columns=(
+            ValueRequirement("provider", ("faster_whisper", "nemo")),
+            ValueRequirement("status", ("pass",)),
+        ),
     ),
     TableSchemaSpec(
         "shot_transcript_links",
@@ -332,9 +370,37 @@ def validate_table_schema(table_name: str, dataframe: pd.DataFrame, spec: TableS
     errors.extend(validate_required_columns(table_name, dataframe, spec.required_columns))
     errors.extend(validate_non_null_columns(table_name, dataframe, spec.non_null_columns))
     errors.extend(validate_non_empty_text_columns(table_name, dataframe, spec.non_empty_text_columns))
+    errors.extend(validate_column_values(table_name, dataframe, spec.value_columns))
     for key_columns in spec.unique_keys:
         errors.extend(validate_unique_key(table_name, dataframe, key_columns))
     errors.extend(validate_column_types(table_name, dataframe, spec))
+    return errors
+
+
+def validate_column_values(
+    table_name: str,
+    dataframe: pd.DataFrame,
+    value_columns: tuple[ValueRequirement, ...],
+) -> list[str]:
+    errors: list[str] = []
+    for requirement in value_columns:
+        if requirement.column not in dataframe.columns:
+            continue
+        allowed = set(requirement.allowed_values)
+        invalid = sorted(
+            {
+                str(value)
+                for value in dataframe[requirement.column].dropna().tolist()
+                if value not in allowed
+            }
+        )
+        if invalid:
+            allowed_label = ", ".join(str(value) for value in requirement.allowed_values)
+            invalid_label = ", ".join(invalid)
+            errors.append(
+                f"schema validation: {table_name}.{requirement.column} has invalid values "
+                f"{invalid_label}; allowed: {allowed_label}"
+            )
     return errors
 
 
@@ -409,11 +475,19 @@ def validate_column_types(table_name: str, dataframe: pd.DataFrame, spec: TableS
     errors: list[str] = []
     for requirement in spec.integer_columns:
         column_name = requirement.resolve(columns)
-        if column_name is not None and not is_integer_dtype(dataframe[column_name]):
+        if (
+            column_name is not None
+            and not dataframe[column_name].dropna().empty
+            and not is_integer_dtype(dataframe[column_name])
+        ):
             errors.append(f"schema validation: {table_name}.{column_name} must be integer dtype")
     for requirement in spec.numeric_columns:
         column_name = requirement.resolve(columns)
-        if column_name is not None and not is_numeric_dtype(dataframe[column_name]):
+        if (
+            column_name is not None
+            and not dataframe[column_name].dropna().empty
+            and not is_numeric_dtype(dataframe[column_name])
+        ):
             errors.append(f"schema validation: {table_name}.{column_name} must be numeric dtype")
     for requirement in spec.text_columns:
         column_name = requirement.resolve(columns)

@@ -41,7 +41,7 @@ official video
   -> TransNet V2 shot detection
   -> early/middle/late keyframes from bands centered at 20%/50%/80%
   -> deterministic representative-keyframe selection
-  -> faster-whisper large-v3 ASR with automatic language and VAD
+  -> default faster-whisper large-v3 ASR, or optional pinned NeMo/Parakeet Vietnamese ASR
   -> Gemini strict bilingual caption JSON, one response per shot
   -> ASR-to-shot alignment
   -> multimodal context-focus scene grouping
@@ -98,12 +98,28 @@ required deterministic value is unresolved.
 Production uses TransNet V2 only.
 
 Runtime consumes a project-owned PyTorch artifact created once by
-`scripts/prepare_transnetv2_artifact.py`. The preparation job checks out the
-pinned official upstream commit, runs the official TensorFlow-to-PyTorch
-converter and its parity tests, then emits the source/weight checksums. Workers
-download and validate that immutable bundle; they never convert weights.
-Production readiness intentionally fails while the generated weight checksum
-is absent from `configs/models.yaml`.
+`scripts/prepare_transnetv2_artifact.py`. The preferred canonical preparation
+job checks out the pinned official upstream commit, runs the official
+TensorFlow-to-PyTorch converter and its parity tests, then emits the
+source/weight checksums. Workers download and validate that immutable bundle;
+they never convert weights.
+
+When upstream `soCzech/TransNetV2` is blocked by GitHub LFS quota, the
+preparation script also supports an explicit mirror-based unblock path. That
+path still copies the PyTorch source from the pinned official commit and
+verifies the source SHA-256, but downloads preconverted PyTorch weights from a
+declared Hugging Face mirror and verifies the expected weights SHA-256. Mirror
+artifacts must declare `artifact_origin=preconverted_huggingface_mirror` and
+`conversion_verified=false`; runtime accepts them only when
+`configs/models.yaml` intentionally sets `conversion_verified: false`.
+Production readiness intentionally fails while the generated weight checksum is
+absent from `configs/models.yaml`.
+
+The default artifact location is the configured model-artifact store:
+`1thesudden/AIC26_checkpoints` under
+`model_artifacts/transnetv2/85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed/`.
+Public and private checkpoint datasets are both supported; the preparation
+script enforces private storage only when run with `--require-private`.
 
 - A successful inference with no detected transition is valid: emit one shot
   covering the complete decoded video with a successful
@@ -185,10 +201,13 @@ policy without retaining all full-resolution candidates for a long video.
 Production ASR configuration:
 
 ```text
-provider = faster-whisper
-model = large-v3
-language = auto
-VAD = enabled
+default provider = faster-whisper
+default model = large-v3
+default language = auto
+default VAD = enabled
+optional provider = nemo
+optional model = nvidia/parakeet-ctc-0.6b-Vietnamese at revision ac8e8de
+optional segmentation = FFmpeg silence detection with bounded max segment length
 ```
 
 ASR runs for every video.
@@ -411,11 +430,11 @@ independent retrieval indexes.
 - Worker reports and `errors.jsonl` distinguish failed, no-audio/no-speech, and
   successful-empty states.
 
-Notebook 01 processes one video at a time. TransNet and faster-whisper do not
-remain resident together; after each GPU-heavy stage package code drops model
-and tensor references, runs garbage collection, and clears unused CUDA cache.
-Model weights may remain in the runtime's Hugging Face cache, which is separate
-from persistent stage checkpoints.
+Notebook 01 processes one video at a time. TransNet and the selected ASR model
+do not remain resident together; after each GPU-heavy stage package code drops
+model and tensor references, runs garbage collection, and clears unused CUDA
+cache. Model weights may remain in the runtime's Hugging Face cache, which is
+separate from persistent stage checkpoints.
 
 Raw-media downloads, Phase00 restore, checkpoint restore/verification,
 model-artifact downloads, and release checksum verification use bounded caches

@@ -25,6 +25,7 @@ REQUIRED_CONFIGS = (
 
 _PHASE01_USER_SETTING_KEYS = {
     "batch_id",
+    "asr_provider",
     "checkpoint_prefix",
     "checkpoint_revision",
     "hf_checkpoint_repo",
@@ -244,6 +245,9 @@ def resolve_phase01_config(
             "worker_id": str(normalized_settings["worker_id"]),
         },
     }
+    asr_provider = str(normalized_settings.get("asr_provider") or "").strip()
+    if asr_provider:
+        _apply_phase01_asr_provider(payload, asr_provider)
     required_paths = payload["phase01"].get("production_readiness", {}).get(
         "required_non_null_paths", []
     )
@@ -356,3 +360,13 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
 
 def _provider_keys() -> tuple[str, ...]:
     return ("asr", "ocr", "embedding", "object_detection", "shot_caption", "scene_summary")
+
+
+def _apply_phase01_asr_provider(payload: dict[str, Any], provider: str) -> None:
+    providers = payload["models"].get("asr_providers", {})
+    if provider not in providers:
+        available = ", ".join(sorted(providers)) or "none"
+        raise ValueError(
+            f"unsupported Phase01 ASR provider override: {provider}; available: {available}"
+        )
+    payload["models"]["asr"] = copy.deepcopy(providers[provider])

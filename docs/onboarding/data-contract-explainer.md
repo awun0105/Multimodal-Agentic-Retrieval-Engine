@@ -729,8 +729,8 @@ Mỗi dòng là một đoạn transcript theo time range của video.
 | `start_sec` | thời gian bắt đầu | `840.00` |
 | `end_sec` | thời gian kết thúc | `845.00` |
 | `text` | nội dung transcript | `The red bus is arriving.` |
-| `provider` | ASR engine | `faster-whisper` |
-| `model_name` | ASR model | `large-v3` |
+| `provider` | ASR engine | `faster_whisper` hoặc `nemo` |
+| `model_name` | ASR model | `Systran/faster-whisper-large-v3` |
 
 Ví dụ một dòng:
 
@@ -741,8 +741,8 @@ Ví dụ một dòng:
   "start_sec": 840.0,
   "end_sec": 845.0,
   "text": "The red bus is arriving.",
-  "provider": "faster-whisper",
-  "model_name": "large-v3"
+  "provider": "faster_whisper",
+  "model_name": "Systran/faster-whisper-large-v3"
 }
 ```
 

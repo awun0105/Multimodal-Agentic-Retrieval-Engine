@@ -149,6 +149,11 @@ def register(app: typer.Typer) -> None:
     def process_batch(
         batch_id: str = typer.Option(..., "--batch-id"),
         worker_id: str = typer.Option("worker_000", "--worker-id"),
+        asr_provider: str | None = typer.Option(
+            None,
+            "--asr-provider",
+            help="Optional Phase01 ASR provider override from models.yaml.",
+        ),
         release_id_override: str | None = typer.Option(None, "--release-id-override"),
         hf_checkpoint_repo: str | None = typer.Option(None, "--hf-checkpoint-repo"),
         checkpoint_revision: str | None = typer.Option(None, "--checkpoint-revision"),
@@ -188,6 +193,7 @@ def register(app: typer.Typer) -> None:
             user_settings = {
                 "batch_id": batch_id,
                 "worker_id": worker_id,
+                "asr_provider": asr_provider,
                 "release_id_override": release_id_override,
                 "hf_release_repo": hf_repo_id,
                 "hf_repo_type": hf_repo_type,
