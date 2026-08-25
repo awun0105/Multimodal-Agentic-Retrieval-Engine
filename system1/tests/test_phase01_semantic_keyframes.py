@@ -151,7 +151,7 @@ def test_changed_nominal_middle_seed_can_become_supplemental(
 ) -> None:
     config = keyframe_config()
     timeline = [
-        {"frame_id": frame_id, "pts_time": frame_id * 0.02} for frame_id in range(101)
+        {"frame_id": frame_id, "pts_time": frame_id * 0.2} for frame_id in range(101)
     ]
     shot = {"shot_id": "v_SH00000", "start_frame": 0, "end_frame": 101}
     plan = temporal_probe_plan_for_shot(shot, timeline, config)
@@ -210,7 +210,7 @@ def test_changed_nominal_middle_seed_can_become_supplemental(
 def test_coverage_seed_matching_actual_anchor_is_not_duplicated(monkeypatch) -> None:
     config = keyframe_config()
     timeline = [
-        {"frame_id": frame_id, "pts_time": frame_id * 0.02} for frame_id in range(101)
+        {"frame_id": frame_id, "pts_time": frame_id * 0.2} for frame_id in range(101)
     ]
     shot = {"shot_id": "v_SH00000", "start_frame": 0, "end_frame": 101}
     plan = temporal_probe_plan_for_shot(shot, timeline, config)
@@ -332,7 +332,50 @@ def test_short_shot_does_not_create_unnecessary_probes() -> None:
     )
 
     assert plan.probes == ()
+    assert plan.coverage_seeds == ()
+    assert plan.semantic_candidates == ()
     assert plan.coverage_cap_reached is False
+
+
+def test_short_shot_does_not_evaluate_novel_coverage_seeds(monkeypatch) -> None:
+    config = keyframe_config()
+    timeline = [
+        {"frame_id": frame_id, "pts_time": frame_id * 0.04} for frame_id in range(8)
+    ]
+    shot = {"shot_id": "v_SH00000", "start_frame": 0, "end_frame": 8}
+    plan = temporal_probe_plan_for_shot(shot, timeline, config)
+    actual_anchors = [
+        SelectedKeyframe(1, "early", 10.0, False, "anchor"),
+        SelectedKeyframe(3, "middle", 10.0, True, "anchor"),
+        SelectedKeyframe(6, "late", 10.0, False, "anchor"),
+    ]
+    signal_calls: list[int] = []
+
+    def maximally_novel_signals(*, frame_id, timestamp_sec, **_kwargs):
+        signal_calls.append(frame_id)
+        return semantic._FrameSignals(
+            frame_id=frame_id,
+            timestamp_sec=timestamp_sec,
+            visual_hash=np.ones(64, dtype=bool),
+            text_signal=TextSignal(True, np.ones(64, dtype=bool), 64),
+            signal_errors=(),
+        )
+
+    monkeypatch.setattr(semantic, "_frame_signals", maximally_novel_signals)
+    supplemental, diagnostics = select_supplemental_keyframes(
+        shot=shot,
+        anchors=actual_anchors,
+        probe_plan=plan,
+        decoded_frames={frame_id: frame() for frame_id in range(8)},
+        timestamp_by_frame={
+            int(item["frame_id"]): float(item["pts_time"]) for item in timeline
+        },
+        config=config,
+    )
+
+    assert supplemental == []
+    assert diagnostics == []
+    assert signal_calls == []
 
 
 def test_probe_cap_is_best_effort_and_reports_uncovered_gap() -> None:
