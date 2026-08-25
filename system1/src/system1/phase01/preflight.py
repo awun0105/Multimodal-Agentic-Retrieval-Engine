@@ -18,6 +18,13 @@ from system1.config import ResolvedPhase01Config, require_phase01_production_rea
 from system1.shots import load_transnet_artifact
 
 
+_EXPECTED_TORCH_STACK = {
+    "torch": "2.8.0",
+    "torchaudio": "2.8.0",
+    "torchvision": "0.23.0",
+}
+
+
 @dataclass(frozen=True)
 class PreflightResult:
     environment: str
@@ -97,6 +104,8 @@ def run_phase01_preflight(
         "opencv-python-headless",
         "pillow",
         "psutil",
+        "torchaudio",
+        "torchvision",
     ):
         try:
             versions[package] = importlib.metadata.version(package)
@@ -110,6 +119,21 @@ def run_phase01_preflight(
         cuda_available = bool(torch.cuda.is_available())
     except ImportError:
         versions["torch"] = "missing"
+    for torch_package in ("torchaudio", "torchvision"):
+        try:
+            module = importlib.import_module(torch_package)
+            versions[torch_package] = str(module.__version__)
+        except (ImportError, OSError) as exc:
+            raise RuntimeError(
+                f"{torch_package} could not initialize; check PyTorch stack ABI compatibility"
+            ) from exc
+    for torch_package, expected_version in _EXPECTED_TORCH_STACK.items():
+        actual_version = versions.get(torch_package, "missing").split("+")[0]
+        if actual_version != expected_version:
+            raise RuntimeError(
+                f"Installed {torch_package} version {actual_version} differs from "
+                f"required {expected_version}"
+            )
     expected = config.payload["models"]
     asr_model = expected["asr"]
     asr_provider = str(asr_model.get("provider", "nemo"))
@@ -121,7 +145,7 @@ def run_phase01_preflight(
             raise RuntimeError("Installed nemo-toolkit version differs from resolved config")
         try:
             importlib.import_module("nemo.collections.asr")
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (ImportError, AttributeError, RuntimeError, OSError) as exc:
             raise RuntimeError(
                 "nemo_toolkit[asr] could not initialize for configured NeMo ASR"
             ) from exc
