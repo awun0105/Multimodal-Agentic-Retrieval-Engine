@@ -1091,3 +1091,32 @@ def test_qwen_loader_sets_left_padding(monkeypatch) -> None:
     processor = captured["processor"]
 
     assert processor.tokenizer.padding_side == "left"
+
+def test_qwen_cache_identity_includes_padding_side() -> None:
+    client_left = LocalVisionStructuredClient(
+        model_config={
+            "provider": "qwen_local",
+            "model_id": "qwen",
+            "model_revision": "revision",
+            "padding_side": "left",
+        }
+    )
+    client_right = LocalVisionStructuredClient(
+        model_config={
+            "provider": "qwen_local",
+            "model_id": "qwen",
+            "model_revision": "revision",
+            "padding_side": "right",
+        }
+    )
+    request = GeminiRequest(
+        request_kind="test",
+        video_id="video",
+        prompt="prompt",
+        prompt_version="1",
+        response_schema_version="1",
+        response_schema={},
+    )
+    hash_left = client_left._request_hash(request)
+    hash_right = client_right._request_hash(request)
+    assert hash_left != hash_right

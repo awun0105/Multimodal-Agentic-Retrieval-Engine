@@ -1806,7 +1806,6 @@ def _build_captions(
             "actions_en": {"type": "array", "items": {"type": "string"}},
             "visible_text_summary_vi": {"type": "string"},
             "visible_text_summary_en": {"type": "string"},
-            "scene_type": {"type": "string"},
         },
         "required": [
             "caption_vi",
@@ -1817,7 +1816,6 @@ def _build_captions(
             "actions_en",
             "visible_text_summary_vi",
             "visible_text_summary_en",
-            "scene_type",
         ],
         "additionalProperties": False,
     }
@@ -1871,7 +1869,6 @@ def _build_captions(
             "actions_en": _string_list(response, "actions_en"),
             "visible_text_summary_vi": str(response.get("visible_text_summary_vi", "")),
             "visible_text_summary_en": str(response.get("visible_text_summary_en", "")),
-            "scene_type": str(response.get("scene_type", "")),
             "provider": provider, "model_name": model_name,
             "model_version": model_version, "prompt_version": model_config["prompt_version"],
             "schema_version": model_config["response_schema_version"], "confidence": None, "status": "pass",

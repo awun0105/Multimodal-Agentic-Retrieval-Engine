@@ -527,6 +527,7 @@ def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:
         "trust_remote_code",
         "torch_dtype",
         "device_map",
+        "padding_side",
         "quantization",
         "low_cpu_mem_usage",
         "use_fast_tokenizer",

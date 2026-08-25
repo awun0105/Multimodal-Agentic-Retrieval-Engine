@@ -270,7 +270,6 @@ TABLE_SCHEMA_SPECS: tuple[TableSchemaSpec, ...] = (
             column("actions_en"),
             column("visible_text_summary_vi"),
             column("visible_text_summary_en"),
-            column("scene_type"),
             column("provider"),
             column("model_name"),
             column("model_version"),
@@ -281,7 +280,7 @@ TABLE_SCHEMA_SPECS: tuple[TableSchemaSpec, ...] = (
         non_null_columns=(column("shot_caption_id"), column("shot_id"), column("video_id"), column("representative_keyframe_id"), column("caption_vi"), column("caption_en")),
         unique_keys=((column("shot_caption_id"),), (column("shot_id"),)),
         numeric_columns=(column("representative_timestamp_sec"),),
-        text_columns=(column("shot_caption_id"), column("shot_id"), column("video_id"), column("representative_keyframe_id"), column("caption_vi"), column("caption_en"), column("visible_text_summary_vi"), column("visible_text_summary_en"), column("scene_type"), column("provider"), column("model_name"), column("model_version"), column("prompt_version"), column("schema_version"), column("status")),
+        text_columns=(column("shot_caption_id"), column("shot_id"), column("video_id"), column("representative_keyframe_id"), column("caption_vi"), column("caption_en"), column("visible_text_summary_vi"), column("visible_text_summary_en"), column("provider"), column("model_name"), column("model_version"), column("prompt_version"), column("schema_version"), column("status")),
         non_empty_text_columns=(column("caption_vi"), column("caption_en")),
     ),
     TableSchemaSpec(

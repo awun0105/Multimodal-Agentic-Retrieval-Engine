@@ -132,7 +132,7 @@ schemas:
   keyframes: keyframes_v3
   asr_segments: asr_segments_v1
   ocr: ocr_v2
-  shot_captions: shot_captions_v2
+  shot_captions: shot_captions_v3
   shot_transcript_links: shot_transcript_links_v1
   scenes: scenes_v1
   scene_transcript_links: scene_transcript_links_v1

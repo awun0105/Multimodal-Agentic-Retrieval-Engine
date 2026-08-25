@@ -121,7 +121,6 @@ def write_valid_schema_release(release_dir: Path) -> None:
                 "actions_en": ["standing"],
                 "visible_text_summary_vi": "",
                 "visible_text_summary_en": "",
-                "scene_type": "news",
                 "provider": "qwen_local",
                 "model_name": "fixture-qwen",
                 "model_version": "fixture",

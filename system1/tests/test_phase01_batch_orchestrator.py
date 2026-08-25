@@ -70,7 +70,6 @@ class FakeLocalStructuredClient:
                 "actions_en": [],
                 "visible_text_summary_vi": "",
                 "visible_text_summary_en": "",
-                "scene_type": "unknown",
             }
         if request.request_kind == "scene_summary":
             return {"summary_vi": "Một cảnh", "summary_en": "A scene"}
@@ -132,7 +131,6 @@ class ChunkLocalStructuredClient:
                 "actions_en": [],
                 "visible_text_summary_vi": "",
                 "visible_text_summary_en": "",
-                "scene_type": "unknown",
             }
         if request.request_kind == "scene_summary":
             return {"summary_vi": "Một cảnh", "summary_en": "A scene"}
