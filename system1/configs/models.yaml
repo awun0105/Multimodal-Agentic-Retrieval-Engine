@@ -96,6 +96,7 @@ phase01:
     trust_remote_code: false
     torch_dtype: float16
     device_map: cuda
+    padding_side: left
     structured_output_contract_version: json_schema_prompt_v1
     quantization:
       method: bitsandbytes
@@ -105,7 +106,7 @@ phase01:
       compute_dtype: float16
       double_quant: true
     prompt_version: shot_caption_v2
-    response_schema_version: shot_caption_response_v2
+    response_schema_version: shot_caption_response_v3
     max_new_tokens: 768
     fallbacks:
       - provider: gemini
@@ -115,7 +116,7 @@ phase01:
         model_revision: gemini-3.6-flash
         thinking_level: medium
         prompt_version: shot_caption_v2
-        response_schema_version: shot_caption_response_v2
+        response_schema_version: shot_caption_response_v3
 
   scene_boundary:
     provider: qwen_local

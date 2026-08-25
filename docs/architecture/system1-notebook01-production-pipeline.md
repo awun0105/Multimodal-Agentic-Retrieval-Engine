@@ -279,9 +279,9 @@ gate counts and failures stay in diagnostics. Thresholds are versioned in
 
 Each shot has exactly one caption row generated from its selected
 representative keyframe. Qwen2.5-VL-7B-Instruct is primary and must return
-strict `shot_caption_response_v2` JSON including bilingual captions,
+strict `shot_caption_response_v3` JSON including bilingual captions,
 objects/actions, visible-text summary, and scene type. The caption rows retain
-the canonical `shot_captions_v2` contract.
+the canonical `shot_captions_v3` contract.
 
 ```json
 {
@@ -292,8 +292,7 @@ the canonical `shot_captions_v2` contract.
   "actions_vi": ["..."],
   "actions_en": ["..."],
   "visible_text_summary_vi": "...",
-  "visible_text_summary_en": "...",
-  "scene_type": "..."
+  "visible_text_summary_en": "..."
 }
 ```
 
@@ -309,8 +308,16 @@ video_id
 shot_id
 representative_keyframe_id
 representative_timestamp_sec
+
 caption_vi
 caption_en
+objects_vi
+objects_en
+actions_vi
+actions_en
+visible_text_summary_vi
+visible_text_summary_en
+
 provider
 model_name
 model_version

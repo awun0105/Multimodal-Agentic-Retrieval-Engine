@@ -2366,9 +2366,11 @@ Output:
 shot_captions.parquet
 ```
 
-Phase01 creates exactly one canonical bilingual caption row per shot from that
-shot's representative keyframe. Gemini must return strict JSON containing only
-non-empty `caption_vi` and `caption_en` strings. All frames/keyframes in the
+Phase01 creates exactly one canonical caption row per shot from that
+shot's representative keyframe. The VLM must return strict JSON containing
+`caption_vi`, `caption_en`, `objects_vi`, `objects_en`, `actions_vi`,
+`actions_en`, `visible_text_summary_vi`, and `visible_text_summary_en`.
+All frames/keyframes in the
 shot use the same row by joining
 `keyframes.shot_id -> shot_captions.shot_id`. Do not create per-keyframe
 captions as the canonical Phase01 scene input, and do not defer canonical shot
@@ -2386,6 +2388,12 @@ representative_keyframe_id
 representative_timestamp_sec
 caption_vi
 caption_en
+objects_vi
+objects_en
+actions_vi
+actions_en
+visible_text_summary_vi
+visible_text_summary_en
 provider
 model_name
 model_version

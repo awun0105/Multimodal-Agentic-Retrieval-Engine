@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "shot_captions_v2",
+  "title": "shot_captions_v3",
   "type": "object",
   "required": [
     "shot_caption_id",
@@ -16,7 +16,6 @@
     "actions_en",
     "visible_text_summary_vi",
     "visible_text_summary_en",
-    "scene_type",
     "provider",
     "model_name",
     "model_version",
@@ -39,7 +38,6 @@
     "actions_en": {"type": "array", "items": {"type": "string"}},
     "visible_text_summary_vi": {"type": "string"},
     "visible_text_summary_en": {"type": "string"},
-    "scene_type": {"type": "string"},
     "provider": {"enum": ["qwen_local", "vintern_local", "gemini"]},
     "model_name": {"type": "string", "minLength": 1},
     "model_version": {"type": "string", "minLength": 1},

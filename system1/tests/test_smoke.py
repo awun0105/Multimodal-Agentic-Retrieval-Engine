@@ -1027,7 +1027,6 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "actions_en",
         "visible_text_summary_vi",
         "visible_text_summary_en",
-        "scene_type",
         "provider",
         "model_name",
         "model_version",

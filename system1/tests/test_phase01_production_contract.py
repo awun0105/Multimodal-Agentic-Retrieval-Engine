@@ -115,6 +115,18 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     assert models["phase01"]["scene_summary"]["provider"] == "qwen_local"
     assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
 
+    assert (
+        phase01["schemas"]["shot_captions"]
+        == "shot_captions_v3"
+    )
+
+    assert (
+        models["phase01"]["shot_caption"][
+            "response_schema_version"
+        ]
+        == "shot_caption_response_v3"
+    )
+
 
 @pytest.mark.parametrize(
     ("field", "value"),
@@ -332,7 +344,6 @@ def test_build_captions_submits_all_shots_through_request_many(
                     "actions_en": [],
                     "visible_text_summary_vi": "",
                     "visible_text_summary_en": "",
-                    "scene_type": "unknown",
                     "__provider": "qwen_local",
                     "__model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
                     "__model_revision": "revision",
@@ -816,12 +827,12 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "representative_timestamp_sec": 0.0, "caption_vi": "Một cảnh",
             "caption_en": "A scene", "objects_vi": ["cảnh"], "objects_en": ["scene"],
             "actions_vi": [], "actions_en": [], "visible_text_summary_vi": "",
-            "visible_text_summary_en": "", "scene_type": "unknown",
+            "visible_text_summary_en": "",
             "provider": "qwen_local",
             "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
             "model_version": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
             "prompt_version": "shot_caption_v2",
-            "schema_version": "shot_caption_response_v2", "confidence": None,
+            "schema_version": "shot_caption_response_v3", "confidence": None,
             "status": "pass",
         }],
         "scenes": [{
@@ -870,3 +881,21 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
     assert (artifact / "errors.jsonl").read_text(encoding="utf-8") == ""
     assert pd.read_parquet(artifact / "shots.parquet").iloc[0]["scene_id"] == scene_id
     assert pd.read_parquet(artifact / "scenes.parquet").iloc[0]["keyframe_count"] == 2
+
+def test_shared_semantic_runtime_rejects_padding_side_drift() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+
+    resolved.payload["models"]["scene_summary"][
+        "padding_side"
+    ] = "right"
+
+    with pytest.raises(
+        ValueError,
+        match="shared semantic runtime mismatch",
+    ):
+        require_phase01_production_ready(resolved)
