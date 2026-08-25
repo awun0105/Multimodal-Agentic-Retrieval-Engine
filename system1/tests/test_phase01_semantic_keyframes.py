@@ -4,16 +4,27 @@ from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from system1.config import load_configs
-from system1.keyframes import SelectedKeyframe, semantic
+from system1.keyframes import (
+    SelectedKeyframe,
+    candidate_frame_ids_for_shot,
+    select_keyframes_for_shot,
+    semantic,
+)
 from system1.keyframes.semantic import (
     TemporalProbe,
     TemporalProbePlan,
     select_supplemental_keyframes,
     temporal_probe_plan_for_shot,
 )
-from system1.keyframes.signals import TextSignal, difference_hash_distance
+from system1.keyframes.signals import (
+    TextSignal,
+    difference_hash_distance,
+    text_jaccard_distance,
+)
+from system1.phase01 import production
 
 CONFIG_DIR = Path(__file__).parents[1] / "configs"
 
@@ -28,11 +39,24 @@ def frame(value: int = 127) -> np.ndarray:
     return image
 
 
+def checkerboard(size: int = 64) -> np.ndarray:
+    grid = np.indices((size, size)).sum(axis=0) % 2
+    return np.repeat((grid * 255).astype(np.uint8)[:, :, None], 3, axis=2)
+
+
 def anchors() -> list[SelectedKeyframe]:
     return [
         SelectedKeyframe(0, "early", 10.0, False, "anchor"),
         SelectedKeyframe(10, "middle", 10.0, True, "anchor"),
         SelectedKeyframe(20, "late", 10.0, False, "anchor"),
+    ]
+
+
+def anchors_for_long_shot() -> list[SelectedKeyframe]:
+    return [
+        SelectedKeyframe(20, "early", 10.0, False, "anchor"),
+        SelectedKeyframe(50, "middle", 10.0, True, "anchor"),
+        SelectedKeyframe(80, "late", 10.0, False, "anchor"),
     ]
 
 
@@ -42,6 +66,16 @@ def test_dhash_distance_is_normalized_by_exact_bit_count() -> None:
     right[:16] = True
 
     assert difference_hash_distance(left, right) == 0.25
+
+
+def test_text_jaccard_distance_primitive() -> None:
+    signature = np.array([True, True, False, False])
+    overlap = np.array([True, False, True, False])
+    empty = np.zeros(4, dtype=bool)
+
+    assert text_jaccard_distance(signature, signature) == 0.0
+    assert text_jaccard_distance(signature, overlap) == pytest.approx(2.0 / 3.0)
+    assert text_jaccard_distance(empty, empty) == 0.0
 
 
 def test_vfr_probe_uses_pts_time_instead_of_frame_midpoint() -> None:
@@ -110,6 +144,179 @@ def test_probe_coverage_seeds_include_safe_interior_edges() -> None:
     )
 
     assert {probe.frame_id for probe in plan.probes} == {12, 35, 65, 87}
+
+
+def test_changed_nominal_middle_seed_can_become_supplemental(
+    monkeypatch,
+) -> None:
+    config = keyframe_config()
+    timeline = [
+        {"frame_id": frame_id, "pts_time": frame_id * 0.02} for frame_id in range(101)
+    ]
+    shot = {"shot_id": "v_SH00000", "start_frame": 0, "end_frame": 101}
+    plan = temporal_probe_plan_for_shot(shot, timeline, config)
+    candidate_ids = {
+        frame_id
+        for role_ids in candidate_frame_ids_for_shot(shot, config).values()
+        for frame_id in role_ids
+    } | {item.frame_id for item in plan.semantic_candidates}
+    decoded = {frame_id: frame(100) for frame_id in candidate_ids}
+    decoded[45] = checkerboard()
+    decoded[50] = np.full((64, 64, 3), 100, dtype=np.uint8)
+    selected_anchors, _diagnostics = select_keyframes_for_shot(shot, decoded, config)
+    assert (
+        next(item.frame_id for item in selected_anchors if item.role == "middle") == 45
+    )
+
+    visual = np.zeros(64, dtype=bool)
+    default_text = np.array([True, False, True, False])
+    changed_text = np.array([False, True, False, True])
+
+    def signals(*, frame_id, timestamp_sec, **_kwargs):
+        return semantic._FrameSignals(
+            frame_id=frame_id,
+            timestamp_sec=timestamp_sec,
+            visual_hash=visual,
+            text_signal=TextSignal(
+                True,
+                changed_text if frame_id == 50 else default_text,
+                2,
+            ),
+            signal_errors=(),
+        )
+
+    monkeypatch.setattr(semantic, "_frame_signals", signals)
+    supplemental, supplemental_diagnostics = select_supplemental_keyframes(
+        shot=shot,
+        anchors=selected_anchors,
+        probe_plan=plan,
+        decoded_frames=decoded,
+        timestamp_by_frame={
+            int(item["frame_id"]): float(item["pts_time"]) for item in timeline
+        },
+        config=config,
+    )
+
+    assert [(item.frame_id, item.selection_reason) for item in supplemental] == [
+        (50, "text_change")
+    ]
+    middle_seed = next(
+        item for item in supplemental_diagnostics if item["frame_id"] == 50
+    )
+    assert middle_seed["candidate_source"] == "coverage_seed_middle"
+    assert middle_seed["keep"] is True
+
+
+def test_coverage_seed_matching_actual_anchor_is_not_duplicated(monkeypatch) -> None:
+    config = keyframe_config()
+    timeline = [
+        {"frame_id": frame_id, "pts_time": frame_id * 0.02} for frame_id in range(101)
+    ]
+    shot = {"shot_id": "v_SH00000", "start_frame": 0, "end_frame": 101}
+    plan = temporal_probe_plan_for_shot(shot, timeline, config)
+    actual_anchors = [
+        SelectedKeyframe(20, "early", 10.0, False, "anchor"),
+        SelectedKeyframe(50, "middle", 10.0, True, "anchor"),
+        SelectedKeyframe(80, "late", 10.0, False, "anchor"),
+    ]
+    decoded_ids = {
+        item.frame_id for item in (*actual_anchors, *plan.semantic_candidates)
+    }
+    visual = np.zeros(64, dtype=bool)
+    text = np.array([True, False, True, False])
+
+    def signals(*, frame_id, timestamp_sec, **_kwargs):
+        return semantic._FrameSignals(
+            frame_id=frame_id,
+            timestamp_sec=timestamp_sec,
+            visual_hash=visual,
+            text_signal=TextSignal(True, text, 2),
+            signal_errors=(),
+        )
+
+    monkeypatch.setattr(semantic, "_frame_signals", signals)
+    supplemental, diagnostics = select_supplemental_keyframes(
+        shot=shot,
+        anchors=actual_anchors,
+        probe_plan=plan,
+        decoded_frames={frame_id: frame() for frame_id in decoded_ids},
+        timestamp_by_frame={
+            int(item["frame_id"]): float(item["pts_time"]) for item in timeline
+        },
+        config=config,
+    )
+
+    assert supplemental == []
+    middle_rows = [item for item in diagnostics if item["frame_id"] == 50]
+    assert len(middle_rows) == 1
+    assert middle_rows[0]["decision_reason"] == "actual_anchor"
+
+
+def test_build_keyframes_decodes_anchors_seeds_and_probes_in_one_pass(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    media_config = load_configs(CONFIG_DIR)["media"]
+    probe_plan = TemporalProbePlan(
+        probes=(TemporalProbe(35, 0.7, 1.0),),
+        coverage_cap_reached=False,
+        remaining_max_probe_gap_seconds=1.0,
+        coverage_seeds=(TemporalProbe(5, 0.1, None, "coverage_seed_safe_start"),),
+    )
+    decoded_calls: list[list[set[int]]] = []
+
+    monkeypatch.setattr(
+        production,
+        "candidate_frame_ids_for_shot",
+        lambda *_args: {"early": (20,), "middle": (50,), "late": (80,)},
+    )
+    monkeypatch.setattr(
+        production,
+        "temporal_probe_plan_for_shot",
+        lambda *_args: probe_plan,
+    )
+
+    def decode_once(_video_path, groups):
+        captured = [set(group) for group in groups]
+        decoded_calls.append(captured)
+        return iter([{frame_id: frame() for frame_id in captured[0]}])
+
+    monkeypatch.setattr(production, "iter_decode_frame_groups", decode_once)
+    monkeypatch.setattr(
+        production,
+        "select_keyframes_for_shot",
+        lambda *_args: (anchors_for_long_shot(), []),
+    )
+    monkeypatch.setattr(
+        production,
+        "select_supplemental_keyframes",
+        lambda **_kwargs: ([], []),
+    )
+    monkeypatch.setattr(
+        production, "write_keyframe_images", lambda *_args, **_kwargs: None
+    )
+
+    production._build_keyframes(
+        video_id="v",
+        video_path=tmp_path / "video.mp4",
+        shots=[
+            {
+                "shot_id": "v_SH00000",
+                "start_frame": 0,
+                "end_frame": 101,
+                "start_sec": 0.0,
+                "end_sec": 2.02,
+            }
+        ],
+        timeline=[
+            {"frame_id": frame_id, "pts_time": frame_id * 0.02}
+            for frame_id in range(101)
+        ],
+        output_dir=tmp_path / "output",
+        config=media_config,
+    )
+
+    assert decoded_calls == [[{5, 20, 35, 50, 80}]]
 
 
 def test_short_shot_does_not_create_unnecessary_probes() -> None:
