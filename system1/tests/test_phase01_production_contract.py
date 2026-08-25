@@ -48,8 +48,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_3"
-    assert phase01["pipeline_id"] == "phase01_production_v1_3"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_4"
+    assert phase01["pipeline_id"] == "phase01_production_v1_4"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -154,6 +154,55 @@ def test_shared_semantic_runtime_rejects_fallback_config_drift() -> None:
         require_phase01_production_ready(resolved)
 
 
+def test_semantic_sampling_thresholds_and_downstream_roles_are_validated() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["media"]["keyframe"]["semantic_sampling"][
+        "visual_novelty"
+    ]["min_hamming_ratio"] = 1.1
+    with pytest.raises(ValueError, match=r"min_hamming_ratio.*\[0, 1\]"):
+        require_phase01_production_ready(resolved)
+
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["phase01"]["ocr"]["run_on_keyframe_roles"] = [
+        "early",
+        "middle",
+        "late",
+    ]
+    with pytest.raises(ValueError, match="supplemental OCR evidence"):
+        require_phase01_production_ready(resolved)
+
+
+def test_supplemental_keyframe_cannot_be_representative() -> None:
+    row = {
+        "keyframe_id": "L21_V001:1",
+        "video_id": "L21_V001",
+        "frame_id": 1,
+        "timestamp_sec": 0.04,
+        "shot_id": "L21_V001_SH00000",
+        "scene_id": None,
+        "keyframe_role": "supplemental",
+        "quality_score": 1.0,
+        "is_representative": True,
+        "selection_reason": "visual_novelty",
+        "keyframe_ref": "media://keyframes/L21_V001/L21_V001_f0000001.jpg",
+        "thumbnail_ref": "media://thumbnails/L21_V001/L21_V001_f0000001.webp",
+        "status": "pass",
+    }
+
+    with pytest.raises(ValueError, match="keyframes row 0 violates canonical schema"):
+        validate_rows("keyframes", [row])
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -199,7 +248,7 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_3"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_4"
     assert diagnostics["models_schema_version"] == "phase01_models_v1_2"
     assert diagnostics["asr"] == {
         "provider": "nemo",
@@ -327,6 +376,29 @@ def test_keyframe_config_uses_search_bands_and_relative_representative_rule() ->
     assert keyframe["quality"]["absolute_blur_threshold"] is None
     assert keyframe["representative"]["preferred_role"] == "middle"
     assert keyframe["representative"]["preferred_min_ratio_of_best"] == 0.85
+    assert keyframe["semantic_sampling"] == {
+        "enabled": True,
+        "policy": "temporal_visual_text_v1",
+        "target_max_probe_gap_seconds": 3.0,
+        "max_probe_candidates_per_shot": 24,
+        "min_supplemental_separation_seconds": 1.0,
+        "max_supplemental_keyframes_per_shot": 2,
+        "visual_novelty": {
+            "policy": "dhash_v1",
+            "hash_size": 8,
+            "min_hamming_ratio": 0.25,
+        },
+        "text_change": {
+            "policy": "mser_masked_edge_jaccard_v1",
+            "max_long_side": 480,
+            "canny_low": 50,
+            "canny_high": 150,
+            "signature_width": 64,
+            "signature_height": 36,
+            "min_plausible_regions": 2,
+            "min_jaccard_distance": 0.35,
+        },
+    }
 
 
 def test_phase01_config_encodes_oom_and_dependency_invalidation_policy() -> None:
@@ -404,6 +476,23 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
         boundary_hashes["scene_summaries"]
         == resolved.stage_config_hashes["scene_summaries"]
     )
+
+    keyframe_changed = copy.deepcopy(resolved.payload)
+    keyframe_changed["media"]["keyframe"]["semantic_sampling"][
+        "target_max_probe_gap_seconds"
+    ] = 2.5
+    keyframe_hashes = _stage_config_hashes(keyframe_changed)
+    assert keyframe_hashes["keyframes"] != resolved.stage_config_hashes["keyframes"]
+    assert keyframe_hashes["shots"] == resolved.stage_config_hashes["shots"]
+    assert keyframe_hashes["asr"] == resolved.stage_config_hashes["asr"]
+
+    focused_roles_changed = copy.deepcopy(resolved.payload)
+    focused_roles_changed["phase01"]["scene_grouping"][
+        "focused_review_keyframe_roles"
+    ] = ["early", "late"]
+    focused_hashes = _stage_config_hashes(focused_roles_changed)
+    assert focused_hashes["scenes"] != resolved.stage_config_hashes["scenes"]
+    assert focused_hashes["keyframes"] == resolved.stage_config_hashes["keyframes"]
 
 
 def test_phase01_config_can_select_nemo_asr_provider() -> None:
@@ -617,7 +706,13 @@ def test_phase01_json_schemas_lock_checkpoint_and_keyframe_contracts() -> None:
     assert {"keyframe_role", "quality_score", "is_representative", "selection_reason"}.issubset(
         keyframes["required"]
     )
-    assert keyframes["properties"]["keyframe_role"]["enum"] == ["early", "middle", "late"]
+    assert keyframes["title"] == "keyframes_v3"
+    assert keyframes["properties"]["keyframe_role"]["enum"] == [
+        "early",
+        "middle",
+        "late",
+        "supplemental",
+    ]
 
 
 def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
@@ -631,12 +726,14 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
     (stage / "thumbnails").mkdir()
     (stage / "keyframes" / f"{video_id}_f0000000.jpg").write_bytes(b"jpg")
     (stage / "thumbnails" / f"{video_id}_f0000000.webp").write_bytes(b"webp")
+    (stage / "keyframes" / f"{video_id}_f0000001.jpg").write_bytes(b"jpg-1")
+    (stage / "thumbnails" / f"{video_id}_f0000001.webp").write_bytes(b"webp-1")
     rows = {
         "shots": [{
             "shot_id": shot_id, "video_id": video_id, "scene_id": None,
-            "shot_index": 0, "start_frame": 0, "end_frame": 1,
-            "start_sec": 0.0, "end_sec": 0.04, "duration_sec": 0.04,
-            "frame_count": 1, "boundary_convention": "[start_frame, end_frame)",
+            "shot_index": 0, "start_frame": 0, "end_frame": 2,
+            "start_sec": 0.0, "end_sec": 0.08, "duration_sec": 0.08,
+            "frame_count": 2, "boundary_convention": "[start_frame, end_frame)",
             "detection_method": "transnet_v2", "status": "transnet_v2_no_cut",
         }],
         "keyframes": [{
@@ -646,6 +743,14 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "is_representative": True, "selection_reason": "middle_within_quality_ratio",
             "keyframe_ref": f"media://keyframes/{video_id}/{video_id}_f0000000.jpg",
             "thumbnail_ref": f"media://thumbnails/{video_id}/{video_id}_f0000000.webp",
+            "status": "pass",
+        }, {
+            "keyframe_id": f"{video_id}:1", "video_id": video_id, "frame_id": 1,
+            "timestamp_sec": 0.04, "shot_id": shot_id, "scene_id": None,
+            "keyframe_role": "supplemental", "quality_score": 9.0,
+            "is_representative": False, "selection_reason": "text_change",
+            "keyframe_ref": f"media://keyframes/{video_id}/{video_id}_f0000001.jpg",
+            "thumbnail_ref": f"media://thumbnails/{video_id}/{video_id}_f0000001.webp",
             "status": "pass",
         }],
         "ocr": [{
@@ -673,8 +778,8 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
         "scenes": [{
             "scene_id": scene_id, "video_id": video_id, "scene_index": 0,
             "start_shot_id": shot_id, "end_shot_id": shot_id,
-            "start_frame": 0, "end_frame": 1, "start_sec": 0.0,
-            "end_sec": 0.04, "duration_sec": 0.04, "frame_count": 1,
+            "start_frame": 0, "end_frame": 2, "start_sec": 0.0,
+            "end_sec": 0.08, "duration_sec": 0.08, "frame_count": 2,
             "shot_count": 1, "keyframe_count": 0, "scene_type": "semantic",
             "grouping_method": "multimodal_context_focus",
             "grouping_version": "scene_grouping_v1", "confidence": None,
@@ -715,4 +820,4 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
 
     assert (artifact / "errors.jsonl").read_text(encoding="utf-8") == ""
     assert pd.read_parquet(artifact / "shots.parquet").iloc[0]["scene_id"] == scene_id
-    assert pd.read_parquet(artifact / "scenes.parquet").iloc[0]["keyframe_count"] == 1
+    assert pd.read_parquet(artifact / "scenes.parquet").iloc[0]["keyframe_count"] == 2

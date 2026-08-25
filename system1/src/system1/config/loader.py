@@ -421,6 +421,8 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
                 f"{expected!r}"
             )
 
+    _validate_semantic_sampling_policy(payload)
+
     models = payload["models"]
     caption_signature = _semantic_runtime_signature(
         _resolved_semantic_model(models, "shot_caption")
@@ -434,6 +436,83 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
                 "Phase01 shared semantic runtime mismatch: "
                 f"shot_caption and {stage_key} must use the same primary/fallback "
                 "client chain"
+            )
+
+
+def _validate_semantic_sampling_policy(payload: dict[str, Any]) -> None:
+    phase01 = payload["phase01"]
+    policy = payload["media"]["keyframe"]["semantic_sampling"]
+    if str(policy.get("policy")) != "temporal_visual_text_v1":
+        raise ValueError("Unsupported Phase01 keyframe semantic sampling policy")
+    positive_fields = (
+        "target_max_probe_gap_seconds",
+        "max_probe_candidates_per_shot",
+        "max_supplemental_keyframes_per_shot",
+    )
+    for field in positive_fields:
+        if float(policy.get(field, 0)) <= 0:
+            raise ValueError(
+                f"Phase01 keyframe semantic_sampling.{field} must be positive"
+            )
+    if float(policy.get("min_supplemental_separation_seconds", -1)) < 0:
+        raise ValueError(
+            "Phase01 keyframe semantic_sampling."
+            "min_supplemental_separation_seconds must be non-negative"
+        )
+
+    visual = policy["visual_novelty"]
+    text = policy["text_change"]
+    if str(visual.get("policy")) != "dhash_v1" or int(
+        visual.get("hash_size", 0)
+    ) < 1:
+        raise ValueError("Invalid Phase01 dHash semantic sampling config")
+    if str(text.get("policy")) != "mser_masked_edge_jaccard_v1":
+        raise ValueError("Invalid Phase01 text-change semantic sampling policy")
+    for field, value in (
+        ("visual_novelty.min_hamming_ratio", visual.get("min_hamming_ratio")),
+        ("text_change.min_jaccard_distance", text.get("min_jaccard_distance")),
+    ):
+        if value is None or not 0 <= float(value) <= 1:
+            raise ValueError(
+                f"Phase01 keyframe semantic_sampling.{field} must be in [0, 1]"
+            )
+    for field in (
+        "max_long_side",
+        "signature_width",
+        "signature_height",
+        "min_plausible_regions",
+    ):
+        if int(text.get(field, 0)) < 1:
+            raise ValueError(
+                f"Phase01 keyframe semantic_sampling.text_change.{field} "
+                "must be positive"
+            )
+    canny_low = int(text.get("canny_low", -1))
+    canny_high = int(text.get("canny_high", -1))
+    if canny_low < 0 or canny_high <= canny_low:
+        raise ValueError(
+            "Phase01 keyframe semantic_sampling.text_change Canny thresholds "
+            "must satisfy 0 <= canny_low < canny_high"
+        )
+
+    if bool(policy.get("enabled", False)):
+        ocr_roles = {
+            str(role) for role in phase01["ocr"]["run_on_keyframe_roles"]
+        }
+        focused_roles = {
+            str(role)
+            for role in phase01["scene_grouping"][
+                "focused_review_keyframe_roles"
+            ]
+        }
+        if "supplemental" not in ocr_roles:
+            raise ValueError(
+                "Enabled semantic sampling requires supplemental OCR evidence"
+            )
+        if not {"early", "late", "supplemental"}.issubset(focused_roles):
+            raise ValueError(
+                "Enabled semantic sampling requires early/late/supplemental "
+                "focused scene evidence"
             )
 
 

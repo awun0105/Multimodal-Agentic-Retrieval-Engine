@@ -40,6 +40,7 @@ contract.
 official video
   -> TransNet V2 shot detection
   -> early/middle/late keyframes from bands centered at 20%/50%/80%
+  -> bounded temporal probes for novel visual/text events
   -> deterministic representative-keyframe selection
   -> default pinned NeMo/Parakeet Vietnamese ASR, or Faster-Whisper Large-v3 override
   -> OpenCV text-presence gate, then Vintern OCR for uncertain/text frames
@@ -177,9 +178,9 @@ middle_quality >= 0.85 * best_quality
 ```
 
 Otherwise the highest-quality selected role is representative. A quality tie
-is broken by proximity to the temporal center of the shot. Every persisted row
-retains its semantic `early`, `middle`, or `late` role; exactly one row per shot
-has `is_representative = true`.
+is broken by proximity to the temporal center of the shot. Every mandatory
+anchor retains its semantic `early`, `middle`, or `late` role; exactly one
+anchor row per shot has `is_representative = true`.
 
 Canonical `keyframes.parquet` additionally records:
 
@@ -193,10 +194,48 @@ selection_reason
 Detailed candidate metrics remain checkpoint/debug evidence instead of
 expanding the canonical table.
 
-Candidate decoding is a single forward pass through the video, grouped by shot.
-Only one shot's temporary candidate frames remain in memory at a time; selected
-images are written before the group is released. This preserves the search
-policy without retaining all full-resolution candidates for a long video.
+### Semantic-event supplemental keyframes
+
+The mandatory anchor candidate generation above remains frame-ratio based and
+unchanged. For long shots, a second deterministic policy creates temporal probe
+IDs from the authoritative Phase00 `frame_timeline.pts_time`. It seeds coverage
+with the safe interior start/end plus nominal early/middle/late target
+timestamps, then bisects the largest timestamp gap until the configured target
+gap is reached or the per-shot probe cap is exhausted. The target gap is best
+effort; diagnostics record `coverage_cap_reached` and the remaining maximum gap
+when the cap prevents full coverage.
+
+Probe IDs are temporary observations, not automatically persisted keyframes.
+Anchor candidate IDs and probe IDs are combined before one grouped decode pass.
+After actual anchors are selected, each valid probe is compared with all
+retained references using normalized dHash visual distance and Jaccard distance
+between config-sized, MSER-masked Canny edge signatures for text-region change.
+
+Visual novelty is the minimum distance to every retained reference, so a probe
+must differ from all already retained visual evidence. Text change can trigger
+only when the candidate itself has plausible text; text disappearing does not
+count as new evidence. A candidate is eligible when either signal crosses its
+configured threshold. Selection is greedy and recomputes novelty after each
+accepted frame. Ranking is deterministic: triggered-signal count, strongest
+triggered-signal score, quality, timestamp distance to the nearest actual
+anchor, then lower `frame_id`. Configured timestamp separation and a maximum of
+two supplemental frames per shot bound output size.
+
+Accepted rows use `keyframe_role = supplemental`, are never representative, and
+are covered by `keyframes_v3`. OCR runs on them through the existing text gate;
+their OCR joins the shot's scene evidence, and focused scene review can include
+all supplemental images without role-key overwrite. Shot captioning and scene
+summary image sampling remain representative-only.
+
+`keyframe_diagnostics.jsonl` records candidate source, timestamp gap, quality,
+visual/text scores, triggered-signal count, keep/drop reason, temporal distance,
+dedup target, signal errors, and coverage-cap state. These diagnostics do not
+expand the canonical Parquet schema.
+
+Candidate decoding remains one forward pass through the video, grouped by
+shot. Only one shot's temporary anchor/probe frames remain in memory at a time;
+selected images are written before the group is released. This preserves the
+coverage policy without retaining all frames for a long video.
 
 ## ASR
 
@@ -308,10 +347,11 @@ Coverage is derived deterministically from time overlap. Empty `no_audio` or
 The authoritative algorithm is
 `docs/architecture/system1-scene-grouping.md`.
 
-Its inputs are ordered shots, representative images, optional early/late images
-for focused review, bilingual shot captions, caption objects/actions, canonical
-OCR, ASR transcript evidence, and the timeline. It does not use organizer
-support artifacts, embeddings, or organizer metadata as boundary evidence.
+Its inputs are ordered shots, representative images, optional
+early/late/supplemental images for focused review, bilingual shot captions,
+caption objects/actions, canonical OCR, ASR transcript evidence, and the
+timeline. It does not use organizer support artifacts, embeddings, or organizer
+metadata as boundary evidence.
 
 The configured structured client returns only strict Boolean adjacent-shot
 boundary judgements. Qwen is primary and Gemini is fallback. Package

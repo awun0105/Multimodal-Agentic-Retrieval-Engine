@@ -135,3 +135,29 @@ def test_gate_failure_runs_vintern_and_counts_failure(
     assert diagnostics["gate_failures"] == 1
     assert diagnostics["vintern_processed"] == 1
     validate_rows("ocr", rows)
+
+
+def test_supplemental_role_runs_through_existing_ocr_gate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = RecordingClient()
+    keyframe = _keyframe(tmp_path, color="white")
+    keyframe["keyframe_role"] = "supplemental"
+    ocr_config = {
+        **OCR_CONFIG,
+        "run_on_keyframe_roles": ["early", "middle", "late", "supplemental"],
+    }
+    monkeypatch.setattr(production, "_text_presence_gate", lambda *_args: "uncertain")
+
+    rows = production._build_ocr(
+        video_id="L21_V001",
+        keyframes=[keyframe],
+        stage_dir=tmp_path,
+        client=client,
+        model_config=MODEL_CONFIG,
+        ocr_config=ocr_config,
+    )
+
+    assert len(client.requests) == 1
+    assert client.requests[0].identity == {"keyframe_id": "L21_V001:0"}
+    assert rows[0]["status"] == "pass"

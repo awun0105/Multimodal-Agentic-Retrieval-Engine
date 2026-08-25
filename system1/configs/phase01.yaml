@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_3
-pipeline_id: phase01_production_v1_3
+schema_version: phase01_pipeline_v1_4
+pipeline_id: phase01_production_v1_4
 
 execution:
   video_order: batch_manifest
@@ -74,7 +74,7 @@ asr:
 
 ocr:
   model_key: ocr
-  run_on_keyframe_roles: [early, middle, late]
+  run_on_keyframe_roles: [early, middle, late, supplemental]
   empty_status: empty
   failed_status: failed
   text_presence_filter:
@@ -103,6 +103,7 @@ retry:
   schema_repair_attempts: 1
 
 scene_grouping:
+  focused_review_keyframe_roles: [early, late, supplemental]
   focus_gap_count: 8
   context_shots_each_side: 4
   stride: 6
@@ -128,7 +129,7 @@ schemas:
   resolved_config: resolved_config_v1
   checkpoint_state: phase01_checkpoint_state_v1
   shots: shots_v1
-  keyframes: keyframes_v2
+  keyframes: keyframes_v3
   asr_segments: asr_segments_v1
   ocr: ocr_v2
   shot_captions: shot_captions_v2

@@ -41,7 +41,7 @@ official videos + optional organizer metadata
 | Video probing | probed media facts | Probe fps, duration, dimensions, codec/container facts; last-year evidence suggests 25 fps, but actual fps must be persisted per video. |
 | Timeline mapping | `frame_timeline` staging rows or equivalent mapping proof | Persist enough timing metadata to map timestamps to frame ids safely, especially for VFR or unreliable FPS metadata. |
 | Shot detection | `shots` rows | Production Phase01 uses TransNet V2 only. A successful no-cut result is one valid full-video shot; model/inference failure after bounded retry fails the video instead of invoking a silent fallback. |
-| Keyframe extraction | `keyframes` rows and media refs | Target early/middle/late frames near 20/50/80 percent of each shot and select middle as representative unless deterministic decode/blur/black-frame checks choose early then late. Use decoded original `frame_id` and `keyframe_id = "{video_id}:{frame_id}"`; short shots emit each distinct decodable frame once rather than duplicate IDs. |
+| Keyframe extraction | `keyframes` rows and media refs | Keep early/middle/late anchors near 20/50/80 percent of each shot and select the representative with the existing quality policy. Long shots may add bounded non-representative supplemental frames from timestamp probes only when cheap visual/text novelty is new. Use decoded original `frame_id` and `keyframe_id = "{video_id}:{frame_id}"`; short shots emit each distinct decodable frame once rather than duplicate IDs. |
 | Thumbnail generation | `thumbnail_ref` per keyframe | Generate missing thumbnails under `${AIC_DATA_ROOT}/processed/media/thumbnails/`. |
 | Shot captioning | `shot_captions` rows | Gemini returns strict `caption_vi`/`caption_en` JSON for exactly one canonical row per shot from the representative keyframe. Requests are cached, retried, rate-limited, resumable, and versioned; persistent production failure fails the video. |
 | Scene construction | `scenes` rows | Production Phase01 uses `docs/architecture/system1-scene-grouping.md`. Gemini judges only adjacent-shot boundaries from ordered visual/bilingual-caption/ASR/timeline evidence; package code owns the deterministic partition and production failure is explicit. |
@@ -60,8 +60,9 @@ the full raw dataset into worker runtime storage. A missing decoded timeline
 fails that production video rather than silently deriving exact frame IDs in
 notebook code. Explicit estimated/degraded mapping remains debug/test-only.
 
-Scene grouping runs only after shots, representative/optional early/late
-keyframes, canonical shot captions, ASR segments, and shot-transcript links
+Scene grouping runs only after shots, representative/optional
+early/late/supplemental keyframes, canonical shot captions, ASR segments, and
+shot-transcript links
 exist. It writes `scenes.parquet`, backfills `shots.scene_id` and
 `keyframes.scene_id`, then builds scene-transcript links and bilingual scene
 summaries. OCR, objects, and embeddings remain Phase02 outputs and are not

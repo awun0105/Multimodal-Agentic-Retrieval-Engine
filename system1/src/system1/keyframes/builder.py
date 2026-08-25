@@ -94,7 +94,7 @@ def iter_decode_frame_groups(
     exhausted = False
     try:
         for frame_ids in frame_id_groups:
-            requested = sorted(set(int(frame_id) for frame_id in frame_ids))
+            requested = sorted({int(frame_id) for frame_id in frame_ids})
             if requested and requested[0] < index:
                 raise ValueError(
                     "Frame groups must be monotonically ordered and non-overlapping"
