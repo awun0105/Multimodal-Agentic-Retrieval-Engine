@@ -390,7 +390,7 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The complete local suite passes 342 tests. Scoped Ruff checks pass for all
+- The complete local suite passes 348 tests. Scoped Ruff checks pass for all
   undefined names and for import correctness across the new Phase01 surface.
   Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
   current; and `git diff --check` passes.
@@ -411,7 +411,7 @@ shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
-are covered by the 342-test local suite. The intentionally deferred gate is
+are covered by the 348-test local suite. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation

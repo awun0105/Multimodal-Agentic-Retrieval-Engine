@@ -26,9 +26,10 @@ remain unchanged and frame-ratio based. A supplemental policy uses exact
 by safe-interior start/end and nominal early/middle/late timestamps, then the
 largest timestamp gap is bisected until the configured target or probe cap.
 
-Anchor and probe frame IDs are combined before the existing one-pass grouped
-decode. Actual selected anchors become the first novelty references. A probe is
-eligible only when it has valid existing quality evidence and either:
+Anchor, coverage-seed, and bisection-probe frame IDs are combined before the
+existing one-pass grouped decode. Actual selected anchors become the first
+novelty references. A coverage seed or probe that is not already an actual
+anchor is eligible only when it has valid existing quality evidence and either:
 
 - its normalized dHash distance is above threshold relative to every retained
   visual reference; or

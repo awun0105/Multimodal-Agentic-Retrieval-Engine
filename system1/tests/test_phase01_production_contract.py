@@ -22,6 +22,7 @@ from system1.phase01.production import (
     PARQUET_COLUMNS,
     _assemble_package,
     _build_captions,
+    _keyframe_diagnostic_counts,
     _required_text,
 )
 from system1.phase01.runner import _build_runtime_diagnostics
@@ -201,6 +202,48 @@ def test_supplemental_keyframe_cannot_be_representative() -> None:
 
     with pytest.raises(ValueError, match="keyframes row 0 violates canonical schema"):
         validate_rows("keyframes", [row])
+
+
+def test_supplemental_keyframe_rejects_non_novelty_selection_reason() -> None:
+    row = {
+        "keyframe_id": "L21_V001:1",
+        "video_id": "L21_V001",
+        "frame_id": 1,
+        "timestamp_sec": 0.04,
+        "shot_id": "L21_V001_SH00000",
+        "scene_id": None,
+        "keyframe_role": "supplemental",
+        "quality_score": 1.0,
+        "is_representative": False,
+        "selection_reason": "best_valid_candidate_in_search_band",
+        "keyframe_ref": "media://keyframes/L21_V001/L21_V001_f0000001.jpg",
+        "thumbnail_ref": "media://thumbnails/L21_V001/L21_V001_f0000001.webp",
+        "status": "pass",
+    }
+
+    with pytest.raises(ValueError, match="keyframes row 0 violates canonical schema"):
+        validate_rows("keyframes", [row])
+
+
+def test_keyframe_diagnostic_counts_separate_unique_frames_from_evaluations() -> None:
+    anchor_diagnostics = [
+        SimpleNamespace(frame_id=5, valid=True),
+        SimpleNamespace(frame_id=5, valid=True),
+        SimpleNamespace(frame_id=7, valid=False),
+    ]
+    semantic_diagnostics = [
+        {"frame_id": 5, "valid": False},
+        {"frame_id": 9, "valid": True},
+    ]
+
+    assert _keyframe_diagnostic_counts(
+        anchor_diagnostics, semantic_diagnostics
+    ) == {
+        "candidate_count": 3,
+        "valid_candidate_count": 2,
+        "evaluation_count": 5,
+        "valid_evaluation_count": 3,
+    }
 
 
 @pytest.mark.parametrize(
@@ -712,6 +755,12 @@ def test_phase01_json_schemas_lock_checkpoint_and_keyframe_contracts() -> None:
         "middle",
         "late",
         "supplemental",
+    ]
+    supplemental_contract = keyframes["allOf"][0]["then"]["properties"]
+    assert supplemental_contract["selection_reason"]["enum"] == [
+        "visual_novelty",
+        "text_change",
+        "visual_and_text_novelty",
     ]
 
 

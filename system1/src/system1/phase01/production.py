@@ -1251,6 +1251,10 @@ def _build_keyframes(
 ) -> None:
     keyframe_config = config["keyframe"]
     timeline_by_frame = {int(row["frame_id"]): row for row in timeline}
+    timestamp_by_frame = {
+        frame_id: float(row["pts_time"])
+        for frame_id, row in timeline_by_frame.items()
+    }
     candidate_groups = []
     probe_plans = []
     for shot in shots:
@@ -1273,7 +1277,7 @@ def _build_keyframes(
                     for role_ids in by_role.values()
                     for frame_id in role_ids
                 ),
-                *(probe.frame_id for probe in probe_plan.probes),
+                *(probe.frame_id for probe in probe_plan.semantic_candidates),
             }
         )
     rows: list[dict[str, Any]] = []
@@ -1290,10 +1294,7 @@ def _build_keyframes(
             anchors=anchors,
             probe_plan=probe_plan,
             decoded_frames=decoded,
-            timestamp_by_frame={
-                frame_id: float(row["pts_time"])
-                for frame_id, row in timeline_by_frame.items()
-            },
+            timestamp_by_frame=timestamp_by_frame,
             config=keyframe_config,
         )
         selected = sorted(
@@ -1306,11 +1307,9 @@ def _build_keyframes(
         }
         shot_frame_span = int(shot["end_frame"]) - int(shot["start_frame"])
         shot_duration_sec = float(shot["end_sec"]) - float(shot["start_sec"])
-        candidate_count = len(candidate_diagnostics) + len(supplemental_diagnostics)
-        valid_candidate_count = sum(
-            1 for candidate in candidate_diagnostics if candidate.valid
-        ) + sum(
-            1 for candidate in supplemental_diagnostics if candidate.get("valid")
+        diagnostic_counts = _keyframe_diagnostic_counts(
+            candidate_diagnostics,
+            supplemental_diagnostics,
         )
         diagnostics.extend(
             {
@@ -1319,8 +1318,7 @@ def _build_keyframes(
                 "shot_duration_sec": shot_duration_sec,
                 "selected_roles": selected_roles,
                 "selected_frame_ids": selected_frame_ids,
-                "candidate_count": candidate_count,
-                "valid_candidate_count": valid_candidate_count,
+                **diagnostic_counts,
                 "long_shot_coverage_warning": shot_duration_sec > 10.0 and len(anchors) < 3,
                 "candidate_source": f"anchor_{item.role}_search_band",
                 "timestamp_sec": (
@@ -1360,8 +1358,7 @@ def _build_keyframes(
                 "shot_duration_sec": shot_duration_sec,
                 "selected_roles": selected_roles,
                 "selected_frame_ids": selected_frame_ids,
-                "candidate_count": candidate_count,
-                "valid_candidate_count": valid_candidate_count,
+                **diagnostic_counts,
                 "long_shot_coverage_warning": (
                     shot_duration_sec > 10.0 and len(anchors) < 3
                 ),
@@ -1402,6 +1399,31 @@ def _build_keyframes(
     _validate_keyframe_rows(shots, rows)
     _write_parquet(output_dir / "keyframes.parquet", rows)
     _write_jsonl(output_dir / "keyframe_diagnostics.jsonl", diagnostics)
+
+
+def _keyframe_diagnostic_counts(
+    anchor_diagnostics: list[Any],
+    semantic_diagnostics: list[dict[str, Any]],
+) -> dict[str, int]:
+    candidate_frame_ids = {
+        int(item.frame_id) for item in anchor_diagnostics
+    } | {int(item["frame_id"]) for item in semantic_diagnostics}
+    valid_candidate_frame_ids = {
+        int(item.frame_id) for item in anchor_diagnostics if item.valid
+    } | {
+        int(item["frame_id"])
+        for item in semantic_diagnostics
+        if item.get("valid")
+    }
+    return {
+        "candidate_count": len(candidate_frame_ids),
+        "valid_candidate_count": len(valid_candidate_frame_ids),
+        "evaluation_count": len(anchor_diagnostics) + len(semantic_diagnostics),
+        "valid_evaluation_count": sum(
+            1 for item in anchor_diagnostics if item.valid
+        )
+        + sum(1 for item in semantic_diagnostics if item.get("valid")),
+    }
 
 
 def _caption_client_for_model(

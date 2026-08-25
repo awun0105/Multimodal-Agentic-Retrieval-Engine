@@ -21,7 +21,8 @@ from .signals import (
 class TemporalProbe:
     frame_id: int
     target_timestamp_sec: float
-    temporal_gap_sec: float
+    temporal_gap_sec: float | None
+    candidate_source: str = "temporal_probe"
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,14 @@ class TemporalProbePlan:
     probes: tuple[TemporalProbe, ...]
     coverage_cap_reached: bool
     remaining_max_probe_gap_seconds: float
+    coverage_seeds: tuple[TemporalProbe, ...] = ()
+
+    @property
+    def semantic_candidates(self) -> tuple[TemporalProbe, ...]:
+        by_frame = {item.frame_id: item for item in self.coverage_seeds}
+        for item in self.probes:
+            by_frame.setdefault(item.frame_id, item)
+        return tuple(sorted(by_frame.values(), key=lambda item: item.frame_id))
 
 
 @dataclass(frozen=True)
@@ -96,17 +105,40 @@ def temporal_probe_plan_for_shot(
     start = int(shot["start_frame"])
     end = int(shot["end_frame"])
     frame_span = max(0, end - start - 1)
-    seed_ratios = [
-        float(config["selection"]["safe_interior_start_ratio"]),
-        float(config["roles"]["early"]["target_ratio"]),
-        float(config["roles"]["middle"]["target_ratio"]),
-        float(config["roles"]["late"]["target_ratio"]),
-        float(config["selection"]["safe_interior_end_ratio"]),
+    seed_specs = [
+        (
+            "safe_start",
+            float(config["selection"]["safe_interior_start_ratio"]),
+        ),
+        ("early", float(config["roles"]["early"]["target_ratio"])),
+        ("middle", float(config["roles"]["middle"]["target_ratio"])),
+        ("late", float(config["roles"]["late"]["target_ratio"])),
+        (
+            "safe_end",
+            float(config["selection"]["safe_interior_end_ratio"]),
+        ),
     ]
     seed_rows = [
-        _nearest_row_by_frame(rows, start + ratio * frame_span) for ratio in seed_ratios
+        (name, _nearest_row_by_frame(rows, start + ratio * frame_span))
+        for name, ratio in seed_specs
     ]
-    observed = {int(row["frame_id"]): float(row["pts_time"]) for row in seed_rows}
+    coverage_seeds_by_frame: dict[int, TemporalProbe] = {}
+    for name, row in seed_rows:
+        frame_id = int(row["frame_id"])
+        timestamp = float(row["pts_time"])
+        coverage_seeds_by_frame.setdefault(
+            frame_id,
+            TemporalProbe(
+                frame_id=frame_id,
+                target_timestamp_sec=timestamp,
+                temporal_gap_sec=None,
+                candidate_source=f"coverage_seed_{name}",
+            ),
+        )
+    coverage_seeds = tuple(
+        sorted(coverage_seeds_by_frame.values(), key=lambda item: item.frame_id)
+    )
+    observed = {item.frame_id: item.target_timestamp_sec for item in coverage_seeds}
     probes: dict[int, TemporalProbe] = {}
     target_gap = float(policy["target_max_probe_gap_seconds"])
     maximum = int(policy["max_probe_candidates_per_shot"])
@@ -135,6 +167,7 @@ def temporal_probe_plan_for_shot(
             len(probes) >= maximum and remaining_seconds > target_gap
         ),
         remaining_max_probe_gap_seconds=remaining_seconds,
+        coverage_seeds=coverage_seeds,
     )
 
 
@@ -148,7 +181,8 @@ def select_supplemental_keyframes(
     config: Mapping[str, Any],
 ) -> tuple[list[SelectedKeyframe], list[dict[str, Any]]]:
     policy = config["semantic_sampling"]
-    if not bool(policy.get("enabled", False)) or not probe_plan.probes:
+    semantic_candidates = probe_plan.semantic_candidates
+    if not bool(policy.get("enabled", False)) or not semantic_candidates:
         return [], []
     visual_config = policy["visual_novelty"]
     text_config = policy["text_change"]
@@ -166,12 +200,12 @@ def select_supplemental_keyframes(
     candidates: list[_Candidate] = []
     diagnostics_by_frame: dict[int, dict[str, Any]] = {}
 
-    for probe in probe_plan.probes:
+    for probe in semantic_candidates:
         timestamp = float(timestamp_by_frame[probe.frame_id])
         base = {
             "frame_id": probe.frame_id,
             "shot_id": str(shot["shot_id"]),
-            "candidate_source": "temporal_probe",
+            "candidate_source": probe.candidate_source,
             "timestamp_sec": timestamp,
             "temporal_gap_sec": probe.temporal_gap_sec,
             "coverage_cap_reached": probe_plan.coverage_cap_reached,

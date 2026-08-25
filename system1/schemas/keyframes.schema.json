@@ -21,7 +21,14 @@
   "allOf": [
     {
       "if": {"properties": {"keyframe_role": {"const": "supplemental"}}},
-      "then": {"properties": {"is_representative": {"const": false}}}
+      "then": {
+        "properties": {
+          "is_representative": {"const": false},
+          "selection_reason": {
+            "enum": ["visual_novelty", "text_change", "visual_and_text_novelty"]
+          }
+        }
+      }
     }
   ],
   "additionalProperties": false
