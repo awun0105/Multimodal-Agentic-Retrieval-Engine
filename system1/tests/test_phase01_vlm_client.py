@@ -505,6 +505,51 @@ def test_qwen_loader_rejects_cpu_or_disk_offload(
     assert client._loaded is None
 
 
+@pytest.mark.parametrize("offload_device", ["cpu", "disk"])
+def test_vintern_loader_rejects_cpu_or_disk_offload(
+    monkeypatch, offload_device: str
+) -> None:
+    _install_fake_torch(monkeypatch)
+
+    class FakeTokenizerFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return object()
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.hf_device_map = {"vision": 0, "language": offload_device}
+
+        def eval(self):
+            return None
+
+    class FakeModelFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return FakeModel()
+
+    transformers = ModuleType("transformers")
+    transformers.AutoTokenizer = FakeTokenizerFactory
+    transformers.AutoModel = FakeModelFactory
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "vintern_local",
+            "model_id": "5CD-AI/Vintern-1B-v3_5",
+            "model_revision": "revision",
+            "device_map": "auto",
+        }
+    )
+
+    with pytest.raises(
+        SystemicProviderError,
+        match="vintern_local CPU/disk offload is forbidden",
+    ):
+        client._load_vintern()
+
+    assert client._loaded is None
+
+
 def test_local_vlm_pre_load_guard_blocks_before_model_factory(monkeypatch) -> None:
     calls = []
     client = LocalVisionStructuredClient(
@@ -698,6 +743,122 @@ def test_invalid_json_falls_back_only_failed_request_and_keeps_qwen_primary(
     assert next_response["value"] == "primary"
     assert client.circuit_open is False
     assert calls == [["good", "bad"], ["next"]]
+
+
+def test_batch_call_error_retries_singletons_and_falls_back_only_failed_request(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+    primary = LocalVisionStructuredClient(
+        model_config={
+            "provider": "qwen_local",
+            "model_id": "qwen",
+            "model_revision": "revision",
+            "inference_batch_size": 2,
+        }
+    )
+
+    def call_models(requests):
+        prompts = [request.prompt for request in requests]
+        calls.append(prompts)
+        if len(requests) > 1:
+            raise ValueError("one request cannot be processed in this batch")
+        if prompts == ["bad"]:
+            raise ValueError("bad request")
+        return ['{"value": "primary"}']
+
+    monkeypatch.setattr(primary, "_call_models", call_models)
+
+    class GeminiFallback:
+        provider_name = "gemini"
+
+        def request(self, request):
+            return {"value": f"fallback:{request.prompt}"}
+
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "string"}},
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+
+    def make_request(prompt):
+        return GeminiRequest(
+            request_kind="shot_caption",
+            video_id="L21_V001",
+            prompt=prompt,
+            prompt_version="prompt",
+            response_schema_version="schema",
+            response_schema=schema,
+        )
+
+    client = FallbackStructuredClient([primary, GeminiFallback()])
+    responses = client.request_many([make_request("good"), make_request("bad")])
+    next_response = client.request(make_request("next"))
+
+    assert [response["value"] for response in responses] == [
+        "primary",
+        "fallback:bad",
+    ]
+    assert next_response["value"] == "primary"
+    assert client.circuit_open is False
+    assert calls == [["good", "bad"], ["good"], ["bad"], ["next"]]
+
+
+def test_multi_image_oom_reduces_evidence_evenly_before_circuit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    lifecycle: list[dict[str, object]] = []
+    image_counts: list[int] = []
+    final_images: list[Path] = []
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "qwen_local",
+            "model_id": "qwen",
+            "model_revision": "revision",
+            "inference_batch_size": 1,
+            "total_attempts": 2,
+        },
+        lifecycle_callback=lambda payload: lifecycle.append(dict(payload)),
+    )
+    images = tuple(tmp_path / f"image_{index:02d}.jpg" for index in range(12))
+    for image in images:
+        image.write_bytes(image.name.encode())
+
+    def call_models(requests):
+        image_counts.append(len(requests[0].image_paths))
+        if len(requests[0].image_paths) > 3:
+            raise RuntimeError("CUDA out of memory")
+        final_images.extend(requests[0].image_paths)
+        return ['{"value": "local"}']
+
+    monkeypatch.setattr(client, "_call_models", call_models)
+    monkeypatch.setattr("system1.vlm.client._release_torch_memory", lambda: None)
+    request = GeminiRequest(
+        request_kind="scene_summary",
+        video_id="L21_V001",
+        prompt="summary",
+        prompt_version="prompt",
+        response_schema_version="schema",
+        response_schema={
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+        image_paths=images,
+    )
+
+    response = client.request(request)
+
+    assert response["value"] == "local"
+    assert image_counts == [12, 6, 3]
+    assert final_images[0] == images[0]
+    assert final_images[-1] == images[-1]
+    reductions = [
+        event for event in lifecycle if event["status"] == "image_oom_reduction"
+    ]
+    assert [event["effective_image_count"] for event in reductions] == [6, 3]
 
 
 def test_repeated_batch_one_oom_opens_circuit_and_uses_gemini(monkeypatch) -> None:

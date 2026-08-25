@@ -8,7 +8,7 @@ import tempfile
 import time
 import weakref
 import zipfile
-from collections.abc import Generator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -172,6 +172,14 @@ def process_production_batch(
             chunk_size=chunk_size,
             chunk_raw_bytes=planned.raw_bytes,
         )
+        asr_pre_load_callback = _heavy_model_memory_guard(
+            scratch_root=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            policy=scheduler_policy["ram"],
+        )
 
         active: list[_VideoFlow] = []
         for video_id in chunk_video_ids:
@@ -238,6 +246,7 @@ def process_production_batch(
                     transnet_artifact_dir=transnet_artifact_dir,
                     release_store=release_store,
                     sync_release=sync_release,
+                    asr_pre_load_callback=asr_pre_load_callback,
                 )
                 flow = _VideoFlow(
                     video_id=video_id,
@@ -714,6 +723,7 @@ def _process_video_flow(
     transnet_artifact_dir: Path,
     release_store: HuggingFaceDatasetArtifactStore,
     sync_release: bool,
+    asr_pre_load_callback: Callable[[str], None] | None = None,
 ) -> Generator[str, Any, dict[str, Any]]:
     manager.active_stage = "shots"
     _emit_stage_progress(manager, "shots", scratch, status="start")
@@ -836,6 +846,7 @@ def _process_video_flow(
             video_id=video_id,
             frame_timeline=timeline,
             config=asr_config,
+            pre_load_callback=asr_pre_load_callback,
         )
         _write_parquet(asr_path, result.rows, empty_columns=PARQUET_COLUMNS["asr_segments"])
         _write_json(asr_status_path, {

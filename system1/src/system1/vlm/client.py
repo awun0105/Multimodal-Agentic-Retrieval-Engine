@@ -7,6 +7,7 @@ import threading
 import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -339,6 +340,7 @@ class LocalVisionStructuredClient:
         if not requests:
             return []
         results: list[dict[str, Any] | None] = [None] * len(requests)
+        active_requests = list(requests)
         errors: dict[int, Exception] = {}
         misses: list[int] = []
         cache_paths: dict[int, Path] = {}
@@ -372,7 +374,7 @@ class LocalVisionStructuredClient:
         systemic_attempts = 0
         while cursor < len(misses):
             batch_indices = misses[cursor : cursor + effective_batch_size]
-            batch_requests = [requests[index] for index in batch_indices]
+            batch_requests = [active_requests[index] for index in batch_indices]
             try:
                 raw_texts = self._call_models(batch_requests)
             except _NativeBatchUnavailable:
@@ -406,6 +408,31 @@ class LocalVisionStructuredClient:
                             error_type=type(exc).__name__,
                             quantization_mode=self._quantization_mode(),
                         )
+                        continue
+                    reduced_request = _reduce_multimage_request(batch_requests[0])
+                    if reduced_request is not None:
+                        index = batch_indices[0]
+                        previous_image_count = len(batch_requests[0].image_paths)
+                        active_requests[index] = reduced_request
+                        reduced_hash = self._request_hash(reduced_request)
+                        reduced_cache_path = self.cache_prefix / f"{reduced_hash}.json"
+                        cache_paths[index] = reduced_cache_path
+                        cached = self._read_cached(reduced_cache_path, reduced_request)
+                        self._emit_lifecycle(
+                            "image_oom_reduction",
+                            requested_batch_size=requested_batch_size,
+                            effective_batch_size=1,
+                            previous_image_count=previous_image_count,
+                            effective_image_count=len(reduced_request.image_paths),
+                            request_kind=reduced_request.request_kind,
+                            cache_hit=cached is not None,
+                            quantization_mode=self._quantization_mode(),
+                        )
+                        if cached is not None:
+                            results[index] = self._with_metadata(cached)
+                            cursor += 1
+                        batch_one_oom_attempts = 0
+                        systemic_attempts = 0
                         continue
                     batch_one_oom_attempts += 1
                     if batch_one_oom_attempts < self.total_attempts:
@@ -449,6 +476,19 @@ class LocalVisionStructuredClient:
                     for index in misses[cursor:]:
                         errors[index] = systemic
                     raise BatchRequestError(results=results, errors=errors) from exc
+                if effective_batch_size > 1:
+                    previous = effective_batch_size
+                    effective_batch_size = 1
+                    self._last_effective_batch_size = 1
+                    self._emit_lifecycle(
+                        "batch_error_isolation",
+                        requested_batch_size=requested_batch_size,
+                        previous_batch_size=previous,
+                        effective_batch_size=1,
+                        error_type=type(exc).__name__,
+                        quantization_mode=self._quantization_mode(),
+                    )
+                    continue
                 for index in batch_indices:
                     errors[index] = exc
                 cursor += len(batch_indices)
@@ -459,9 +499,21 @@ class LocalVisionStructuredClient:
                     f"local VLM returned {len(raw_texts)} responses for "
                     f"{len(batch_requests)} requests"
                 )
-                for index in batch_indices:
-                    errors[index] = exc
-                cursor += len(batch_indices)
+                if effective_batch_size > 1:
+                    previous = effective_batch_size
+                    effective_batch_size = 1
+                    self._last_effective_batch_size = 1
+                    self._emit_lifecycle(
+                        "batch_error_isolation",
+                        requested_batch_size=requested_batch_size,
+                        previous_batch_size=previous,
+                        effective_batch_size=1,
+                        error_type=type(exc).__name__,
+                        quantization_mode=self._quantization_mode(),
+                    )
+                    continue
+                errors[batch_indices[0]] = exc
+                cursor += 1
                 continue
             for index, request, raw_text in zip(
                 batch_indices, batch_requests, raw_texts, strict=True
@@ -741,7 +793,7 @@ class LocalVisionStructuredClient:
                     ),
                 )
                 model.eval()
-                _reject_cpu_disk_offload(model)
+                _reject_cpu_disk_offload(model, provider_name="qwen_local")
                 self._loaded = (processor, model)
             except Exception as exc:
                 _release_torch_memory()
@@ -801,6 +853,7 @@ class LocalVisionStructuredClient:
                     ),
                 )
                 model.eval()
+                _reject_cpu_disk_offload(model, provider_name="vintern_local")
                 self._loaded = (tokenizer, model)
             except Exception as exc:
                 _release_torch_memory()
@@ -895,7 +948,7 @@ def _qwen_quantization_config(
     )
 
 
-def _reject_cpu_disk_offload(model: Any) -> None:
+def _reject_cpu_disk_offload(model: Any, *, provider_name: str) -> None:
     device_map = getattr(model, "hf_device_map", None)
     if not isinstance(device_map, Mapping):
         return
@@ -906,9 +959,31 @@ def _reject_cpu_disk_offload(model: Any) -> None:
     }
     if offloaded:
         raise SystemicProviderError(
-            "qwen_local CPU/disk offload is forbidden: "
+            f"{provider_name} CPU/disk offload is forbidden: "
             + json.dumps(offloaded, sort_keys=True)
         )
+
+
+def _reduce_multimage_request(
+    request: StructuredRequest,
+) -> StructuredRequest | None:
+    image_count = len(request.image_paths)
+    if image_count <= 1:
+        return None
+    maximum = max(1, (image_count + 1) // 2)
+    if maximum == 1:
+        indices = [image_count // 2]
+    else:
+        indices = sorted(
+            {
+                round(position * (image_count - 1) / (maximum - 1))
+                for position in range(maximum)
+            }
+        )
+    return replace(
+        request,
+        image_paths=tuple(request.image_paths[index] for index in indices),
+    )
 
 
 def _torch_dtype(value: Any, torch: Any):

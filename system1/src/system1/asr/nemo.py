@@ -27,6 +27,7 @@ def transcribe_video(
     config: Mapping[str, Any],
     model_factory: Callable[..., Any] | None = None,
     audio_present: bool | None = None,
+    pre_load_callback: Callable[[str], None] | None = None,
 ) -> AsrResult:
     present = has_audio_stream(video_path) if audio_present is None else audio_present
     if not present:
@@ -40,6 +41,8 @@ def transcribe_video(
         model = None
         try:
             device = _device()
+            if pre_load_callback is not None:
+                pre_load_callback("nemo")
             if model_factory is _load_pinned_nemo_model:
                 model = model_factory(str(config["model_id"]), config=config)
             else:
