@@ -53,7 +53,7 @@ class _FrameSignals:
 class _Candidate:
     frame_id: int
     timestamp_sec: float
-    temporal_gap_sec: float
+    temporal_gap_sec: float | None
     quality_score: float
     signals: _FrameSignals
 
@@ -142,6 +142,15 @@ def temporal_probe_plan_for_shot(
     probes: dict[int, TemporalProbe] = {}
     target_gap = float(policy["target_max_probe_gap_seconds"])
     maximum = int(policy["max_probe_candidates_per_shot"])
+
+    initial_gap = _largest_gap(observed)
+    initial_gap_seconds = 0.0 if initial_gap is None else float(initial_gap[0])
+    if initial_gap_seconds <= target_gap:
+        return TemporalProbePlan(
+            probes=(),
+            coverage_cap_reached=False,
+            remaining_max_probe_gap_seconds=initial_gap_seconds,
+        )
 
     while len(probes) < maximum:
         next_probe = _next_splittable_probe(observed, rows, target_gap)

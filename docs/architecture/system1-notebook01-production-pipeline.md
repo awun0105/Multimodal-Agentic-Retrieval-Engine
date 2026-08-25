@@ -203,15 +203,17 @@ with the safe interior start/end plus nominal early/middle/late target
 timestamps, then bisects the largest timestamp gap until the configured target
 gap is reached or the per-shot probe cap is exhausted. The target gap is best
 effort; diagnostics record `coverage_cap_reached` and the remaining maximum gap
-when the cap prevents full coverage.
+when the cap prevents full coverage. If the initial seed-to-seed gaps are
+already within the target, the shot exposes no semantic candidates; this keeps
+short shots on the mandatory anchor path only.
 
 Probe IDs are temporary observations, not automatically persisted keyframes.
-Anchor candidate IDs, coverage-seed IDs, and bisection probe IDs are combined
-before one grouped decode pass. After actual anchors are selected, every valid
-coverage seed or probe that is not already an actual anchor is compared with
-all retained references using normalized dHash visual distance and Jaccard
-distance between config-sized, MSER-masked Canny edge signatures for
-text-region change.
+For shots requiring semantic sampling, anchor candidate IDs, coverage-seed IDs,
+and bisection probe IDs are combined before one grouped decode pass. After
+actual anchors are selected, every valid coverage seed or probe that is not
+already an actual anchor is compared with all retained references using
+normalized dHash visual distance and Jaccard distance between config-sized,
+MSER-masked Canny edge signatures for text-region change.
 
 Visual novelty is the minimum distance to every retained reference, so a probe
 must differ from all already retained visual evidence. Text change can trigger

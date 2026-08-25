@@ -25,11 +25,15 @@ remain unchanged and frame-ratio based. A supplemental policy uses exact
 `frame_timeline.pts_time` only for temporal coverage probes. Coverage is seeded
 by safe-interior start/end and nominal early/middle/late timestamps, then the
 largest timestamp gap is bisected until the configured target or probe cap.
+If those initial coverage seeds already keep every timestamp gap within the
+target, semantic evaluation is disabled for that shot; short shots therefore
+do not create supplemental candidates solely from nominal seed positions.
 
-Anchor, coverage-seed, and bisection-probe frame IDs are combined before the
-existing one-pass grouped decode. Actual selected anchors become the first
-novelty references. A coverage seed or probe that is not already an actual
-anchor is eligible only when it has valid existing quality evidence and either:
+For shots that need semantic sampling, anchor, coverage-seed, and
+bisection-probe frame IDs are combined before the existing one-pass grouped
+decode. Actual selected anchors become the first novelty references. A coverage
+seed or probe that is not already an actual anchor is eligible only when it has
+valid existing quality evidence and either:
 
 - its normalized dHash distance is above threshold relative to every retained
   visual reference; or
