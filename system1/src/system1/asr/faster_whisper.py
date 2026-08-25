@@ -50,6 +50,7 @@ def transcribe_video(
     config: Mapping[str, Any],
     model_factory: Callable[..., Any] | None = None,
     audio_present: bool | None = None,
+    pre_load_callback: Callable[[str], None] | None = None,
 ) -> AsrResult:
     present = has_audio_stream(video_path) if audio_present is None else audio_present
     if not present:
@@ -72,6 +73,8 @@ def transcribe_video(
     for attempt in range(1, total_attempts + 1):
         model = None
         try:
+            if pre_load_callback is not None:
+                pre_load_callback("faster_whisper")
             model = model_factory(
                 config["model_id"],
                 device=device,

@@ -23,6 +23,9 @@ checkpoint:
     asr:
       - asr_segments.parquet
       - asr_status.json
+    ocr:
+      - ocr.parquet
+      - ocr_status.json
     shot_captions:
       - shot_captions.parquet
     shot_transcript_links:

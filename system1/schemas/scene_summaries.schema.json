@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "scene_summaries_v1",
+  "title": "scene_summaries_v2",
   "type": "object",
   "required": ["scene_id", "video_id", "summary_vi", "summary_en", "provider", "model_name", "model_version", "prompt_version", "schema_version", "confidence", "status"],
   "properties": {
@@ -8,7 +8,7 @@
     "video_id": {"type": "string", "minLength": 1},
     "summary_vi": {"type": "string", "minLength": 1},
     "summary_en": {"type": "string", "minLength": 1},
-    "provider": {"const": "gemini"},
+    "provider": {"enum": ["gemini", "qwen_local"]},
     "model_name": {"type": "string", "minLength": 1},
     "model_version": {"type": "string", "minLength": 1},
     "prompt_version": {"type": "string", "minLength": 1},

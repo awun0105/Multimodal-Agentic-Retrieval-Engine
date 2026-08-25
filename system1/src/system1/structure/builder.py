@@ -28,11 +28,49 @@ STRUCTURE_PARQUET_FILES = (
     "shots.parquet",
     "scenes.parquet",
     "keyframes.parquet",
+    "ocr.parquet",
     "shot_captions.parquet",
     "shot_transcript_links.parquet",
     "scene_transcript_links.parquet",
     "scene_summaries.parquet",
 )
+
+PARQUET_COLUMNS: dict[str, list[str]] = {
+    "asr_segments": [
+        "asr_segment_id",
+        "video_id",
+        "start_sec",
+        "end_sec",
+        "start_frame",
+        "end_frame",
+        "text",
+        "language",
+        "confidence",
+        "avg_logprob",
+        "no_speech_prob",
+        "provider",
+        "model_name",
+        "model_version",
+        "status",
+    ],
+    "shot_transcript_links": ["shot_id", "asr_segment_id", "video_id", "coverage"],
+    "scene_transcript_links": ["scene_id", "asr_segment_id", "video_id", "coverage"],
+    "ocr": [
+        "ocr_id",
+        "video_id",
+        "keyframe_id",
+        "shot_id",
+        "frame_id",
+        "text",
+        "raw_text",
+        "provider",
+        "model_name",
+        "model_version",
+        "language",
+        "confidence",
+        "status",
+    ],
+}
 
 
 def process_structure_batch(
@@ -186,7 +224,6 @@ def _write_video_structure_artifact(
     keyframe_selection = keyframe_selections[0]
 
     asr_text = _transcribe(video_path, text_provider, provider_plan, errors, video_id)
-    asr_status = "empty" if not asr_text else "pass"
     asr_segment_id = f"{video_id}_ASR00000"
     shot_id = shot.shot_id
     scene_id = scene.scene_id
@@ -199,6 +236,8 @@ def _write_video_structure_artifact(
     selection_method = _extract_media(video_path, keyframe_path, thumbnail_path, errors, video_id)
     keyframe_ref = f"media://keyframes/{video_id}/{keyframe_filename}"
     thumbnail_ref = f"media://thumbnails/{video_id}/{thumbnail_filename}"
+    ocr_text = text_provider.read_text(keyframe_path)
+    ocr_status = "empty" if not ocr_text else "pass"
     shot_caption_text = _caption_keyframe(keyframe_path, normalized_text, text_provider, provider_plan, errors, video_id)
     shot_caption_status = "empty" if not shot_caption_text else "pass"
     scene_summary_text = _summarize_scene(
@@ -210,6 +249,24 @@ def _write_video_structure_artifact(
         video_id,
     )
     scene_summary_status = "empty" if not scene_summary_text else "pass"
+    asr_rows = _legacy_asr_rows(
+        video_id=video_id,
+        asr_segment_id=asr_segment_id,
+        text=asr_text,
+        end_sec=shot.end_seconds,
+        end_frame=shot.end_frame,
+        provider=provider_plan.asr,
+    )
+    shot_transcript_links = (
+        [{"shot_id": shot_id, "asr_segment_id": asr_segment_id, "video_id": video_id, "coverage": 1.0}]
+        if asr_rows
+        else []
+    )
+    scene_transcript_links = (
+        [{"scene_id": scene_id, "asr_segment_id": asr_segment_id, "video_id": video_id, "coverage": 1.0}]
+        if asr_rows
+        else []
+    )
 
     _write_json_artifact(
         artifact_dir / "metadata_normalized.json",
@@ -222,18 +279,7 @@ def _write_video_structure_artifact(
         },
     )
     tables = {
-        "asr_segments": [{
-            "asr_segment_id": asr_segment_id,
-            "video_id": video_id,
-            "start_sec": 0.0,
-            "end_sec": shot.end_seconds,
-            "start_seconds": 0.0,
-            "end_seconds": shot.end_seconds,
-            "text": asr_text,
-            "provider": providers,
-            "asr_provider": provider_plan.asr,
-            "status": asr_status,
-        }],
+        "asr_segments": asr_rows,
         "shots": [{
             "shot_id": shot_id,
             "video_id": video_id,
@@ -299,6 +345,21 @@ def _write_video_structure_artifact(
             "provider": "KeyframeSelectionProvider",
             "status": keyframe_selection.status if keyframe_path.exists() and thumbnail_path.exists() else "degraded",
         }],
+        "ocr": [{
+            "ocr_id": f"{keyframe_id}:ocr",
+            "video_id": video_id,
+            "keyframe_id": keyframe_id,
+            "shot_id": shot_id,
+            "frame_id": frame_id,
+            "text": ocr_text,
+            "raw_text": ocr_text,
+            "provider": provider_plan.ocr,
+            "model_name": provider_plan.ocr,
+            "model_version": "debug",
+            "language": "vi",
+            "confidence": None,
+            "status": ocr_status,
+        }],
         "shot_captions": [{
             "shot_caption_id": f"{shot_id}_caption",
             "video_id": video_id,
@@ -308,27 +369,24 @@ def _write_video_structure_artifact(
             "representative_timestamp_sec": keyframe_selection.time_seconds,
             "caption_vi": shot_caption_text,
             "caption_en": shot_caption_text,
+            "objects_vi": [],
+            "objects_en": [],
+            "actions_vi": [],
+            "actions_en": [],
+            "visible_text_summary_vi": ocr_text,
+            "visible_text_summary_en": ocr_text,
+            "scene_type": "unknown",
             "provider": provider_plan.shot_caption,
             "caption_model": provider_plan.shot_caption,
             "model_name": provider_plan.shot_caption,
             "model_version": "debug",
-            "prompt_version": "debug_shot_caption_v1",
-            "schema_version": "1.0.0",
+            "prompt_version": "debug_shot_caption_v2",
+            "schema_version": "shot_caption_response_v2",
             "confidence": 0.0,
             "status": shot_caption_status,
         }],
-        "shot_transcript_links": [{
-            "shot_id": shot_id,
-            "asr_segment_id": asr_segment_id,
-            "video_id": video_id,
-            "coverage": 1.0,
-        }],
-        "scene_transcript_links": [{
-            "scene_id": scene_id,
-            "asr_segment_id": asr_segment_id,
-            "video_id": video_id,
-            "coverage": 1.0,
-        }],
+        "shot_transcript_links": shot_transcript_links,
+        "scene_transcript_links": scene_transcript_links,
         "scene_summaries": [{
             "scene_id": scene_id,
             "video_id": video_id,
@@ -344,7 +402,11 @@ def _write_video_structure_artifact(
         }],
     }
     for table_name, rows in tables.items():
-        _write_parquet(artifact_dir / f"{table_name}.parquet", rows)
+        _write_parquet(
+            artifact_dir / f"{table_name}.parquet",
+            rows,
+            columns=PARQUET_COLUMNS.get(table_name),
+        )
     _write_errors(artifact_dir / "errors.jsonl", errors)
     _write_json_artifact(
         artifact_dir / "manifest.json",
@@ -509,6 +571,40 @@ def _transcribe(
         return ""
 
 
+def _legacy_asr_rows(
+    *,
+    video_id: str,
+    asr_segment_id: str,
+    text: str,
+    end_sec: float,
+    end_frame: int,
+    provider: str,
+) -> list[dict[str, Any]]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+    canonical_provider = provider if provider in {"faster_whisper", "nemo"} else "faster_whisper"
+    return [
+        {
+            "asr_segment_id": asr_segment_id,
+            "video_id": video_id,
+            "start_sec": 0.0,
+            "end_sec": float(end_sec),
+            "start_frame": 0,
+            "end_frame": int(end_frame),
+            "text": stripped,
+            "language": None,
+            "confidence": None,
+            "avg_logprob": None,
+            "no_speech_prob": None,
+            "provider": canonical_provider,
+            "model_name": canonical_provider,
+            "model_version": "legacy-debug",
+            "status": "pass",
+        }
+    ]
+
+
 def _caption_keyframe(
     keyframe_path: Path,
     fallback_text: str,
@@ -563,9 +659,17 @@ def _extract_media(video_path: Path, keyframe_path: Path, thumbnail_path: Path, 
         return "missing_after_extract_failure"
 
 
-def _write_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
+def _write_parquet(
+    path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    columns: list[str] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_parquet(path, index=False)
+    pd.DataFrame(rows, columns=columns if not rows and columns else None).to_parquet(
+        path,
+        index=False,
+    )
 
 
 def _write_json_artifact(path: Path, payload: dict[str, Any]) -> None:

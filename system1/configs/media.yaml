@@ -1,4 +1,4 @@
-schema_version: phase01_media_v1
+schema_version: phase01_media_v2
 
 keyframe:
   extension: .jpg
@@ -55,6 +55,27 @@ keyframe:
     fallback: highest_quality
     tie_breaker: nearest_shot_temporal_center
     single_frame_is_representative: true
+
+  semantic_sampling:
+    enabled: true
+    policy: temporal_visual_text_v1
+    target_max_probe_gap_seconds: 3.0
+    max_probe_candidates_per_shot: 24
+    min_supplemental_separation_seconds: 1.0
+    max_supplemental_keyframes_per_shot: 2
+    visual_novelty:
+      policy: dhash_v1
+      hash_size: 8
+      min_hamming_ratio: 0.25
+    text_change:
+      policy: mser_masked_edge_jaccard_v1
+      max_long_side: 480
+      canny_low: 50
+      canny_high: 150
+      signature_width: 64
+      signature_height: 36
+      min_plausible_regions: 2
+      min_jaccard_distance: 0.35
 
 thumbnail:
   extension: .webp

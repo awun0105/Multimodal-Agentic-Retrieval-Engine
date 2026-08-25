@@ -474,11 +474,14 @@ Required checks:
   the Phase00 frame timeline. Estimated FPS mapping is debug-only and cannot
   satisfy app-ready validation.
 - Every keyframe has `keyframe_ref` and `thumbnail_ref`.
-- Every normal shot has distinct early/middle/late keyframes chosen from the
+- Every normal shot has distinct early/middle/late anchors chosen from the
   configured search bands centered at 20%/50%/80%. Short shots emit every
-  distinct selected frame once. Every row records quality and selection reason,
-  and every shot has exactly one representative keyframe selected by the
-  relative middle-quality rule.
+  distinct selected frame once. Long shots may add bounded `supplemental`
+  keyframes only when configured visual novelty or candidate-present text
+  change survives multi-signal dedup. Every row records quality and selection
+  reason, every supplemental row is non-representative, and every shot has
+  exactly one representative anchor selected by the relative middle-quality
+  rule.
 - Every SigLIP and BEiT3 FAISS vector has a corresponding `vector_map` row with
   the correct `index_name`.
 - Every `vector_map.keyframe_id` exists in `keyframes`.

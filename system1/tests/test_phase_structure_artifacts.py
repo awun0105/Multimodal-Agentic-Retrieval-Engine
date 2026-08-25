@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from system1.artifacts.package import write_artifact_zip
+from system1.artifacts.package import validate_artifact_zip, write_artifact_zip
 from system1.cli import app
 from system1.release.phase_artifacts import (
     phase01_structure_artifact_remote_path,
@@ -14,7 +15,6 @@ from system1.release.phase_artifacts import (
     plan_structure_artifact_sync,
     upload_structure_artifacts_to_hf,
 )
-
 
 runner = CliRunner()
 
@@ -57,6 +57,25 @@ def _build_structure_release(root: Path, *, release_id: str = "canonical_release
         encoding="utf-8",
     )
     return release_dir
+
+
+def test_artifact_validation_streams_payload_checksum_reads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    release_dir = tmp_path / "release"
+    zip_path = _write_structure_zip(release_dir, "L21_V001")
+    original_read = zipfile.ZipFile.read
+
+    def metadata_only_read(archive, name, *args, **kwargs):
+        if Path(str(name)).name not in {"artifact_manifest.json", "checksums.json"}:
+            raise AssertionError("payload members must be streamed with ZipFile.open")
+        return original_read(archive, name, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", metadata_only_read)
+
+    manifest = validate_artifact_zip(zip_path)
+
+    assert manifest["video_id"] == "L21_V001"
 
 
 def test_plan_structure_artifact_sync_scopes_to_current_batch_and_worker_report(tmp_path: Path) -> None:

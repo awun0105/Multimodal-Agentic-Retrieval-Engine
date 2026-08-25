@@ -26,7 +26,7 @@ from trake_submission import spread_frames as _spread_frames
 #
 # Still unspecified: exact per-line CSV layout for TRAKE, submission filename
 # rules, and the ZIP wrapper (zip > submission/ > one CSV per query, UTF-8).
-SUBMISSION_DELIMITER = ", "
+SUBMISSION_DELIMITER = ","
 SUBMISSION_INCLUDE_HEADER = False
 SUBMISSION_MAX_ROWS = 100
 FRAME_INDEX_BASE = 0

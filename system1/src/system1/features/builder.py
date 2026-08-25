@@ -172,7 +172,16 @@ def feature_rows(
     objects = text_provider.detect(keyframe_path)
     return (
         {"embedding_id": embedding_id, "keyframe_id": keyframe_id, "video_id": video_id, "frame_id": frame_id, "embedding_model": embedding_provider.model_slug, "model_slug": embedding_provider.model_slug, "embedding_dim": embedding_provider.embedding_dim, "vector_dim": embedding_provider.embedding_dim, "provider": plan.embedding, "embedding_status": visual_status, "status": visual_status},
-        {"ocr_id": f"{keyframe_id}:ocr", "keyframe_id": keyframe_id, "text": ocr_text, "provider": plan.ocr, "status": "empty" if not ocr_text else "pass"},
+        {
+            "ocr_id": f"{keyframe_id}:ocr",
+            "keyframe_id": keyframe_id,
+            "text": ocr_text,
+            "provider": plan.ocr,
+            "model_name": getattr(text_provider, "model_slug", plan.ocr),
+            "model_version": getattr(text_provider, "model_slug", plan.ocr),
+            "confidence": None,
+            "status": "empty" if not ocr_text else "pass",
+        },
         {"object_id": f"{keyframe_id}:object", "keyframe_id": keyframe_id, "label": objects[0], "confidence": 0.0, "provider": plan.object_detection},
         embedding,
         ocr_text,
@@ -236,7 +245,16 @@ def _write_video_feature_artifact(
             errors.append({"video_id": video_id, "level": "warning", "kind": "feature_provider_failed", "message": str(exc)})
             embedding_dim = int(getattr(embedding_provider, "embedding_dim", 0) or 0)
             embedding_meta = {"embedding_id": f"{keyframe_id}_failed", "keyframe_id": keyframe_id, "video_id": video_id, "frame_id": frame_id, "embedding_model": getattr(embedding_provider, "model_slug", "unknown"), "model_slug": getattr(embedding_provider, "model_slug", "unknown"), "embedding_dim": embedding_dim, "vector_dim": embedding_dim, "provider": provider_plan.embedding, "status": "failed"}
-            ocr_row = {"ocr_id": f"{keyframe_id}:ocr", "keyframe_id": keyframe_id, "text": "", "provider": provider_plan.ocr, "status": "failed"}
+            ocr_row = {
+                "ocr_id": f"{keyframe_id}:ocr",
+                "keyframe_id": keyframe_id,
+                "text": "",
+                "provider": provider_plan.ocr,
+                "model_name": provider_plan.ocr,
+                "model_version": provider_plan.ocr,
+                "confidence": None,
+                "status": "failed",
+            }
             object_row = {"object_id": f"{keyframe_id}:object", "keyframe_id": keyframe_id, "label": "", "confidence": 0.0, "provider": provider_plan.object_detection, "status": "failed"}
             embedding = [0.0] * embedding_dim
             ocr_text = ""
@@ -259,10 +277,15 @@ def _write_video_feature_artifact(
             "ocr_id": ocr_row["ocr_id"],
             "keyframe_id": keyframe_id,
             "video_id": video_id,
+            "shot_id": str(row.get("shot_id", "")),
             "frame_id": frame_id,
             "raw_text": ocr_row.get("text", ""),
             "text": ocr_row.get("text", ""),
             "provider": ocr_row.get("provider", provider_plan.ocr),
+            "model_name": ocr_row.get("model_name", provider_plan.ocr),
+            "model_version": ocr_row.get("model_version", provider_plan.ocr),
+            "language": ocr_row.get("language", "vi"),
+            "confidence": ocr_row.get("confidence"),
             "status": ocr_row.get("status", "pass"),
         })
         object_rows.append({

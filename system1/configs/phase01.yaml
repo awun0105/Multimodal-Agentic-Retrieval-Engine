@@ -1,21 +1,38 @@
-schema_version: phase01_pipeline_v1
-pipeline_id: phase01_production_v1
+schema_version: phase01_pipeline_v1_4
+pipeline_id: phase01_production_v1_4
 
 execution:
   video_order: batch_manifest
   max_concurrent_videos: 1
+  chunk_scheduler:
+    max_chunk_videos: 4
+    max_chunk_raw_bytes: 1610612736
+    min_free_disk_gb: 20
+    medium_free_disk_gb: 35
+    medium_max_chunk_videos: 2
+    low_disk_max_chunk_videos: 1
+    ram:
+      medium_available_gb: 8
+      minimum_available_gb: 4
+      medium_max_chunk_videos: 2
+      low_max_chunk_videos: 1
+  inference_batch_size:
+    ocr: 4
+    shot_captions: 2
   require_phase00_frame_timeline: true
   checkpoint_after_each_stage: true
   continue_after_retryable_video_failure: true
   gpu_heavy_models_resident: 1
   release_gpu_objects_before_empty_cache: true
   min_scratch_free_gb: 5
+  min_model_cache_free_gb: 25
 
 stages:
   order:
     - shots
     - keyframes
     - asr
+    - ocr
     - shot_captions
     - shot_transcript_links
     - scenes
@@ -26,14 +43,16 @@ stages:
     shots: []
     keyframes: [shots]
     asr: []
-    shot_captions: [keyframes]
+    ocr: [keyframes]
+    shot_captions: [keyframes, ocr]
     shot_transcript_links: [shots, asr]
-    scenes: [shots, keyframes, shot_captions, shot_transcript_links]
-    scene_summaries: [scenes, keyframes, shot_captions, shot_transcript_links]
+    scenes: [shots, keyframes, ocr, shot_captions, shot_transcript_links]
+    scene_summaries: [scenes, keyframes, ocr, shot_captions, shot_transcript_links]
     package:
       - shots
       - keyframes
       - asr
+      - ocr
       - shot_captions
       - shot_transcript_links
       - scenes
@@ -53,6 +72,20 @@ asr:
   exhausted_oom_status: failed_retryable
   continue_next_video_after_exhausted_oom: true
 
+ocr:
+  model_key: ocr
+  run_on_keyframe_roles: [early, middle, late, supplemental]
+  empty_status: empty
+  failed_status: failed
+  text_presence_filter:
+    enabled: true
+    policy: opencv_conservative_v1
+    max_long_side: 960
+    canny_low: 50
+    canny_high: 150
+    max_no_text_edge_density: 0.0015
+    max_no_text_gray_std: 12
+
 api:
   max_concurrency_per_video: 2
   request_cache_backend: stage_local
@@ -70,6 +103,7 @@ retry:
   schema_repair_attempts: 1
 
 scene_grouping:
+  focused_review_keyframe_roles: [early, late, supplemental]
   focus_gap_count: 8
   context_shots_each_side: 4
   stride: 6
@@ -95,13 +129,14 @@ schemas:
   resolved_config: resolved_config_v1
   checkpoint_state: phase01_checkpoint_state_v1
   shots: shots_v1
-  keyframes: keyframes_v2
+  keyframes: keyframes_v3
   asr_segments: asr_segments_v1
-  shot_captions: shot_captions_v1
+  ocr: ocr_v2
+  shot_captions: shot_captions_v2
   shot_transcript_links: shot_transcript_links_v1
   scenes: scenes_v1
   scene_transcript_links: scene_transcript_links_v1
-  scene_summaries: scene_summaries_v1
+  scene_summaries: scene_summaries_v2
 
 production_readiness:
   required_non_null_paths:
@@ -109,12 +144,10 @@ production_readiness:
     - models.shot_detection.source_sha256
     - models.shot_detection.weights_sha256
     - models.asr.model_revision
+    - models.ocr.model_id
+    - models.ocr.model_revision
     - models.shot_caption.model_id
     - models.shot_caption.model_revision
-    - models.scene_boundary.model_id
-    - models.scene_boundary.model_revision
-    - models.scene_summary.model_id
-    - models.scene_summary.model_revision
     - media.keyframe.encoding.jpeg_quality
     - media.keyframe.quality.resize_width
     - media.keyframe.quality.resize_height

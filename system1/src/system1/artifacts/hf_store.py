@@ -17,9 +17,13 @@ from huggingface_hub import (
     CommitOperationAdd,
     CommitOperationDelete,
     HfApi,
-    RepoFile,
     hf_hub_download,
 )
+
+try:
+    from huggingface_hub import RepoFile
+except ImportError:  # huggingface-hub < 1.0
+    from huggingface_hub.hf_api import RepoFile
 
 try:
     from huggingface_hub.utils import (
@@ -66,6 +70,7 @@ class HuggingFaceDatasetArtifactStore:
     revision: str = "main"
     token: str | None = None
     prefix: str = ""
+    cache_dir: Path | str | None = None
 
     def __post_init__(self) -> None:
         _normalize_relative_path(self.prefix)
@@ -102,6 +107,7 @@ class HuggingFaceDatasetArtifactStore:
                     revision=self.revision,
                     filename=remote_path,
                     token=self.token,
+                    cache_dir=str(self.cache_dir) if self.cache_dir is not None else None,
                 )
             return True
         except (EntryNotFoundError, LocalEntryNotFoundError):
@@ -192,8 +198,15 @@ class HuggingFaceDatasetArtifactStore:
         )
         return [self.path(relative_path) for relative_path in relative_paths]
 
-    def download_file(self, relative_path: str | Path, target: Path, *, cache_dir: Path | str | None = None) -> Path:
+    def download_file(
+        self,
+        relative_path: str | Path,
+        target: Path,
+        *,
+        cache_dir: Path | str | None = None,
+    ) -> Path:
         remote_path = self._remote_path(relative_path)
+        effective_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         try:
             cached_path = hf_hub_download(
                 repo_id=self.repo_id,
@@ -201,7 +214,11 @@ class HuggingFaceDatasetArtifactStore:
                 revision=self.revision,
                 filename=remote_path,
                 token=self.token,
-                cache_dir=str(cache_dir) if cache_dir is not None else None,
+                cache_dir=(
+                    str(effective_cache_dir)
+                    if effective_cache_dir is not None
+                    else None
+                ),
             )
         except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
             raise FileNotFoundError(remote_path) from exc
@@ -218,12 +235,12 @@ class HuggingFaceDatasetArtifactStore:
             with target.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
         if not isinstance(payload, dict):
-            raise ValueError("Artifact JSON payload must be an object")
+            raise ValueError("Artifact JSON payload must be an object")  # noqa: TRY004
         return payload
 
     def write_json(self, relative_path: str | Path, payload: dict[str, Any]) -> Path:
         if not isinstance(payload, dict):
-            raise ValueError("Artifact JSON payload must be a dict")
+            raise ValueError("Artifact JSON payload must be a dict")  # noqa: TRY004
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / Path(str(relative_path)).name
             source.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

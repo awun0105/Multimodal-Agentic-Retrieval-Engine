@@ -21,6 +21,8 @@ persisted resolved config and stage provenance.
 - Scene grouping design: `docs/architecture/system1-scene-grouping.md`.
 - Self-generated evidence decision:
   `docs/decisions/0015-system1-self-generated-production-evidence.md`.
+- Semantic-event keyframe decision:
+  `docs/decisions/0019-phase01-semantic-event-keyframes.md`.
 - Phase00 handoff: `docs/architecture/system1-ingestion.md`.
 - Current orchestration: `system1/notebooks/01_worker_structure_pipeline.ipynb`.
 - Current package entry point: `system1/src/system1/structure/builder.py`.
@@ -45,8 +47,15 @@ In scope:
   dependency-aware invalidation.
 - Sequential video processing and single-heavy-model GPU residency for
   Colab/Kaggle safety.
-- TransNet V2 shots, search-band keyframes, faster-whisper large-v3 ASR,
-  Gemini captions/grouping/summaries, package, sync, and scratch cleanup.
+- Public or private Hugging Face checkpoint repositories, selected by project
+  configuration rather than enforced as a runtime privacy policy.
+- Per-run and per-video Hugging Face download caches under disposable scratch,
+  plus operator-visible video/stage/disk progress and post-run remote layout
+  verification.
+- TransNet V2 shots, mandatory search-band anchors plus bounded semantic-event
+  supplemental keyframes, NVIDIA Vietnamese FastConformer ASR, gated Vintern
+  OCR, shared 4-bit Qwen2.5-VL caption/grouping/summaries, scoped Gemini
+  fallback, package, sync, and scratch cleanup.
 - Focused, integration, recovery, and real-provider acceptance tests.
 
 Out of scope:
@@ -86,11 +95,11 @@ The stage graph is:
 
 ```text
 shots
-  -> keyframes -> shot_captions
+  -> keyframes -> ocr -> shot_captions
 asr
 shots + asr -> shot_transcript_links
-shots + keyframes + shot_captions + shot_transcript_links -> scenes
-scenes + keyframes + shot_captions + shot_transcript_links -> scene_summaries
+shots + keyframes + ocr + shot_captions + shot_transcript_links -> scenes
+scenes + keyframes + ocr + shot_captions + shot_transcript_links -> scene_summaries
 all canonical stages -> package -> sync
 ```
 
@@ -109,7 +118,7 @@ state update have all succeeded.
 2. Add versioned Phase01, model, media, artifact, and storage configuration.
 3. Add resolved-config and per-video checkpoint-state JSON schemas.
 4. Extend `keyframes.parquet` with `quality_score`, `is_representative`, and
-   `selection_reason` while retaining the semantic early/middle/late role.
+   `selection_reason` while retaining semantic early/middle/late anchor roles.
 5. Add contract tests. Required but undecided production values remain explicit
    `null` values and fail readiness validation instead of receiving guessed
    defaults.
@@ -126,6 +135,8 @@ state update have all succeeded.
    disk, CUDA/model cache, and CLI/package compatibility before expensive work.
 6. Restore only Phase00 core tables, the selected batch manifest, and that
    batch's timelines, with checksum-based incremental recovery.
+7. Pin Notebook 01 to the active `monolith-mvp-app` branch and verify the
+   uploaded `phase01_structure` artifact/report paths after `Run All`.
 
 ### Work Package 2: Checkpoint Engine
 
@@ -138,8 +149,8 @@ state update have all succeeded.
 4. Implement dependency invalidation without invalidating independent stages.
 5. Restore the checkpoint index at startup and skip only complete, checksum-
    valid, fingerprint-matching stages.
-6. Batch all outputs of one stage into one backend commit, then publish state
-   separately as the atomic completion marker.
+6. Batch all outputs of one stage and the matching complete state into one
+   atomic backend commit; verify recorded checksums during promotion/resume.
 
 ### Work Package 3: Shots And Search-Band Keyframes
 
@@ -158,18 +169,23 @@ state update have all succeeded.
    best selected role; otherwise use the highest-quality role, tie-breaking
    toward the temporal center.
 
-### Work Package 4: ASR And Gemini Stages
+### Work Package 4: ASR, OCR, And Semantic Stages
 
-1. Implement faster-whisper large-v3 with auto language and VAD.
-2. Use CUDA `float16`, retry CUDA OOM with `int8_float16`, and use CPU `int8`;
-   never substitute a weaker ASR model.
-3. Release stage model/tensor references, run garbage collection, and clear
-   unused CUDA cache before loading the next heavy model.
-4. Implement strict bilingual Gemini caption, Boolean scene-boundary, and
-   bilingual summary adapters with content-addressed caching.
-5. Bound Gemini concurrency to two requests per video and apply configured
-   retry/rate-limit behavior.
-6. Keep request-level cache in stage scratch; use the persistent completed
+1. Use pinned NeMo/FastConformer Vietnamese ASR by default while preserving
+   Faster-Whisper Large-v3 as a config override.
+2. Gate Vintern OCR with a conservative OpenCV text-presence filter; uncertain
+   and detector-error frames still run Vintern, while confident no-text frames
+   emit canonical empty OCR rows.
+3. Load Qwen2.5-VL-7B once per chunk in explicit bitsandbytes NF4 4-bit mode
+   after Vintern is released; reuse it for caption, boundary, and summary.
+4. Batch one-image local requests through `request_many`: OCR defaults to four
+   requests and captions to two, with adaptive CUDA OOM reduction to one.
+5. Keep scene-boundary and scene-summary requests at one because each request
+   contains larger multi-image/context evidence.
+6. Fall back only an isolated invalid/schema-failing request to Gemini. Open a
+   per-chunk Qwen circuit only for load failure, repeated batch-one OOM, or an
+   unusable local runtime; do not increase Gemini concurrency.
+7. Keep request-level cache in stage scratch; use the persistent completed
    stage itself as the cross-session cache to avoid per-request HF commits.
 
 ### Work Package 5: Orchestrator, Package, And Sync
@@ -183,6 +199,9 @@ state update have all succeeded.
    remote checksum verification.
 5. Persist batch summary counts for complete, skipped, failed-retryable, and
    terminal failures without replacing per-video state.
+6. Keep raw-media, checkpoint-restore, remote-verification, and model-artifact
+   HF caches inside disposable scratch. Emit progress before and after every
+   video/stage with current scratch free space.
 
 ### Work Package 6: Production Proof
 
@@ -195,6 +214,59 @@ state update have all succeeded.
    concurrency, memory cleanup, API cache reuse, package, sync, and restore.
 5. Run full Batch 1 only after the prior proof passes.
 
+### Work Package 7: Runtime Memory And Lifecycle Hardening
+
+1. Make the chunk scheduler RAM-aware and block heavy model loads below the
+   configured minimum after deterministic cleanup/recheck.
+2. Advance the shared semantic client through explicit caption, scene, and
+   summary yields; clear generator references before the owner closes Qwen.
+3. Reject Qwen CPU/disk offload, record process RSS and stage memory
+   milestones, and cleanup chunk-local references before measuring chunk end.
+4. Print Git/config/model identity before expensive work so stale Notebook code
+   is visible immediately.
+5. Preserve checkpoint semantics: caption failure leaves the first four stages
+   complete and downstream unpromoted; missing complete artifacts invalidate
+   the affected stage and downstream.
+
+### Work Package 8: Production Audit Hardening
+
+1. Guard NeMo/Faster-Whisper loads with the existing host-RAM pre-load policy
+   and reject Vintern CPU/disk offload.
+2. Validate fixed execution and shared semantic primary/fallback invariants.
+3. Isolate non-systemic local batch errors to singleton requests and reduce
+   multi-image evidence evenly only after an observed CUDA OOM.
+4. Align checkpoint/package documentation with the atomic HF commit and
+   diagnostics layout used by code.
+5. Validate path-safe batch/worker identifiers and stream ZIP payload checksum
+   verification.
+
+### Work Package 9: Semantic-Event Keyframe Recall
+
+1. Preserve frame-ratio early/middle/late anchor selection and add bounded,
+   VFR-safe timestamp probes before the existing one-pass grouped decode.
+2. Select supplemental evidence with config-versioned dHash visual novelty,
+   candidate-present masked-edge text change, greedy recomputation, timestamp
+   separation, and deterministic ranking.
+3. Migrate `keyframes_v2` to `keyframes_v3` with a non-representative
+   `supplemental` role; keep caption and summary-image policies representative
+   only.
+4. Run supplemental frames through OCR and preserve every supplemental path in
+   focused scene evidence/contact sheets.
+5. Persist config-hashed keep/drop diagnostics and test VFR coverage, static
+   dedup, text change, budget, package, and downstream behavior.
+
+### Work Package 10: Local Structured-Output Recovery
+
+1. Version the OCR prompt without changing the canonical OCR response schema.
+2. Attach the exact JSON Schema contract to every local Vintern/Qwen request
+   and include the contract version in local request-cache identity.
+3. Emit bounded parse-failure samples so provider output can be diagnosed
+   without flooding logs.
+4. Classify OCR health against actual Vintern requests and refuse checkpoint
+   promotion when every Vintern request fails.
+5. Preserve the OCR gate, batching, model revision, and image preprocessing;
+   validate locally before any one-video real-provider smoke.
+
 ## Dependencies And Invalidation
 
 The minimum invalidation rules are:
@@ -202,6 +274,8 @@ The minimum invalidation rules are:
 - `shots` change invalidates `keyframes`, `shot_captions`,
   `shot_transcript_links`, `scenes`, `scene_summaries`, `package`, and `sync`.
 - `keyframes` change invalidates `shot_captions`, `scenes`, `scene_summaries`,
+  `package`, and `sync`.
+- `ocr` change invalidates `shot_captions`, `scenes`, `scene_summaries`,
   `package`, and `sync`.
 - `asr` change invalidates `shot_transcript_links`, `scenes`,
   `scene_summaries`, `package`, and `sync`.
@@ -245,9 +319,13 @@ completed stage.
 - [x] Complete Work Package 1 resolved-config and Notebook UX.
 - [x] Complete Work Package 2 checkpoint engine.
 - [x] Complete Work Package 3 shots and keyframes.
-- [x] Complete Work Package 4 ASR and Gemini stages.
+- [x] Complete Work Package 4 ASR, OCR, and local-first semantic stages.
 - [x] Complete Work Package 5 orchestration/package/sync.
 - [ ] Complete Work Package 6 real production proof.
+- [x] Complete Work Package 7 runtime memory and lifecycle hardening.
+- [x] Complete Work Package 8 production audit hardening.
+- [x] Complete Work Package 9 semantic-event keyframe recall.
+- [x] Complete Work Package 10 local structured-output recovery.
 
 ## Decisions
 
@@ -267,23 +345,56 @@ completed stage.
   parity-verified artifact is produced.
 - 2026-08-13: Keyframe candidate decoding uses one sequential video pass and
   retains only one shot's candidate group, bounding peak RAM on Colab/Kaggle.
-- 2026-08-16: Gemini request caching is stage-local and checkpoint outputs are
-  batch-uploaded per stage. Persistent resume authority remains the verified
-  stage output plus its separately committed state marker.
+- 2026-08-16: Gemini request caching is stage-local. Persistent resume
+  authority is one atomic backend commit containing the stage outputs and
+  matching complete state marker; resume revalidates every recorded checksum.
 - 2026-08-16: Phase00 restore is batch-scoped and checksum-resumable; unrelated
   batch timelines are not downloaded into Colab/Kaggle scratch.
+- 2026-08-24: Checkpoint repository visibility is an operator choice. Public
+  repositories are accepted; the preflight proves access and write/read
+  behavior without imposing a private-repository policy.
+- 2026-08-24: Hugging Face download caches used for raw media, checkpoint
+  restore/verification, model artifacts, and remote artifact verification are
+  disposable scratch scoped to the run or video. Notebook 01 exposes
+  video/stage/disk progress and verifies the remote Phase01 layout after a run.
+- 2026-08-25: NeMo/FastConformer Vietnamese is the ASR default. One shared
+  Qwen2.5-VL-7B NF4 runtime is primary for caption, scene boundaries, and scene
+  summaries; Gemini is a request-scoped fallback unless a systemic local
+  failure opens the remainder-of-chunk circuit breaker.
+- 2026-08-25: OCR runs a conservative config-hashed OpenCV text-presence gate
+  before Vintern and maps confident no-text results to canonical `ocr_v2`
+  `status=empty` rows without inventing a new status.
+- 2026-08-25: Runtime chunks use configured RAM pressure limits of 8/4 GiB for
+  4/2/1 video planning. Heavy model loads require at least 4 GiB available
+  after cleanup, and Qwen CPU/disk offload is a systemic provider failure.
+- 2026-08-25: The pinned logical NeMo model ID resolves on Hugging Face to the
+  canonical Vietnamese source repository at the same immutable revision, so
+  no model identity migration is required.
+- 2026-08-25: A checkpoint stage promotion is one atomic backend commit
+  containing outputs and the matching state marker. Resume accepts it only
+  after checksum validation; documentation must not describe a separate state
+  commit.
+- 2026-08-25: Mandatory anchor selection remains frame-ratio based. Supplemental
+  probes alone use exact `pts_time`; only visual/text novelty may produce a
+  bounded non-representative `supplemental` row, while captions and summary
+  images stay representative-only.
+- 2026-08-25: Local Vintern/Qwen generation receives a versioned exact JSON
+  Schema contract. OCR may degrade per request, but a video with zero
+  successful Vintern responses must fail the OCR stage before promotion.
 
 ## Still Required Before A Production Run
 
 All code/config decisions are authoritative except the checksum generated by
 the one-time official TransNet converter parity job. Before a production run:
 
-- run `scripts/prepare_transnetv2_artifact.py`, upload the bundle to the private
-  model-artifact store, and set the printed `weights_sha256` in `models.yaml`;
-- create/verify the private checkpoint repository and configure secrets;
-- use `release_id_override=canonical_release_v001` for the current legacy
-  Phase00 snapshot because its manifest predates `completed_at`, or resync
-  Phase00 with the updated package;
+- run `scripts/prepare_transnetv2_artifact.py`, upload the bundle to the
+  configured writable model-artifact store, and set the printed
+  `weights_sha256` in `models.yaml`;
+- create/verify a writable checkpoint repository (public or private) and
+  configure secrets;
+- allow Phase00 auto-resolution when the completion manifest contains
+  `completed_at`; use `release_id_override` only for legacy snapshots without
+  that field;
 - choose a real one-video fixture and heterogeneous small batch, complete the
   generated 12-item stratified manual review, then authorize the full batch.
 
@@ -292,21 +403,39 @@ the one-time official TransNet converter parity job. Before a production run:
 - Focused proof covers config/hash/readiness, Phase00 resolution, checkpoint
   batch-scoped restore/corruption recovery, checkpoint grouped promotion,
   restore/corruption/invalidation, TransNet partitioning, one-pass grouped
-  frame decoding, search-band selection, ASR normalization, Gemini
-  retry/cache/schema repair, scene voting/review, strict package assembly, and
-  QA sampling.
-- The complete local suite passes 247 tests. Scoped Ruff checks pass for all
+  frame decoding, search-band selection, both ASR providers, OCR gate behavior,
+  true/adaptive local batching, request/systemic fallback separation, shared
+  Qwen residency, scene voting/review, strict package assembly, and QA sampling.
+- The complete local suite passes 356 tests. Scoped Ruff checks pass for all
   undefined names and for import correctness across the new Phase01 surface.
   Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
   current; and `git diff --check` passes.
+- Runtime-hardening tests prove one Qwen load/close per chunk across captions,
+  scenes, and summaries; Vintern-before-Qwen release ordering; request/systemic
+  fallback separation; RAM-aware 4/2/1 scheduling; pre-load RAM blocking;
+  checkpoint failure semantics; and release of chunk client references.
 - CLI/notebook contracts prove that no Phase01 provider selector is exposed and
   Notebook 01 has one package invocation with minimal settings.
+- Local structured-output recovery proof passes 37 focused OCR/VLM/orchestrator
+  tests and 39 Phase01 production-contract tests. It proves that exact schemas
+  reach both Vintern and Qwen, cache identity changes with the contract version,
+  parse telemetry is bounded, and all-request Vintern failure cannot promote
+  the OCR checkpoint. Ruff F/E9/I and `uv lock --check` pass.
 - Real-provider one-video, heterogeneous-batch, disconnect-at-every-boundary,
   and Colab/Kaggle platform proof remain Work Package 6.
 
 ## Result
 
-Active. Work Packages 0-5 are implemented locally. The remaining gate is
+Active. Work Packages 0-5, 7, and 8 are implemented locally. On 2026-08-25 the
+production defaults moved to NeMo/FastConformer ASR, gated Vintern OCR, and a
+shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
+also preserves mandatory anchors while adding bounded visual/text-novel
+supplemental keyframes. These paths, checkpoint invalidation, lifecycle
+telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
+are covered by the 356-test local suite. OCR and the shared Qwen runtime now
+receive the exact versioned JSON Schema in their prompts; OCR records bounded
+parse diagnostics and fails before checkpoint promotion when every Vintern
+request fails. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import gc
 import json
 import os
 import shutil
 import tempfile
+import time
+import weakref
 import zipfile
-from collections.abc import Mapping
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from collections.abc import Callable, Generator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import psutil
 
 from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
@@ -19,23 +23,34 @@ from system1.artifacts.reports import utc_now, write_worker_report
 from system1.artifacts.store import ArtifactStore
 from system1.asr import build_shot_transcript_links, transcribe_video
 from system1.config import ResolvedPhase01Config, persist_resolved_phase01_config
-from system1.gemini import GeminiRequest, GeminiStructuredClient
+from system1.gemini import GeminiStructuredClient, StructuredRequest
 from system1.ingest.discovery import read_metadata
 from system1.keyframes import (
     candidate_frame_ids_for_shot,
     iter_decode_frame_groups,
     select_keyframes_for_shot,
+    select_supplemental_keyframes,
+    temporal_probe_plan_for_shot,
+    text_presence_gate,
     write_keyframe_images,
 )
 from system1.phase01.checkpoint import CheckpointManager, compute_fingerprint
 from system1.phase01.qa import write_manual_review_report
+from system1.phase01.scheduler import plan_runtime_chunks
 from system1.phase01.validation import validate_phase01_package, validate_rows
 from system1.scenes import group_scenes
-from system1.scenes.gemini_judge import GeminiSceneBoundaryJudge
+from system1.scenes.gemini_judge import StructuredSceneBoundaryJudge
 from system1.shots import (
     detect_shot_scenes,
     load_transnet_artifact,
     scenes_to_shot_rows,
+)
+from system1.vlm import (
+    BatchRequestError,
+    FallbackStructuredClient,
+    LocalVisionStructuredClient,
+    MetadataStructuredClient,
+    SystemicProviderError,
 )
 
 PARQUET_COLUMNS: dict[str, list[str]] = {
@@ -46,7 +61,30 @@ PARQUET_COLUMNS: dict[str, list[str]] = {
     ],
     "shot_transcript_links": ["video_id", "shot_id", "asr_segment_id", "coverage"],
     "scene_transcript_links": ["video_id", "scene_id", "asr_segment_id", "coverage"],
+    "ocr": [
+        "ocr_id", "video_id", "keyframe_id", "shot_id", "frame_id", "text", "raw_text",
+        "provider", "model_name", "model_version", "language", "confidence", "status",
+    ],
 }
+
+
+@dataclass
+class _VideoFlow:
+    video_id: str
+    video_index: int
+    scratch: Path
+    manager: CheckpointManager
+    pipeline: Generator[str, Any, dict[str, Any]]
+
+
+class InsufficientMemoryError(RuntimeError):
+    """Retryable host-memory pressure that blocks a heavy model load."""
+
+
+_MANAGER_RUNTIME_CONTEXT: weakref.WeakKeyDictionary[
+    CheckpointManager, dict[str, int]
+] = weakref.WeakKeyDictionary()
+_STAGE_TIMERS: dict[tuple[int, str], float] = {}
 
 
 def process_production_batch(
@@ -64,78 +102,303 @@ def process_production_batch(
     started_at = utc_now()
     batch_path = release_dir / "manifests" / f"{batch_id}.txt"
     video_ids = [line.strip() for line in batch_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    duplicate_video_ids = sorted(
+        video_id for video_id in set(video_ids) if video_ids.count(video_id) > 1
+    )
+    if duplicate_video_ids:
+        raise ValueError(
+            "Phase01 batch manifest contains duplicate video IDs: "
+            + ", ".join(duplicate_video_ids)
+        )
     videos = pd.read_parquet(release_dir / "tables" / "videos.parquet")
     media = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet")
     videos_by_id = {str(row["video_id"]): row for row in videos.to_dict("records")}
     media_by_id = {str(row["video_id"]): row for row in media.to_dict("records")}
-    checkpoint_store = _hf_store(config.payload["storage"]["checkpoint"])
-    release_store = _hf_store(config.payload["storage"]["release"])
-    results: list[dict[str, Any]] = []
+    del videos, media
+    result_slots: list[dict[str, Any] | None] = [None] * len(video_ids)
     scratch_root.mkdir(parents=True, exist_ok=True)
+    _emit_progress(
+        event="batch",
+        status="start",
+        scratch=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_count=len(video_ids),
+    )
 
-    for video_id in video_ids:
-        video_scratch = scratch_root / release_id / batch_id / video_id
-        if video_scratch.exists():
-            shutil.rmtree(video_scratch)
-        video_scratch.mkdir(parents=True)
-        manager = CheckpointManager(
-            checkpoint_store,
-            release_id=release_id,
-            video_id=video_id,
-            config_hash=config.config_hash,
-            stage_config_hashes=config.stage_config_hashes,
-            verify_remote_checksum=bool(
-                config.payload["storage"]["checkpoint"].get("verify_remote_checksum", True)
-            ),
-            root_template=str(config.payload["artifact"]["checkpoint"]["root"]),
-            state_filename=str(
-                config.payload["artifact"]["checkpoint"]["state_filename"]
-            ),
+    raw_bytes_by_video = {
+        video_id: _mapping_raw_bytes(mapping)
+        for video_id, mapping in media_by_id.items()
+    }
+    pending = list(video_ids)
+    video_offsets = {video_id: index for index, video_id in enumerate(video_ids)}
+    chunk_index = 0
+    scheduler_policy = config.payload["phase01"]["execution"]["chunk_scheduler"]
+    while pending:
+        planned = plan_runtime_chunks(
+            pending,
+            raw_bytes_by_video=raw_bytes_by_video,
+            free_disk_gb=_scratch_free_gb(scratch_root),
+            available_ram_gb=_available_ram_gb(),
+            policy=scheduler_policy,
+        )[0]
+        chunk_index += 1
+        chunk_video_ids = list(planned.video_ids)
+        pending = pending[len(chunk_video_ids) :]
+        chunk_size = len(chunk_video_ids)
+        chunk_scratch = (
+            scratch_root
+            / release_id
+            / batch_id
+            / ".runtime_chunks"
+            / f"chunk_{chunk_index:04d}"
         )
-        try:
-            if video_id not in videos_by_id or video_id not in media_by_id:
-                raise ValueError(f"Phase00 batch references unknown video_id={video_id}")
-            result = _process_video(
-                video_id=video_id,
-                video_row=videos_by_id[video_id],
-                mapping=media_by_id[video_id],
-                release_dir=release_dir,
-                scratch=video_scratch,
-                manager=manager,
-                config=config,
-                transnet_artifact_dir=transnet_artifact_dir,
-                release_store=release_store,
-                sync_release=sync_release,
-            )
-        except Exception as exc:  # noqa: BLE001 - isolate failures per video
-            retryable = _retryable_video_error(exc)
-            checkpoint_error: str | None = None
-            try:
-                failed_stage = manager.active_stage
-                manager.mark_failed(
-                    failed_stage,
-                    input_fingerprint=None,
-                    retryable=retryable,
-                    error={
-                        "error_type": type(exc).__name__,
-                        "message": str(exc),
-                        "failed_at": utc_now(),
-                    },
-                )
-            except Exception as checkpoint_exc:  # noqa: BLE001 - retain original error
-                failed_stage = "unknown"
-                checkpoint_error = str(checkpoint_exc)
-            result = {
-                "video_id": video_id,
-                "status": "failed_retryable" if retryable else "failed_terminal",
-                "failed_stage": failed_stage,
-                "error_type": type(exc).__name__,
-                "error": str(exc),
-                "checkpoint_error": checkpoint_error,
-            }
-        finally:
+        shutil.rmtree(chunk_scratch, ignore_errors=True)
+        chunk_scratch.mkdir(parents=True)
+        _emit_progress(
+            event="chunk",
+            status="start",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            chunk_raw_bytes=planned.raw_bytes,
+        )
+        _emit_progress(
+            event="memory",
+            status="chunk_start",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            chunk_raw_bytes=planned.raw_bytes,
+        )
+        asr_pre_load_callback = _heavy_model_memory_guard(
+            scratch_root=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            policy=scheduler_policy["ram"],
+        )
+
+        active: list[_VideoFlow] = []
+        for video_id in chunk_video_ids:
+            video_index = video_offsets[video_id] + 1
+            video_scratch = scratch_root / release_id / batch_id / video_id
             shutil.rmtree(video_scratch, ignore_errors=True)
-        results.append(result)
+            video_scratch.mkdir(parents=True)
+            checkpoint_store = _hf_store(
+                config.payload["storage"]["checkpoint"],
+                cache_dir=video_scratch / "hf_cache" / "checkpoint",
+            )
+            release_store = _hf_store(
+                config.payload["storage"]["release"],
+                cache_dir=video_scratch / "hf_cache" / "release",
+            )
+            manager = CheckpointManager(
+                checkpoint_store,
+                release_id=release_id,
+                video_id=video_id,
+                config_hash=config.config_hash,
+                stage_config_hashes=config.stage_config_hashes,
+                verify_remote_checksum=bool(
+                    config.payload["storage"]["checkpoint"].get(
+                        "verify_remote_checksum", True
+                    )
+                ),
+                root_template=str(
+                    config.payload["artifact"]["checkpoint"]["root"]
+                ),
+                state_filename=str(
+                    config.payload["artifact"]["checkpoint"]["state_filename"]
+                ),
+            )
+            _MANAGER_RUNTIME_CONTEXT[manager] = {
+                "chunk_index": chunk_index,
+                "chunk_size": chunk_size,
+            }
+            _emit_progress(
+                event="video",
+                status="start",
+                scratch=scratch_root,
+                release_id=release_id,
+                batch_id=batch_id,
+                video_id=video_id,
+                video_index=video_index,
+                video_count=len(video_ids),
+                chunk_index=chunk_index,
+                chunk_size=chunk_size,
+            )
+            flow: _VideoFlow | None = None
+            try:
+                if video_id not in videos_by_id or video_id not in media_by_id:
+                    raise ValueError(
+                        f"Phase00 batch references unknown video_id={video_id}"
+                    )
+                pipeline = _process_video_flow(
+                    video_id=video_id,
+                    video_row=videos_by_id[video_id],
+                    mapping=media_by_id[video_id],
+                    release_dir=release_dir,
+                    scratch=video_scratch,
+                    manager=manager,
+                    config=config,
+                    transnet_artifact_dir=transnet_artifact_dir,
+                    release_store=release_store,
+                    sync_release=sync_release,
+                    asr_pre_load_callback=asr_pre_load_callback,
+                )
+                flow = _VideoFlow(
+                    video_id=video_id,
+                    video_index=video_index,
+                    scratch=video_scratch,
+                    manager=manager,
+                    pipeline=pipeline,
+                )
+                yielded = next(pipeline)
+                if yielded != "ocr":
+                    raise RuntimeError(
+                        f"Phase01 video flow expected ocr, received {yielded!r}"
+                    )
+                active.append(flow)
+            except Exception as exc:  # noqa: BLE001 - isolate failures per video
+                if flow is None:
+                    flow = _VideoFlow(
+                        video_id=video_id,
+                        video_index=video_index,
+                        scratch=video_scratch,
+                        manager=manager,
+                        pipeline=_empty_video_flow(),
+                    )
+                _finish_failed_video(
+                    flow,
+                    exc,
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=len(video_ids),
+                )
+
+        active = _run_chunk_client_phase(
+            active,
+            model_config=config.payload["models"]["ocr"],
+            phase01=config.payload["phase01"],
+            cache=ArtifactStore(chunk_scratch / "ocr_api_cache"),
+            cache_prefix="ocr",
+            expected_yields=("shot_captions",),
+            model_role="ocr",
+            result_slots=result_slots,
+            scratch_root=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            video_count=len(video_ids),
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+        )
+        active = _run_chunk_client_phase(
+            active,
+            model_config=config.payload["models"]["shot_caption"],
+            phase01=config.payload["phase01"],
+            cache=ArtifactStore(chunk_scratch / "caption_api_cache"),
+            cache_prefix="shot_caption",
+            expected_yields=("scenes", "scene_summaries", "finalize"),
+            model_role="semantic",
+            result_slots=result_slots,
+            scratch_root=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            video_count=len(video_ids),
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+        )
+        for flow in active:
+            try:
+                yielded = next(flow.pipeline)
+            except StopIteration as completed:
+                result = completed.value
+                if not isinstance(result, dict):
+                    _finish_failed_video(
+                        flow,
+                        RuntimeError("Phase01 video flow returned an invalid result"),
+                        result_slots=result_slots,
+                        scratch_root=scratch_root,
+                        release_id=release_id,
+                        batch_id=batch_id,
+                        video_count=len(video_ids),
+                    )
+                    continue
+                _finish_video(
+                    flow,
+                    result,
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=len(video_ids),
+                )
+            except Exception as exc:  # noqa: BLE001 - isolate failures per video
+                _finish_failed_video(
+                    flow,
+                    exc,
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=len(video_ids),
+                )
+            else:
+                _finish_failed_video(
+                    flow,
+                    RuntimeError(
+                        "Phase01 video flow yielded unexpectedly during finalize: "
+                        f"{yielded!r}"
+                    ),
+                    result_slots=result_slots,
+                    scratch_root=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    video_count=len(video_ids),
+                )
+        active.clear()
+        flow = None
+        pipeline = None
+        manager = None
+        checkpoint_store = None
+        release_store = None
+        shutil.rmtree(chunk_scratch, ignore_errors=True)
+        _cleanup_runtime_resources()
+        _emit_progress(
+            event="memory",
+            status="chunk_end",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            chunk_raw_bytes=planned.raw_bytes,
+        )
+        _emit_progress(
+            event="chunk",
+            status="complete",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            chunk_raw_bytes=planned.raw_bytes,
+        )
+
+    shutil.rmtree(
+        scratch_root / release_id / batch_id / ".runtime_chunks",
+        ignore_errors=True,
+    )
+    if any(result is None for result in result_slots):
+        raise RuntimeError("Phase01 scheduler finished without a result for every video")
+    results = [result for result in result_slots if result is not None]
 
     failed = [row for row in results if not row["status"].startswith("complete")]
     manual_review_path = write_manual_review_report(
@@ -174,6 +437,7 @@ def process_production_batch(
     errors_path = release_dir / "manifests" / "phase01" / f"errors_{batch_id}_{worker_id}.jsonl"
     _write_jsonl(errors_path, failed)
     if sync_release:
+        release_store = _hf_store(config.payload["storage"]["release"])
         remote_root = f"{release_id}/phase01_structure"
         release_store.upload_files(
             [
@@ -187,6 +451,15 @@ def process_production_batch(
             commit_message=f"Upload Phase01 worker report {batch_id}/{worker_id}",
             num_threads=2,
         )
+    _emit_progress(
+        event="batch",
+        status="complete" if not failed else "failed",
+        scratch=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_count=len(video_ids),
+        failed_count=len(failed),
+    )
     if failed:
         raise RuntimeError(
             f"Phase01 batch completed with {len(failed)} failed video(s); report={report}"
@@ -194,7 +467,254 @@ def process_production_batch(
     return report
 
 
-def _process_video(
+def _run_chunk_client_phase(
+    flows: list[_VideoFlow],
+    *,
+    model_config: Mapping[str, Any],
+    phase01: Mapping[str, Any],
+    cache: ArtifactStore,
+    cache_prefix: str,
+    expected_yields: tuple[str, ...],
+    model_role: str,
+    result_slots: list[dict[str, Any] | None],
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    video_count: int,
+    chunk_index: int,
+    chunk_size: int,
+) -> list[_VideoFlow]:
+    if not flows:
+        return []
+    if model_role not in {"ocr", "semantic"}:
+        raise ValueError(f"Unsupported chunk model role: {model_role}")
+    if not expected_yields:
+        raise ValueError("Chunk client phase requires at least one expected yield")
+
+    stage = "shot_captions" if model_role == "semantic" else "ocr"
+    lifecycle_callback = _model_lifecycle_callback(
+        scratch_root=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        chunk_index=chunk_index,
+        chunk_size=chunk_size,
+        stage=stage,
+    )
+    pre_load_callback = _heavy_model_memory_guard(
+        scratch_root=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        chunk_index=chunk_index,
+        chunk_size=chunk_size,
+        policy=phase01["execution"]["chunk_scheduler"]["ram"],
+    )
+    try:
+        if model_role == "semantic":
+            client = _caption_client_for_model(
+                model_config,
+                phase01=phase01,
+                cache=cache,
+                lifecycle_callback=lifecycle_callback,
+                pre_load_callback=pre_load_callback,
+            )
+        else:
+            client = _structured_client_for_model(
+                model_config,
+                phase01=phase01,
+                cache=cache,
+                cache_prefix=cache_prefix,
+                lifecycle_callback=lifecycle_callback,
+                pre_load_callback=pre_load_callback,
+            )
+    except Exception as exc:  # noqa: BLE001 - fail only this chunk stage
+        for flow in flows:
+            flow.manager.active_stage = stage
+            _emit_stage_progress(
+                flow.manager, stage, scratch_root, status="start"
+            )
+            _finish_failed_video(
+                flow,
+                exc,
+                result_slots=result_slots,
+                scratch_root=scratch_root,
+                release_id=release_id,
+                batch_id=batch_id,
+                video_count=video_count,
+            )
+        return []
+
+    survivors = list(flows)
+    try:
+        for step_index, expected_yield in enumerate(expected_yields):
+            next_survivors: list[_VideoFlow] = []
+            for flow in survivors:
+                try:
+                    yielded = flow.pipeline.send(client if step_index == 0 else None)
+                    if yielded != expected_yield:
+                        raise RuntimeError(
+                            "Phase01 video flow expected "
+                            f"{expected_yield}, received {yielded!r}"
+                        )
+                    next_survivors.append(flow)
+                except Exception as exc:  # noqa: BLE001 - isolate failures per video
+                    _finish_failed_video(
+                        flow,
+                        exc,
+                        result_slots=result_slots,
+                        scratch_root=scratch_root,
+                        release_id=release_id,
+                        batch_id=batch_id,
+                        video_count=video_count,
+                    )
+            survivors = next_survivors
+            if not survivors:
+                break
+            if model_role == "semantic":
+                milestone = {
+                    "scenes": "after_captions",
+                    "scene_summaries": "after_scenes",
+                    "finalize": "after_summaries",
+                }[expected_yield]
+                _emit_progress(
+                    event="memory",
+                    status=milestone,
+                    scratch=scratch_root,
+                    release_id=release_id,
+                    batch_id=batch_id,
+                    chunk_index=chunk_index,
+                    chunk_size=chunk_size,
+                    active_video_count=len(survivors),
+                )
+    finally:
+        _release_structured_client(client)
+        client = None
+        if model_role == "ocr":
+            _emit_progress(
+                event="memory",
+                status="after_ocr",
+                scratch=scratch_root,
+                release_id=release_id,
+                batch_id=batch_id,
+                chunk_index=chunk_index,
+                chunk_size=chunk_size,
+                active_video_count=len(survivors),
+            )
+        else:
+            _emit_progress(
+                event="memory",
+                status="qwen_unloaded",
+                scratch=scratch_root,
+                release_id=release_id,
+                batch_id=batch_id,
+                chunk_index=chunk_index,
+                chunk_size=chunk_size,
+                active_video_count=len(survivors),
+            )
+    return survivors
+
+
+def _finish_failed_video(
+    flow: _VideoFlow,
+    exc: Exception,
+    *,
+    result_slots: list[dict[str, Any] | None],
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    video_count: int,
+) -> None:
+    retryable = _retryable_video_error(exc)
+    checkpoint_error: str | None = None
+    failed_stage = flow.manager.active_stage
+    _emit_stage_progress(
+        flow.manager,
+        failed_stage,
+        scratch_root,
+        status="failed_retryable" if retryable else "failed_terminal",
+    )
+    try:
+        flow.manager.mark_failed(
+            failed_stage,
+            input_fingerprint=None,
+            retryable=retryable,
+            error={
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "failed_at": utc_now(),
+            },
+        )
+    except Exception as checkpoint_exc:  # noqa: BLE001 - retain original error
+        failed_stage = "unknown"
+        checkpoint_error = str(checkpoint_exc)
+    result = {
+        "video_id": flow.video_id,
+        "status": "failed_retryable" if retryable else "failed_terminal",
+        "failed_stage": failed_stage,
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+        "checkpoint_error": checkpoint_error,
+    }
+    flow.pipeline.close()
+    _finish_video(
+        flow,
+        result,
+        result_slots=result_slots,
+        scratch_root=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_count=video_count,
+    )
+
+
+def _finish_video(
+    flow: _VideoFlow,
+    result: dict[str, Any],
+    *,
+    result_slots: list[dict[str, Any] | None],
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    video_count: int,
+) -> None:
+    result_slots[flow.video_index - 1] = result
+    shutil.rmtree(flow.scratch, ignore_errors=True)
+    runtime_context = _MANAGER_RUNTIME_CONTEXT.get(flow.manager, {})
+    _emit_progress(
+        event="video_cache_cleanup",
+        status="complete",
+        scratch=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_id=flow.video_id,
+        **runtime_context,
+    )
+    result_progress = {
+        key: result[key]
+        for key in ("failed_stage", "error_type")
+        if result.get(key) is not None
+    }
+    _emit_progress(
+        event="video",
+        status=str(result["status"]),
+        scratch=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        video_id=flow.video_id,
+        video_index=flow.video_index,
+        video_count=video_count,
+        **runtime_context,
+        **result_progress,
+    )
+    _MANAGER_RUNTIME_CONTEXT.pop(flow.manager, None)
+
+
+def _empty_video_flow() -> Generator[str, Any, dict[str, Any]]:
+    if False:  # pragma: no cover - typed empty generator
+        yield ""
+    return {}
+
+
+def _process_video_flow(
     *,
     video_id: str,
     video_row: dict[str, Any],
@@ -206,14 +726,12 @@ def _process_video(
     transnet_artifact_dir: Path,
     release_store: HuggingFaceDatasetArtifactStore,
     sync_release: bool,
-) -> dict[str, Any]:
+    asr_pre_load_callback: Callable[[str], None] | None = None,
+) -> Generator[str, Any, dict[str, Any]]:
     manager.active_stage = "shots"
+    _emit_stage_progress(manager, "shots", scratch, status="start")
     stage_dir = scratch / "stages"
-    stage_dir.mkdir()
-    # API responses only need request-level reuse while the current atomic
-    # stage is running. Completed canonical tables are the persistent cache via
-    # the stage checkpoint, so avoid one HF commit per Gemini request.
-    api_cache = ArtifactStore(scratch / "api_cache")
+    stage_dir.mkdir(exist_ok=True)
     video_path = _materialize_canonical(mapping, "canonical_video_path", scratch / "source")
     metadata_path = _materialize_canonical(mapping, "canonical_metadata_path", scratch / "source")
     timeline_path = _timeline_path(release_dir, video_id, video_row)
@@ -232,13 +750,16 @@ def _process_video(
     )
     models = config.payload["models"]
     phase01 = config.payload["phase01"]
+    scene_boundary_model = _semantic_model_config(models, "scene_boundary")
+    scene_summary_model = _semantic_model_config(models, "scene_summary")
     media_config = config.payload["media"]
 
     shots_path = stage_dir / "shots.parquet"
     shots_fingerprint = compute_fingerprint(
         video_timeline_fingerprint, config.stage_config_hashes["shots"]
     )
-    if not _restore_if_reusable(manager, "shots", shots_fingerprint, stage_dir):
+    shots_reused = _restore_if_reusable(manager, "shots", shots_fingerprint, stage_dir)
+    if not shots_reused:
         artifact = load_transnet_artifact(
             transnet_artifact_dir,
             expected_commit=str(models["shot_detection"]["model_revision"]),
@@ -246,6 +767,9 @@ def _process_video(
                 models["shot_detection"]["source_sha256"]
             ),
             expected_weights_sha256=str(models["shot_detection"]["weights_sha256"]),
+            expected_conversion_verified=bool(
+                models["shot_detection"].get("conversion_verified", True)
+            ),
         )
         prediction_path = stage_dir / "transnet_predictions.json"
         predictions = detect_shot_scenes(
@@ -272,16 +796,23 @@ def _process_video(
             model=models["shot_detection"],
             schema_version=phase01["schemas"]["shots"],
         )
+    _emit_stage_progress(
+        manager, "shots", scratch, status="complete", reused=shots_reused
+    )
     shots = pd.read_parquet(shots_path).to_dict("records")
     shots_output_fingerprint = manager.stage_output_fingerprint("shots")
 
     manager.active_stage = "keyframes"
+    _emit_stage_progress(manager, "keyframes", scratch, status="start")
     keyframes_path = stage_dir / "keyframes.parquet"
     keyframes_bundle = stage_dir / "keyframes.zip"
     keyframes_fingerprint = _stage_fingerprint(
         manager, "keyframes", shots_output_fingerprint
     )
-    if not _restore_keyframes_if_reusable(manager, keyframes_fingerprint, stage_dir):
+    keyframes_reused = _restore_keyframes_if_reusable(
+        manager, keyframes_fingerprint, stage_dir
+    )
+    if not keyframes_reused:
         _build_keyframes(
             video_id=video_id,
             video_path=video_path,
@@ -297,22 +828,28 @@ def _process_video(
             outputs=[keyframes_bundle],
             schema_version=phase01["schemas"]["keyframes"],
         )
+    _emit_stage_progress(
+        manager, "keyframes", scratch, status="complete", reused=keyframes_reused
+    )
     keyframes = pd.read_parquet(keyframes_path).to_dict("records")
     keyframes_output_fingerprint = manager.stage_output_fingerprint("keyframes")
 
     manager.active_stage = "asr"
+    _emit_stage_progress(manager, "asr", scratch, status="start")
     asr_path = stage_dir / "asr_segments.parquet"
     asr_status_path = stage_dir / "asr_status.json"
     asr_fingerprint = compute_fingerprint(
         video_timeline_fingerprint, config.stage_config_hashes["asr"]
     )
-    if not _restore_if_reusable(manager, "asr", asr_fingerprint, stage_dir):
+    asr_reused = _restore_if_reusable(manager, "asr", asr_fingerprint, stage_dir)
+    if not asr_reused:
         asr_config = {**models["asr"], "total_attempts": phase01["retry"]["local_model_total_attempts"]}
         result = transcribe_video(
             video_path,
             video_id=video_id,
             frame_timeline=timeline,
             config=asr_config,
+            pre_load_callback=asr_pre_load_callback,
         )
         _write_parquet(asr_path, result.rows, empty_columns=PARQUET_COLUMNS["asr_segments"])
         _write_json(asr_status_path, {
@@ -328,54 +865,140 @@ def _process_video(
             model=models["asr"],
             schema_version=phase01["schemas"]["asr_segments"],
         )
+    _emit_stage_progress(
+        manager, "asr", scratch, status="complete", reused=asr_reused
+    )
     asr_rows = pd.read_parquet(asr_path).to_dict("records")
     asr_output_fingerprint = manager.stage_output_fingerprint("asr")
 
+    # The decoded Phase00 timeline can be very large. Release it before this
+    # prepared video waits for the other videos in its runtime chunk.
+    timeline = []
+    ocr_client = yield "ocr"
+    manager.active_stage = "ocr"
+    _emit_stage_progress(manager, "ocr", scratch, status="start")
+    ocr_path = stage_dir / "ocr.parquet"
+    ocr_status_path = stage_dir / "ocr_status.json"
+    ocr_fingerprint = _stage_fingerprint(manager, "ocr", keyframes_output_fingerprint)
+    ocr_reused = _restore_if_reusable(manager, "ocr", ocr_fingerprint, stage_dir)
+    if not ocr_reused:
+        if ocr_client is None:
+            raise RuntimeError("Phase01 OCR stage requires a structured client")
+        try:
+            ocr_gate_counts: dict[str, int] = {}
+            ocr_rows = _build_ocr(
+                video_id=video_id,
+                keyframes=keyframes,
+                stage_dir=stage_dir,
+                client=ocr_client,
+                model_config=models["ocr"],
+                ocr_config=phase01["ocr"],
+                diagnostics=ocr_gate_counts,
+            )
+            _write_parquet(ocr_path, ocr_rows, empty_columns=PARQUET_COLUMNS["ocr"])
+            status_counts: dict[str, int] = {}
+            for row in ocr_rows:
+                status = str(row["status"])
+                status_counts[status] = status_counts.get(status, 0) + 1
+            ocr_status = _ocr_stage_status(status_counts, ocr_gate_counts)
+            _write_json(ocr_status_path, {
+                "status": ocr_status,
+                "provider": models["ocr"]["provider"],
+                "model_id": models["ocr"]["model_id"],
+                "status_counts": status_counts,
+                **ocr_gate_counts,
+            })
+            _emit_progress(
+                event="ocr_gate",
+                status="complete",
+                scratch=scratch,
+                release_id=manager.release_id,
+                video_id=video_id,
+                **_MANAGER_RUNTIME_CONTEXT.get(manager, {}),
+                **ocr_gate_counts,
+            )
+            if ocr_status == "failed":
+                raise RuntimeError(
+                    "Phase01 OCR failed for every Vintern request: "
+                    f"video_id={video_id}, "
+                    f"failed={status_counts.get('failed', 0)}, "
+                    "vintern_processed="
+                    f"{ocr_gate_counts.get('vintern_processed', 0)}"
+                )
+            manager.promote_stage(
+                "ocr",
+                input_fingerprint=ocr_fingerprint,
+                outputs=[ocr_path, ocr_status_path],
+                model=models["ocr"],
+                prompt_version=models["ocr"]["prompt_version"],
+                schema_version=phase01["schemas"]["ocr"],
+            )
+        finally:
+            pass  # The chunk scheduler owns the shared client lifecycle.
+    _emit_stage_progress(manager, "ocr", scratch, status="complete", reused=ocr_reused)
+    ocr_rows = pd.read_parquet(ocr_path).to_dict("records")
+    ocr_output_fingerprint = manager.stage_output_fingerprint("ocr")
+
+    caption_client = yield "shot_captions"
     manager.active_stage = "shot_captions"
-    gemini_client = GeminiStructuredClient(
-        model_id=str(models["shot_caption"]["model_id"]),
-        api_config={
-            **phase01["api"],
-            "schema_repair_attempts": phase01["retry"]["schema_repair_attempts"],
-            "thinking_level": models["shot_caption"]["thinking_level"],
-        },
-        cache=api_cache,
-        cache_prefix="gemini",
-    )
+    _emit_stage_progress(manager, "shot_captions", scratch, status="start")
     captions_path = stage_dir / "shot_captions.parquet"
     captions_fingerprint = _stage_fingerprint(
-        manager, "shot_captions", keyframes_output_fingerprint
+        manager, "shot_captions", compute_fingerprint(keyframes_output_fingerprint, ocr_output_fingerprint)
     )
-    if not _restore_if_reusable(manager, "shot_captions", captions_fingerprint, stage_dir):
-        caption_rows = _build_captions(
-            video_id=video_id,
-            shots=shots,
-            keyframes=keyframes,
-            stage_dir=stage_dir,
-            client=gemini_client,
-            model_config=models["shot_caption"],
-            max_concurrency=int(phase01["api"]["max_concurrency_per_video"]),
-        )
-        _write_parquet(captions_path, caption_rows)
-        manager.promote_stage(
-            "shot_captions",
-            input_fingerprint=captions_fingerprint,
-            outputs=[captions_path],
-            model=models["shot_caption"],
-            prompt_version=models["shot_caption"]["prompt_version"],
-            schema_version=phase01["schemas"]["shot_captions"],
-        )
+    captions_reused = _restore_if_reusable(
+        manager, "shot_captions", captions_fingerprint, stage_dir
+    )
+    if not captions_reused:
+        if caption_client is None:
+            raise RuntimeError(
+                "Phase01 shot_captions stage requires a structured client"
+            )
+        try:
+            caption_rows = _build_captions(
+                video_id=video_id,
+                shots=shots,
+                keyframes=keyframes,
+                ocr_rows=ocr_rows,
+                stage_dir=stage_dir,
+                client=caption_client,
+                model_config=models["shot_caption"],
+                max_concurrency=int(phase01["api"]["max_concurrency_per_video"]),
+            )
+            _write_parquet(captions_path, caption_rows)
+            manager.promote_stage(
+                "shot_captions",
+                input_fingerprint=captions_fingerprint,
+                outputs=[captions_path],
+                model=models["shot_caption"],
+                prompt_version=models["shot_caption"]["prompt_version"],
+                schema_version=phase01["schemas"]["shot_captions"],
+            )
+            del caption_rows
+        finally:
+            pass  # The chunk scheduler owns the shared client lifecycle.
+    _emit_stage_progress(
+        manager,
+        "shot_captions",
+        scratch,
+        status="complete",
+        reused=captions_reused,
+    )
     captions = pd.read_parquet(captions_path).to_dict("records")
     captions_output_fingerprint = manager.stage_output_fingerprint("shot_captions")
 
     manager.active_stage = "shot_transcript_links"
+    _emit_stage_progress(manager, "shot_transcript_links", scratch, status="start")
     links_path = stage_dir / "shot_transcript_links.parquet"
     links_fingerprint = compute_fingerprint(
         shots_output_fingerprint,
         asr_output_fingerprint,
         config.stage_config_hashes["shot_transcript_links"],
     )
-    if not _restore_if_reusable(manager, "shot_transcript_links", links_fingerprint, stage_dir):
+    links_reused = _restore_if_reusable(
+        manager, "shot_transcript_links", links_fingerprint, stage_dir
+    )
+    if not links_reused:
         links = build_shot_transcript_links(shots, asr_rows)
         _write_parquet(links_path, links, empty_columns=PARQUET_COLUMNS["shot_transcript_links"])
         manager.promote_stage(
@@ -384,41 +1007,51 @@ def _process_video(
             outputs=[links_path],
             schema_version=phase01["schemas"]["shot_transcript_links"],
         )
+    _emit_stage_progress(
+        manager,
+        "shot_transcript_links",
+        scratch,
+        status="complete",
+        reused=links_reused,
+    )
     links = pd.read_parquet(links_path).to_dict("records")
     links_output_fingerprint = manager.stage_output_fingerprint(
         "shot_transcript_links"
     )
 
+    yield "scenes"
+
     manager.active_stage = "scenes"
+    _emit_stage_progress(manager, "scenes", scratch, status="start")
     scenes_path = stage_dir / "scenes.parquet"
     scene_links_path = stage_dir / "scene_transcript_links.parquet"
     scene_diagnostics_path = stage_dir / "scene_boundary_diagnostics.jsonl"
     scenes_fingerprint = compute_fingerprint(
         shots_output_fingerprint,
         keyframes_output_fingerprint,
+        ocr_output_fingerprint,
         captions_output_fingerprint,
         asr_output_fingerprint,
         links_output_fingerprint,
         config.stage_config_hashes["scenes"],
     )
-    if not _restore_if_reusable(manager, "scenes", scenes_fingerprint, stage_dir):
-        evidence = _build_scene_evidence(shots, keyframes, captions, asr_rows, links, stage_dir)
-        boundary_client = GeminiStructuredClient(
-            model_id=str(models["scene_boundary"]["model_id"]),
-            api_config={
-                **phase01["api"],
-                "schema_repair_attempts": phase01["retry"]["schema_repair_attempts"],
-                "thinking_level": models["scene_boundary"]["thinking_level"],
-            },
-            cache=api_cache,
-            cache_prefix="gemini",
-        )
-        judge = GeminiSceneBoundaryJudge(
-            boundary_client,
+    scenes_reused = _restore_if_reusable(
+        manager, "scenes", scenes_fingerprint, stage_dir
+    )
+    if not scenes_reused:
+        evidence = _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links, stage_dir)
+        judge = StructuredSceneBoundaryJudge(
+            caption_client,
             video_id=video_id,
             prompt_dir=_prompt_dir(),
             diagnostics_dir=stage_dir / "diagnostics" / "scene_requests",
-            model_config=models["scene_boundary"],
+            model_config=scene_boundary_model,
+            focused_keyframe_roles=tuple(
+                str(role)
+                for role in phase01["scene_grouping"][
+                    "focused_review_keyframe_roles"
+                ]
+            ),
         )
         scenes, decisions = group_scenes(
             video_id=video_id,
@@ -439,46 +1072,48 @@ def _process_video(
             "scenes",
             input_fingerprint=scenes_fingerprint,
             outputs=[scenes_path, scene_links_path, scene_diagnostics_path],
-            model=models["scene_boundary"],
-            prompt_version=models["scene_boundary"]["prompt_version"],
+            model=scene_boundary_model,
+            prompt_version=scene_boundary_model["prompt_version"],
             schema_version=phase01["schemas"]["scenes"],
         )
+        del decisions, evidence, judge
+    _emit_stage_progress(
+        manager, "scenes", scratch, status="complete", reused=scenes_reused
+    )
     scenes = pd.read_parquet(scenes_path).to_dict("records")
     scene_links = pd.read_parquet(scene_links_path).to_dict("records")
     scenes_output_fingerprint = manager.stage_output_fingerprint("scenes")
 
+    yield "scene_summaries"
+
     manager.active_stage = "scene_summaries"
+    _emit_stage_progress(manager, "scene_summaries", scratch, status="start")
     summaries_path = stage_dir / "scene_summaries.parquet"
     summaries_fingerprint = compute_fingerprint(
         scenes_output_fingerprint,
         keyframes_output_fingerprint,
+        ocr_output_fingerprint,
         asr_output_fingerprint,
         captions_output_fingerprint,
         links_output_fingerprint,
         config.stage_config_hashes["scene_summaries"],
     )
-    if not _restore_if_reusable(manager, "scene_summaries", summaries_fingerprint, stage_dir):
-        summary_client = GeminiStructuredClient(
-            model_id=str(models["scene_summary"]["model_id"]),
-            api_config={
-                **phase01["api"],
-                "schema_repair_attempts": phase01["retry"]["schema_repair_attempts"],
-                "thinking_level": models["scene_summary"]["thinking_level"],
-            },
-            cache=api_cache,
-            cache_prefix="gemini",
-        )
+    summaries_reused = _restore_if_reusable(
+        manager, "scene_summaries", summaries_fingerprint, stage_dir
+    )
+    if not summaries_reused:
         summary_rows = _build_scene_summaries(
             video_id=video_id,
             scenes=scenes,
             shots=shots,
             keyframes=keyframes,
+            ocr_rows=ocr_rows,
             captions=captions,
             asr_rows=asr_rows,
             scene_links=scene_links,
             stage_dir=stage_dir,
-            client=summary_client,
-            model_config=models["scene_summary"],
+            client=caption_client,
+            model_config=scene_summary_model,
             summary_config=phase01["scene_summary"],
         )
         _write_parquet(summaries_path, summary_rows)
@@ -486,18 +1121,41 @@ def _process_video(
             "scene_summaries",
             input_fingerprint=summaries_fingerprint,
             outputs=[summaries_path],
-            model=models["scene_summary"],
-            prompt_version=models["scene_summary"]["prompt_version"],
+            model=scene_summary_model,
+            prompt_version=scene_summary_model["prompt_version"],
             schema_version=phase01["schemas"]["scene_summaries"],
         )
+        del summary_rows
+    _emit_stage_progress(
+        manager,
+        "scene_summaries",
+        scratch,
+        status="complete",
+        reused=summaries_reused,
+    )
     summaries_output_fingerprint = manager.stage_output_fingerprint("scene_summaries")
 
+    # Package/sync read stage artifacts from disk. Drop semantic runtime and
+    # table references before the chunk owner closes Qwen and resumes this flow.
+    caption_client = None
+    shots = []
+    keyframes = []
+    asr_rows = []
+    ocr_rows = []
+    captions = []
+    links = []
+    scenes = []
+    scene_links = []
+    yield "finalize"
+
     manager.active_stage = "package"
+    _emit_stage_progress(manager, "package", scratch, status="start")
     package_fingerprint = compute_fingerprint(
         metadata_fingerprint,
         shots_output_fingerprint,
         keyframes_output_fingerprint,
         asr_output_fingerprint,
+        ocr_output_fingerprint,
         captions_output_fingerprint,
         links_output_fingerprint,
         scenes_output_fingerprint,
@@ -509,7 +1167,10 @@ def _process_video(
     if Path(package_filename).name != package_filename:
         raise ValueError("Phase01 package filename must resolve to a basename")
     package_path = stage_dir / package_filename
-    if not _restore_if_reusable(manager, "package", package_fingerprint, stage_dir):
+    package_reused = _restore_if_reusable(
+        manager, "package", package_fingerprint, stage_dir
+    )
+    if not package_reused:
         artifact_dir = stage_dir / "package" / video_id
         _assemble_package(
             artifact_dir=artifact_dir,
@@ -535,6 +1196,9 @@ def _process_video(
             outputs=[package_path],
             schema_version="phase01_structure_v2",
         )
+    _emit_stage_progress(
+        manager, "package", scratch, status="complete", reused=package_reused
+    )
 
     local_artifact = release_dir / "artifacts" / "structure" / package_filename
     local_artifact.parent.mkdir(parents=True, exist_ok=True)
@@ -543,10 +1207,12 @@ def _process_video(
         return {"video_id": video_id, "status": "complete_local", "artifact": str(local_artifact)}
 
     manager.active_stage = "sync"
+    _emit_stage_progress(manager, "sync", scratch, status="start")
     sync_fingerprint = compute_fingerprint(
         package_fingerprint, sha256_file(package_path), config.stage_config_hashes["sync"]
     )
-    if not manager.is_reusable("sync", input_fingerprint=sync_fingerprint):
+    sync_reused = manager.is_reusable("sync", input_fingerprint=sync_fingerprint)
+    if not sync_reused:
         remote_root = str(package_config["root"]).format(
             release_id=config.payload["runtime"]["release_id"],
             batch_id=config.payload["runtime"]["batch_id"],
@@ -572,6 +1238,9 @@ def _process_video(
             outputs=[receipt_path],
             schema_version="phase01_sync_receipt_v1",
         )
+    _emit_stage_progress(
+        manager, "sync", scratch, status="complete", reused=sync_reused
+    )
     return {"video_id": video_id, "status": "complete", "artifact": str(local_artifact)}
 
 
@@ -585,19 +1254,121 @@ def _build_keyframes(
     config: Mapping[str, Any],
 ) -> None:
     keyframe_config = config["keyframe"]
+    timeline_by_frame = {int(row["frame_id"]): row for row in timeline}
+    timestamp_by_frame = {
+        frame_id: float(row["pts_time"])
+        for frame_id, row in timeline_by_frame.items()
+    }
     candidate_groups = []
+    probe_plans = []
     for shot in shots:
         by_role = candidate_frame_ids_for_shot(shot, keyframe_config)
-        candidate_groups.append(
-            {frame_id for role_ids in by_role.values() for frame_id in role_ids}
+        shot_timeline = [
+            timeline_by_frame[frame_id]
+            for frame_id in range(
+                int(shot["start_frame"]), int(shot["end_frame"])
+            )
+            if frame_id in timeline_by_frame
+        ]
+        probe_plan = temporal_probe_plan_for_shot(
+            shot, shot_timeline, keyframe_config
         )
-    timeline_by_frame = {int(row["frame_id"]): row for row in timeline}
+        probe_plans.append(probe_plan)
+        candidate_groups.append(
+            {
+                *(
+                    frame_id
+                    for role_ids in by_role.values()
+                    for frame_id in role_ids
+                ),
+                *(probe.frame_id for probe in probe_plan.semantic_candidates),
+            }
+        )
     rows: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
     decoded_groups = iter_decode_frame_groups(video_path, candidate_groups)
-    for shot, decoded in zip(shots, decoded_groups, strict=True):
-        selected, candidate_diagnostics = select_keyframes_for_shot(shot, decoded, keyframe_config)
-        diagnostics.extend({"shot_id": shot["shot_id"], **item.__dict__} for item in candidate_diagnostics)
+    for shot, decoded, probe_plan in zip(
+        shots, decoded_groups, probe_plans, strict=True
+    ):
+        anchors, candidate_diagnostics = select_keyframes_for_shot(
+            shot, decoded, keyframe_config
+        )
+        supplemental, supplemental_diagnostics = select_supplemental_keyframes(
+            shot=shot,
+            anchors=anchors,
+            probe_plan=probe_plan,
+            decoded_frames=decoded,
+            timestamp_by_frame=timestamp_by_frame,
+            config=keyframe_config,
+        )
+        selected = sorted(
+            [*anchors, *supplemental], key=lambda item: item.frame_id
+        )
+        selected_roles = sorted(item.role for item in selected)
+        selected_frame_ids = sorted(item.frame_id for item in selected)
+        selected_identity = {
+            (item.frame_id, item.role): item for item in selected
+        }
+        shot_frame_span = int(shot["end_frame"]) - int(shot["start_frame"])
+        shot_duration_sec = float(shot["end_sec"]) - float(shot["start_sec"])
+        diagnostic_counts = _keyframe_diagnostic_counts(
+            candidate_diagnostics,
+            supplemental_diagnostics,
+        )
+        diagnostics.extend(
+            {
+                "shot_id": shot["shot_id"],
+                "shot_frame_span": shot_frame_span,
+                "shot_duration_sec": shot_duration_sec,
+                "selected_roles": selected_roles,
+                "selected_frame_ids": selected_frame_ids,
+                **diagnostic_counts,
+                "long_shot_coverage_warning": shot_duration_sec > 10.0 and len(anchors) < 3,
+                "candidate_source": f"anchor_{item.role}_search_band",
+                "timestamp_sec": (
+                    float(timeline_by_frame[item.frame_id]["pts_time"])
+                    if item.frame_id in timeline_by_frame
+                    else None
+                ),
+                "temporal_gap_sec": None,
+                "visual_novelty_score": None,
+                "text_present": None,
+                "text_change_score": None,
+                "visual_trigger": False,
+                "text_trigger": False,
+                "triggered_signal_count": 0,
+                "max_triggered_signal_score": None,
+                "keep": (item.frame_id, item.role) in selected_identity,
+                "decision_reason": (
+                    selected_identity[(item.frame_id, item.role)].selection_reason
+                    if (item.frame_id, item.role) in selected_identity
+                    else item.invalid_reason or "lower_quality_in_role"
+                ),
+                "dedup_target_frame_id": None,
+                "distance_to_nearest_actual_anchor_sec": None,
+                "coverage_cap_reached": probe_plan.coverage_cap_reached,
+                "remaining_max_probe_gap_seconds": (
+                    probe_plan.remaining_max_probe_gap_seconds
+                ),
+                "signal_errors": [],
+                **item.__dict__,
+            }
+            for item in candidate_diagnostics
+        )
+        diagnostics.extend(
+            {
+                **item,
+                "shot_frame_span": shot_frame_span,
+                "shot_duration_sec": shot_duration_sec,
+                "selected_roles": selected_roles,
+                "selected_frame_ids": selected_frame_ids,
+                **diagnostic_counts,
+                "long_shot_coverage_warning": (
+                    shot_duration_sec > 10.0 and len(anchors) < 3
+                ),
+            }
+            for item in supplemental_diagnostics
+        )
         for item in selected:
             frame = decoded[item.frame_id]
             keyframe_id = f"{video_id}:{item.frame_id}"
@@ -634,70 +1405,486 @@ def _build_keyframes(
     _write_jsonl(output_dir / "keyframe_diagnostics.jsonl", diagnostics)
 
 
-def _build_captions(
-    *, video_id: str, shots: list[dict[str, Any]], keyframes: list[dict[str, Any]],
-    stage_dir: Path, client: GeminiStructuredClient, model_config: Mapping[str, Any],
-    max_concurrency: int,
+def _keyframe_diagnostic_counts(
+    anchor_diagnostics: list[Any],
+    semantic_diagnostics: list[dict[str, Any]],
+) -> dict[str, int]:
+    candidate_frame_ids = {
+        int(item.frame_id) for item in anchor_diagnostics
+    } | {int(item["frame_id"]) for item in semantic_diagnostics}
+    valid_candidate_frame_ids = {
+        int(item.frame_id) for item in anchor_diagnostics if item.valid
+    } | {
+        int(item["frame_id"])
+        for item in semantic_diagnostics
+        if item.get("valid")
+    }
+    return {
+        "candidate_count": len(candidate_frame_ids),
+        "valid_candidate_count": len(valid_candidate_frame_ids),
+        "evaluation_count": len(anchor_diagnostics) + len(semantic_diagnostics),
+        "valid_evaluation_count": sum(
+            1 for item in anchor_diagnostics if item.valid
+        )
+        + sum(1 for item in semantic_diagnostics if item.get("valid")),
+    }
+
+
+def _caption_client_for_model(
+    model_config: Mapping[str, Any],
+    *,
+    phase01: Mapping[str, Any],
+    cache: ArtifactStore,
+    lifecycle_callback=None,
+    pre_load_callback=None,
+):
+    clients = [
+        _structured_client_for_model(
+            model_config,
+            phase01=phase01,
+            cache=cache,
+            cache_prefix=f"{model_config['provider']}/shot_caption",
+            lifecycle_callback=lifecycle_callback,
+            pre_load_callback=pre_load_callback,
+        )
+    ]
+    for fallback in model_config.get("fallbacks", []):
+        clients.append(
+            _structured_client_for_model(
+                fallback,
+                phase01=phase01,
+                cache=cache,
+                cache_prefix=f"{fallback['provider']}/shot_caption",
+                lifecycle_callback=lifecycle_callback,
+                pre_load_callback=pre_load_callback,
+            )
+        )
+    return (
+        clients[0]
+        if len(clients) == 1
+        else FallbackStructuredClient(
+            clients, telemetry_callback=lifecycle_callback
+        )
+    )
+
+
+def _semantic_model_config(
+    models: Mapping[str, Any], stage_key: str
+) -> dict[str, Any]:
+    stage_config = dict(models[stage_key])
+    model_key = stage_config.pop("model_key", None)
+    if not model_key:
+        return stage_config
+    if str(model_key) not in models:
+        raise ValueError(
+            f"Phase01 semantic model_key does not exist: {model_key}"
+        )
+    return {**dict(models[str(model_key)]), **stage_config}
+
+
+def _structured_client_for_model(
+    model_config: Mapping[str, Any],
+    *,
+    phase01: Mapping[str, Any],
+    cache: ArtifactStore,
+    cache_prefix: str,
+    lifecycle_callback=None,
+    pre_load_callback=None,
+):
+    provider = str(model_config["provider"])
+    if provider == "gemini":
+        client = GeminiStructuredClient(
+            model_id=str(model_config["model_id"]),
+            api_config={
+                **phase01["api"],
+                "schema_repair_attempts": phase01["retry"]["schema_repair_attempts"],
+                "thinking_level": model_config.get("thinking_level", "medium"),
+            },
+            cache=cache,
+            cache_prefix=f"gemini/{cache_prefix}",
+        )
+        return MetadataStructuredClient(
+            client,
+            provider_name="gemini",
+            model_id=str(model_config["model_id"]),
+            model_revision=str(model_config["model_revision"]),
+        )
+    if provider in {"qwen_local", "vintern_local"}:
+        inference_stage = (
+            "shot_captions" if "shot_caption" in cache_prefix else "ocr"
+        )
+        return LocalVisionStructuredClient(
+            model_config={
+                **model_config,
+                "total_attempts": phase01["retry"]["local_model_total_attempts"],
+                "inference_batch_size": phase01["execution"][
+                    "inference_batch_size"
+                ][inference_stage],
+            },
+            cache=cache,
+            cache_prefix=f"local_vlm/{cache_prefix}",
+            lifecycle_callback=lifecycle_callback,
+            pre_load_callback=pre_load_callback,
+        )
+    raise RuntimeError(f"Unsupported structured provider: {provider}")
+
+
+def _build_ocr(
+    *,
+    video_id: str,
+    keyframes: list[dict[str, Any]],
+    stage_dir: Path,
+    client,
+    model_config: Mapping[str, Any],
+    ocr_config: Mapping[str, Any],
+    diagnostics: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    if max_concurrency < 1:
-        raise ValueError("Gemini max_concurrency must be positive")
-    representative = {str(row["shot_id"]): row for row in keyframes if row["is_representative"]}
     prompt = (_prompt_dir() / f"{model_config['prompt_version']}.txt").read_text(encoding="utf-8")
     schema = {
         "type": "object",
-        "properties": {"caption_vi": {"type": "string", "minLength": 1}, "caption_en": {"type": "string", "minLength": 1}},
-        "required": ["caption_vi", "caption_en"],
+        "properties": {
+            "full_text": {"type": "string"},
+            "ocr_blocks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "confidence": {"type": ["number", "null"]},
+                    },
+                    "required": ["text"],
+                    "additionalProperties": True,
+                },
+            },
+            "language": {"type": "string"},
+            "confidence": {"type": ["number", "null"]},
+        },
+        "required": ["full_text", "ocr_blocks"],
         "additionalProperties": False,
     }
-    def build(shot: dict[str, Any]) -> dict[str, Any]:
-        keyframe = representative[str(shot["shot_id"])]
+    allowed_roles = {str(role) for role in ocr_config.get("run_on_keyframe_roles", [])}
+    selected_keyframes = sorted(
+        [
+        keyframe
+        for keyframe in keyframes
+        if not allowed_roles or str(keyframe.get("keyframe_role")) in allowed_roles
+        ],
+        key=lambda row: (str(row["shot_id"]), int(row["frame_id"])),
+    )
+    gate_config = ocr_config.get("text_presence_filter", {})
+    gate_enabled = bool(
+        isinstance(gate_config, Mapping) and gate_config.get("enabled", False)
+    )
+    counts = {
+        "gate_checked": 0,
+        "gate_no_text": 0,
+        "gate_failures": 0,
+        "vintern_processed": 0,
+        "vintern_failed": 0,
+    }
+    rows_by_keyframe: dict[str, dict[str, Any]] = {}
+    requests: list[StructuredRequest] = []
+    request_keyframes: list[dict[str, Any]] = []
+    for keyframe in selected_keyframes:
+        keyframe_id = str(keyframe["keyframe_id"])
         image = stage_dir / "keyframes" / Path(str(keyframe["keyframe_ref"])).name
-        response = client.request(GeminiRequest(
-            request_kind="shot_caption", video_id=video_id, prompt=prompt,
-            prompt_version=str(model_config["prompt_version"]),
-            response_schema_version=str(model_config["response_schema_version"]),
-            response_schema=schema, image_paths=(image,), identity={"shot_id": shot["shot_id"]},
-        ))
+        gate_decision = "uncertain"
+        if gate_enabled:
+            counts["gate_checked"] += 1
+            try:
+                gate_decision = _text_presence_gate(image, gate_config)
+            except Exception:  # noqa: BLE001 - gate failure must run Vintern
+                gate_decision = "error"
+                counts["gate_failures"] += 1
+        if gate_decision == "no_text":
+            counts["gate_no_text"] += 1
+            rows_by_keyframe[keyframe_id] = _ocr_row(
+                video_id=video_id,
+                keyframe=keyframe,
+                text="",
+                provider="opencv_text_gate",
+                model_name="opencv_mser_canny",
+                model_version="text_presence_gate_v1",
+                language="vi",
+                confidence=None,
+                status="empty",
+            )
+            continue
+        requests.append(
+            StructuredRequest(
+                request_kind="keyframe_ocr",
+                video_id=video_id,
+                prompt=prompt,
+                prompt_version=str(model_config["prompt_version"]),
+                response_schema_version=str(model_config["response_schema_version"]),
+                response_schema=schema,
+                image_paths=(image,),
+                identity={"keyframe_id": keyframe_id},
+            )
+        )
+        request_keyframes.append(keyframe)
+
+    counts["vintern_processed"] = len(requests)
+    responses: list[dict[str, Any] | None] = [None] * len(requests)
+    errors: dict[int, Exception] = {}
+    if requests:
+        try:
+            responses = list(client.request_many(requests))
+        except BatchRequestError as exc:
+            if any(
+                isinstance(error, SystemicProviderError)
+                for error in exc.errors.values()
+            ):
+                raise
+            responses = list(exc.results)
+            errors = dict(exc.errors)
+        except InsufficientMemoryError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - preserve per-keyframe degradation
+            errors = {index: exc for index in range(len(requests))}
+
+    for index, keyframe in enumerate(request_keyframes):
+        keyframe_id = str(keyframe["keyframe_id"])
+        response = responses[index] if index < len(responses) else None
+        try:
+            if index in errors:
+                raise errors[index]
+            if response is None:
+                raise RuntimeError("OCR request returned no response")
+            text = _ocr_text(response)
+            status = "pass" if text else "empty"
+            provider = str(response.get("__provider", model_config["provider"]))
+            model_name = str(response.get("__model_id", model_config["model_id"]))
+            model_version = str(response.get("__model_revision", model_config["model_revision"]))
+            confidence = _nullable_confidence(response.get("confidence"))
+            language = str(response.get("language") or "vi")
+        except Exception:  # noqa: BLE001 - preserve per-keyframe degradation
+            counts["vintern_failed"] += 1
+            text = ""
+            status = "failed"
+            provider = str(model_config["provider"])
+            model_name = str(model_config["model_id"])
+            model_version = str(model_config["model_revision"])
+            confidence = None
+            language = "vi"
+        rows_by_keyframe[keyframe_id] = _ocr_row(
+            video_id=video_id,
+            keyframe=keyframe,
+            text=text,
+            provider=provider,
+            model_name=model_name,
+            model_version=model_version,
+            language=language,
+            confidence=confidence,
+            status=status,
+        )
+    if diagnostics is not None:
+        diagnostics.update(counts)
+    return [rows_by_keyframe[str(row["keyframe_id"])] for row in selected_keyframes]
+
+
+def _ocr_stage_status(
+    status_counts: Mapping[str, int],
+    diagnostics: Mapping[str, int],
+) -> str:
+    """Classify OCR stage health from actual Vintern requests."""
+
+    failed_count = int(status_counts.get("failed", 0))
+    vintern_processed = int(diagnostics.get("vintern_processed", 0))
+    if vintern_processed > 0 and failed_count == vintern_processed:
+        return "failed"
+    if failed_count > 0:
+        return "partial"
+    return "pass"
+
+
+def _ocr_row(
+    *,
+    video_id: str,
+    keyframe: Mapping[str, Any],
+    text: str,
+    provider: str,
+    model_name: str,
+    model_version: str,
+    language: str,
+    confidence: float | None,
+    status: str,
+) -> dict[str, Any]:
+    keyframe_id = str(keyframe["keyframe_id"])
+    return {
+        "ocr_id": f"{keyframe_id}:ocr",
+        "video_id": video_id,
+        "keyframe_id": keyframe_id,
+        "shot_id": str(keyframe["shot_id"]),
+        "frame_id": int(keyframe["frame_id"]),
+        "text": text,
+        "raw_text": text,
+        "provider": provider,
+        "model_name": model_name,
+        "model_version": model_version,
+        "language": language,
+        "confidence": confidence,
+        "status": status,
+    }
+
+
+def _text_presence_gate(
+    image_path: Path, config: Mapping[str, Any]
+) -> str:
+    return text_presence_gate(image_path, config)
+
+
+def _ocr_text(payload: Mapping[str, Any]) -> str:
+    full_text = str(payload.get("full_text", "")).strip()
+    if full_text:
+        return full_text
+    blocks = payload.get("ocr_blocks", [])
+    if not isinstance(blocks, list):
+        return ""
+    return " ".join(
+        str(block.get("text", "")).strip()
+        for block in blocks
+        if isinstance(block, Mapping) and str(block.get("text", "")).strip()
+    )
+
+
+def _ocr_text_by_keyframe(rows: list[dict[str, Any]]) -> dict[str, str]:
+    output: dict[str, str] = {}
+    for row in rows:
+        if str(row.get("status")) == "failed":
+            continue
+        text = str(row.get("text") or row.get("raw_text") or "").strip()
+        if text:
+            output[str(row["keyframe_id"])] = text
+    return output
+
+
+def _nullable_confidence(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(1.0, max(0.0, number))
+
+
+def _string_list(payload: Mapping[str, Any], key: str) -> list[str]:
+    value = payload.get(key, [])
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if not isinstance(value, (list, tuple)):
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        else:
+            return []
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _build_captions(
+    *, video_id: str, shots: list[dict[str, Any]], keyframes: list[dict[str, Any]],
+    ocr_rows: list[dict[str, Any]], stage_dir: Path, client, model_config: Mapping[str, Any],
+    max_concurrency: int,
+) -> list[dict[str, Any]]:
+    if max_concurrency < 1:
+        raise ValueError("caption max_concurrency must be positive")
+    if str(model_config.get("provider")) != "gemini":
+        max_concurrency = 1
+    representative = {str(row["shot_id"]): row for row in keyframes if row["is_representative"]}
+    prompt = (_prompt_dir() / f"{model_config['prompt_version']}.txt").read_text(encoding="utf-8")
+    ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
+    schema = {
+        "type": "object",
+        "properties": {
+            "caption_vi": {"type": "string", "minLength": 1},
+            "caption_en": {"type": "string", "minLength": 1},
+            "objects_vi": {"type": "array", "items": {"type": "string"}},
+            "objects_en": {"type": "array", "items": {"type": "string"}},
+            "actions_vi": {"type": "array", "items": {"type": "string"}},
+            "actions_en": {"type": "array", "items": {"type": "string"}},
+            "visible_text_summary_vi": {"type": "string"},
+            "visible_text_summary_en": {"type": "string"},
+            "scene_type": {"type": "string"},
+        },
+        "required": [
+            "caption_vi",
+            "caption_en",
+            "objects_vi",
+            "objects_en",
+            "actions_vi",
+            "actions_en",
+            "visible_text_summary_vi",
+            "visible_text_summary_en",
+            "scene_type",
+        ],
+        "additionalProperties": False,
+    }
+    ordered_shots = sorted(shots, key=lambda row: str(row["shot_id"]))
+    requests: list[StructuredRequest] = []
+    request_context: list[tuple[dict[str, Any], dict[str, Any], str]] = []
+    for shot in ordered_shots:
+        keyframe = representative[str(shot["shot_id"])]
+        keyframe_id = str(keyframe["keyframe_id"])
+        image = stage_dir / "keyframes" / Path(str(keyframe["keyframe_ref"])).name
+        ocr_text = ocr_by_keyframe.get(keyframe_id, "")
+        request_prompt = (
+            prompt
+            + "\n\nOCR TEXT DETECTED FOR THIS REPRESENTATIVE KEYFRAME:\n"
+            + (ocr_text if ocr_text else "<none>")
+        )
+        requests.append(
+            StructuredRequest(
+                request_kind="shot_caption",
+                video_id=video_id,
+                prompt=request_prompt,
+                prompt_version=str(model_config["prompt_version"]),
+                response_schema_version=str(model_config["response_schema_version"]),
+                response_schema=schema,
+                image_paths=(image,),
+                identity={"shot_id": shot["shot_id"]},
+            )
+        )
+        request_context.append((shot, keyframe, keyframe_id))
+    responses = client.request_many(requests)
+    if len(responses) != len(request_context):
+        raise ValueError(
+            "caption client returned a different number of responses than requests"
+        )
+    rows: list[dict[str, Any]] = []
+    for response, context in zip(responses, request_context, strict=True):
+        shot, keyframe, keyframe_id = context
         caption_vi = _required_text(response, "caption_vi")
         caption_en = _required_text(response, "caption_en")
-        return {
+        provider = str(response.get("__provider", model_config["provider"]))
+        model_name = str(response.get("__model_id", model_config["model_id"]))
+        model_version = str(response.get("__model_revision", model_config["model_revision"]))
+        rows.append({
             "shot_caption_id": f"{shot['shot_id']}_caption", "video_id": video_id,
-            "shot_id": shot["shot_id"], "representative_keyframe_id": keyframe["keyframe_id"],
+            "shot_id": shot["shot_id"], "representative_keyframe_id": keyframe_id,
             "representative_timestamp_sec": keyframe["timestamp_sec"],
             "caption_vi": caption_vi, "caption_en": caption_en,
-            "provider": "gemini", "model_name": model_config["model_id"],
-            "model_version": model_config["model_revision"], "prompt_version": model_config["prompt_version"],
+            "objects_vi": _string_list(response, "objects_vi"),
+            "objects_en": _string_list(response, "objects_en"),
+            "actions_vi": _string_list(response, "actions_vi"),
+            "actions_en": _string_list(response, "actions_en"),
+            "visible_text_summary_vi": str(response.get("visible_text_summary_vi", "")),
+            "visible_text_summary_en": str(response.get("visible_text_summary_en", "")),
+            "scene_type": str(response.get("scene_type", "")),
+            "provider": provider, "model_name": model_name,
+            "model_version": model_version, "prompt_version": model_config["prompt_version"],
             "schema_version": model_config["response_schema_version"], "confidence": None, "status": "pass",
-        }
-    rows: list[dict[str, Any]] = []
-    shot_iterator = iter(shots)
-    executor = ThreadPoolExecutor(max_workers=max_concurrency)
-    pending = {
-        executor.submit(build, shot)
-        for shot in [item for _, item in zip(range(max_concurrency), shot_iterator)]
-    }
-    try:
-        while pending:
-            completed, pending = wait(pending, return_when=FIRST_COMPLETED)
-            for future in completed:
-                rows.append(future.result())
-                next_shot = next(shot_iterator, None)
-                if next_shot is not None:
-                    pending.add(executor.submit(build, next_shot))
-    except Exception:
-        for future in pending:
-            future.cancel()
-        raise
-    finally:
-        executor.shutdown(wait=True, cancel_futures=True)
-    return sorted(rows, key=lambda row: str(row["shot_id"]))
+        })
+    return rows
 
 
-def _build_scene_evidence(shots, keyframes, captions, asr_rows, links, stage_dir):
+def _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links, stage_dir):
     by_shot_keyframes: dict[str, list[dict[str, Any]]] = {}
     for row in keyframes:
         by_shot_keyframes.setdefault(str(row["shot_id"]), []).append(row)
     caption_by_shot = {str(row["shot_id"]): row for row in captions}
+    ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
     asr_by_id = {str(row["asr_segment_id"]): row for row in asr_rows}
     links_by_shot: dict[str, list[dict[str, Any]]] = {}
     for row in links:
@@ -712,7 +1899,13 @@ def _build_scene_evidence(shots, keyframes, captions, asr_rows, links, stage_dir
             / "keyframes"
             / Path(str(row["keyframe_ref"])).name
             for row in frames
+            if str(row["keyframe_role"]) != "supplemental"
         }
+        supplemental_paths = [
+            stage_dir / "keyframes" / Path(str(row["keyframe_ref"])).name
+            for row in sorted(frames, key=lambda value: int(value["frame_id"]))
+            if str(row["keyframe_role"]) == "supplemental"
+        ]
         linked_ids = {
             str(link["asr_segment_id"])
             for link in links_by_shot.get(shot_id, [])
@@ -732,13 +1925,24 @@ def _build_scene_evidence(shots, keyframes, captions, asr_rows, links, stage_dir
             if str(row["text"]).strip()
         )
         caption = caption_by_shot[shot_id]
+        shot_ocr = [
+            ocr_by_keyframe[str(row["keyframe_id"])]
+            for row in frames
+            if ocr_by_keyframe.get(str(row["keyframe_id"]))
+        ]
         evidence.append({
             "shot_id": shot_id, "start_sec": shot["start_sec"], "end_sec": shot["end_sec"],
             "representative_path": stage_dir
             / "keyframes"
             / Path(str(representative["keyframe_ref"])).name,
             "early_path": role_paths.get("early"), "late_path": role_paths.get("late"),
-            "caption_vi": caption["caption_vi"], "caption_en": caption["caption_en"], "transcript": transcript,
+            "supplemental_paths": supplemental_paths,
+            "caption_vi": caption["caption_vi"], "caption_en": caption["caption_en"],
+            "objects_vi": _string_list(caption, "objects_vi"), "objects_en": _string_list(caption, "objects_en"),
+            "actions_vi": _string_list(caption, "actions_vi"), "actions_en": _string_list(caption, "actions_en"),
+            "visible_text_summary_vi": caption.get("visible_text_summary_vi", ""),
+            "visible_text_summary_en": caption.get("visible_text_summary_en", ""),
+            "ocr_text": shot_ocr, "transcript": transcript,
         })
     return evidence
 
@@ -756,11 +1960,15 @@ def _build_scene_transcript_links(scenes, asr_rows):
     return rows
 
 
-def _build_scene_summaries(*, video_id, scenes, shots, keyframes, captions, asr_rows, scene_links, stage_dir, client, model_config, summary_config):
+def _build_scene_summaries(*, video_id, scenes, shots, keyframes, ocr_rows, captions, asr_rows, scene_links, stage_dir, client, model_config, summary_config):
     prompt_base = (_prompt_dir() / f"{model_config['prompt_version']}.txt").read_text(encoding="utf-8")
     schema = {"type": "object", "properties": {"summary_vi": {"type": "string", "minLength": 1}, "summary_en": {"type": "string", "minLength": 1}}, "required": ["summary_vi", "summary_en"], "additionalProperties": False}
     captions_by_shot = {str(row["shot_id"]): row for row in captions}
+    ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
     representative = {str(row["shot_id"]): row for row in keyframes if row["is_representative"]}
+    keyframes_by_shot: dict[str, list[dict[str, Any]]] = {}
+    for row in keyframes:
+        keyframes_by_shot.setdefault(str(row["shot_id"]), []).append(row)
     asr_by_id = {str(row["asr_segment_id"]): row for row in asr_rows}
     links_by_scene: dict[str, list[dict[str, Any]]] = {}
     for link in scene_links: links_by_scene.setdefault(str(link["scene_id"]), []).append(link)
@@ -776,9 +1984,58 @@ def _build_scene_summaries(*, video_id, scenes, shots, keyframes, captions, asr_
             / Path(str(representative[str(shot["shot_id"])]["keyframe_ref"])).name
             for shot in sampled_shots
         )
-        evidence = {"shots": [{"shot_id": shot["shot_id"], "caption_vi": captions_by_shot[str(shot["shot_id"])]["caption_vi"], "caption_en": captions_by_shot[str(shot["shot_id"])]["caption_en"]} for shot in scene_shots], "transcript": [asr_by_id[str(link["asr_segment_id"])]["text"] for link in links_by_scene.get(str(scene["scene_id"]), [])], "timeline": [scene["start_sec"], scene["end_sec"]]}
-        response = client.request(GeminiRequest(request_kind="scene_summary", video_id=video_id, prompt=prompt_base + "\n\nSCENE EVIDENCE:\n" + json.dumps(evidence, ensure_ascii=False), prompt_version=str(model_config["prompt_version"]), response_schema_version=str(model_config["response_schema_version"]), response_schema=schema, image_paths=image_paths, identity={"scene_id": scene["scene_id"]}))
-        rows.append({"scene_id": scene["scene_id"], "video_id": video_id, "summary_vi": _required_text(response, "summary_vi"), "summary_en": _required_text(response, "summary_en"), "provider": "gemini", "model_name": model_config["model_id"], "model_version": model_config["model_revision"], "prompt_version": model_config["prompt_version"], "schema_version": model_config["response_schema_version"], "confidence": None, "status": "pass"})
+        shot_evidence = []
+        for shot in scene_shots:
+            shot_id = str(shot["shot_id"])
+            caption = captions_by_shot[shot_id]
+            shot_evidence.append({
+                "shot_id": shot_id,
+                "caption_vi": caption["caption_vi"],
+                "caption_en": caption["caption_en"],
+                "objects_vi": _string_list(caption, "objects_vi"),
+                "objects_en": _string_list(caption, "objects_en"),
+                "actions_vi": _string_list(caption, "actions_vi"),
+                "actions_en": _string_list(caption, "actions_en"),
+                "visible_text_summary_vi": caption.get("visible_text_summary_vi", ""),
+                "visible_text_summary_en": caption.get("visible_text_summary_en", ""),
+                "ocr_text": [
+                    ocr_by_keyframe[str(row["keyframe_id"])]
+                    for row in keyframes_by_shot.get(shot_id, [])
+                    if ocr_by_keyframe.get(str(row["keyframe_id"]))
+                ],
+            })
+        evidence = {"shots": shot_evidence, "transcript": [asr_by_id[str(link["asr_segment_id"])]["text"] for link in links_by_scene.get(str(scene["scene_id"]), [])], "timeline": [scene["start_sec"], scene["end_sec"]]}
+        response = client.request(
+            StructuredRequest(
+                request_kind="scene_summary",
+                video_id=video_id,
+                prompt=prompt_base
+                + "\n\nSCENE EVIDENCE:\n"
+                + json.dumps(evidence, ensure_ascii=False),
+                prompt_version=str(model_config["prompt_version"]),
+                response_schema_version=str(
+                    model_config["response_schema_version"]
+                ),
+                response_schema=schema,
+                image_paths=image_paths,
+                identity={"scene_id": scene["scene_id"]},
+            )
+        )
+        rows.append({
+            "scene_id": scene["scene_id"],
+            "video_id": video_id,
+            "summary_vi": _required_text(response, "summary_vi"),
+            "summary_en": _required_text(response, "summary_en"),
+            "provider": str(response.get("__provider", model_config["provider"])),
+            "model_name": str(response.get("__model_id", model_config["model_id"])),
+            "model_version": str(
+                response.get("__model_revision", model_config["model_revision"])
+            ),
+            "prompt_version": model_config["prompt_version"],
+            "schema_version": model_config["response_schema_version"],
+            "confidence": None,
+            "status": "pass",
+        })
     return rows
 
 
@@ -801,12 +2058,12 @@ def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path,
     artifact_dir.mkdir(parents=True)
     metadata = read_metadata(metadata_path)
     _write_json(artifact_dir / "metadata_normalized.json", metadata)
-    for name in ("shots.parquet", "keyframes.parquet", "asr_segments.parquet", "shot_captions.parquet", "shot_transcript_links.parquet", "scenes.parquet", "scene_transcript_links.parquet", "scene_summaries.parquet"):
+    for name in ("shots.parquet", "keyframes.parquet", "asr_segments.parquet", "ocr.parquet", "shot_captions.parquet", "shot_transcript_links.parquet", "scenes.parquet", "scene_transcript_links.parquet", "scene_summaries.parquet"):
         shutil.copy2(stage_dir / name, artifact_dir / name)
     shutil.copytree(stage_dir / "keyframes", artifact_dir / "keyframes")
     shutil.copytree(stage_dir / "thumbnails", artifact_dir / "thumbnails")
     diagnostics = artifact_dir / "diagnostics"; diagnostics.mkdir()
-    for name in ("keyframe_diagnostics.jsonl", "scene_boundary_diagnostics.jsonl", "transnet_predictions.json", "asr_status.json"):
+    for name in ("keyframe_diagnostics.jsonl", "scene_boundary_diagnostics.jsonl", "transnet_predictions.json", "asr_status.json", "ocr_status.json"):
         source = stage_dir / name
         if source.exists(): shutil.copy2(source, diagnostics / name)
     # A complete per-video package has no item-level errors, but retains the
@@ -886,8 +2143,229 @@ def _safe_extract_zip(bundle: Path, target_dir: Path) -> None:
                 shutil.copyfileobj(source, output)
 
 
-def _hf_store(config):
-    return HuggingFaceDatasetArtifactStore(repo_id=str(config["repo_id"]), repo_type=str(config.get("repo_type", "dataset")), revision=str(config.get("revision", "main")), token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"), prefix=str(config.get("prefix", "")))
+def _emit_progress(
+    *,
+    event: str,
+    status: str,
+    scratch: Path,
+    **details: Any,
+) -> None:
+    payload = {
+        "event": event,
+        "status": status,
+        **_resource_snapshot(scratch),
+        **details,
+    }
+    print(f"[phase01] {json.dumps(payload, ensure_ascii=False, sort_keys=True)}", flush=True)
+
+
+def _emit_stage_progress(
+    manager: CheckpointManager,
+    stage: str,
+    scratch: Path,
+    *,
+    status: str,
+    reused: bool | None = None,
+) -> None:
+    timer_key = (id(manager), stage)
+    details: dict[str, Any] = {
+        "release_id": manager.release_id,
+        "video_id": manager.video_id,
+        "stage": stage,
+        **_MANAGER_RUNTIME_CONTEXT.get(manager, {}),
+    }
+    if status == "start":
+        _STAGE_TIMERS[timer_key] = time.monotonic()
+    else:
+        started = _STAGE_TIMERS.pop(timer_key, None)
+        if started is not None:
+            details["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    if reused is not None:
+        details["source"] = "checkpoint" if reused else "computed"
+    _emit_progress(event="stage", status=status, scratch=scratch, **details)
+
+
+def _model_lifecycle_callback(
+    *,
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    chunk_index: int,
+    chunk_size: int,
+    stage: str,
+):
+    def emit(payload: Mapping[str, Any]) -> None:
+        details = dict(payload)
+        status = str(details.pop("status"))
+        if "load_seconds" in details:
+            details.setdefault("elapsed_seconds", details["load_seconds"])
+        _emit_progress(
+            event="model",
+            status=status,
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            stage=stage,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            **details,
+        )
+
+    return emit
+
+
+def _heavy_model_memory_guard(
+    *,
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    chunk_index: int,
+    chunk_size: int,
+    policy: Mapping[str, Any],
+):
+    try:
+        minimum_available_gb = float(policy["minimum_available_gb"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Phase01 RAM guard minimum_available_gb must be configured"
+        ) from exc
+    if minimum_available_gb < 0:
+        raise ValueError("Phase01 RAM guard minimum_available_gb must be non-negative")
+
+    def guard(provider: str) -> None:
+        before_cleanup_gb = _available_ram_gb()
+        _cleanup_runtime_resources()
+        available_gb = _available_ram_gb()
+        _emit_progress(
+            event="memory_guard",
+            status="pass" if available_gb >= minimum_available_gb else "blocked",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            provider=provider,
+            ram_available_before_cleanup_gb=before_cleanup_gb,
+            ram_available_after_cleanup_gb=available_gb,
+            minimum_available_gb=minimum_available_gb,
+        )
+        if available_gb < minimum_available_gb:
+            raise InsufficientMemoryError(
+                "insufficient RAM for heavy model load: "
+                f"available={available_gb:.3f} GiB, "
+                f"minimum={minimum_available_gb:.3f} GiB, provider={provider}"
+            )
+
+    return guard
+
+
+def _resource_snapshot(scratch: Path) -> dict[str, float | None]:
+    snapshot: dict[str, float | None] = {
+        "scratch_free_gb": None,
+        "ram_used_gb": None,
+        "ram_available_gb": None,
+        "process_rss_gb": None,
+        "gpu_allocated_gb": None,
+        "gpu_reserved_gb": None,
+        "gpu_peak_allocated_gb": None,
+    }
+    try:
+        snapshot["scratch_free_gb"] = _bytes_to_gb(shutil.disk_usage(scratch).free)
+    except (FileNotFoundError, OSError):
+        pass
+    try:
+        memory = psutil.virtual_memory()
+        snapshot["ram_available_gb"] = _bytes_to_gb(memory.available)
+        snapshot["ram_used_gb"] = _bytes_to_gb(memory.total - memory.available)
+        snapshot["process_rss_gb"] = _bytes_to_gb(
+            psutil.Process().memory_info().rss
+        )
+    except (OSError, TypeError, ValueError):
+        pass
+    try:
+        import torch
+    except ImportError:
+        return snapshot
+    try:
+        if torch.cuda.is_available():
+            snapshot["gpu_allocated_gb"] = _bytes_to_gb(
+                torch.cuda.memory_allocated()
+            )
+            snapshot["gpu_reserved_gb"] = _bytes_to_gb(
+                torch.cuda.memory_reserved()
+            )
+            snapshot["gpu_peak_allocated_gb"] = _bytes_to_gb(
+                torch.cuda.max_memory_allocated()
+            )
+    except (RuntimeError, TypeError, ValueError):
+        pass
+    return snapshot
+
+
+def _bytes_to_gb(value: float) -> float:
+    return round(float(value) / (1024**3), 3)
+
+
+def _scratch_free_gb(scratch: Path) -> float:
+    return float(shutil.disk_usage(scratch).free) / (1024**3)
+
+
+def _available_ram_gb() -> float:
+    return float(psutil.virtual_memory().available) / (1024**3)
+
+
+def _mapping_raw_bytes(mapping: Mapping[str, Any]) -> int | None:
+    value = mapping.get("video_size_bytes")
+    if _present_scalar(value):
+        try:
+            size = int(value)
+        except (TypeError, ValueError):
+            size = -1
+        if size >= 0:
+            return size
+    for key in ("video_local_path", "debug_video_local_path", "source_video_path"):
+        path_value = mapping.get(key)
+        if _present_scalar(path_value):
+            path = Path(str(path_value))
+            if path.is_file():
+                return path.stat().st_size
+    return None
+
+
+def _hf_store(config, *, cache_dir: Path | str | None = None):
+    return HuggingFaceDatasetArtifactStore(
+        repo_id=str(config["repo_id"]),
+        repo_type=str(config.get("repo_type", "dataset")),
+        revision=str(config.get("revision", "main")),
+        token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
+        prefix=str(config.get("prefix", "")),
+        cache_dir=cache_dir,
+    )
+
+
+def _release_structured_client(client: Any) -> None:
+    close = getattr(client, "close", None)
+    if callable(close):
+        close()
+    _cleanup_runtime_resources()
+
+
+def _cleanup_runtime_resources() -> None:
+    # Third-party wrappers do not consistently release cyclic references or
+    # CUDA caches even after their close hook returns.
+    gc.collect()
+    try:
+        import torch
+    except ImportError:
+        return
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+            if callable(ipc_collect):
+                ipc_collect()
+    except RuntimeError:
+        pass
 
 
 def _materialize_canonical(mapping, key, target_dir):
@@ -897,7 +2375,26 @@ def _materialize_canonical(mapping, key, target_dir):
         if _present_scalar(value) and Path(str(value)).is_file(): return Path(str(value))
     target_dir.mkdir(parents=True, exist_ok=True)
     remote_path = str(mapping[key]); target = target_dir / Path(remote_path).name
-    store = HuggingFaceDatasetArtifactStore(repo_id=str(mapping["canonical_repo_id"]), repo_type=str(mapping.get("canonical_repo_type")) if _present_scalar(mapping.get("canonical_repo_type")) else "dataset", revision=str(mapping.get("canonical_revision")) if _present_scalar(mapping.get("canonical_revision")) else "main", token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"), prefix=str(mapping.get("canonical_prefix")) if _present_scalar(mapping.get("canonical_prefix")) else "")
+    store = HuggingFaceDatasetArtifactStore(
+        repo_id=str(mapping["canonical_repo_id"]),
+        repo_type=(
+            str(mapping.get("canonical_repo_type"))
+            if _present_scalar(mapping.get("canonical_repo_type"))
+            else "dataset"
+        ),
+        revision=(
+            str(mapping.get("canonical_revision"))
+            if _present_scalar(mapping.get("canonical_revision"))
+            else "main"
+        ),
+        token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
+        prefix=(
+            str(mapping.get("canonical_prefix"))
+            if _present_scalar(mapping.get("canonical_prefix"))
+            else ""
+        ),
+        cache_dir=target_dir / ".hf_cache",
+    )
     return store.download_file(remote_path, target)
 
 
@@ -949,6 +2446,11 @@ def _validate_keyframe_rows(shots, rows):
     for shot in shots:
         members = [row for row in rows if row["shot_id"] == shot["shot_id"]]
         if not members or sum(row["is_representative"] for row in members) != 1: raise ValueError(f"Invalid keyframe selection for {shot['shot_id']}")
+        if any(
+            row["keyframe_role"] == "supplemental" and row["is_representative"]
+            for row in members
+        ):
+            raise ValueError("Supplemental keyframes cannot be representative")
         if any(not (shot["start_frame"] <= row["frame_id"] < shot["end_frame"]) for row in members): raise ValueError("Keyframe lies outside its shot")
 
 
@@ -974,10 +2476,14 @@ def _prompt_dir(): return Path(__file__).resolve().parents[3] / "prompts"
 def _required_text(payload: Mapping[str, Any], key: str) -> str:
     value = str(payload[key]).strip()
     if not value:
-        raise ValueError(f"Gemini structured field must contain non-whitespace text: {key}")
+        raise ValueError(
+            f"Structured field must contain non-whitespace text: {key}"
+        )
     return value
 
 
 def _retryable_video_error(exc):
+    if isinstance(exc, InsufficientMemoryError):
+        return True
     message = str(exc).lower()
-    return any(marker in message for marker in ("timeout", "timed out", "429", "500", "502", "503", "504", "out of memory", "temporarily unavailable", "connection reset", "decode", "i/o"))
+    return any(marker in message for marker in ("timeout", "timed out", "429", "500", "502", "503", "504", "out of memory", "insufficient ram", "temporarily unavailable", "connection reset", "decode", "i/o"))

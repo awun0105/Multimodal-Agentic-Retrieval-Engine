@@ -25,6 +25,7 @@ REQUIRED_CONFIGS = (
 
 _PHASE01_USER_SETTING_KEYS = {
     "batch_id",
+    "asr_provider",
     "checkpoint_prefix",
     "checkpoint_revision",
     "hf_checkpoint_repo",
@@ -92,7 +93,7 @@ def load_configs(config_dir: Path | str) -> dict[str, dict[str, Any]]:
             raise FileNotFoundError(f"missing config file: {path}")
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict):
-            raise ValueError(f"config must be a mapping: {path}")
+            raise TypeError(f"config must be a mapping: {path}")
         configs[path.stem] = data
     return configs
 
@@ -134,7 +135,7 @@ def load_provider_plan(config_dir: Path | str, provider_profile: str) -> Provide
         if phase01_models:
             return ProviderPlan(
                 asr=str(phase01_models.get("asr", {}).get("provider", "unconfigured")),
-                ocr="unconfigured",
+                ocr=str(phase01_models.get("ocr", {}).get("provider", "unconfigured")),
                 embedding="unconfigured",
                 object_detection="unconfigured",
                 shot_caption=str(
@@ -178,6 +179,12 @@ def resolve_phase01_config(
     )
     if missing:
         raise ValueError(f"missing Phase01 user settings: {', '.join(missing)}")
+    batch_id = _validated_runtime_identifier(
+        normalized_settings["batch_id"], field_name="batch_id"
+    )
+    worker_id = _validated_runtime_identifier(
+        normalized_settings["worker_id"], field_name="worker_id"
+    )
 
     release_override = str(normalized_settings.get("release_id_override") or "").strip()
     discovered_release = str(phase00_release_id or "").strip()
@@ -240,10 +247,13 @@ def resolve_phase01_config(
             "environment": environment or detect_environment(),
             "release_id": release_id,
             "release_id_source": "user_override" if release_override else "phase00_auto_resolve",
-            "batch_id": str(normalized_settings["batch_id"]),
-            "worker_id": str(normalized_settings["worker_id"]),
+            "batch_id": batch_id,
+            "worker_id": worker_id,
         },
     }
+    asr_provider = str(normalized_settings.get("asr_provider") or "").strip()
+    if asr_provider:
+        _apply_phase01_asr_provider(payload, asr_provider)
     required_paths = payload["phase01"].get("production_readiness", {}).get(
         "required_non_null_paths", []
     )
@@ -261,12 +271,12 @@ def resolve_phase01_config(
 
 
 def require_phase01_production_ready(config: ResolvedPhase01Config) -> None:
-    if config.production_ready:
-        return
-    raise ValueError(
-        "Phase01 production config has unresolved required fields: "
-        + ", ".join(config.unresolved_required_fields)
-    )
+    if not config.production_ready:
+        raise ValueError(
+            "Phase01 production config has unresolved required fields: "
+            + ", ".join(config.unresolved_required_fields)
+        )
+    _validate_phase01_runtime_invariants(config.payload)
 
 
 def persist_resolved_phase01_config(config: ResolvedPhase01Config, path: Path | str) -> Path:
@@ -317,8 +327,15 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "retry": phase01["retry"],
             "schema": schemas["asr_segments"],
         },
+        "ocr": {
+            "model": models["ocr"],
+            "policy": phase01["ocr"],
+            "retry": phase01["retry"],
+            "schema": schemas["ocr"],
+        },
         "shot_captions": {
             "model": models["shot_caption"],
+            "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
             "schema": schemas["shot_captions"],
@@ -327,14 +344,18 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "schema": schemas["shot_transcript_links"],
         },
         "scenes": {
-            "model": models["scene_boundary"],
+            "model": _resolved_semantic_model(models, "scene_boundary"),
+            "policy": models["scene_boundary"],
+            "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
             "grouping": phase01["scene_grouping"],
             "schemas": [schemas["scenes"], schemas["scene_transcript_links"]],
         },
         "scene_summaries": {
-            "model": models["scene_summary"],
+            "model": _resolved_semantic_model(models, "scene_summary"),
+            "provider_policy": models["scene_summary"],
+            "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
             "policy": phase01["scene_summary"],
@@ -356,3 +377,184 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
 
 def _provider_keys() -> tuple[str, ...]:
     return ("asr", "ocr", "embedding", "object_detection", "shot_caption", "scene_summary")
+
+
+def _resolved_semantic_model(
+    models: dict[str, Any], stage_key: str
+) -> dict[str, Any]:
+    stage = copy.deepcopy(models[stage_key])
+    model_key = stage.pop("model_key", None)
+    if not model_key:
+        return stage
+    if str(model_key) not in models:
+        raise ValueError(f"unknown Phase01 semantic model_key: {model_key}")
+    return {**copy.deepcopy(models[str(model_key)]), **stage}
+
+
+def _validated_runtime_identifier(value: Any, *, field_name: str) -> str:
+    text = str(value)
+    if (
+        not text
+        or text != text.strip()
+        or text in {".", ".."}
+        or any(separator in text for separator in ("/", "\\"))
+        or any(ord(character) < 32 for character in text)
+    ):
+        raise ValueError(
+            f"Phase01 {field_name} must be a non-empty path-safe identifier"
+        )
+    return text
+
+
+def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
+    execution = payload["phase01"]["execution"]
+    expected_execution = {
+        "max_concurrent_videos": 1,
+        "gpu_heavy_models_resident": 1,
+        "checkpoint_after_each_stage": True,
+        "release_gpu_objects_before_empty_cache": True,
+    }
+    for key, expected in expected_execution.items():
+        if execution.get(key) != expected:
+            raise ValueError(
+                f"Phase01 execution.{key} is an enforced invariant and must be "
+                f"{expected!r}"
+            )
+
+    _validate_semantic_sampling_policy(payload)
+
+    models = payload["models"]
+    caption_signature = _semantic_runtime_signature(
+        _resolved_semantic_model(models, "shot_caption")
+    )
+    for stage_key in ("scene_boundary", "scene_summary"):
+        signature = _semantic_runtime_signature(
+            _resolved_semantic_model(models, stage_key)
+        )
+        if signature != caption_signature:
+            raise ValueError(
+                "Phase01 shared semantic runtime mismatch: "
+                f"shot_caption and {stage_key} must use the same primary/fallback "
+                "client chain"
+            )
+
+
+def _validate_semantic_sampling_policy(payload: dict[str, Any]) -> None:
+    phase01 = payload["phase01"]
+    policy = payload["media"]["keyframe"]["semantic_sampling"]
+    if str(policy.get("policy")) != "temporal_visual_text_v1":
+        raise ValueError("Unsupported Phase01 keyframe semantic sampling policy")
+    positive_fields = (
+        "target_max_probe_gap_seconds",
+        "max_probe_candidates_per_shot",
+        "max_supplemental_keyframes_per_shot",
+    )
+    for field in positive_fields:
+        if float(policy.get(field, 0)) <= 0:
+            raise ValueError(
+                f"Phase01 keyframe semantic_sampling.{field} must be positive"
+            )
+    if float(policy.get("min_supplemental_separation_seconds", -1)) < 0:
+        raise ValueError(
+            "Phase01 keyframe semantic_sampling."
+            "min_supplemental_separation_seconds must be non-negative"
+        )
+
+    visual = policy["visual_novelty"]
+    text = policy["text_change"]
+    if str(visual.get("policy")) != "dhash_v1" or int(
+        visual.get("hash_size", 0)
+    ) < 1:
+        raise ValueError("Invalid Phase01 dHash semantic sampling config")
+    if str(text.get("policy")) != "mser_masked_edge_jaccard_v1":
+        raise ValueError("Invalid Phase01 text-change semantic sampling policy")
+    for field, value in (
+        ("visual_novelty.min_hamming_ratio", visual.get("min_hamming_ratio")),
+        ("text_change.min_jaccard_distance", text.get("min_jaccard_distance")),
+    ):
+        if value is None or not 0 <= float(value) <= 1:
+            raise ValueError(
+                f"Phase01 keyframe semantic_sampling.{field} must be in [0, 1]"
+            )
+    for field in (
+        "max_long_side",
+        "signature_width",
+        "signature_height",
+        "min_plausible_regions",
+    ):
+        if int(text.get(field, 0)) < 1:
+            raise ValueError(
+                f"Phase01 keyframe semantic_sampling.text_change.{field} "
+                "must be positive"
+            )
+    canny_low = int(text.get("canny_low", -1))
+    canny_high = int(text.get("canny_high", -1))
+    if canny_low < 0 or canny_high <= canny_low:
+        raise ValueError(
+            "Phase01 keyframe semantic_sampling.text_change Canny thresholds "
+            "must satisfy 0 <= canny_low < canny_high"
+        )
+
+    if bool(policy.get("enabled", False)):
+        ocr_roles = {
+            str(role) for role in phase01["ocr"]["run_on_keyframe_roles"]
+        }
+        focused_roles = {
+            str(role)
+            for role in phase01["scene_grouping"][
+                "focused_review_keyframe_roles"
+            ]
+        }
+        if "supplemental" not in ocr_roles:
+            raise ValueError(
+                "Enabled semantic sampling requires supplemental OCR evidence"
+            )
+        if not {"early", "late", "supplemental"}.issubset(focused_roles):
+            raise ValueError(
+                "Enabled semantic sampling requires early/late/supplemental "
+                "focused scene evidence"
+            )
+
+
+def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:
+    runtime_keys = (
+        "provider",
+        "sdk",
+        "sdk_version",
+        "model_id",
+        "model_revision",
+        "thinking_level",
+        "trust_remote_code",
+        "torch_dtype",
+        "device_map",
+        "quantization",
+        "low_cpu_mem_usage",
+        "use_fast_tokenizer",
+        "use_flash_attn",
+        "max_new_tokens",
+    )
+
+    def client_signature(config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: copy.deepcopy(config[key])
+            for key in runtime_keys
+            if key in config
+        }
+
+    return {
+        "primary": client_signature(model),
+        "fallbacks": [
+            client_signature(dict(fallback))
+            for fallback in model.get("fallbacks", [])
+        ],
+    }
+
+
+def _apply_phase01_asr_provider(payload: dict[str, Any], provider: str) -> None:
+    providers = payload["models"].get("asr_providers", {})
+    if provider not in providers:
+        available = ", ".join(sorted(providers)) or "none"
+        raise ValueError(
+            f"unsupported Phase01 ASR provider override: {provider}; available: {available}"
+        )
+    payload["models"]["asr"] = copy.deepcopy(providers[provider])

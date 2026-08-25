@@ -9,6 +9,7 @@ import pytest
 
 from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.store import ArtifactStore
+from system1.config import resolve_phase01_config
 from system1.phase01.checkpoint import (
     CheckpointManager,
     compute_fingerprint,
@@ -19,7 +20,10 @@ from system1.phase01.phase00 import (
     discover_phase00_candidates,
     resolve_phase00_release,
 )
+from system1.phase01.preflight import run_phase01_storage_preflight
 from system1.phase01.runner import _restore_phase00_if_needed
+
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
 
 
 def candidate(release_id: str, timestamp: str | None) -> Phase00Candidate:
@@ -87,6 +91,51 @@ def test_phase00_discovery_accepts_only_complete_matching_manifests(tmp_path: Pa
     ]
 
 
+def test_storage_preflight_accepts_writable_public_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    objects: dict[str, dict] = {}
+
+    class FakeApi:
+        def __init__(self, token=None) -> None:
+            assert token == "token"
+
+        def repo_info(self, **_kwargs):
+            return type("RepoInfo", (), {"private": False})()
+
+    class FakeStore:
+        def __init__(self, **kwargs) -> None:
+            assert kwargs["cache_dir"] == "/tmp/phase01-test-cache"
+
+        def write_json(self, relative_path, payload):
+            objects[str(relative_path)] = payload
+
+        def read_json(self, relative_path):
+            return objects[str(relative_path)]
+
+    monkeypatch.setenv("HF_TOKEN", "token")
+    monkeypatch.setattr("system1.phase01.preflight.HfApi", FakeApi)
+    monkeypatch.setattr(
+        "system1.phase01.preflight.HuggingFaceDatasetArtifactStore", FakeStore
+    )
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings={
+            "batch_id": "batch_000",
+            "worker_id": "worker_000",
+            "hf_release_repo": "org/release",
+        },
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+
+    run_phase01_storage_preflight(
+        resolved, cache_dir="/tmp/phase01-test-cache"
+    )
+
+    assert len(objects) == 1
+
+
 def test_phase00_restore_downloads_only_the_selected_batch_timelines(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -134,7 +183,7 @@ def test_phase00_restore_downloads_only_the_selected_batch_timelines(
         ],
     }
     monkeypatch.setattr(
-        "system1.phase01.runner._hf_store", lambda _storage: store
+        "system1.phase01.runner._hf_store", lambda _storage, **_kwargs: store
     )
 
     output = tmp_path / "output"
@@ -168,6 +217,7 @@ def stage_hashes() -> dict[str, str]:
         "shots",
         "keyframes",
         "asr",
+        "ocr",
         "shot_captions",
         "shot_transcript_links",
         "scenes",
@@ -251,7 +301,11 @@ def test_checkpoint_groups_stage_outputs_into_one_backend_upload(tmp_path: Path)
     assert [source.name for source, _remote in store.upload_batches[0]] == [
         "shots.parquet",
         "transnet_predictions.json",
+        "state.json",
     ]
+    assert str(store.upload_batches[0][-1][1]).endswith(
+        "phase01_checkpoints/canonical_release_v001/L21_V001/state.json"
+    )
 
 
 def test_corrupt_checkpoint_output_is_not_reusable(tmp_path: Path) -> None:
@@ -269,6 +323,26 @@ def test_corrupt_checkpoint_output_is_not_reusable(tmp_path: Path) -> None:
     (tmp_path / "persistent" / remote_path).write_bytes(b"corrupt")
     assert checkpoint.is_reusable("shots", input_fingerprint=fingerprint) is False
     assert checkpoint.load_state()["stages"]["shots"]["status"] == "invalidated"
+
+
+def test_missing_checkpoint_output_invalidates_complete_state(tmp_path: Path) -> None:
+    checkpoint = manager(tmp_path)
+    output = tmp_path / "shots.parquet"
+    output.write_bytes(b"valid")
+    fingerprint = compute_fingerprint("input")
+    record = checkpoint.promote_stage(
+        "shots",
+        input_fingerprint=fingerprint,
+        outputs=[output],
+        schema_version="shots_v1",
+    )
+    remote_path = next(iter(record["output_checksums"]))
+    (tmp_path / "persistent" / remote_path).unlink()
+
+    assert checkpoint.is_reusable("shots", input_fingerprint=fingerprint) is False
+    state = checkpoint.load_state()
+    assert state["stages"]["shots"]["status"] == "invalidated"
+    assert state["stages"]["shots"]["output_checksums"] == {}
 
 
 def test_changed_input_invalidates_complete_stage_and_only_its_downstream(

@@ -13,6 +13,7 @@ PHASE01_TABLES = (
     "shots",
     "keyframes",
     "asr_segments",
+    "ocr",
     "shot_captions",
     "shot_transcript_links",
     "scenes",
@@ -40,6 +41,7 @@ def validate_phase01_package(artifact_dir: Path) -> None:
 
     shots = tables["shots"].sort_values("shot_index")
     keyframes = tables["keyframes"]
+    ocr = tables["ocr"]
     captions = tables["shot_captions"]
     scenes = tables["scenes"].sort_values("scene_index")
     summaries = tables["scene_summaries"]
@@ -79,6 +81,12 @@ def validate_phase01_package(artifact_dir: Path) -> None:
     )
     if actual_representatives != expected_representatives:
         raise ValueError("Every shot must have exactly one representative keyframe")
+    supplemental_representatives = keyframes[
+        (keyframes["keyframe_role"] == "supplemental")
+        & keyframes["is_representative"]
+    ]
+    if not supplemental_representatives.empty:
+        raise ValueError("Supplemental keyframes cannot be representative")
     expected_keyframe_ids = {
         f"{row.video_id}:{int(row.frame_id)}" for row in keyframes.itertuples(index=False)
     }
@@ -86,6 +94,8 @@ def validate_phase01_package(artifact_dir: Path) -> None:
         raise ValueError("keyframe_id must equal {video_id}:{frame_id}")
     if keyframes["keyframe_id"].astype(str).duplicated().any():
         raise ValueError("keyframe_id must be unique")
+    if not set(ocr["keyframe_id"].astype(str)).issubset(expected_keyframe_ids):
+        raise ValueError("ocr.keyframe_id must reference canonical keyframes")
     shot_ids = set(shots["shot_id"].astype(str))
     scene_ids = set(scenes["scene_id"].astype(str))
     if set(captions["shot_id"].astype(str)) != shot_ids or len(captions) != len(shots):
@@ -233,6 +243,11 @@ def _json_value(value: Any) -> Any:
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
+    if hasattr(value, "tolist") and not isinstance(value, (str, bytes)):
+        converted = value.tolist()
+        if isinstance(converted, list):
+            return [_json_value(item) for item in converted]
+        value = converted
     if value is None:
         return None
     try:

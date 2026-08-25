@@ -597,6 +597,14 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
         if path.name == "01_worker_structure_pipeline.ipynb":
             assert "providers" not in joined
             assert "--providers" not in joined
+            assert "AIOU26_release" in joined
+            assert "AIOU26_checkpoints" in joined
+            assert "phase01_structure" in joined
+            assert "list_repo_tree" in joined
+            assert "SOURCE IDENTITY" in joined
+            assert "origin_branch_sha" in joined
+            assert "AIC_EXPECTED_GIT_BRANCH" in joined
+            assert "Source code stale/mismatch" in joined
         elif path.name == "02_worker_feature_enrichment.ipynb":
             assert "providers" in joined
         assert "run_cli" in joined
@@ -604,7 +612,6 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert command in joined
         if path.name.startswith(("00B", "00C")):
             assert "canonical_raw_v009" in joined
-            assert "system1-notebook01" in joined
             assert "metadata_schema_version" in joined
             assert "organizer_metadata_present" in joined
             assert "probe_status" in joined
@@ -614,6 +621,10 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "stream_standardize_upload_progress_{raw_import_id}" in joined
             assert "Path(config.stream_progress_path).name" in joined
             assert "required_local_reports.append(Path(config.stream_progress_path)" in joined
+        if path.name.startswith("00B"):
+            assert "monolith-mvp-app" in joined
+        if path.name.startswith("00C"):
+            assert "system1-notebook01" in joined
         if path.name.startswith(("00A", "00B", "00C", "01_")):
             assert "package source preflight: OK" in joined
             assert "help_result" not in joined
@@ -921,6 +932,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
+        "ocr.parquet",
         "shot_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
@@ -944,6 +956,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
             "L21_V001/shots.parquet",
             "L21_V001/scenes.parquet",
             "L21_V001/keyframes.parquet",
+            "L21_V001/ocr.parquet",
             "L21_V001/shot_captions.parquet",
             "L21_V001/shot_transcript_links.parquet",
             "L21_V001/scene_transcript_links.parquet",
@@ -965,6 +978,7 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "shots.parquet",
         "scenes.parquet",
         "keyframes.parquet",
+        "ocr.parquet",
         "shot_captions.parquet",
         "shot_transcript_links.parquet",
         "scene_transcript_links.parquet",
@@ -1007,6 +1021,13 @@ def test_process_batch_creates_only_structure_artifacts_for_selected_batch(tmp_p
         "representative_timestamp_sec",
         "caption_vi",
         "caption_en",
+        "objects_vi",
+        "objects_en",
+        "actions_vi",
+        "actions_en",
+        "visible_text_summary_vi",
+        "visible_text_summary_en",
+        "scene_type",
         "provider",
         "model_name",
         "model_version",

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+
 from tools.build_release import normalize_publish_date, normalized_detections
 from tools.optimize_images import optimize_images
 from tools.upload_release import _load_state, _merge_ranges, load_manifest, remote_path

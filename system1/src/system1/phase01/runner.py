@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -12,6 +14,7 @@ import pandas as pd
 from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.config import (
+    ResolvedPhase01Config,
     load_configs,
     persist_resolved_phase01_config,
     require_phase01_production_ready,
@@ -59,33 +62,56 @@ def run_phase01_pipeline(
     ):
         if user_settings.get(setting) is not None:
             release_storage[key] = user_settings[setting]
-    release_store = _hf_store(release_storage)
-    selected = resolve_phase00_release(
-        discover_phase00_candidates(release_store),
-        release_id_override=str(user_settings.get("release_id_override") or "") or None,
-    )
+    discovery_cache = output_root.resolve().parent / ".phase01_hf_cache" / "discovery"
+    try:
+        release_store = _hf_store(release_storage, cache_dir=discovery_cache)
+        selected = resolve_phase00_release(
+            discover_phase00_candidates(release_store),
+            release_id_override=str(user_settings.get("release_id_override") or "") or None,
+        )
+    finally:
+        shutil.rmtree(discovery_cache, ignore_errors=True)
     resolved = resolve_phase01_config(
         config_dir,
         user_settings=user_settings,
         phase00_release_id=selected.release_id,
     )
     require_phase01_production_ready(resolved)
+    runtime_diagnostics = _build_runtime_diagnostics(configs, resolved)
+    print(
+        "[phase01] "
+        + json.dumps(
+            {"event": "runtime_identity", **runtime_diagnostics},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    scratch_root = _scratch_root(resolved.payload["storage"], output_root)
     if validate_remote:
-        run_phase01_storage_preflight(resolved)
+        preflight_cache = scratch_root / ".hf_cache" / "storage_preflight"
+        try:
+            run_phase01_storage_preflight(resolved, cache_dir=preflight_cache)
+        finally:
+            shutil.rmtree(preflight_cache, ignore_errors=True)
     release_id = str(resolved.payload["runtime"]["release_id"])
     release_dir = output_root.resolve() / release_id
     if restore_phase00:
-        _restore_phase00_if_needed(
-            output_root=output_root,
-            release_id=release_id,
-            batch_id=str(resolved.payload["runtime"]["batch_id"]),
-            storage=resolved.payload["storage"]["release"],
-            selected_manifest=selected.manifest,
-        )
+        restore_cache = scratch_root / ".hf_cache" / "phase00_restore"
+        try:
+            _restore_phase00_if_needed(
+                output_root=output_root,
+                release_id=release_id,
+                batch_id=str(resolved.payload["runtime"]["batch_id"]),
+                storage=resolved.payload["storage"]["release"],
+                selected_manifest=selected.manifest,
+                cache_dir=restore_cache,
+            )
+        finally:
+            shutil.rmtree(restore_cache, ignore_errors=True)
     resolved_path = persist_resolved_phase01_config(
         resolved, release_dir / "manifests" / "phase01" / "resolved_config.json"
     )
-    scratch_root = _scratch_root(resolved.payload["storage"], output_root)
     transnet = materialize_transnet_artifact(
         model_config=resolved.payload["models"]["shot_detection"],
         storage_config=resolved.payload["storage"]["model_artifacts"],
@@ -126,6 +152,83 @@ def run_phase01_pipeline(
     return Phase01RunResult(release_id, release_dir, resolved_path, report, preflight)
 
 
+def _build_runtime_diagnostics(
+    configs: dict[str, Any], resolved: ResolvedPhase01Config
+) -> dict[str, Any]:
+    models = resolved.payload["models"]
+    caption = models["shot_caption"]
+    quantization = caption.get("quantization", {})
+    fallback_providers = [
+        str(model["provider"])
+        for model in caption.get("fallbacks", [])
+        if model.get("provider")
+    ]
+    git_identity = _git_identity()
+    expected_branch = str(os.environ.get("AIC_EXPECTED_GIT_BRANCH") or "") or None
+    actual_branch = git_identity["git_branch"]
+    return {
+        **git_identity,
+        "expected_git_branch": expected_branch,
+        "git_branch_matches_expected": (
+            None if expected_branch is None else actual_branch == expected_branch
+        ),
+        "config_hash": resolved.config_hash,
+        "pipeline_id": resolved.payload["phase01"]["pipeline_id"],
+        "phase01_schema_version": resolved.payload["phase01"]["schema_version"],
+        "models_schema_version": configs["models"]["schema_version"],
+        "asr": {
+            "provider": models["asr"]["provider"],
+            "model_id": models["asr"]["model_id"],
+        },
+        "ocr": {
+            "provider": models["ocr"]["provider"],
+            "model_id": models["ocr"]["model_id"],
+        },
+        "semantic": {
+            "provider": caption["provider"],
+            "model_id": caption["model_id"],
+            "quantization": (
+                f"{quantization.get('method', 'none')}:"
+                f"{quantization.get('mode', 'none')}:"
+                f"{quantization.get('quant_type', 'none')}"
+            ),
+            "stages": ["shot_captions", "scenes", "scene_summaries"],
+        },
+        "semantic_fallback_providers": fallback_providers,
+    }
+
+
+def _git_identity() -> dict[str, Any]:
+    repo_root = next(
+        (
+            parent
+            for parent in Path(__file__).resolve().parents
+            if (parent / ".git").exists()
+        ),
+        None,
+    )
+    if repo_root is None:
+        return {"git_commit_sha": None, "git_branch": None, "git_dirty": None}
+
+    def run(*args: str) -> str:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        return completed.stdout.strip()
+
+    try:
+        sha = run("rev-parse", "HEAD")
+        branch = run("branch", "--show-current") or None
+        dirty = bool(run("status", "--porcelain"))
+    except (OSError, subprocess.CalledProcessError):
+        return {"git_commit_sha": None, "git_branch": None, "git_dirty": None}
+    return {"git_commit_sha": sha, "git_branch": branch, "git_dirty": dirty}
+
+
 def _restore_phase00_if_needed(
     *,
     output_root: Path,
@@ -133,6 +236,7 @@ def _restore_phase00_if_needed(
     batch_id: str,
     storage: dict[str, Any],
     selected_manifest: dict[str, Any],
+    cache_dir: Path | str | None = None,
 ) -> None:
     release_dir = output_root.resolve() / release_id
     marker_path = (
@@ -157,7 +261,7 @@ def _restore_phase00_if_needed(
         ):
             return
 
-    store = _hf_store(storage)
+    store = _hf_store(storage, cache_dir=cache_dir)
     remote_root = phase00_ingestion_remote_prefix(release_id)
     expected_checksums = {
         str(row["relative_path"]): str(row["sha256"])
@@ -312,11 +416,16 @@ def _scratch_root(storage: dict[str, Any], output_root: Path) -> Path:
     return (output_root.resolve().parent / "phase01_scratch").resolve()
 
 
-def _hf_store(config: dict[str, Any]) -> HuggingFaceDatasetArtifactStore:
+def _hf_store(
+    config: dict[str, Any],
+    *,
+    cache_dir: Path | str | None = None,
+) -> HuggingFaceDatasetArtifactStore:
     return HuggingFaceDatasetArtifactStore(
         repo_id=str(config["repo_id"]),
         repo_type=str(config.get("repo_type", "dataset")),
         revision=str(config.get("revision", "main")),
         token=os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN"),
         prefix=str(config.get("prefix", "")),
+        cache_dir=cache_dir,
     )

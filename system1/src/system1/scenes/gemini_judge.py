@@ -8,25 +8,29 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageOps
 
-from system1.gemini import GeminiRequest, GeminiStructuredClient
+from system1.gemini import StructuredRequest
+from system1.vlm import StructuredClient
 
 
-class GeminiSceneBoundaryJudge:
+class StructuredSceneBoundaryJudge:
     def __init__(
         self,
-        client: GeminiStructuredClient,
+        client: StructuredClient,
         *,
         video_id: str,
         prompt_dir: Path,
         diagnostics_dir: Path,
         model_config: Mapping[str, Any],
+        focused_keyframe_roles: tuple[str, ...] = ("early", "late"),
     ) -> None:
         self.client = client
         self.video_id = video_id
         self.prompt_dir = prompt_dir
         self.diagnostics_dir = diagnostics_dir
         self.model_config = model_config
+        self.focused_keyframe_roles = focused_keyframe_roles
         self.request_index = 0
+        self._diagnostics: dict[str, dict[str, Any]] = {}
 
     def judge(
         self,
@@ -58,7 +62,12 @@ class GeminiSceneBoundaryJudge:
                 self.diagnostics_dir
                 / f"{self.request_index:05d}_{request_kind}_early_late.jpg"
             )
-            if _write_role_contact_sheet(context, focus_gap_ids, role_sheet):
+            if _write_role_contact_sheet(
+                context,
+                focus_gap_ids,
+                role_sheet,
+                roles=self.focused_keyframe_roles,
+            ):
                 image_paths.append(role_sheet)
         response_schema = {
             "type": "object",
@@ -72,6 +81,12 @@ class GeminiSceneBoundaryJudge:
                         "properties": {
                             "after_shot_id": {"type": "string"},
                             "is_scene_boundary": {"type": "boolean"},
+                            "reason": {"type": "string"},
+                            "confidence": {"type": ["number", "null"]},
+                            "evidence_used": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
                         },
                         "required": ["after_shot_id", "is_scene_boundary"],
                         "additionalProperties": False,
@@ -82,7 +97,7 @@ class GeminiSceneBoundaryJudge:
             "additionalProperties": False,
         }
         response = self.client.request(
-            GeminiRequest(
+            StructuredRequest(
                 request_kind=f"scene_boundary_{request_kind}",
                 video_id=self.video_id,
                 prompt=prompt,
@@ -99,9 +114,17 @@ class GeminiSceneBoundaryJudge:
         for item in boundaries:
             gap_id = str(item["after_shot_id"])
             if gap_id in result:
-                raise ValueError(f"Gemini duplicated scene gap: {gap_id}")
+                raise ValueError(f"Structured judge duplicated scene gap: {gap_id}")
             result[gap_id] = item["is_scene_boundary"]
+            self._diagnostics[gap_id] = {
+                "reason": str(item.get("reason", "")),
+                "confidence": item.get("confidence"),
+                "evidence_used": item.get("evidence_used", []),
+            }
         return result
+
+    def diagnostics_for(self, gap_id: str) -> Mapping[str, Any]:
+        return self._diagnostics.get(gap_id, {})
 
 
 def _write_contact_sheet(context: Sequence[Mapping[str, Any]], output: Path) -> None:
@@ -126,6 +149,8 @@ def _write_role_contact_sheet(
     context: Sequence[Mapping[str, Any]],
     focus_gap_ids: tuple[str, ...],
     output: Path,
+    *,
+    roles: Sequence[str] = ("early", "late"),
 ) -> bool:
     relevant_ids = set(focus_gap_ids)
     for previous, current in pairwise(context):
@@ -136,7 +161,16 @@ def _write_role_contact_sheet(
         shot_id = str(item["shot_id"])
         if shot_id not in relevant_ids:
             continue
-        for role in ("early", "late"):
+        for role in roles:
+            if role == "supplemental":
+                values = item.get("supplemental_paths", [])
+                if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+                    tiles.extend(
+                        (shot_id, role, Path(str(value)))
+                        for value in values
+                        if value
+                    )
+                continue
             value = item.get(f"{role}_path")
             if value:
                 tiles.append((shot_id, role, Path(str(value))))
@@ -169,7 +203,30 @@ def _json_safe_evidence(item: Mapping[str, Any]) -> dict[str, Any]:
         "end_sec": float(item["end_sec"]),
         "caption_vi": str(item.get("caption_vi", "")),
         "caption_en": str(item.get("caption_en", "")),
+        "objects_vi": _string_list(item.get("objects_vi", [])),
+        "objects_en": _string_list(item.get("objects_en", [])),
+        "actions_vi": _string_list(item.get("actions_vi", [])),
+        "actions_en": _string_list(item.get("actions_en", [])),
+        "visible_text_summary_vi": str(item.get("visible_text_summary_vi", "")),
+        "visible_text_summary_en": str(item.get("visible_text_summary_en", "")),
+        "ocr_text": _string_list(item.get("ocr_text", [])),
         "transcript": str(item.get("transcript", "")),
         "has_early_frame": bool(item.get("early_path")),
         "has_late_frame": bool(item.get("late_path")),
+        "supplemental_frame_count": len(item.get("supplemental_paths", [])),
     }
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, Sequence):
+        return [str(item) for item in value if str(item).strip()]
+    return []
+
+
+# Compatibility for existing imports while production call sites use the
+# provider-neutral name.
+GeminiSceneBoundaryJudge = StructuredSceneBoundaryJudge

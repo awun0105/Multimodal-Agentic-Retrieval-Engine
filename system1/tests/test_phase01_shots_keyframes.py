@@ -98,6 +98,55 @@ def test_transnet_artifact_pins_source_and_weight_checksums(tmp_path: Path) -> N
         )
 
 
+def test_transnet_preconverted_artifact_requires_explicit_policy(tmp_path: Path) -> None:
+    source = tmp_path / "transnetv2_pytorch.py"
+    weights = tmp_path / "weights.pth"
+    source.write_bytes(b"official-source")
+    weights.write_bytes(b"preconverted-weights")
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    weights_sha = hashlib.sha256(weights.read_bytes()).hexdigest()
+    manifest_path = tmp_path / "manifest.json"
+    manifest = {
+        "schema_version": "transnetv2_model_artifact_v1",
+        "artifact_origin": "preconverted_huggingface_mirror",
+        "upstream_commit": "pinned-commit",
+        "conversion_verified": False,
+        "source_file": source.name,
+        "source_sha256": source_sha,
+        "weights_file": weights.name,
+        "weights_sha256": weights_sha,
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="conversion parity was not verified"):
+        load_transnet_artifact(
+            tmp_path,
+            expected_commit="pinned-commit",
+            expected_source_sha256=source_sha,
+            expected_weights_sha256=weights_sha,
+        )
+
+    artifact = load_transnet_artifact(
+        tmp_path,
+        expected_commit="pinned-commit",
+        expected_source_sha256=source_sha,
+        expected_weights_sha256=weights_sha,
+        expected_conversion_verified=False,
+    )
+    assert artifact.weights_path == weights
+
+    manifest["artifact_origin"] = "unknown_mirror"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="preconverted artifact origin is not trusted"):
+        load_transnet_artifact(
+            tmp_path,
+            expected_commit="pinned-commit",
+            expected_source_sha256=source_sha,
+            expected_weights_sha256=weights_sha,
+            expected_conversion_verified=False,
+        )
+
+
 def test_candidate_search_bands_are_centered_around_20_50_80() -> None:
     ids = candidate_frame_ids_for_shot(
         {"shot_id": "v_SH00000", "start_frame": 100, "end_frame": 201},
@@ -135,7 +184,12 @@ def test_quality_rejects_near_black_and_prefers_sharp_relative_candidate() -> No
         quality_config=config["quality"],
     )
     assert rejected.invalid_reason == "near_black"
+    assert rejected.mean_luma == 0.0
+    assert rejected.black_ratio == 1.0
+    assert rejected.target_distance == 0.0
     assert sharp_score.quality_score > smooth_score.quality_score
+    assert sharp_score.mean_luma is not None
+    assert sharp_score.white_ratio is not None
 
 
 def test_representative_uses_best_frame_when_middle_is_blurred() -> None:

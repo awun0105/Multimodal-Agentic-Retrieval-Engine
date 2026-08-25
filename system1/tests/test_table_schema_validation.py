@@ -76,7 +76,25 @@ def write_valid_schema_release(release_dir: Path) -> None:
     )
     write_table(
         release_dir / "tables" / "asr_segments.parquet",
-        [{"asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "start_sec": 0.0, "end_sec": 0.04, "text": "sample transcript"}],
+        [
+            {
+                "asr_segment_id": "L21_V001_ASR00000",
+                "video_id": "L21_V001",
+                "start_sec": 0.0,
+                "end_sec": 0.04,
+                "start_frame": 0,
+                "end_frame": 1,
+                "text": "sample transcript",
+                "language": "vi",
+                "confidence": None,
+                "avg_logprob": None,
+                "no_speech_prob": None,
+                "provider": "faster_whisper",
+                "model_name": "fixture-asr",
+                "model_version": "fixture",
+                "status": "pass",
+            }
+        ],
     )
     write_table(
         release_dir / "tables" / "shot_transcript_links.parquet",
@@ -97,11 +115,19 @@ def write_valid_schema_release(release_dir: Path) -> None:
                 "representative_timestamp_sec": 0.0,
                 "caption_vi": "mô tả cảnh quay mẫu",
                 "caption_en": "sample shot caption",
-                "provider": "gemini",
-                "model_name": "fixture-gemini",
+                "objects_vi": ["người"],
+                "objects_en": ["person"],
+                "actions_vi": ["đứng"],
+                "actions_en": ["standing"],
+                "visible_text_summary_vi": "",
+                "visible_text_summary_en": "",
+                "scene_type": "news",
+                "provider": "qwen_local",
+                "model_name": "fixture-qwen",
                 "model_version": "fixture",
-                "prompt_version": "shot_caption_v1",
-                "schema_version": "1.0.0",
+                "prompt_version": "shot_caption_v2",
+                "schema_version": "shot_caption_response_v2",
+                "confidence": None,
                 "status": "pass",
             }
         ],
@@ -256,3 +282,32 @@ def test_schema_validation_catches_empty_bilingual_text(tmp_path):
 
     assert result.status == "fail"
     assert any("scene_summaries.summary_en has 1 empty text values" in error for error in result.errors)
+
+
+def test_schema_validation_catches_invalid_asr_provider_and_status(tmp_path):
+    release_dir = tmp_path / "release"
+    write_valid_schema_release(release_dir)
+    asr = pd.read_parquet(release_dir / "tables" / "asr_segments.parquet")
+    asr.loc[0, "provider"] = "whisperx"
+    asr.loc[0, "status"] = "degraded"
+    asr.to_parquet(release_dir / "tables" / "asr_segments.parquet", index=False)
+
+    result = validate_release_tables(release_dir)
+
+    assert result.status == "fail"
+    assert any("asr_segments.provider has invalid values whisperx" in error for error in result.errors)
+    assert any("asr_segments.status has invalid values degraded" in error for error in result.errors)
+
+
+def test_schema_validation_requires_full_asr_contract_columns(tmp_path):
+    release_dir = tmp_path / "release"
+    write_valid_schema_release(release_dir)
+    asr = pd.read_parquet(release_dir / "tables" / "asr_segments.parquet").drop(
+        columns=["provider"]
+    )
+    asr.to_parquet(release_dir / "tables" / "asr_segments.parquet", index=False)
+
+    result = validate_release_tables(release_dir)
+
+    assert result.status == "fail"
+    assert any("asr_segments missing required column: provider" in error for error in result.errors)

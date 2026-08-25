@@ -31,6 +31,9 @@ class BoundaryDecision:
     false_vote_weight: float
     review_route: str
     consistency_review_triggered: bool
+    reason: str | None = None
+    confidence: float | None = None
+    evidence_used: tuple[str, ...] = ()
 
 
 class SceneBoundaryJudge(Protocol):
@@ -189,6 +192,7 @@ def group_scenes(
         gap_votes = votes[gap_index]
         true_weight = sum(vote.weight for vote in gap_votes if vote.is_boundary)
         false_weight = sum(vote.weight for vote in gap_votes if not vote.is_boundary)
+        diagnostics = _diagnostics_for_gap(judge, gap_ids[gap_index])
         decisions.append(
             BoundaryDecision(
                 gap_index=gap_index,
@@ -200,6 +204,9 @@ def group_scenes(
                 false_vote_weight=false_weight,
                 review_route=routes[gap_index],
                 consistency_review_triggered=gap_index in reviewed,
+                reason=diagnostics.get("reason"),
+                confidence=diagnostics.get("confidence"),
+                evidence_used=tuple(diagnostics.get("evidence_used", ())),
             )
         )
     return partition_scenes(video_id=video_id, shots=shots, decisions=decisions), decisions
@@ -268,6 +275,25 @@ def _validate_judgement(
             raise ValueError(f"Scene judgement must be Boolean for gap {gap_id}")
         normalized[gap_id] = value
     return normalized
+
+
+def _diagnostics_for_gap(judge: SceneBoundaryJudge, gap_id: str) -> dict[str, Any]:
+    diagnostics_for = getattr(judge, "diagnostics_for", None)
+    if not callable(diagnostics_for):
+        return {}
+    value = diagnostics_for(gap_id)
+    if not isinstance(value, Mapping):
+        return {}
+    reason = value.get("reason")
+    confidence = value.get("confidence")
+    evidence_used = value.get("evidence_used", ())
+    if not isinstance(evidence_used, (list, tuple)):
+        evidence_used = ()
+    return {
+        "reason": str(reason) if reason is not None else None,
+        "confidence": float(confidence) if isinstance(confidence, (int, float)) else None,
+        "evidence_used": tuple(str(item) for item in evidence_used),
+    }
 
 
 def _focused_context_indices(gap_index: int, *, shot_count: int, each_side: int) -> range:

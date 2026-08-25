@@ -69,6 +69,7 @@ def _collect_artifact_candidates(
             raise ValueError(f"Unexpected Phase01 artifact root: {artifact}")
         video_id = next(iter(roots))
         keyframes = _read_parquet(archive, f"{video_id}/keyframes.parquet")
+        ocr = _read_parquet_optional(archive, f"{video_id}/ocr.parquet")
         captions = _read_parquet(archive, f"{video_id}/shot_captions.parquet")
         scenes = _read_parquet(archive, f"{video_id}/scenes.parquet")
         summaries = _read_parquet(archive, f"{video_id}/scene_summaries.parquet")
@@ -76,6 +77,11 @@ def _collect_artifact_candidates(
             str(row["shot_id"]): row
             for row in keyframes.to_dict("records")
             if bool(row["is_representative"])
+        }
+        ocr_by_keyframe = {
+            str(row.get("keyframe_id")): str(row.get("text") or row.get("raw_text") or "")
+            for row in ocr.to_dict("records")
+            if str(row.get("status", "")) != "failed"
         }
         for row in captions.to_dict("records"):
             frame = representative[str(row["shot_id"])]
@@ -89,6 +95,13 @@ def _collect_artifact_candidates(
                         "keyframe_ref": frame["keyframe_ref"],
                         "caption_vi": row["caption_vi"],
                         "caption_en": row["caption_en"],
+                        "objects_vi": _string_values(row.get("objects_vi", [])),
+                        "objects_en": _string_values(row.get("objects_en", [])),
+                        "actions_vi": _string_values(row.get("actions_vi", [])),
+                        "actions_en": _string_values(row.get("actions_en", [])),
+                        "visible_text_summary_vi": row.get("visible_text_summary_vi", ""),
+                        "visible_text_summary_en": row.get("visible_text_summary_en", ""),
+                        "ocr_text": ocr_by_keyframe.get(str(frame["keyframe_id"]), ""),
                         "quality_score": float(frame["quality_score"]),
                     },
                 )
@@ -134,6 +147,9 @@ def _collect_artifact_candidates(
                                 row["primary_boundary_score"]
                             ),
                             "review_route": row["review_route"],
+                            "reason": row.get("reason"),
+                            "confidence": row.get("confidence"),
+                            "evidence_used": row.get("evidence_used", []),
                         },
                     )
                 )
@@ -141,6 +157,24 @@ def _collect_artifact_candidates(
 
 def _read_parquet(archive: zipfile.ZipFile, name: str) -> pd.DataFrame:
     return pd.read_parquet(io.BytesIO(archive.read(name)))
+
+
+def _read_parquet_optional(archive: zipfile.ZipFile, name: str) -> pd.DataFrame:
+    if name not in archive.namelist():
+        return pd.DataFrame()
+    return _read_parquet(archive, name)
+
+
+def _string_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def _review_row(

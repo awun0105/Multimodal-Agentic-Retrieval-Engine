@@ -124,12 +124,28 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
     if not rows:
         return "Chưa có kết quả để xem trước."
     from trake_submission import format_submission
+
     submission_rows = []
+
+    # 1. Promote pinned frames to the top
+    for vid_id, frame_idx in pinned.items():
+        submission_rows.append((vid_id, (frame_idx,)))
+
+    # 2. Append remaining AI predictions
     for r in rows:
         video_id = r["video_id"]
-        frame_idx = pinned.get(video_id, r["frame_idx"])
+        frame_idx = r["frame_idx"]
+
+        # If this EXACT frame was pinned, skip it (we already put it at the top)
+        if pinned.get(video_id) == frame_idx:
+            continue
+
         submission_rows.append((video_id, (frame_idx,)))
-    return format_submission(submission_rows, delimiter=", ", include_header=False, frame_index_base=0)
+
+    # Ensure we don't exceed the original result count if capped
+    submission_rows = submission_rows[:max(100, len(rows))]
+
+    return format_submission(submission_rows, delimiter=",", include_header=False, frame_index_base=0)
 
 
 def _detail_markdown(details) -> str:
@@ -611,7 +627,7 @@ class SearchController:
             return None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>", "Selected result is no longer available", []
         row = page_rows[local_index]
         details = self.search_mechanism.get_keyframe_details(row["keyframe_id"])
-        
+
         video_html = "<p style='color: #666; font-style: italic;'>Video file not found in VIDEO_ROOT.</p>"
         video_id = details.keyframe["video_id"]
         pts = float(details.keyframe["pts_time_sec"])
@@ -619,7 +635,7 @@ class SearchController:
         video_path = get_video_path(video_id)
         if video_path:
             video_html = render_video_player(video_id, video_path, pts, fps, player_id="query-text-player")
-            
+
         import gradio as gr
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
                 gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)),
@@ -877,7 +893,7 @@ def build_app(
                                 with gr.Row():
                                     prev_btn = gr.Button("Prev Frame", interactive=False)
                                     next_btn = gr.Button("Next Frame", interactive=False)
-                                    pin_btn = gr.Button("Chốt Frame (Pin)", interactive=False, variant="primary")
+                                    pin_btn = gr.Button("Chốt Frame (Đẩy lên Top)", interactive=False, variant="primary")
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
                                 pinned_frames_state = gr.State({})
 
@@ -1168,10 +1184,10 @@ def build_app(
                     const t = video ? video.currentTime.toString() : "";
                     return [t, pinned, vid, fps, kf_frame];
                 }"""
-                
+
                 next_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_step_js)
                 prev_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_prev_js)
-                
+
                 pin_btn.click(
                     process_pin_kis,
                     inputs=[current_time_box, pinned_frames_state, current_video_id_box, current_fps_box, current_kf_frame_box],
@@ -1204,7 +1220,7 @@ def build_app(
 def process_pin_kis(current_time, current_pins, video_id, fps, kf_frame):
     if not video_id:
         return current_pins, "Không có video nào được chọn."
-    
+
     try:
         current_time = float(current_time)
         new_frame = round(current_time * fps)

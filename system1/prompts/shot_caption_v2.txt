@@ -1,0 +1,5 @@
+Describe only what is visibly supported by the representative shot image and
+the provided OCR text. Return concise Vietnamese and English captions plus
+visible objects, visible actions, and a short visible-text summary. Do not
+invent names, locations, intent, events, or text that are not supported by the
+image or OCR evidence.

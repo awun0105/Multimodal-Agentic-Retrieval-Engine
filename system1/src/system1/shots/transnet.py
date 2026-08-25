@@ -24,6 +24,7 @@ def load_transnet_artifact(
     expected_commit: str,
     expected_source_sha256: str,
     expected_weights_sha256: str,
+    expected_conversion_verified: bool = True,
 ) -> TransNetArtifact:
     root_path = Path(root).resolve()
     manifest_path = root_path / "manifest.json"
@@ -34,8 +35,15 @@ def load_transnet_artifact(
         raise ValueError("Unsupported TransNet model artifact manifest")
     if manifest.get("upstream_commit") != expected_commit:
         raise ValueError("TransNet upstream commit does not match resolved config")
-    if manifest.get("conversion_verified") is not True:
-        raise ValueError("TransNet conversion parity was not verified")
+    conversion_verified = manifest.get("conversion_verified")
+    if expected_conversion_verified:
+        if conversion_verified is not True:
+            raise ValueError("TransNet conversion parity was not verified")
+    else:
+        if conversion_verified is not False:
+            raise ValueError("TransNet conversion provenance does not match resolved config")
+        if manifest.get("artifact_origin") != "preconverted_huggingface_mirror":
+            raise ValueError("TransNet preconverted artifact origin is not trusted")
     source_name = str(manifest.get("source_file", ""))
     weights_name = str(manifest.get("weights_file", ""))
     if not source_name or Path(source_name).name != source_name:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
+import importlib.util
 import json
 import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from huggingface_hub import HfApi
 
@@ -15,6 +18,13 @@ from system1.config import ResolvedPhase01Config, require_phase01_production_rea
 from system1.shots import load_transnet_artifact
 
 
+_EXPECTED_TORCH_STACK = {
+    "torch": "2.8.0",
+    "torchaudio": "2.8.0",
+    "torchvision": "0.23.0",
+}
+
+
 @dataclass(frozen=True)
 class PreflightResult:
     environment: str
@@ -22,6 +32,7 @@ class PreflightResult:
     batch_id: str
     cuda_available: bool
     scratch_free_gb: float
+    model_cache_free_gb: float | None
     versions: dict[str, str]
 
 
@@ -49,7 +60,8 @@ def run_phase01_preflight(
     for executable in ("ffmpeg", "ffprobe"):
         if shutil.which(executable) is None:
             raise RuntimeError(f"Required executable is unavailable: {executable}")
-    if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY"):
+    models = config.payload["models"]
+    if _requires_gemini(models) and not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY"):
         raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY is required")
     if not os.environ.get("AIC_HF_TOKEN") and not os.environ.get("HF_TOKEN"):
         raise RuntimeError("AIC_HF_TOKEN or HF_TOKEN is required")
@@ -64,6 +76,7 @@ def run_phase01_preflight(
             f"Scratch free space is too low: {scratch_free_gb:.2f} GiB "
             f"< {required_free_gb:.2f} GiB"
         )
+    model_cache_free_gb = _validate_model_cache_free_space(config, models)
 
     shot_model = config.payload["models"]["shot_detection"]
     load_transnet_artifact(
@@ -71,17 +84,28 @@ def run_phase01_preflight(
         expected_commit=str(shot_model["model_revision"]),
         expected_source_sha256=str(shot_model["source_sha256"]),
         expected_weights_sha256=str(shot_model["weights_sha256"]),
+        expected_conversion_verified=bool(shot_model.get("conversion_verified", True)),
     )
     if validate_remote:
-        run_phase01_storage_preflight(config)
+        storage_cache = scratch_root / ".hf_cache" / "storage_preflight"
+        try:
+            run_phase01_storage_preflight(config, cache_dir=storage_cache)
+        finally:
+            shutil.rmtree(storage_cache, ignore_errors=True)
 
     versions: dict[str, str] = {}
     for package in (
+        "bitsandbytes",
         "faster-whisper",
         "google-genai",
         "huggingface-hub",
+        "nemo-toolkit",
+        "onnx",
         "opencv-python-headless",
         "pillow",
+        "psutil",
+        "torchaudio",
+        "torchvision",
     ):
         try:
             versions[package] = importlib.metadata.version(package)
@@ -95,11 +119,48 @@ def run_phase01_preflight(
         cuda_available = bool(torch.cuda.is_available())
     except ImportError:
         versions["torch"] = "missing"
+    for torch_package in ("torchaudio", "torchvision"):
+        try:
+            module = importlib.import_module(torch_package)
+            versions[torch_package] = str(module.__version__)
+        except (ImportError, OSError) as exc:
+            raise RuntimeError(
+                f"{torch_package} could not initialize; check PyTorch stack ABI compatibility"
+            ) from exc
+    for torch_package, expected_version in _EXPECTED_TORCH_STACK.items():
+        actual_version = versions.get(torch_package, "missing").split("+")[0]
+        if actual_version != expected_version:
+            raise RuntimeError(
+                f"Installed {torch_package} version {actual_version} differs from "
+                f"required {expected_version}"
+            )
     expected = config.payload["models"]
-    if versions["faster-whisper"] != str(expected["asr"]["package_version"]):
-        raise RuntimeError("Installed faster-whisper version differs from resolved config")
-    if versions["google-genai"] != str(expected["shot_caption"]["sdk_version"]):
+    asr_model = expected["asr"]
+    asr_provider = str(asr_model.get("provider", "nemo"))
+    if asr_provider == "faster_whisper":
+        if versions["faster-whisper"] != str(asr_model["package_version"]):
+            raise RuntimeError("Installed faster-whisper version differs from resolved config")
+    elif asr_provider == "nemo":
+        if versions["nemo-toolkit"] != str(asr_model["package_version"]):
+            raise RuntimeError("Installed nemo-toolkit version differs from resolved config")
+        try:
+            importlib.import_module("nemo.collections.asr")
+        except (ImportError, AttributeError, RuntimeError, OSError) as exc:
+            raise RuntimeError(
+                "nemo_toolkit[asr] could not initialize for configured NeMo ASR"
+            ) from exc
+    else:
+        raise RuntimeError(f"Unsupported Phase01 ASR provider: {asr_provider}")
+    semantic_models = [expected.get(key, {}) for key in ("shot_caption", "scene_boundary", "scene_summary")]
+    gemini_versions = [
+        model.get("sdk_version")
+        for configured in semantic_models
+        for model in [configured, *configured.get("fallbacks", [])]
+        if model.get("provider") == "gemini" and model.get("sdk_version") is not None
+    ]
+    if gemini_versions and versions["google-genai"] not in {str(value) for value in gemini_versions}:
         raise RuntimeError("Installed google-genai version differs from resolved config")
+    _validate_local_vlm_dependencies(expected, versions=versions)
     if versions["torch"] == "missing":
         raise RuntimeError("PyTorch is required for TransNet V2")
     return PreflightResult(
@@ -108,12 +169,17 @@ def run_phase01_preflight(
         batch_id=str(runtime["batch_id"]),
         cuda_available=cuda_available,
         scratch_free_gb=scratch_free_gb,
+        model_cache_free_gb=model_cache_free_gb,
         versions=versions,
     )
 
 
-def run_phase01_storage_preflight(config: ResolvedPhase01Config) -> None:
-    """Prove release access and private checkpoint write/read before heavy work."""
+def run_phase01_storage_preflight(
+    config: ResolvedPhase01Config,
+    *,
+    cache_dir: Path | str | None = None,
+) -> None:
+    """Prove release access and checkpoint write/read before heavy work."""
 
     storage = config.payload["storage"]
     token = os.environ.get("AIC_HF_TOKEN") or os.environ.get("HF_TOKEN")
@@ -131,7 +197,9 @@ def run_phase01_storage_preflight(config: ResolvedPhase01Config) -> None:
         revision=checkpoint.get("revision", "main"),
     )
     if checkpoint.get("require_private") and not checkpoint_info.private:
-        raise RuntimeError("Phase01 checkpoint repository must be private")
+        raise RuntimeError(
+            "Phase01 checkpoint repository is public but require_private=true"
+        )
 
     store = HuggingFaceDatasetArtifactStore(
         repo_id=str(checkpoint["repo_id"]),
@@ -139,6 +207,7 @@ def run_phase01_storage_preflight(config: ResolvedPhase01Config) -> None:
         revision=str(checkpoint.get("revision", "main")),
         token=token,
         prefix=str(checkpoint.get("prefix", "")),
+        cache_dir=cache_dir,
     )
     runtime = config.payload["runtime"]
     proof_path = (
@@ -238,6 +307,7 @@ def _validate_prompt_files(config: ResolvedPhase01Config) -> None:
     models = config.payload["models"]
     versions = {
         str(config.payload["phase01"]["api"]["schema_repair_prompt_version"]),
+        str(models["ocr"]["prompt_version"]),
         str(models["shot_caption"]["prompt_version"]),
         str(models["scene_boundary"]["prompt_version"]),
         str(models["scene_boundary"]["focused_prompt_version"]),
@@ -254,3 +324,106 @@ def _validate_prompt_files(config: ResolvedPhase01Config) -> None:
             missing.append(str(path))
     if missing:
         raise RuntimeError("Phase01 prompt files are missing or empty: " + ", ".join(missing))
+
+
+def _requires_gemini(models: dict[str, Any]) -> bool:
+    return any(
+        str(models.get(key, {}).get("provider")) == "gemini"
+        for key in ("shot_caption", "scene_boundary", "scene_summary")
+    )
+
+
+def _validate_local_vlm_dependencies(
+    models: dict[str, Any], *, versions: dict[str, str]
+) -> None:
+    local_models = [
+        models.get("ocr", {}),
+        models.get("shot_caption", {}),
+        *models.get("shot_caption", {}).get("fallbacks", []),
+    ]
+    if not any(str(model.get("provider")) in {"qwen_local", "vintern_local"} for model in local_models):
+        return
+    required_modules = {
+        "transformers": "transformers",
+        "accelerate": "accelerate",
+        "torch": "torch",
+    }
+    if any(str(model.get("provider")) == "qwen_local" for model in local_models):
+        required_modules["qwen_vl_utils"] = "qwen-vl-utils"
+        required_modules["bitsandbytes"] = "bitsandbytes"
+    missing = [
+        package
+        for module, package in required_modules.items()
+        if importlib.util.find_spec(module) is None
+    ]
+    if missing:
+        raise RuntimeError(
+            "Local VLM dependencies are missing: "
+            + ", ".join(sorted(missing))
+            + ". Install system1[phase01-production]."
+        )
+    qwen_models = [
+        model for model in local_models if str(model.get("provider")) == "qwen_local"
+    ]
+    if not qwen_models:
+        return
+    configured_versions = {
+        str(model.get("quantization", {}).get("package_version", ""))
+        for model in qwen_models
+    }
+    configured_versions.discard("")
+    if configured_versions and versions["bitsandbytes"] not in configured_versions:
+        raise RuntimeError(
+            "Installed bitsandbytes version differs from resolved Qwen quantization config"
+        )
+    try:
+        torch = importlib.import_module("torch")
+        cextension = importlib.import_module("bitsandbytes.cextension")
+    except (ImportError, RuntimeError) as exc:
+        raise RuntimeError("bitsandbytes could not initialize for Qwen 4-bit") from exc
+    if bool(torch.cuda.is_available()) and not bool(
+        getattr(getattr(cextension, "lib", None), "compiled_with_cuda", False)
+    ):
+        raise RuntimeError(
+            "bitsandbytes has no CUDA native backend for the installed PyTorch CUDA build"
+        )
+
+
+def _validate_model_cache_free_space(
+    config: ResolvedPhase01Config, models: dict[str, Any]
+) -> float | None:
+    if not _uses_local_vlm(models):
+        return None
+    required_free_gb = float(
+        config.payload["phase01"]["execution"].get("min_model_cache_free_gb", 0)
+    )
+    if required_free_gb <= 0:
+        return None
+    cache_root = _hf_model_cache_root()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    free_gb = shutil.disk_usage(cache_root).free / (1024**3)
+    if free_gb < required_free_gb:
+        raise RuntimeError(
+            f"Model cache free space is too low: {free_gb:.2f} GiB "
+            f"< {required_free_gb:.2f} GiB. Set HF_HOME to a larger runtime disk."
+        )
+    return free_gb
+
+
+def _uses_local_vlm(models: dict[str, Any]) -> bool:
+    local_models = [
+        models.get("ocr", {}),
+        models.get("shot_caption", {}),
+        *models.get("shot_caption", {}).get("fallbacks", []),
+    ]
+    return any(
+        str(model.get("provider")) in {"qwen_local", "vintern_local"}
+        for model in local_models
+    )
+
+
+def _hf_model_cache_root() -> Path:
+    explicit = os.environ.get("HF_HOME") or os.environ.get("HF_HUB_CACHE")
+    if explicit:
+        return Path(explicit).expanduser()
+    return Path("~/.cache/huggingface").expanduser()

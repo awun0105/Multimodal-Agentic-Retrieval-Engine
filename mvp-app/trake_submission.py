@@ -90,8 +90,16 @@ def build_submission(
     if pinned_frames is None:
         pinned_frames = {}
 
+    pinned_vids = {k.split(":")[0] for k in pinned_frames.keys()}
+
+    # 1. Promote videos with pinned frames to the top
+    sorted_videos = sorted(
+        outcome.videos,
+        key=lambda v: 0 if v.video_id in pinned_vids else 1
+    )
+
     rows: list[tuple[str, tuple[int, ...]]] = []
-    for video in outcome.videos:
+    for video in sorted_videos:
         if len(rows) >= max_rows:
             break
 
@@ -128,18 +136,20 @@ def format_submission(
     return "\n".join(lines)
 
 import tempfile
-from pathlib import Path
 import time
+from pathlib import Path
 
 import gradio as gr
+
+
 def export_csv_file(content: str, filename: str):
     if not content.strip():
         return gr.update(value=None, visible=False), "No data to export."
-    
+
     # Use a secure temp directory
     out_dir = Path(tempfile.gettempdir()) / "aic26_submissions"
     out_dir.mkdir(exist_ok=True)
-    
+
     # Clean up filename, defaulting if empty
     safe_name = filename.strip()
     if not safe_name:
@@ -147,8 +157,8 @@ def export_csv_file(content: str, filename: str):
         safe_name = f"submission_{timestamp}.csv"
     if not safe_name.endswith(".csv"):
         safe_name += ".csv"
-        
+
     out_path = out_dir / safe_name
     out_path.write_text(content, encoding="utf-8")
-    
+
     return gr.update(value=str(out_path), visible=True), f"Đã lưu thành công {safe_name} tại {out_path}."

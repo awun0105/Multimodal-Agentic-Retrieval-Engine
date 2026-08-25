@@ -40,12 +40,15 @@ contract.
 official video
   -> TransNet V2 shot detection
   -> early/middle/late keyframes from bands centered at 20%/50%/80%
+  -> bounded temporal probes for novel visual/text events
   -> deterministic representative-keyframe selection
-  -> faster-whisper large-v3 ASR with automatic language and VAD
-  -> Gemini strict bilingual caption JSON, one response per shot
+  -> default pinned NeMo/Parakeet Vietnamese ASR, or Faster-Whisper Large-v3 override
+  -> OpenCV text-presence gate, then Vintern OCR for uncertain/text frames
+  -> shared 4-bit Qwen strict shot-caption JSON, batched over representative frames
   -> ASR-to-shot alignment
-  -> multimodal context-focus scene grouping
-  -> Gemini strict bilingual scene-summary JSON
+  -> shared Qwen multimodal context-focus scene grouping
+  -> shared Qwen strict bilingual scene-summary JSON
+  -> scoped Gemini fallback for failed semantic requests/runtime
   -> validated per-video structure ZIP
 ```
 
@@ -98,12 +101,28 @@ required deterministic value is unresolved.
 Production uses TransNet V2 only.
 
 Runtime consumes a project-owned PyTorch artifact created once by
-`scripts/prepare_transnetv2_artifact.py`. The preparation job checks out the
-pinned official upstream commit, runs the official TensorFlow-to-PyTorch
-converter and its parity tests, then emits the source/weight checksums. Workers
-download and validate that immutable bundle; they never convert weights.
-Production readiness intentionally fails while the generated weight checksum
-is absent from `configs/models.yaml`.
+`scripts/prepare_transnetv2_artifact.py`. The preferred canonical preparation
+job checks out the pinned official upstream commit, runs the official
+TensorFlow-to-PyTorch converter and its parity tests, then emits the
+source/weight checksums. Workers download and validate that immutable bundle;
+they never convert weights.
+
+When upstream `soCzech/TransNetV2` is blocked by GitHub LFS quota, the
+preparation script also supports an explicit mirror-based unblock path. That
+path still copies the PyTorch source from the pinned official commit and
+verifies the source SHA-256, but downloads preconverted PyTorch weights from a
+declared Hugging Face mirror and verifies the expected weights SHA-256. Mirror
+artifacts must declare `artifact_origin=preconverted_huggingface_mirror` and
+`conversion_verified=false`; runtime accepts them only when
+`configs/models.yaml` intentionally sets `conversion_verified: false`.
+Production readiness intentionally fails while the generated weight checksum is
+absent from `configs/models.yaml`.
+
+The default artifact location is the configured model-artifact store:
+`1thesudden/AIC26_checkpoints` under
+`model_artifacts/transnetv2/85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed/`.
+Public and private checkpoint datasets are both supported; the preparation
+script enforces private storage only when run with `--require-private`.
 
 - A successful inference with no detected transition is valid: emit one shot
   covering the complete decoded video with a successful
@@ -159,9 +178,9 @@ middle_quality >= 0.85 * best_quality
 ```
 
 Otherwise the highest-quality selected role is representative. A quality tie
-is broken by proximity to the temporal center of the shot. Every persisted row
-retains its semantic `early`, `middle`, or `late` role; exactly one row per shot
-has `is_representative = true`.
+is broken by proximity to the temporal center of the shot. Every mandatory
+anchor retains its semantic `early`, `middle`, or `late` role; exactly one
+anchor row per shot has `is_representative = true`.
 
 Canonical `keyframes.parquet` additionally records:
 
@@ -175,20 +194,65 @@ selection_reason
 Detailed candidate metrics remain checkpoint/debug evidence instead of
 expanding the canonical table.
 
-Candidate decoding is a single forward pass through the video, grouped by shot.
-Only one shot's temporary candidate frames remain in memory at a time; selected
-images are written before the group is released. This preserves the search
-policy without retaining all full-resolution candidates for a long video.
+### Semantic-event supplemental keyframes
+
+The mandatory anchor candidate generation above remains frame-ratio based and
+unchanged. For long shots, a second deterministic policy creates temporal probe
+IDs from the authoritative Phase00 `frame_timeline.pts_time`. It seeds coverage
+with the safe interior start/end plus nominal early/middle/late target
+timestamps, then bisects the largest timestamp gap until the configured target
+gap is reached or the per-shot probe cap is exhausted. The target gap is best
+effort; diagnostics record `coverage_cap_reached` and the remaining maximum gap
+when the cap prevents full coverage. If the initial seed-to-seed gaps are
+already within the target, the shot exposes no semantic candidates; this keeps
+short shots on the mandatory anchor path only.
+
+Probe IDs are temporary observations, not automatically persisted keyframes.
+For shots requiring semantic sampling, anchor candidate IDs, coverage-seed IDs,
+and bisection probe IDs are combined before one grouped decode pass. After
+actual anchors are selected, every valid coverage seed or probe that is not
+already an actual anchor is compared with all retained references using
+normalized dHash visual distance and Jaccard distance between config-sized,
+MSER-masked Canny edge signatures for text-region change.
+
+Visual novelty is the minimum distance to every retained reference, so a probe
+must differ from all already retained visual evidence. Text change can trigger
+only when the candidate itself has plausible text; text disappearing does not
+count as new evidence. A candidate is eligible when either signal crosses its
+configured threshold. Selection is greedy and recomputes novelty after each
+accepted frame. Ranking is deterministic: triggered-signal count, strongest
+triggered-signal score, quality, timestamp distance to the nearest actual
+anchor, then lower `frame_id`. Configured timestamp separation and a maximum of
+two supplemental frames per shot bound output size.
+
+Accepted rows use `keyframe_role = supplemental`, are never representative, and
+are covered by `keyframes_v3`. OCR runs on them through the existing text gate;
+their OCR joins the shot's scene evidence, and focused scene review can include
+all supplemental images without role-key overwrite. Shot captioning and scene
+summary image sampling remain representative-only.
+
+`keyframe_diagnostics.jsonl` records candidate source, timestamp gap, quality,
+visual/text scores, triggered-signal count, keep/drop reason, temporal distance,
+dedup target, signal errors, and coverage-cap state. These diagnostics do not
+expand the canonical Parquet schema.
+
+Candidate decoding remains one forward pass through the video, grouped by
+shot. Only one shot's temporary anchor/probe frames remain in memory at a time;
+selected images are written before the group is released. This preserves the
+coverage policy without retaining all frames for a long video.
 
 ## ASR
 
 Production ASR configuration:
 
 ```text
-provider = faster-whisper
-model = large-v3
-language = auto
-VAD = enabled
+default provider = nemo
+default model = nvidia/parakeet-ctc-0.6b-vi
+default revision = b0493142b49458810324e3db8be9e8e07b4ebc17
+default model file = parakeet-ctc-0.6b-vi.nemo
+segmentation = FFmpeg silence detection with bounded max segment length
+optional provider = faster_whisper
+optional model = Systran/faster-whisper-large-v3 at its configured revision
 ```
 
 ASR runs for every video.
@@ -204,15 +268,32 @@ ASR runs for every video.
   decoded-frame range when resolvable, text, detected language, confidence when
   available, provider/model/version, and status.
 
-## Canonical Shot Captions
+## OCR And Canonical Shot Captions
+
+Each representative keyframe first passes a conservative OpenCV text-presence
+gate. Only a high-confidence no-text decision skips Vintern. Uncertain results
+and gate errors run the pinned Vintern OCR model. A skipped image still emits a
+canonical `ocr_v2` row with empty text, `status=empty`, and gate provenance;
+gate counts and failures stay in diagnostics. Thresholds are versioned in
+`phase01.yaml` and participate in the OCR stage fingerprint.
 
 Each shot has exactly one caption row generated from its selected
-representative keyframe. Gemini must return strict JSON:
+representative keyframe. Qwen2.5-VL-7B-Instruct is primary and must return
+strict `shot_caption_response_v2` JSON including bilingual captions,
+objects/actions, visible-text summary, and scene type. The caption rows retain
+the canonical `shot_captions_v2` contract.
 
 ```json
 {
   "caption_vi": "...",
-  "caption_en": "..."
+  "caption_en": "...",
+  "objects_vi": ["..."],
+  "objects_en": ["..."],
+  "actions_vi": ["..."],
+  "actions_en": ["..."],
+  "visible_text_summary_vi": "...",
+  "visible_text_summary_en": "...",
+  "scene_type": "..."
 }
 ```
 
@@ -243,10 +324,12 @@ There is no canonical per-keyframe `image_captions` table. The API's raw JSON
 belongs in the content-addressed cache/diagnostics; the normalized bilingual
 fields belong in Parquet.
 
-Caption requests require content-addressed caching, bounded retry, rate-limit
-handling, resumability, exact model/version, prompt version, response-schema
-version, and non-secret diagnostics. A persistent caption failure fails the
-video because canonical captions are required for scene grouping.
+Caption requests require per-request content-addressed caching, bounded retry,
+resumability, exact model/version, prompt version, response-schema version, and
+non-secret diagnostics. Local requests use true processor/model tensor
+batching, not thread concurrency. Invalid JSON/schema for one request falls
+back only that request to Gemini; systemic local-runtime failure opens the
+chunk circuit and sends the remaining semantic work to Gemini.
 
 ## Transcript-Shot Alignment
 
@@ -268,26 +351,29 @@ Coverage is derived deterministically from time overlap. Empty `no_audio` or
 The authoritative algorithm is
 `docs/architecture/system1-scene-grouping.md`.
 
-Its inputs are ordered shots, representative images, optional early/late images
-for focused review, bilingual shot captions, ASR transcript evidence, and the
-timeline. It does not use organizer support artifacts, OCR, objects,
-embeddings, or metadata as boundary evidence.
+Its inputs are ordered shots, representative images, optional
+early/late/supplemental images for focused review, bilingual shot captions,
+caption objects/actions, canonical OCR, ASR transcript evidence, and the
+timeline. It does not use organizer support artifacts, embeddings, or organizer
+metadata as boundary evidence.
 
-Gemini returns only strict Boolean adjacent-shot boundary judgements. Package
+The configured structured client returns only strict Boolean adjacent-shot
+boundary judgements. Qwen is primary and Gemini is fallback. Package
 code owns overlap voting, ambiguity review, consistency review, deterministic
 scene partitioning, IDs, ranges, mappings, and validation. Every shot belongs
 to exactly one scene; scenes cannot overlap, leave a shot-order gap, or reorder
 shots.
 
-A valid all-false boundary result creates one successful scene. Gemini/provider
-failure after bounded retry fails the video; production does not silently turn
-an unresolved result into one fallback scene.
+A valid all-false boundary result creates one successful scene. Failure of both
+the local primary and configured fallback after bounded retry fails the video;
+production does not turn an unresolved result into one fabricated scene.
 
 ## Bilingual Scene Summaries
 
-Only after scene boundaries are fixed, Gemini receives the scene's ordered
-representative images, bilingual shot captions, ASR transcript evidence, and
-timeline. It returns strict JSON:
+Only after scene boundaries are fixed, the same shared Qwen runtime receives
+the scene's sampled representative images, bilingual shot captions,
+objects/actions, OCR, ASR transcript evidence, and timeline. Gemini receives
+the same request only when fallback is required. Both return strict JSON:
 
 ```json
 {
@@ -326,6 +412,7 @@ The per-video structure package is:
 |-- metadata_normalized.json
 |-- shots.parquet
 |-- keyframes.parquet
+|-- ocr.parquet
 |-- shot_captions.parquet
 |-- asr_segments.parquet
 |-- shot_transcript_links.parquet
@@ -334,9 +421,16 @@ The per-video structure package is:
 |-- scene_summaries.parquet
 |-- keyframes/
 |-- thumbnails/
+|-- diagnostics/
+|   |-- keyframe_diagnostics.jsonl
+|   |-- scene_boundary_diagnostics.jsonl
+|   |-- transnet_predictions.json
+|   |-- asr_status.json
+|   `-- ocr_status.json
 |-- manifest.json
 |-- artifact_manifest.json
 |-- checksums.json
+|-- resolved_config.json
 `-- errors.jsonl
 ```
 
@@ -345,21 +439,21 @@ the proposed list. It is the canonical direct mapping from scene context to ASR
 segments used by System 2 and is already part of the repository data contract.
 It is derived after the scene partition is fixed.
 
-Contact sheets, raw Gemini responses, retry logs, and API caches are
+Contact sheets, raw provider responses, retry logs, and request caches are
 intermediate/checkpoint data and are not canonical runtime tables.
 
 ## Notebook 02 Handoff
 
-Notebook 02 consumes only keyframes generated by Notebook 01 and creates:
+Notebook 02 consumes keyframes and evidence generated by Notebook 01 and
+creates:
 
 ```text
-Gemini OCR
 configured object detection
 SigLIP embeddings
 BEiT3 embeddings
 ```
 
-The exact object detector and exact Gemini/SigLIP/BEiT3 model identifiers are
+The exact object detector and exact SigLIP/BEiT3 model identifiers are
 configuration values that must be recorded in manifests; no unspecified model
 may be presented as reproducible production behavior.
 
@@ -402,35 +496,52 @@ independent retrieval indexes.
 - Each stage stores status, input fingerprint, relevant config hash,
   model/revision, prompt version when applicable, schema version, output
   checksums, and completion time.
-- Stage completion is atomic: write local temp, validate, checksum, sync to the
-  persistent artifact store, update `state.json`, then mark complete. Local
-  Colab/Kaggle storage is scratch, not resume authority.
+- Stage completion is atomic: write local temp, validate, checksum, then upload
+  the immutable outputs and matching complete `state.json` in one backend
+  commit. Local Colab/Kaggle storage is scratch, not resume authority.
 - A rerun reuses only complete stages whose persistent outputs, checksums,
   upstream fingerprints, and relevant versions still match. Dependency changes
   invalidate only downstream stages.
 - Worker reports and `errors.jsonl` distinguish failed, no-audio/no-speech, and
   successful-empty states.
 
-Notebook 01 processes one video at a time. TransNet and faster-whisper do not
-remain resident together; after each GPU-heavy stage package code drops model
-and tensor references, runs garbage collection, and clears unused CUDA cache.
-Model weights may remain in the runtime's Hugging Face cache, which is separate
-from persistent stage checkpoints.
+Notebook 01 processes a resource-aware chunk of videos while preserving one
+heavy local VLM resident at a time. Vintern serves OCR and is released before
+Qwen loads. One Qwen processor/model session is then reused for shot captions,
+scene boundaries, and scene summaries across the chunk before release. Package
+code drops model/tensor references, runs garbage collection, and clears unused
+CUDA cache at lifecycle boundaries. Model files may remain in the runtime's
+Hugging Face cache, separate from persistent stage checkpoints.
 
-Faster-whisper uses CUDA `float16`, retries an OOM with CUDA `int8_float16`, and
-uses CPU `int8`; it does not replace large-v3 with a weaker model. If bounded
-OOM recovery is exhausted, the video becomes `failed_retryable`, its error is
-checkpointed, scratch/GPU state is cleaned, and processing continues with the
-next video. Gemini calls use bounded concurrency, initially two requests within
-the current video.
+Raw-media downloads, Phase00 restore, checkpoint restore/verification,
+model-artifact downloads, and release checksum verification use bounded caches
+inside run/video scratch. Those caches are removed after the relevant restore
+or after each video. Structured progress records expose batch/video/stage
+status and remaining scratch space without printing credentials.
 
-Gemini request-level content-addressed cache entries live in the current
+Qwen is loaded explicitly with bitsandbytes NF4 4-bit, float16 compute, and
+double quantization on CUDA; load failure never silently retries the same
+checkpoint in full precision or with CPU/disk offload. Caption batches default
+to two and reduce on CUDA OOM until one. OCR batches default to four, but
+Vintern uses batches only when its model exposes a safe native API. Scene
+boundary and summary requests stay at one because they carry multi-image
+context. Repeated batch-one OOM or an unusable local runtime opens a per-chunk
+circuit breaker; isolated JSON/schema errors fall back per request without
+disabling Qwen. Gemini concurrency is unchanged.
+
+Structured request-level content-addressed cache entries live in the current
 video's stage scratch. The completed canonical stage is the persistent cache
-and is promoted to the private checkpoint repository. This avoids one Hugging
-Face commit per Gemini request while preserving stage-level resume semantics.
-All output files belonging to one checkpoint stage are uploaded in one backend
-commit; the separate `state.json` update remains the final atomic completion
-marker after output checksum verification.
+and is promoted to the configured writable checkpoint repository, which may be
+public or private. This avoids one Hugging Face commit per Gemini request while
+preserving stage-level resume semantics.
+All output files belonging to one checkpoint stage and the matching
+`state.json` completion marker are uploaded in one atomic backend commit. A
+resume still downloads and verifies every recorded checksum; a missing or
+corrupt output invalidates that stage and its downstream stages.
+
+After the worker report commit, Notebook 01 lists the remote
+`{release_id}/phase01_structure` tree and fails unless every completed video
+package plus the report, error log, and manual-review report is present.
 
 ## Validation Sequence
 
