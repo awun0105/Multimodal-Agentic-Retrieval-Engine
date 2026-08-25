@@ -17,9 +17,13 @@ from huggingface_hub import (
     CommitOperationAdd,
     CommitOperationDelete,
     HfApi,
-    RepoFile,
     hf_hub_download,
 )
+
+try:
+    from huggingface_hub import RepoFile
+except ImportError:  # huggingface-hub < 1.0
+    from huggingface_hub.hf_api import RepoFile
 
 try:
     from huggingface_hub.utils import (
@@ -231,12 +235,12 @@ class HuggingFaceDatasetArtifactStore:
             with target.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
         if not isinstance(payload, dict):
-            raise ValueError("Artifact JSON payload must be an object")
+            raise ValueError("Artifact JSON payload must be an object")  # noqa: TRY004
         return payload
 
     def write_json(self, relative_path: str | Path, payload: dict[str, Any]) -> Path:
         if not isinstance(payload, dict):
-            raise ValueError("Artifact JSON payload must be a dict")
+            raise ValueError("Artifact JSON payload must be a dict")  # noqa: TRY004
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / Path(str(relative_path)).name
             source.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

@@ -23,7 +23,7 @@ class JsonCache(Protocol):
 
 
 @dataclass(frozen=True)
-class GeminiRequest:
+class StructuredRequest:
     request_kind: str
     video_id: str
     prompt: str
@@ -35,7 +35,7 @@ class GeminiRequest:
 
 
 def build_request_hash(
-    request: GeminiRequest,
+    request: StructuredRequest,
     *,
     model_id: str,
     cache_identity: Mapping[str, Any] | None = None,
@@ -88,7 +88,7 @@ class GeminiStructuredClient:
         self.random_uniform = random_uniform
         self._cache_lock = threading.Lock()
 
-    def request(self, request: GeminiRequest) -> dict[str, Any]:
+    def request(self, request: StructuredRequest) -> dict[str, Any]:
         request_hash = build_request_hash(
             request,
             model_id=self.model_id,
@@ -137,7 +137,14 @@ class GeminiStructuredClient:
                 )
         return normalized
 
-    def _transport_request(self, request: GeminiRequest) -> str:
+    def request_many(
+        self, requests: list[StructuredRequest]
+    ) -> list[dict[str, Any]]:
+        # Gemini fallback stays serial. GPU batching belongs to local clients,
+        # and this interface must not increase API concurrency.
+        return [self.request(request) for request in requests]
+
+    def _transport_request(self, request: StructuredRequest) -> str:
         return self._transport_call(
             prompt=request.prompt,
             image_paths=request.image_paths,
@@ -173,7 +180,7 @@ class GeminiStructuredClient:
                 delay = min(maximum, delay * 2)
         raise RuntimeError(f"Gemini transport failed after {attempts} attempts: {last_error}") from last_error
 
-    def _repair_schema(self, request: GeminiRequest, invalid_text: str) -> str:
+    def _repair_schema(self, request: StructuredRequest, invalid_text: str) -> str:
         prompt_version = str(self.api_config["schema_repair_prompt_version"])
         prompt_path = (
             Path(__file__).resolve().parents[3] / "prompts" / f"{prompt_version}.txt"
@@ -264,3 +271,7 @@ def _retryable_transport_error(exc: Exception, config: Mapping[str, Any]) -> boo
         marker in message
         for marker in ("timeout", "timed out", "connection reset", "temporarily unavailable")
     )
+
+
+# Backward-compatible import while structured requests become provider-neutral.
+GeminiRequest = StructuredRequest

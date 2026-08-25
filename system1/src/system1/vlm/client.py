@@ -5,7 +5,8 @@ import json
 import re
 import threading
 import time
-from collections.abc import Callable, Mapping
+import warnings
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -13,7 +14,7 @@ import numpy as np
 from jsonschema import validate
 from PIL import Image
 
-from system1.gemini import GeminiRequest, build_request_hash
+from system1.gemini import StructuredRequest, build_request_hash
 
 
 class JsonCache(Protocol):
@@ -25,7 +26,37 @@ class JsonCache(Protocol):
 
 
 class StructuredClient(Protocol):
-    def request(self, request: GeminiRequest) -> dict[str, Any]: ...
+    def request(self, request: StructuredRequest) -> dict[str, Any]: ...
+
+    def request_many(
+        self, requests: list[StructuredRequest]
+    ) -> list[dict[str, Any]]: ...
+
+
+class SystemicProviderError(RuntimeError):
+    """The provider runtime cannot safely serve more requests in this chunk."""
+
+
+class BatchRequestError(RuntimeError):
+    """Carries completed results while exposing request-specific errors."""
+
+    def __init__(
+        self,
+        *,
+        results: list[dict[str, Any] | None],
+        errors: Mapping[int, Exception],
+    ) -> None:
+        self.results = results
+        self.errors = dict(errors)
+        details = " | ".join(
+            f"request[{index}] {type(error).__name__}: {error}"
+            for index, error in sorted(self.errors.items())
+        )
+        super().__init__(details or "structured request batch failed")
+
+
+class _NativeBatchUnavailable(RuntimeError):
+    pass
 
 
 class MetadataStructuredClient:
@@ -42,8 +73,26 @@ class MetadataStructuredClient:
         self.model_id = model_id
         self.model_revision = model_revision
 
-    def request(self, request: GeminiRequest) -> dict[str, Any]:
-        payload = dict(self.client.request(request))
+    def request(self, request: StructuredRequest) -> dict[str, Any]:
+        return self._with_metadata(self.client.request(request))
+
+    def request_many(
+        self, requests: list[StructuredRequest]
+    ) -> list[dict[str, Any]]:
+        try:
+            responses = _client_request_many(self.client, requests)
+        except BatchRequestError as exc:
+            raise BatchRequestError(
+                results=[
+                    self._with_metadata(result) if result is not None else None
+                    for result in exc.results
+                ],
+                errors=exc.errors,
+            ) from exc
+        return [self._with_metadata(response) for response in responses]
+
+    def _with_metadata(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(payload)
         payload.setdefault("__provider", self.provider_name)
         payload.setdefault("__model_id", self.model_id)
         payload.setdefault("__model_revision", self.model_revision)
@@ -54,32 +103,169 @@ class MetadataStructuredClient:
 
 
 class FallbackStructuredClient:
-    def __init__(self, clients: list[StructuredClient]) -> None:
+    """Request-level fallback with a systemic-failure circuit breaker."""
+
+    def __init__(
+        self,
+        clients: list[StructuredClient],
+        *,
+        telemetry_callback: Callable[[Mapping[str, Any]], None] | None = None,
+    ) -> None:
         if not clients:
             raise ValueError("at least one structured client is required")
         self.clients = clients
-        self._active_index = 0
+        self.telemetry_callback = telemetry_callback
         self._request_lock = threading.Lock()
+        self._circuit_open = False
+        self._counts = {
+            "qwen_request_count": 0,
+            "gemini_request_count": 0,
+            "fallback_request_count": 0,
+        }
 
-    def request(self, request: GeminiRequest) -> dict[str, Any]:
+    @property
+    def circuit_open(self) -> bool:
+        return self._circuit_open
+
+    def request(self, request: StructuredRequest) -> dict[str, Any]:
+        try:
+            return self.request_many([request])[0]
+        except BatchRequestError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    def request_many(
+        self, requests: list[StructuredRequest]
+    ) -> list[dict[str, Any]]:
+        if not requests:
+            return []
         with self._request_lock:
-            errors: list[str] = []
-            for index in range(self._active_index, len(self.clients)):
-                client = self.clients[index]
+            if self._circuit_open or len(self.clients) == 1:
+                start = 1 if self._circuit_open and len(self.clients) > 1 else 0
+                return self._request_all_from(start, requests)
+
+            primary = self.clients[0]
+            self._record_provider_requests(primary, len(requests))
+            try:
+                return _client_request_many(primary, requests)
+            except BatchRequestError as exc:
+                results = list(exc.results)
+                failed_indices = sorted(exc.errors)
+                systemic = any(
+                    _is_systemic_provider_error(error)
+                    for error in exc.errors.values()
+                )
+                reason = _fallback_reason(next(iter(exc.errors.values())))
+                if systemic:
+                    self._open_circuit(primary, reason=reason)
+                self._fallback_indices(
+                    requests,
+                    results,
+                    failed_indices,
+                    errors=exc.errors,
+                    reason=reason,
+                )
+                return _complete_batch_or_raise(results)
+            except Exception as exc:  # noqa: BLE001 - provider boundary
+                if _is_systemic_provider_error(exc):
+                    self._open_circuit(primary, reason=_fallback_reason(exc))
+                results: list[dict[str, Any] | None] = [None] * len(requests)
+                self._fallback_indices(
+                    requests,
+                    results,
+                    list(range(len(requests))),
+                    errors={index: exc for index in range(len(requests))},
+                    reason=_fallback_reason(exc),
+                )
+                return _complete_batch_or_raise(results)
+
+    def _request_all_from(
+        self, start: int, requests: list[StructuredRequest]
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any] | None] = [None] * len(requests)
+        self._fallback_indices(
+            requests,
+            results,
+            list(range(len(requests))),
+            errors={},
+            reason="circuit_open" if self._circuit_open else "primary_only",
+            start=start,
+        )
+        return _complete_batch_or_raise(results)
+
+    def _fallback_indices(
+        self,
+        requests: list[StructuredRequest],
+        results: list[dict[str, Any] | None],
+        indices: list[int],
+        *,
+        errors: Mapping[int, Exception],
+        reason: str,
+        start: int = 1,
+    ) -> None:
+        unresolved = list(indices)
+        all_errors: dict[int, Exception] = dict(errors)
+        for client in self.clients[start:]:
+            if not unresolved:
+                break
+            next_unresolved: list[int] = []
+            for index in unresolved:
+                self._counts["fallback_request_count"] += 1
+                self._record_provider_requests(client, 1)
                 try:
-                    response = client.request(request)
-                except Exception as exc:  # noqa: BLE001 - preserve fallback behavior
-                    errors.append(f"{type(exc).__name__}: {exc}")
-                    _close_client(client)
-                    _release_torch_memory()
-                    continue
-                # Stay on the first working fallback for the rest of this
-                # runtime chunk. Retrying an earlier local model here could
-                # load it while the successful fallback is still resident.
-                self._active_index = index
-                return response
-            raise RuntimeError(
-                "all structured providers failed: " + " | ".join(errors)
+                    results[index] = client.request(requests[index])
+                    all_errors.pop(index, None)
+                except Exception as exc:  # noqa: BLE001 - try next fallback
+                    previous = all_errors.get(index)
+                    all_errors[index] = (
+                        RuntimeError(
+                            f"{type(previous).__name__}: {previous} | "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        if previous is not None
+                        else exc
+                    )
+                    next_unresolved.append(index)
+            unresolved = next_unresolved
+        self._emit(
+            "fallback",
+            fallback_reason=reason,
+            circuit_breaker_state="open" if self._circuit_open else "closed",
+            unresolved_count=len(unresolved),
+            **self._counts,
+        )
+        if unresolved:
+            raise BatchRequestError(results=results, errors=all_errors)
+
+    def _record_provider_requests(self, client: StructuredClient, count: int) -> None:
+        provider = str(getattr(client, "provider_name", ""))
+        if provider == "qwen_local":
+            self._counts["qwen_request_count"] += count
+        elif provider == "gemini":
+            self._counts["gemini_request_count"] += count
+
+    def _open_circuit(self, primary: StructuredClient, *, reason: str) -> None:
+        if self._circuit_open:
+            return
+        self._circuit_open = True
+        _close_client(primary)
+        _release_torch_memory()
+        self._emit(
+            "circuit_breaker",
+            circuit_breaker_state="open",
+            circuit_breaker_reason=reason,
+            **self._counts,
+        )
+
+    def _emit(self, status: str, **details: Any) -> None:
+        if self.telemetry_callback is None:
+            return
+        try:
+            self.telemetry_callback({"status": status, **details})
+        except Exception as exc:  # noqa: BLE001 - telemetry cannot break inference
+            warnings.warn(
+                f"structured-client telemetry callback failed: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
             )
 
     def close(self) -> None:
@@ -106,15 +292,180 @@ class LocalVisionStructuredClient:
         self.cache_prefix = Path(cache_prefix)
         self.lifecycle_callback = lifecycle_callback
         self.total_attempts = int(self.model_config.get("total_attempts", 2))
+        self.inference_batch_size = int(
+            self.model_config.get("inference_batch_size", 1)
+        )
         if self.total_attempts < 1:
             raise ValueError("local VLM total_attempts must be positive")
-        if int(self.model_config.get("inference_batch_size", 1)) != 1:
-            raise ValueError("local VLM inference_batch_size must be 1")
+        if self.inference_batch_size < 1:
+            raise ValueError("local VLM inference_batch_size must be positive")
         self._cache_lock = threading.Lock()
         self._model_lock = threading.Lock()
         self._loaded: tuple[Any, ...] | None = None
 
-    def request(self, request: GeminiRequest) -> dict[str, Any]:
+    def request(self, request: StructuredRequest) -> dict[str, Any]:
+        try:
+            return self.request_many([request])[0]
+        except BatchRequestError as exc:
+            raise next(iter(exc.errors.values())) from exc
+
+    def request_many(
+        self, requests: list[StructuredRequest]
+    ) -> list[dict[str, Any]]:
+        if not requests:
+            return []
+        results: list[dict[str, Any] | None] = [None] * len(requests)
+        errors: dict[int, Exception] = {}
+        misses: list[int] = []
+        cache_paths: dict[int, Path] = {}
+        for index, request in enumerate(requests):
+            request_hash = self._request_hash(request)
+            cache_path = self.cache_prefix / f"{request_hash}.json"
+            cache_paths[index] = cache_path
+            cached = self._read_cached(cache_path, request)
+            if cached is None:
+                misses.append(index)
+            else:
+                results[index] = self._with_metadata(cached)
+
+        requested_batch_size = min(self.inference_batch_size, max(1, len(misses)))
+        effective_batch_size = requested_batch_size
+        cache_hits = len(requests) - len(misses)
+        self._emit_lifecycle(
+            "batch_start",
+            requested_batch_size=requested_batch_size,
+            effective_batch_size=effective_batch_size,
+            request_count=len(requests),
+            cache_hits=cache_hits,
+            cache_misses=len(misses),
+            quantization_mode=self._quantization_mode(),
+        )
+        cursor = 0
+        oom_reductions = 0
+        batch_one_oom_attempts = 0
+        systemic_attempts = 0
+        while cursor < len(misses):
+            batch_indices = misses[cursor : cursor + effective_batch_size]
+            batch_requests = [requests[index] for index in batch_indices]
+            try:
+                raw_texts = self._call_models(batch_requests)
+            except _NativeBatchUnavailable:
+                if effective_batch_size == 1:
+                    raise
+                previous = effective_batch_size
+                effective_batch_size = 1
+                self._emit_lifecycle(
+                    "batch_capability_fallback",
+                    requested_batch_size=requested_batch_size,
+                    previous_batch_size=previous,
+                    effective_batch_size=1,
+                    quantization_mode=self._quantization_mode(),
+                )
+                continue
+            except Exception as exc:
+                if _is_cuda_oom(exc):
+                    _release_torch_memory()
+                    if effective_batch_size > 1:
+                        previous = effective_batch_size
+                        effective_batch_size = max(1, effective_batch_size // 2)
+                        oom_reductions += 1
+                        self._emit_lifecycle(
+                            "oom_reduction",
+                            requested_batch_size=requested_batch_size,
+                            previous_batch_size=previous,
+                            effective_batch_size=effective_batch_size,
+                            oom_reductions=oom_reductions,
+                            error_type=type(exc).__name__,
+                            quantization_mode=self._quantization_mode(),
+                        )
+                        continue
+                    batch_one_oom_attempts += 1
+                    if batch_one_oom_attempts < self.total_attempts:
+                        self.close()
+                        self._emit_lifecycle(
+                            "oom_retry",
+                            requested_batch_size=requested_batch_size,
+                            effective_batch_size=1,
+                            attempt=batch_one_oom_attempts,
+                            total_attempts=self.total_attempts,
+                            oom_reductions=oom_reductions,
+                            error_type=type(exc).__name__,
+                            quantization_mode=self._quantization_mode(),
+                        )
+                        continue
+                    self.close()
+                    systemic = SystemicProviderError(
+                        f"{self.provider_name} CUDA OOM at batch_size=1: {exc}"
+                    )
+                    for index in misses[cursor:]:
+                        errors[index] = systemic
+                    raise BatchRequestError(results=results, errors=errors) from exc
+                if _is_systemic_runtime_error(exc):
+                    systemic_attempts += 1
+                    if systemic_attempts < self.total_attempts:
+                        self.close()
+                        self._emit_lifecycle(
+                            "runtime_retry",
+                            requested_batch_size=requested_batch_size,
+                            effective_batch_size=effective_batch_size,
+                            attempt=systemic_attempts,
+                            total_attempts=self.total_attempts,
+                            error_type=type(exc).__name__,
+                            quantization_mode=self._quantization_mode(),
+                        )
+                        continue
+                    self.close()
+                    systemic = SystemicProviderError(
+                        f"{self.provider_name} runtime unavailable: {exc}"
+                    )
+                    for index in misses[cursor:]:
+                        errors[index] = systemic
+                    raise BatchRequestError(results=results, errors=errors) from exc
+                for index in batch_indices:
+                    errors[index] = exc
+                cursor += len(batch_indices)
+                continue
+
+            if len(raw_texts) != len(batch_requests):
+                exc = ValueError(
+                    f"local VLM returned {len(raw_texts)} responses for "
+                    f"{len(batch_requests)} requests"
+                )
+                for index in batch_indices:
+                    errors[index] = exc
+                cursor += len(batch_indices)
+                continue
+            for index, request, raw_text in zip(
+                batch_indices, batch_requests, raw_texts, strict=True
+            ):
+                try:
+                    normalized = _parse_json_object(raw_text, request.response_schema)
+                    self._write_cached(
+                        cache_paths[index], request=request, normalized=normalized
+                    )
+                    results[index] = self._with_metadata(normalized)
+                except Exception as exc:  # noqa: BLE001 - request-scoped fallback
+                    errors[index] = exc
+            cursor += len(batch_indices)
+            batch_one_oom_attempts = 0
+            systemic_attempts = 0
+
+        self._emit_lifecycle(
+            "batch_complete",
+            requested_batch_size=requested_batch_size,
+            effective_batch_size=effective_batch_size,
+            request_count=len(requests),
+            cache_hits=cache_hits,
+            cache_misses=len(misses),
+            oom_reductions=oom_reductions,
+            failed_request_count=len(errors),
+            quantization_mode=self._quantization_mode(),
+        )
+        if errors:
+            raise BatchRequestError(results=results, errors=errors)
+        return _complete_batch_or_raise(results)
+
+    def _request_hash(self, request: StructuredRequest) -> str:
         request_hash = build_request_hash(
             request,
             model_id=self.model_id,
@@ -122,56 +473,54 @@ class LocalVisionStructuredClient:
                 "provider": self.provider_name,
                 "model_revision": self.model_revision,
                 "max_new_tokens": self.model_config.get("max_new_tokens"),
+                "quantization": self.model_config.get("quantization"),
             },
         )
-        cache_path = self.cache_prefix / f"{request_hash}.json"
-        if self.cache is not None:
-            with self._cache_lock:
-                if self.cache.exists(cache_path):
-                    cached = self.cache.read_json(cache_path)
-                    response = cached.get("normalized_response")
-                    if isinstance(response, dict):
-                        validate(response, request.response_schema)
-                        return self._with_metadata(response)
+        return request_hash
 
-        raw_text: str | None = None
-        for attempt in range(1, self.total_attempts + 1):
+    def _read_cached(
+        self, cache_path: Path, request: StructuredRequest
+    ) -> dict[str, Any] | None:
+        if self.cache is None:
+            return None
+        with self._cache_lock:
+            if not self.cache.exists(cache_path):
+                return None
+            cached = self.cache.read_json(cache_path)
+            response = cached.get("normalized_response")
+            if not isinstance(response, dict):
+                return None
             try:
-                raw_text = self._call_model(request)
-                break
-            except Exception as exc:
-                if not _is_cuda_oom(exc):
-                    raise
-                self.close()
-                self._emit_lifecycle(
-                    "oom_retry" if attempt < self.total_attempts else "oom_exhausted",
-                    attempt=attempt,
-                    total_attempts=self.total_attempts,
-                    error_type=type(exc).__name__,
-                )
-                if attempt >= self.total_attempts:
-                    raise
-        if raw_text is None:  # pragma: no cover - loop invariant guard
-            raise RuntimeError("local VLM produced no response")
-        normalized = _parse_json_object(raw_text, request.response_schema)
-        if self.cache is not None:
-            with self._cache_lock:
-                self.cache.write_json(
-                    cache_path,
-                    {
-                        "schema_version": "local_vlm_cache_entry_v1",
-                        "request_hash": request_hash,
-                        "request_kind": request.request_kind,
-                        "video_id": request.video_id,
-                        "provider": self.provider_name,
-                        "model_id": self.model_id,
-                        "model_revision": self.model_revision,
-                        "prompt_version": request.prompt_version,
-                        "response_schema_version": request.response_schema_version,
-                        "normalized_response": normalized,
-                    },
-                )
-        return self._with_metadata(normalized)
+                validate(response, request.response_schema)
+            except Exception:  # noqa: BLE001 - corrupt cache entries are misses
+                return None
+            return response
+
+    def _write_cached(
+        self,
+        cache_path: Path,
+        *,
+        request: StructuredRequest,
+        normalized: dict[str, Any],
+    ) -> None:
+        if self.cache is None:
+            return
+        with self._cache_lock:
+            self.cache.write_json(
+                cache_path,
+                {
+                    "schema_version": "local_vlm_cache_entry_v1",
+                    "request_hash": cache_path.stem,
+                    "request_kind": request.request_kind,
+                    "video_id": request.video_id,
+                    "provider": self.provider_name,
+                    "model_id": self.model_id,
+                    "model_revision": self.model_revision,
+                    "prompt_version": request.prompt_version,
+                    "response_schema_version": request.response_schema_version,
+                    "normalized_response": normalized,
+                },
+            )
 
     def _with_metadata(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         response = dict(payload)
@@ -180,43 +529,53 @@ class LocalVisionStructuredClient:
         response["__model_revision"] = self.model_revision
         return response
 
-    def _call_model(self, request: GeminiRequest) -> str:
+    def _call_models(self, requests: list[StructuredRequest]) -> list[str]:
         if self.provider_name == "qwen_local":
-            return self._call_qwen(request)
+            return self._call_qwen_many(requests)
         if self.provider_name == "vintern_local":
-            return self._call_vintern(request)
-        raise RuntimeError(f"unsupported local VLM provider: {self.provider_name}")
+            return self._call_vintern_many(requests)
+        raise SystemicProviderError(
+            f"unsupported local VLM provider: {self.provider_name}"
+        )
 
-    def _call_qwen(self, request: GeminiRequest) -> str:
+    def _call_qwen_many(self, requests: list[StructuredRequest]) -> list[str]:
         processor, model = self._load_qwen()
         try:
             from qwen_vl_utils import process_vision_info
         except ImportError as exc:  # pragma: no cover - production dependency guard
-            raise RuntimeError("qwen-vl-utils is required for qwen_local") from exc
+            raise SystemicProviderError(
+                "qwen-vl-utils is required for qwen_local"
+            ) from exc
 
         inputs: Any = None
         generated_ids: Any = None
         image_inputs: Any = None
         video_inputs: Any = None
         try:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        *[
-                            {"type": "image", "image": str(path)}
-                            for path in request.image_paths
+            conversations = [
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            *[
+                                {"type": "image", "image": str(path)}
+                                for path in request.image_paths
+                            ],
+                            {"type": "text", "text": request.prompt},
                         ],
-                        {"type": "text", "text": request.prompt},
-                    ],
-                }
+                    }
+                ]
+                for request in requests
             ]
-            text = processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            image_inputs, video_inputs = process_vision_info(messages)
+            texts = [
+                processor.apply_chat_template(
+                    conversation, tokenize=False, add_generation_prompt=True
+                )
+                for conversation in conversations
+            ]
+            image_inputs, video_inputs = process_vision_info(conversations)
             inputs = processor(
-                text=[text],
+                text=texts,
                 images=image_inputs,
                 videos=video_inputs,
                 padding=True,
@@ -239,40 +598,63 @@ class LocalVisionStructuredClient:
                 generated_ids,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
-            )[0]
+            )
         finally:
             del inputs, generated_ids, image_inputs, video_inputs
 
-    def _call_vintern(self, request: GeminiRequest) -> str:
-        if len(request.image_paths) != 1:
+    def _call_vintern_many(self, requests: list[StructuredRequest]) -> list[str]:
+        if any(len(request.image_paths) != 1 for request in requests):
             raise RuntimeError("vintern_local expects exactly one image per request")
         tokenizer, model = self._load_vintern()
         import torch
 
+        native_batch = getattr(model, "batch_chat", None)
+        if len(requests) > 1 and not callable(native_batch):
+            raise _NativeBatchUnavailable("Vintern runtime has no batch_chat")
         pixel_values: Any = None
         try:
-            pixel_values = _vintern_pixel_values(request.image_paths[0]).to(
-                _model_device(model)
-            )
+            tensors = [
+                _vintern_pixel_values(request.image_paths[0]) for request in requests
+            ]
+            pixel_values = torch.cat(tensors, dim=0).to(_model_device(model))
             try:
                 dtype = next(model.parameters()).dtype
                 pixel_values = pixel_values.to(dtype=dtype)
             except StopIteration:  # pragma: no cover
                 pass
-            prompt = request.prompt
-            if "<image>" not in prompt:
-                prompt = "<image>\n" + prompt
+            prompts = [
+                request.prompt
+                if "<image>" in request.prompt
+                else "<image>\n" + request.prompt
+                for request in requests
+            ]
             generation_config = {
                 "max_new_tokens": int(self.model_config.get("max_new_tokens", 768)),
                 "do_sample": False,
             }
             with torch.no_grad():
-                output = model.chat(tokenizer, pixel_values, prompt, generation_config)
-            if isinstance(output, tuple):
-                output = output[0]
-            if not isinstance(output, str) or not output.strip():
+                if len(requests) > 1:
+                    outputs = native_batch(
+                        tokenizer,
+                        pixel_values,
+                        prompts,
+                        generation_config,
+                        num_patches_list=[1] * len(requests),
+                    )
+                else:
+                    output = model.chat(
+                        tokenizer,
+                        pixel_values,
+                        prompts[0],
+                        generation_config,
+                    )
+                    outputs = [output[0] if isinstance(output, tuple) else output]
+            if not isinstance(outputs, Sequence) or isinstance(outputs, str):
+                raise TypeError("vintern_local returned an invalid batch response")
+            normalized = [str(output).strip() for output in outputs]
+            if any(not output for output in normalized):
                 raise ValueError("vintern_local returned an empty response")
-            return output
+            return normalized
         finally:
             del pixel_values
 
@@ -283,7 +665,8 @@ class LocalVisionStructuredClient:
             started = time.monotonic()
             _reset_cuda_peak_memory()
             try:
-                from transformers import AutoProcessor
+                import torch
+                from transformers import AutoProcessor, BitsAndBytesConfig
                 try:
                     from transformers import (
                         Qwen2_5_VLForConditionalGeneration as AutoModel,
@@ -299,7 +682,12 @@ class LocalVisionStructuredClient:
                         except ImportError:
                             from transformers import AutoModel
             except ImportError as exc:  # pragma: no cover - production dependency guard
-                raise RuntimeError("transformers is required for qwen_local") from exc
+                raise SystemicProviderError(
+                    "transformers, torch, and bitsandbytes are required for qwen_local"
+                ) from exc
+            quantization_config = _qwen_quantization_config(
+                self.model_config, BitsAndBytesConfig, torch
+            )
             try:
                 processor = AutoProcessor.from_pretrained(
                     self.model_id,
@@ -311,8 +699,11 @@ class LocalVisionStructuredClient:
                 model = AutoModel.from_pretrained(
                     self.model_id,
                     revision=self.model_revision,
-                    torch_dtype=self.model_config.get("torch_dtype", "auto"),
-                    device_map=self.model_config.get("device_map", "auto"),
+                    torch_dtype=_torch_dtype(
+                        self.model_config.get("torch_dtype", "float16"), torch
+                    ),
+                    device_map=self.model_config.get("device_map", "cuda"),
+                    quantization_config=quantization_config,
                     low_cpu_mem_usage=bool(
                         self.model_config.get("low_cpu_mem_usage", True)
                     ),
@@ -328,10 +719,15 @@ class LocalVisionStructuredClient:
                     "load_failed",
                     load_seconds=round(time.monotonic() - started, 3),
                     error_type=type(exc).__name__,
+                    quantization_mode=self._quantization_mode(),
                 )
-                raise
+                raise SystemicProviderError(
+                    f"failed to load qwen_local {self.model_id}: {exc}"
+                ) from exc
             self._emit_lifecycle(
-                "loaded", load_seconds=round(time.monotonic() - started, 3)
+                "loaded",
+                load_seconds=round(time.monotonic() - started, 3),
+                quantization_mode=self._quantization_mode(),
             )
             return processor, model
 
@@ -344,7 +740,9 @@ class LocalVisionStructuredClient:
             try:
                 from transformers import AutoModel, AutoTokenizer
             except ImportError as exc:  # pragma: no cover - production dependency guard
-                raise RuntimeError("transformers is required for vintern_local") from exc
+                raise SystemicProviderError(
+                    "transformers is required for vintern_local"
+                ) from exc
             try:
                 tokenizer = AutoTokenizer.from_pretrained(
                     self.model_id,
@@ -379,12 +777,24 @@ class LocalVisionStructuredClient:
                     "load_failed",
                     load_seconds=round(time.monotonic() - started, 3),
                     error_type=type(exc).__name__,
+                    quantization_mode="none",
                 )
-                raise
+                raise SystemicProviderError(
+                    f"failed to load vintern_local {self.model_id}: {exc}"
+                ) from exc
             self._emit_lifecycle(
-                "loaded", load_seconds=round(time.monotonic() - started, 3)
+                "loaded",
+                load_seconds=round(time.monotonic() - started, 3),
+                quantization_mode="none",
+                native_batch_capable=callable(getattr(model, "batch_chat", None)),
             )
             return tokenizer, model
+
+    def _quantization_mode(self) -> str:
+        quantization = self.model_config.get("quantization", {})
+        if not isinstance(quantization, Mapping):
+            return "none"
+        return str(quantization.get("mode", "none"))
 
     def close(self) -> None:
         with self._model_lock:
@@ -392,7 +802,9 @@ class LocalVisionStructuredClient:
             self._loaded = None
         _release_torch_memory()
         if was_loaded:
-            self._emit_lifecycle("unloaded")
+            self._emit_lifecycle(
+                "unloaded", quantization_mode=self._quantization_mode()
+            )
 
     def _emit_lifecycle(self, status: str, **details: Any) -> None:
         if self.lifecycle_callback is None:
@@ -409,6 +821,98 @@ class LocalVisionStructuredClient:
             )
         except Exception:  # noqa: BLE001, S110 - telemetry cannot break inference
             pass
+
+
+def _qwen_quantization_config(
+    model_config: Mapping[str, Any], factory: Any, torch: Any
+):
+    quantization = model_config.get("quantization")
+    if not isinstance(quantization, Mapping):
+        raise SystemicProviderError("qwen_local requires explicit quantization config")
+    if str(quantization.get("method")) != "bitsandbytes" or str(
+        quantization.get("mode")
+    ) != "4bit":
+        raise SystemicProviderError(
+            "qwen_local only supports configured bitsandbytes 4bit loading"
+        )
+    return factory(
+        load_in_4bit=True,
+        bnb_4bit_quant_type=str(quantization.get("quant_type", "nf4")),
+        bnb_4bit_compute_dtype=_torch_dtype(
+            quantization.get("compute_dtype", "float16"), torch
+        ),
+        bnb_4bit_use_double_quant=bool(quantization.get("double_quant", True)),
+    )
+
+
+def _torch_dtype(value: Any, torch: Any):
+    if not isinstance(value, str):
+        return value
+    normalized = value.lower()
+    if normalized == "auto":
+        return "auto"
+    aliases = {
+        "float16": "float16",
+        "fp16": "float16",
+        "bfloat16": "bfloat16",
+    }
+    attribute = aliases.get(normalized)
+    if attribute is None:
+        raise ValueError(f"unsupported torch dtype: {value}")
+    return getattr(torch, attribute)
+
+
+def _client_request_many(
+    client: StructuredClient, requests: list[StructuredRequest]
+) -> list[dict[str, Any]]:
+    request_many = getattr(client, "request_many", None)
+    if callable(request_many):
+        return request_many(requests)
+    return [client.request(request) for request in requests]
+
+
+def _complete_batch_or_raise(
+    results: list[dict[str, Any] | None],
+) -> list[dict[str, Any]]:
+    missing = [index for index, result in enumerate(results) if result is None]
+    if missing:
+        raise BatchRequestError(
+            results=results,
+            errors={
+                index: RuntimeError("missing structured response") for index in missing
+            },
+        )
+    return [result for result in results if result is not None]
+
+
+def _fallback_reason(exc: BaseException) -> str:
+    if isinstance(exc, SystemicProviderError):
+        return "systemic_local_runtime"
+    name = type(exc).__name__.lower()
+    if "validation" in name or "json" in name or isinstance(
+        exc, (ValueError, TypeError)
+    ):
+        return "invalid_structured_response"
+    return "request_error"
+
+
+def _is_systemic_provider_error(exc: BaseException) -> bool:
+    return isinstance(exc, SystemicProviderError)
+
+
+def _is_systemic_runtime_error(exc: BaseException) -> bool:
+    if isinstance(exc, SystemicProviderError):
+        return True
+    message = str(exc).lower()
+    markers = (
+        "device-side assert",
+        "illegal memory access",
+        "cuda error",
+        "cublas",
+        "cudnn",
+        "driver shutting down",
+    )
+    return any(marker in message for marker in markers)
 
 
 def _close_client(client: Any) -> None:
@@ -480,7 +984,8 @@ def _model_device(model: Any):
 def _vintern_pixel_values(image_path: Path):
     import torch
 
-    image = Image.open(image_path).convert("RGB").resize((448, 448))
+    with Image.open(image_path) as opened:
+        image = opened.convert("RGB").resize((448, 448))
     array = np.asarray(image).astype("float32") / 255.0
     tensor = torch.from_numpy(array).permute(2, 0, 1)
     mean = torch.tensor([0.485, 0.456, 0.406], dtype=tensor.dtype).view(3, 1, 1)

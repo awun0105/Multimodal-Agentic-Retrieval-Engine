@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_1
-pipeline_id: phase01_production_v1_1
+schema_version: phase01_pipeline_v1_2
+pipeline_id: phase01_production_v1_2
 
 execution:
   video_order: batch_manifest
@@ -12,8 +12,8 @@ execution:
     medium_max_chunk_videos: 2
     low_disk_max_chunk_videos: 1
   inference_batch_size:
-    ocr: 1
-    shot_captions: 1
+    ocr: 4
+    shot_captions: 2
   require_phase00_frame_timeline: true
   checkpoint_after_each_stage: true
   continue_after_retryable_video_failure: true
@@ -72,6 +72,14 @@ ocr:
   run_on_keyframe_roles: [early, middle, late]
   empty_status: empty
   failed_status: failed
+  text_presence_filter:
+    enabled: true
+    policy: opencv_conservative_v1
+    max_long_side: 960
+    canny_low: 50
+    canny_high: 150
+    max_no_text_edge_density: 0.0015
+    max_no_text_gray_std: 12
 
 api:
   max_concurrency_per_video: 2
@@ -122,7 +130,7 @@ schemas:
   shot_transcript_links: shot_transcript_links_v1
   scenes: scenes_v1
   scene_transcript_links: scene_transcript_links_v1
-  scene_summaries: scene_summaries_v1
+  scene_summaries: scene_summaries_v2
 
 production_readiness:
   required_non_null_paths:
@@ -134,10 +142,6 @@ production_readiness:
     - models.ocr.model_revision
     - models.shot_caption.model_id
     - models.shot_caption.model_revision
-    - models.scene_boundary.model_id
-    - models.scene_boundary.model_revision
-    - models.scene_summary.model_id
-    - models.scene_summary.model_revision
     - media.keyframe.encoding.jpeg_quality
     - media.keyframe.quality.resize_width
     - media.keyframe.quality.resize_height

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import importlib.util
 import json
@@ -87,9 +88,12 @@ def run_phase01_preflight(
 
     versions: dict[str, str] = {}
     for package in (
+        "bitsandbytes",
         "faster-whisper",
         "google-genai",
         "huggingface-hub",
+        "nemo-toolkit",
+        "onnx",
         "opencv-python-headless",
         "pillow",
     ):
@@ -107,28 +111,31 @@ def run_phase01_preflight(
         versions["torch"] = "missing"
     expected = config.payload["models"]
     asr_model = expected["asr"]
-    asr_provider = str(asr_model.get("provider", "faster_whisper"))
+    asr_provider = str(asr_model.get("provider", "nemo"))
     if asr_provider == "faster_whisper":
         if versions["faster-whisper"] != str(asr_model["package_version"]):
             raise RuntimeError("Installed faster-whisper version differs from resolved config")
     elif asr_provider == "nemo":
+        if versions["nemo-toolkit"] != str(asr_model["package_version"]):
+            raise RuntimeError("Installed nemo-toolkit version differs from resolved config")
         try:
-            nemo_available = importlib.util.find_spec("nemo.collections.asr") is not None
-        except ModuleNotFoundError:
-            nemo_available = False
-        if not nemo_available:
-            raise RuntimeError("nemo_toolkit[asr] is required for configured NeMo ASR")
+            importlib.import_module("nemo.collections.asr")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            raise RuntimeError(
+                "nemo_toolkit[asr] could not initialize for configured NeMo ASR"
+            ) from exc
     else:
         raise RuntimeError(f"Unsupported Phase01 ASR provider: {asr_provider}")
+    semantic_models = [expected.get(key, {}) for key in ("shot_caption", "scene_boundary", "scene_summary")]
     gemini_versions = [
         model.get("sdk_version")
-        for key in ("shot_caption", "scene_boundary", "scene_summary")
-        for model in [expected.get(key, {})]
+        for configured in semantic_models
+        for model in [configured, *configured.get("fallbacks", [])]
         if model.get("provider") == "gemini" and model.get("sdk_version") is not None
     ]
     if gemini_versions and versions["google-genai"] not in {str(value) for value in gemini_versions}:
         raise RuntimeError("Installed google-genai version differs from resolved config")
-    _validate_local_vlm_dependencies(expected)
+    _validate_local_vlm_dependencies(expected, versions=versions)
     if versions["torch"] == "missing":
         raise RuntimeError("PyTorch is required for TransNet V2")
     return PreflightResult(
@@ -301,7 +308,9 @@ def _requires_gemini(models: dict[str, Any]) -> bool:
     )
 
 
-def _validate_local_vlm_dependencies(models: dict[str, Any]) -> None:
+def _validate_local_vlm_dependencies(
+    models: dict[str, Any], *, versions: dict[str, str]
+) -> None:
     local_models = [
         models.get("ocr", {}),
         models.get("shot_caption", {}),
@@ -316,6 +325,7 @@ def _validate_local_vlm_dependencies(models: dict[str, Any]) -> None:
     }
     if any(str(model.get("provider")) == "qwen_local" for model in local_models):
         required_modules["qwen_vl_utils"] = "qwen-vl-utils"
+        required_modules["bitsandbytes"] = "bitsandbytes"
     missing = [
         package
         for module, package in required_modules.items()
@@ -326,6 +336,31 @@ def _validate_local_vlm_dependencies(models: dict[str, Any]) -> None:
             "Local VLM dependencies are missing: "
             + ", ".join(sorted(missing))
             + ". Install system1[phase01-production]."
+        )
+    qwen_models = [
+        model for model in local_models if str(model.get("provider")) == "qwen_local"
+    ]
+    if not qwen_models:
+        return
+    configured_versions = {
+        str(model.get("quantization", {}).get("package_version", ""))
+        for model in qwen_models
+    }
+    configured_versions.discard("")
+    if configured_versions and versions["bitsandbytes"] not in configured_versions:
+        raise RuntimeError(
+            "Installed bitsandbytes version differs from resolved Qwen quantization config"
+        )
+    try:
+        torch = importlib.import_module("torch")
+        cextension = importlib.import_module("bitsandbytes.cextension")
+    except (ImportError, RuntimeError) as exc:
+        raise RuntimeError("bitsandbytes could not initialize for Qwen 4-bit") from exc
+    if bool(torch.cuda.is_available()) and not bool(
+        getattr(getattr(cextension, "lib", None), "compiled_with_cuda", False)
+    ):
+        raise RuntimeError(
+            "bitsandbytes has no CUDA native backend for the installed PyTorch CUDA build"
         )
 
 

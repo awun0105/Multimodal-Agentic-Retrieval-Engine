@@ -93,7 +93,7 @@ def load_configs(config_dir: Path | str) -> dict[str, dict[str, Any]]:
             raise FileNotFoundError(f"missing config file: {path}")
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict):
-            raise ValueError(f"config must be a mapping: {path}")
+            raise TypeError(f"config must be a mapping: {path}")
         configs[path.stem] = data
     return configs
 
@@ -338,7 +338,8 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "schema": schemas["shot_transcript_links"],
         },
         "scenes": {
-            "model": models["scene_boundary"],
+            "model": _resolved_semantic_model(models, "scene_boundary"),
+            "policy": models["scene_boundary"],
             "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
@@ -346,7 +347,8 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "schemas": [schemas["scenes"], schemas["scene_transcript_links"]],
         },
         "scene_summaries": {
-            "model": models["scene_summary"],
+            "model": _resolved_semantic_model(models, "scene_summary"),
+            "provider_policy": models["scene_summary"],
             "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
@@ -369,6 +371,18 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
 
 def _provider_keys() -> tuple[str, ...]:
     return ("asr", "ocr", "embedding", "object_detection", "shot_caption", "scene_summary")
+
+
+def _resolved_semantic_model(
+    models: dict[str, Any], stage_key: str
+) -> dict[str, Any]:
+    stage = copy.deepcopy(models[stage_key])
+    model_key = stage.pop("model_key", None)
+    if not model_key:
+        return stage
+    if str(model_key) not in models:
+        raise ValueError(f"unknown Phase01 semantic model_key: {model_key}")
+    return {**copy.deepcopy(models[str(model_key)]), **stage}
 
 
 def _apply_phase01_asr_provider(payload: dict[str, Any], provider: str) -> None:

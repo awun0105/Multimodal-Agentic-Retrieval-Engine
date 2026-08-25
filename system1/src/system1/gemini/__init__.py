@@ -1,3 +1,13 @@
-from .client import GeminiRequest, GeminiStructuredClient, build_request_hash
+from .client import (
+    GeminiRequest,
+    GeminiStructuredClient,
+    StructuredRequest,
+    build_request_hash,
+)
 
-__all__ = ["GeminiRequest", "GeminiStructuredClient", "build_request_hash"]
+__all__ = [
+    "GeminiRequest",
+    "GeminiStructuredClient",
+    "StructuredRequest",
+    "build_request_hash",
+]

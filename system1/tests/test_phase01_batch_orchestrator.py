@@ -32,12 +32,16 @@ class FakeGeminiClient:
             return {"summary_vi": "Một cảnh", "summary_en": "A scene"}
         raise AssertionError(request.request_kind)
 
+    def request_many(self, requests):
+        return [self.request(request) for request in requests]
+
 
 class FakeLocalStructuredClient:
     requests: ClassVar[list[str]] = []
 
     def __init__(self, provider: str) -> None:
         self.provider = provider
+        self.provider_name = provider
 
     def request(self, request):
         self.requests.append(request.request_kind)
@@ -60,7 +64,12 @@ class FakeLocalStructuredClient:
                 "visible_text_summary_en": "",
                 "scene_type": "unknown",
             }
+        if request.request_kind == "scene_summary":
+            return {"summary_vi": "Một cảnh", "summary_en": "A scene"}
         raise AssertionError(request.request_kind)
+
+    def request_many(self, requests):
+        return [self.request(request) for request in requests]
 
 
 class ChunkLocalStructuredClient:
@@ -69,6 +78,7 @@ class ChunkLocalStructuredClient:
 
     def __init__(self, provider: str, lifecycle_callback=None) -> None:
         self.provider = provider
+        self.provider_name = provider
         self.lifecycle_callback = lifecycle_callback
         self.loaded = False
 
@@ -111,7 +121,12 @@ class ChunkLocalStructuredClient:
                 "visible_text_summary_en": "",
                 "scene_type": "unknown",
             }
+        if request.request_kind == "scene_summary":
+            return {"summary_vi": "Một cảnh", "summary_en": "A scene"}
         raise AssertionError(request.request_kind)
+
+    def request_many(self, requests):
+        return [self.request(request) for request in requests]
 
     def close(self) -> None:
         if not self.loaded:
@@ -385,8 +400,12 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         sync_release=False,
     )
     assert second_report == report
-    assert FakeLocalStructuredClient.requests == ["keyframe_ocr", "shot_caption"]
-    assert FakeGeminiClient.requests == ["scene_summary"]
+    assert FakeLocalStructuredClient.requests == [
+        "keyframe_ocr",
+        "shot_caption",
+        "scene_summary",
+    ]
+    assert FakeGeminiClient.requests == []
 
     before_metadata_change = checkpoint_store.read_json(
         f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
@@ -412,8 +431,12 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         after_metadata_change["stages"]["package"]["input_fingerprint"]
         != before_metadata_change["stages"]["package"]["input_fingerprint"]
     )
-    assert FakeLocalStructuredClient.requests == ["keyframe_ocr", "shot_caption"]
-    assert FakeGeminiClient.requests == ["scene_summary"]
+    assert FakeLocalStructuredClient.requests == [
+        "keyframe_ocr",
+        "shot_caption",
+        "scene_summary",
+    ]
+    assert FakeGeminiClient.requests == []
     artifact = release / "artifacts" / "structure" / f"{video_id}_structure.zip"
     with zipfile.ZipFile(artifact) as archive:
         normalized = json.loads(
