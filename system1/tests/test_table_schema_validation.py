@@ -125,7 +125,7 @@ def write_valid_schema_release(release_dir: Path) -> None:
                 "model_name": "fixture-qwen",
                 "model_version": "fixture",
                 "prompt_version": "shot_caption_v2",
-                "schema_version": "shot_caption_response_v2",
+                "schema_version": "shot_caption_response_v3",
                 "confidence": None,
                 "status": "pass",
             }
