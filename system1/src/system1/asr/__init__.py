@@ -20,7 +20,7 @@ def transcribe_video(
     model_factory: Callable[..., Any] | None = None,
     audio_present: bool | None = None,
 ) -> AsrResult:
-    provider = str(config.get("provider", "faster_whisper"))
+    provider = str(config.get("provider", "nemo"))
     if provider == "faster_whisper":
         return _transcribe_faster_whisper(
             video_path,

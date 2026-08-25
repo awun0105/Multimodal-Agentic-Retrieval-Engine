@@ -6,10 +6,10 @@ Date: 2026-08-05
 
 Accepted and implemented package design for Notebook 01 /
 `phase01_structure`. Deterministic fake-judge tests cover windowing, voting,
-review routing, partitioning, and failure validation. Live Gemini acceptance
-and manual quality review remain pending. `TimelineAwareFallbackProvider` is
-available only through guarded debug/test injection; production provider
-failure fails the video.
+review routing, partitioning, and failure validation. Qwen2.5-VL is the local
+primary and Gemini is its structured fallback; real-provider and manual quality
+review remain pending. `TimelineAwareFallbackProvider` is available only
+through guarded debug/test injection.
 
 ## Canonical Definition
 
@@ -22,6 +22,7 @@ Scene grouping uses multimodal context-window segmentation:
 ordered shots
 + representative images
 + canonical shot captions
++ caption objects/actions and canonical OCR
 + ASR transcripts
 + decoded timeline
   -> VLM judges candidate boundaries in overlapping context/focus windows
@@ -41,10 +42,10 @@ partition construction, validation, status, and provenance.
 This workflow belongs to Notebook 01 after shot detection, keyframe selection,
 canonical shot captioning, ASR, and shot-to-transcript linking.
 
-OCR, organizer object detections, and visual embeddings belong to Phase02 and
-are not inputs to the canonical Phase01 scene grouper. The organizer does not
-provide OCR in the documented Batch 1 support assets. Phase02 may later enrich
-retrieval text without changing the Phase01 scene partition.
+Notebook 01 generates canonical OCR and caption objects/actions before scene
+grouping, and these are inputs to the grouper. Organizer object detections and
+visual embeddings remain Phase02 concerns and are not canonical boundary
+evidence.
 
 Scene summaries are generated after the partition exists. They may reuse the
 same multimodal evidence, but summary generation is not allowed to alter scene
@@ -171,8 +172,8 @@ mapping. Scene ranges are derived from shot rows, so the grouper must not
 recompute frames using `timestamp * fps`.
 
 Metadata is preserved elsewhere in the structure artifact but is not a
-canonical scene-boundary input. OCR, objects, and embeddings remain Phase02
-outputs.
+canonical scene-boundary input. OCR and caption objects/actions are Phase01
+evidence; embeddings and organizer object outputs remain Phase02 outputs.
 
 ## 2. Internal `ShotEvidence`
 
@@ -597,9 +598,10 @@ system1/src/system1/scenes/
 `-- gemini_judge.py
 ```
 
-- `gemini_judge.py`: the production Gemini `SceneBoundaryJudge`, deterministic
-  contact sheets, strict response shape, and request evidence serialization.
-  Model, credentials, timeouts, and retry limits come from config/runtime and
+- `gemini_judge.py`: the compatibility-named generic structured
+  `SceneBoundaryJudge`, deterministic contact sheets, strict response shape,
+  and request evidence serialization. Qwen is primary and Gemini fallback;
+  models, credentials, timeouts, and retry limits come from config/runtime and
   are not hardcoded in Notebook 01.
 - `grouping.py`: window planning, contact-sheet request planning, vote
   aggregation, ambiguous second pass, consistency review, failure handling,
@@ -708,9 +710,9 @@ unavailability after bounded retry is a production video failure.
 8. Provider outage fails the production video and cannot produce a misleading
    successful partition.
 
-Tests use fake deterministic judges and fixtures. Live Gemini calls are a
-separate opt-in integration/rehearsal layer and are not required for unit-test
-determinism.
+Tests use fake deterministic judges and fixtures. Live local-Qwen and Gemini
+calls are a separate opt-in integration/rehearsal layer and are not required
+for unit-test determinism.
 
 ## 15. Complete Execution Sequence
 

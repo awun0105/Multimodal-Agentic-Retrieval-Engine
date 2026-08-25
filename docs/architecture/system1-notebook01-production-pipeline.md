@@ -41,11 +41,13 @@ official video
   -> TransNet V2 shot detection
   -> early/middle/late keyframes from bands centered at 20%/50%/80%
   -> deterministic representative-keyframe selection
-  -> default faster-whisper large-v3 ASR, or optional pinned NeMo/Parakeet Vietnamese ASR
-  -> Gemini strict bilingual caption JSON, one response per shot
+  -> default pinned NeMo/Parakeet Vietnamese ASR, or Faster-Whisper Large-v3 override
+  -> OpenCV text-presence gate, then Vintern OCR for uncertain/text frames
+  -> shared 4-bit Qwen strict shot-caption JSON, batched over representative frames
   -> ASR-to-shot alignment
-  -> multimodal context-focus scene grouping
-  -> Gemini strict bilingual scene-summary JSON
+  -> shared Qwen multimodal context-focus scene grouping
+  -> shared Qwen strict bilingual scene-summary JSON
+  -> scoped Gemini fallback for failed semantic requests/runtime
   -> validated per-video structure ZIP
 ```
 
@@ -201,13 +203,13 @@ policy without retaining all full-resolution candidates for a long video.
 Production ASR configuration:
 
 ```text
-default provider = faster-whisper
-default model = large-v3
-default language = auto
-default VAD = enabled
-optional provider = nemo
-optional model = nvidia/parakeet-ctc-0.6b-Vietnamese at revision ac8e8de
-optional segmentation = FFmpeg silence detection with bounded max segment length
+default provider = nemo
+default model = nvidia/parakeet-ctc-0.6b-vi
+default revision = b0493142b49458810324e3db8be9e8e07b4ebc17
+default model file = parakeet-ctc-0.6b-vi.nemo
+segmentation = FFmpeg silence detection with bounded max segment length
+optional provider = faster_whisper
+optional model = Systran/faster-whisper-large-v3 at its configured revision
 ```
 
 ASR runs for every video.
@@ -223,15 +225,32 @@ ASR runs for every video.
   decoded-frame range when resolvable, text, detected language, confidence when
   available, provider/model/version, and status.
 
-## Canonical Shot Captions
+## OCR And Canonical Shot Captions
+
+Each representative keyframe first passes a conservative OpenCV text-presence
+gate. Only a high-confidence no-text decision skips Vintern. Uncertain results
+and gate errors run the pinned Vintern OCR model. A skipped image still emits a
+canonical `ocr_v2` row with empty text, `status=empty`, and gate provenance;
+gate counts and failures stay in diagnostics. Thresholds are versioned in
+`phase01.yaml` and participate in the OCR stage fingerprint.
 
 Each shot has exactly one caption row generated from its selected
-representative keyframe. Gemini must return strict JSON:
+representative keyframe. Qwen2.5-VL-7B-Instruct is primary and must return
+strict `shot_caption_response_v2` JSON including bilingual captions,
+objects/actions, visible-text summary, and scene type. The caption rows retain
+the canonical `shot_captions_v2` contract.
 
 ```json
 {
   "caption_vi": "...",
-  "caption_en": "..."
+  "caption_en": "...",
+  "objects_vi": ["..."],
+  "objects_en": ["..."],
+  "actions_vi": ["..."],
+  "actions_en": ["..."],
+  "visible_text_summary_vi": "...",
+  "visible_text_summary_en": "...",
+  "scene_type": "..."
 }
 ```
 
@@ -262,10 +281,12 @@ There is no canonical per-keyframe `image_captions` table. The API's raw JSON
 belongs in the content-addressed cache/diagnostics; the normalized bilingual
 fields belong in Parquet.
 
-Caption requests require content-addressed caching, bounded retry, rate-limit
-handling, resumability, exact model/version, prompt version, response-schema
-version, and non-secret diagnostics. A persistent caption failure fails the
-video because canonical captions are required for scene grouping.
+Caption requests require per-request content-addressed caching, bounded retry,
+resumability, exact model/version, prompt version, response-schema version, and
+non-secret diagnostics. Local requests use true processor/model tensor
+batching, not thread concurrency. Invalid JSON/schema for one request falls
+back only that request to Gemini; systemic local-runtime failure opens the
+chunk circuit and sends the remaining semantic work to Gemini.
 
 ## Transcript-Shot Alignment
 
@@ -288,25 +309,27 @@ The authoritative algorithm is
 `docs/architecture/system1-scene-grouping.md`.
 
 Its inputs are ordered shots, representative images, optional early/late images
-for focused review, bilingual shot captions, ASR transcript evidence, and the
-timeline. It does not use organizer support artifacts, OCR, objects,
-embeddings, or metadata as boundary evidence.
+for focused review, bilingual shot captions, caption objects/actions, canonical
+OCR, ASR transcript evidence, and the timeline. It does not use organizer
+support artifacts, embeddings, or organizer metadata as boundary evidence.
 
-Gemini returns only strict Boolean adjacent-shot boundary judgements. Package
+The configured structured client returns only strict Boolean adjacent-shot
+boundary judgements. Qwen is primary and Gemini is fallback. Package
 code owns overlap voting, ambiguity review, consistency review, deterministic
 scene partitioning, IDs, ranges, mappings, and validation. Every shot belongs
 to exactly one scene; scenes cannot overlap, leave a shot-order gap, or reorder
 shots.
 
-A valid all-false boundary result creates one successful scene. Gemini/provider
-failure after bounded retry fails the video; production does not silently turn
-an unresolved result into one fallback scene.
+A valid all-false boundary result creates one successful scene. Failure of both
+the local primary and configured fallback after bounded retry fails the video;
+production does not turn an unresolved result into one fabricated scene.
 
 ## Bilingual Scene Summaries
 
-Only after scene boundaries are fixed, Gemini receives the scene's ordered
-representative images, bilingual shot captions, ASR transcript evidence, and
-timeline. It returns strict JSON:
+Only after scene boundaries are fixed, the same shared Qwen runtime receives
+the scene's sampled representative images, bilingual shot captions,
+objects/actions, OCR, ASR transcript evidence, and timeline. Gemini receives
+the same request only when fallback is required. Both return strict JSON:
 
 ```json
 {
@@ -345,6 +368,7 @@ The per-video structure package is:
 |-- metadata_normalized.json
 |-- shots.parquet
 |-- keyframes.parquet
+|-- ocr.parquet
 |-- shot_captions.parquet
 |-- asr_segments.parquet
 |-- shot_transcript_links.parquet
@@ -356,6 +380,7 @@ The per-video structure package is:
 |-- manifest.json
 |-- artifact_manifest.json
 |-- checksums.json
+|-- ocr_status.json
 `-- errors.jsonl
 ```
 
@@ -364,21 +389,21 @@ the proposed list. It is the canonical direct mapping from scene context to ASR
 segments used by System 2 and is already part of the repository data contract.
 It is derived after the scene partition is fixed.
 
-Contact sheets, raw Gemini responses, retry logs, and API caches are
+Contact sheets, raw provider responses, retry logs, and request caches are
 intermediate/checkpoint data and are not canonical runtime tables.
 
 ## Notebook 02 Handoff
 
-Notebook 02 consumes only keyframes generated by Notebook 01 and creates:
+Notebook 02 consumes keyframes and evidence generated by Notebook 01 and
+creates:
 
 ```text
-Gemini OCR
 configured object detection
 SigLIP embeddings
 BEiT3 embeddings
 ```
 
-The exact object detector and exact Gemini/SigLIP/BEiT3 model identifiers are
+The exact object detector and exact SigLIP/BEiT3 model identifiers are
 configuration values that must be recorded in manifests; no unspecified model
 may be presented as reproducible production behavior.
 
@@ -430,11 +455,13 @@ independent retrieval indexes.
 - Worker reports and `errors.jsonl` distinguish failed, no-audio/no-speech, and
   successful-empty states.
 
-Notebook 01 processes one video at a time. TransNet and the selected ASR model
-do not remain resident together; after each GPU-heavy stage package code drops
-model and tensor references, runs garbage collection, and clears unused CUDA
-cache. Model weights may remain in the runtime's Hugging Face cache, which is
-separate from persistent stage checkpoints.
+Notebook 01 processes a resource-aware chunk of videos while preserving one
+heavy local VLM resident at a time. Vintern serves OCR and is released before
+Qwen loads. One Qwen processor/model session is then reused for shot captions,
+scene boundaries, and scene summaries across the chunk before release. Package
+code drops model/tensor references, runs garbage collection, and clears unused
+CUDA cache at lifecycle boundaries. Model files may remain in the runtime's
+Hugging Face cache, separate from persistent stage checkpoints.
 
 Raw-media downloads, Phase00 restore, checkpoint restore/verification,
 model-artifact downloads, and release checksum verification use bounded caches
@@ -442,14 +469,17 @@ inside run/video scratch. Those caches are removed after the relevant restore
 or after each video. Structured progress records expose batch/video/stage
 status and remaining scratch space without printing credentials.
 
-Faster-whisper uses CUDA `float16`, retries an OOM with CUDA `int8_float16`, and
-uses CPU `int8`; it does not replace large-v3 with a weaker model. If bounded
-OOM recovery is exhausted, the video becomes `failed_retryable`, its error is
-checkpointed, scratch/GPU state is cleaned, and processing continues with the
-next video. Gemini calls use bounded concurrency, initially two requests within
-the current video.
+Qwen is loaded explicitly with bitsandbytes NF4 4-bit, float16 compute, and
+double quantization on CUDA; load failure never silently retries the same
+checkpoint in full precision or with CPU/disk offload. Caption batches default
+to two and reduce on CUDA OOM until one. OCR batches default to four, but
+Vintern uses batches only when its model exposes a safe native API. Scene
+boundary and summary requests stay at one because they carry multi-image
+context. Repeated batch-one OOM or an unusable local runtime opens a per-chunk
+circuit breaker; isolated JSON/schema errors fall back per request without
+disabling Qwen. Gemini concurrency is unchanged.
 
-Gemini request-level content-addressed cache entries live in the current
+Structured request-level content-addressed cache entries live in the current
 video's stage scratch. The completed canonical stage is the persistent cache
 and is promoted to the configured writable checkpoint repository, which may be
 public or private. This avoids one Hugging Face commit per Gemini request while

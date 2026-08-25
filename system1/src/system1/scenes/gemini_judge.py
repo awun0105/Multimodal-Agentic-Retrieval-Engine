@@ -8,13 +8,14 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageOps
 
-from system1.gemini import GeminiRequest, GeminiStructuredClient
+from system1.gemini import StructuredRequest
+from system1.vlm import StructuredClient
 
 
-class GeminiSceneBoundaryJudge:
+class StructuredSceneBoundaryJudge:
     def __init__(
         self,
-        client: GeminiStructuredClient,
+        client: StructuredClient,
         *,
         video_id: str,
         prompt_dir: Path,
@@ -89,7 +90,7 @@ class GeminiSceneBoundaryJudge:
             "additionalProperties": False,
         }
         response = self.client.request(
-            GeminiRequest(
+            StructuredRequest(
                 request_kind=f"scene_boundary_{request_kind}",
                 video_id=self.video_id,
                 prompt=prompt,
@@ -106,7 +107,7 @@ class GeminiSceneBoundaryJudge:
         for item in boundaries:
             gap_id = str(item["after_shot_id"])
             if gap_id in result:
-                raise ValueError(f"Gemini duplicated scene gap: {gap_id}")
+                raise ValueError(f"Structured judge duplicated scene gap: {gap_id}")
             result[gap_id] = item["is_scene_boundary"]
             self._diagnostics[gap_id] = {
                 "reason": str(item.get("reason", "")),
@@ -205,3 +206,8 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, Sequence):
         return [str(item) for item in value if str(item).strip()]
     return []
+
+
+# Compatibility for existing imports while production call sites use the
+# provider-neutral name.
+GeminiSceneBoundaryJudge = StructuredSceneBoundaryJudge

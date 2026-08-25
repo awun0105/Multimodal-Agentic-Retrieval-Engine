@@ -1,7 +1,7 @@
-schema_version: phase01_models_v1_1
+schema_version: phase01_models_v1_2
 
-# One fixed production model graph. Notebook 01 uses local/free captioning by
-# default and keeps Gemini for scene boundary + summary stages.
+# One fixed local-first production model graph. Gemini remains an optional
+# request-level and runtime fallback for semantic stages.
 # Model IDs and source revisions are pinned. Runtime workers never convert
 # weights themselves. The active artifact uses official pinned source plus
 # SHA-256 verified preconverted PyTorch weights because upstream Git LFS access
@@ -24,24 +24,20 @@ phase01:
     subprocess_isolation: true
 
   asr:
-    provider: faster_whisper
-    package_version: 1.2.1
-    model_id: Systran/faster-whisper-large-v3
-    model_revision: edaa852ec7e145841d8ffdb056a99866b5f0a478
-    language: auto
-    vad_enabled: true
-    beam_size: 5
-    word_timestamps: false
-    vad_parameters:
-      threshold: 0.5
-      min_speech_duration_ms: 0
-      max_speech_duration_s: null
-      min_silence_duration_ms: 2000
-      speech_pad_ms: 400
-    compute_type:
-      cuda_default: float16
-      cuda_oom_retry: int8_float16
-      cpu: int8
+    provider: nemo
+    install_package: nemo_toolkit[asr]==2.6.0
+    package_version: 2.6.0
+    model_id: nvidia/parakeet-ctc-0.6b-vi
+    model_revision: b0493142b49458810324e3db8be9e8e07b4ebc17
+    model_file: parakeet-ctc-0.6b-vi.nemo
+    language: vi
+    segmentation: ffmpeg_silence
+    max_segment_seconds: 12
+    min_segment_seconds: 0.4
+    silence_db: -35
+    min_silence_duration: 0.6
+    speech_pad_seconds: 0.2
+    batch_size: 16
 
   asr_providers:
     faster_whisper:
@@ -65,9 +61,10 @@ phase01:
         cpu: int8
     nemo:
       provider: nemo
-      install_package: nemo_toolkit[asr]
-      model_id: nvidia/parakeet-ctc-0.6b-Vietnamese
-      model_revision: ac8e8de
+      install_package: nemo_toolkit[asr]==2.6.0
+      package_version: 2.6.0
+      model_id: nvidia/parakeet-ctc-0.6b-vi
+      model_revision: b0493142b49458810324e3db8be9e8e07b4ebc17
       model_file: parakeet-ctc-0.6b-vi.nemo
       language: vi
       segmentation: ffmpeg_silence
@@ -96,22 +93,19 @@ phase01:
     model_id: Qwen/Qwen2.5-VL-7B-Instruct
     model_revision: cc594898137f460bfe9f0759e9844b3ce807cfb5
     trust_remote_code: false
-    torch_dtype: auto
-    device_map: auto
+    torch_dtype: float16
+    device_map: cuda
+    quantization:
+      method: bitsandbytes
+      package_version: 0.47.0
+      mode: 4bit
+      quant_type: nf4
+      compute_dtype: float16
+      double_quant: true
     prompt_version: shot_caption_v2
     response_schema_version: shot_caption_response_v2
     max_new_tokens: 768
     fallbacks:
-      - provider: vintern_local
-        sdk: transformers
-        model_id: 5CD-AI/Vintern-3B-R-beta
-        model_revision: 4fd34d713dfca446cdecc00d921f5038909e3efb
-        trust_remote_code: true
-        torch_dtype: auto
-        device_map: auto
-        prompt_version: shot_caption_v2
-        response_schema_version: shot_caption_response_v2
-        max_new_tokens: 768
       - provider: gemini
         sdk: google-genai
         sdk_version: 2.13.0
@@ -122,23 +116,29 @@ phase01:
         response_schema_version: shot_caption_response_v2
 
   scene_boundary:
-    provider: gemini
-    sdk: google-genai
-    sdk_version: 2.13.0
-    model_id: gemini-3.6-flash
-    model_revision: gemini-3.6-flash
-    thinking_level: medium
+    provider: qwen_local
+    model_key: shot_caption
     prompt_version: scene_boundary_primary_v1
     focused_prompt_version: scene_boundary_focused_v1
     consistency_prompt_version: scene_boundary_consistency_v1
     response_schema_version: scene_boundary_response_v1
+    fallbacks:
+      - provider: gemini
+        sdk: google-genai
+        sdk_version: 2.13.0
+        model_id: gemini-3.6-flash
+        model_revision: gemini-3.6-flash
+        thinking_level: medium
 
   scene_summary:
-    provider: gemini
-    sdk: google-genai
-    sdk_version: 2.13.0
-    model_id: gemini-3.6-flash
-    model_revision: gemini-3.6-flash
-    thinking_level: medium
+    provider: qwen_local
+    model_key: shot_caption
     prompt_version: scene_summary_v1
     response_schema_version: scene_summary_response_v1
+    fallbacks:
+      - provider: gemini
+        sdk: google-genai
+        sdk_version: 2.13.0
+        model_id: gemini-3.6-flash
+        model_revision: gemini-3.6-flash
+        thinking_level: medium

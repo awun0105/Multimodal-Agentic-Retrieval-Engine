@@ -50,8 +50,9 @@ In scope:
 - Per-run and per-video Hugging Face download caches under disposable scratch,
   plus operator-visible video/stage/disk progress and post-run remote layout
   verification.
-- TransNet V2 shots, search-band keyframes, faster-whisper large-v3 ASR,
-  Gemini captions/grouping/summaries, package, sync, and scratch cleanup.
+- TransNet V2 shots, search-band keyframes, NVIDIA Vietnamese FastConformer
+  ASR, gated Vintern OCR, shared 4-bit Qwen2.5-VL caption/grouping/summaries,
+  scoped Gemini fallback, package, sync, and scratch cleanup.
 - Focused, integration, recovery, and real-provider acceptance tests.
 
 Out of scope:
@@ -91,11 +92,11 @@ The stage graph is:
 
 ```text
 shots
-  -> keyframes -> shot_captions
+  -> keyframes -> ocr -> shot_captions
 asr
 shots + asr -> shot_transcript_links
-shots + keyframes + shot_captions + shot_transcript_links -> scenes
-scenes + keyframes + shot_captions + shot_transcript_links -> scene_summaries
+shots + keyframes + ocr + shot_captions + shot_transcript_links -> scenes
+scenes + keyframes + ocr + shot_captions + shot_transcript_links -> scene_summaries
 all canonical stages -> package -> sync
 ```
 
@@ -165,18 +166,23 @@ state update have all succeeded.
    best selected role; otherwise use the highest-quality role, tie-breaking
    toward the temporal center.
 
-### Work Package 4: ASR And Gemini Stages
+### Work Package 4: ASR, OCR, And Semantic Stages
 
-1. Implement faster-whisper large-v3 with auto language and VAD.
-2. Use CUDA `float16`, retry CUDA OOM with `int8_float16`, and use CPU `int8`;
-   never substitute a weaker ASR model.
-3. Release stage model/tensor references, run garbage collection, and clear
-   unused CUDA cache before loading the next heavy model.
-4. Implement strict bilingual Gemini caption, Boolean scene-boundary, and
-   bilingual summary adapters with content-addressed caching.
-5. Bound Gemini concurrency to two requests per video and apply configured
-   retry/rate-limit behavior.
-6. Keep request-level cache in stage scratch; use the persistent completed
+1. Use pinned NeMo/FastConformer Vietnamese ASR by default while preserving
+   Faster-Whisper Large-v3 as a config override.
+2. Gate Vintern OCR with a conservative OpenCV text-presence filter; uncertain
+   and detector-error frames still run Vintern, while confident no-text frames
+   emit canonical empty OCR rows.
+3. Load Qwen2.5-VL-7B once per chunk in explicit bitsandbytes NF4 4-bit mode
+   after Vintern is released; reuse it for caption, boundary, and summary.
+4. Batch one-image local requests through `request_many`: OCR defaults to four
+   requests and captions to two, with adaptive CUDA OOM reduction to one.
+5. Keep scene-boundary and scene-summary requests at one because each request
+   contains larger multi-image/context evidence.
+6. Fall back only an isolated invalid/schema-failing request to Gemini. Open a
+   per-chunk Qwen circuit only for load failure, repeated batch-one OOM, or an
+   unusable local runtime; do not increase Gemini concurrency.
+7. Keep request-level cache in stage scratch; use the persistent completed
    stage itself as the cross-session cache to avoid per-request HF commits.
 
 ### Work Package 5: Orchestrator, Package, And Sync
@@ -212,6 +218,8 @@ The minimum invalidation rules are:
 - `shots` change invalidates `keyframes`, `shot_captions`,
   `shot_transcript_links`, `scenes`, `scene_summaries`, `package`, and `sync`.
 - `keyframes` change invalidates `shot_captions`, `scenes`, `scene_summaries`,
+  `package`, and `sync`.
+- `ocr` change invalidates `shot_captions`, `scenes`, `scene_summaries`,
   `package`, and `sync`.
 - `asr` change invalidates `shot_transcript_links`, `scenes`,
   `scene_summaries`, `package`, and `sync`.
@@ -255,7 +263,7 @@ completed stage.
 - [x] Complete Work Package 1 resolved-config and Notebook UX.
 - [x] Complete Work Package 2 checkpoint engine.
 - [x] Complete Work Package 3 shots and keyframes.
-- [x] Complete Work Package 4 ASR and Gemini stages.
+- [x] Complete Work Package 4 ASR, OCR, and local-first semantic stages.
 - [x] Complete Work Package 5 orchestration/package/sync.
 - [ ] Complete Work Package 6 real production proof.
 
@@ -289,6 +297,13 @@ completed stage.
   restore/verification, model artifacts, and remote artifact verification are
   disposable scratch scoped to the run or video. Notebook 01 exposes
   video/stage/disk progress and verifies the remote Phase01 layout after a run.
+- 2026-08-25: NeMo/FastConformer Vietnamese is the ASR default. One shared
+  Qwen2.5-VL-7B NF4 runtime is primary for caption, scene boundaries, and scene
+  summaries; Gemini is a request-scoped fallback unless a systemic local
+  failure opens the remainder-of-chunk circuit breaker.
+- 2026-08-25: OCR runs a conservative config-hashed OpenCV text-presence gate
+  before Vintern and maps confident no-text results to canonical `ocr_v2`
+  `status=empty` rows without inventing a new status.
 
 ## Still Required Before A Production Run
 
@@ -311,10 +326,10 @@ the one-time official TransNet converter parity job. Before a production run:
 - Focused proof covers config/hash/readiness, Phase00 resolution, checkpoint
   batch-scoped restore/corruption recovery, checkpoint grouped promotion,
   restore/corruption/invalidation, TransNet partitioning, one-pass grouped
-  frame decoding, search-band selection, ASR normalization, Gemini
-  retry/cache/schema repair, scene voting/review, strict package assembly, and
-  QA sampling.
-- The complete local suite passes 249 tests. Scoped Ruff checks pass for all
+  frame decoding, search-band selection, both ASR providers, OCR gate behavior,
+  true/adaptive local batching, request/systemic fallback separation, shared
+  Qwen residency, scene voting/review, strict package assembly, and QA sampling.
+- The complete local suite passes 298 tests. Scoped Ruff checks pass for all
   undefined names and for import correctness across the new Phase01 surface.
   Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
   current; and `git diff --check` passes.
@@ -325,10 +340,11 @@ the one-time official TransNet converter parity job. Before a production run:
 
 ## Result
 
-Active. Work Packages 0-5 are implemented locally. On 2026-08-24 the Notebook
-01 branch pin, writable public-checkpoint policy, bounded Hugging Face caches,
-structured progress, and final remote layout verification were implemented and
-covered by the 249-test local suite. The intentionally deferred gate is
+Active. Work Packages 0-5 are implemented locally. On 2026-08-25 the production
+defaults moved to NeMo/FastConformer ASR, gated Vintern OCR, and a shared 4-bit
+Qwen semantic runtime with scoped Gemini fallback. These paths, checkpoint
+invalidation, lifecycle telemetry, and packaging are covered by the 298-test
+local suite. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation

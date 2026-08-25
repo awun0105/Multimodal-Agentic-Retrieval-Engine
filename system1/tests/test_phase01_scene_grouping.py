@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
+import pytest
+from PIL import Image
+
+from system1.scenes.gemini_judge import StructuredSceneBoundaryJudge
 from system1.scenes.grouping import group_scenes, plan_focus_windows, vote_weight
 
 
@@ -109,3 +113,68 @@ def test_judge_must_return_exact_boolean_gap_set() -> None:
     judge = Judge(lambda _kind, _ids: {"unknown": True})
     with pytest.raises(ValueError, match="gap set mismatch"):
         group_scenes(video_id="v", shots=shots(3), evidence=shots(3), judge=judge, config=config())
+
+
+def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
+    tmp_path: Path,
+) -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.last_request = None
+
+        def request(self, request):
+            self.last_request = request
+            return {
+                "boundaries": [{
+                    "after_shot_id": "v_SH00000",
+                    "is_scene_boundary": True,
+                    "reason": "location changed",
+                    "confidence": 0.8,
+                    "evidence_used": ["caption", "images"],
+                }]
+            }
+
+    context = []
+    for index in range(2):
+        paths = {}
+        for role in ("representative", "early", "late"):
+            path = tmp_path / f"{index}_{role}.jpg"
+            Image.new("RGB", (32, 32), color=(index * 50, 20, 20)).save(path)
+            paths[role] = path
+        context.append({
+            "shot_id": f"v_SH{index:05d}",
+            "start_sec": float(index),
+            "end_sec": float(index + 1),
+            "representative_path": paths["representative"],
+            "early_path": paths["early"],
+            "late_path": paths["late"],
+            "caption_vi": "Một cảnh",
+            "caption_en": "A scene",
+            "ocr_text": ["text"],
+            "transcript": "speech",
+        })
+    client = RecordingClient()
+    prompt_dir = Path(__file__).resolve().parents[1] / "prompts"
+    judge = StructuredSceneBoundaryJudge(
+        client,
+        video_id="v",
+        prompt_dir=prompt_dir,
+        diagnostics_dir=tmp_path / "diagnostics",
+        model_config={
+            "prompt_version": "scene_boundary_primary_v1",
+            "focused_prompt_version": "scene_boundary_focused_v1",
+            "consistency_prompt_version": "scene_boundary_consistency_v1",
+            "response_schema_version": "scene_boundary_response_v1",
+        },
+    )
+
+    result = judge.judge(
+        request_kind="focused_review",
+        focus_gap_ids=("v_SH00000",),
+        context=context,
+    )
+
+    assert result == {"v_SH00000": True}
+    assert client.last_request.request_kind == "scene_boundary_focused_review"
+    assert len(client.last_request.image_paths) == 2
+    assert "ORDERED SHOT EVIDENCE" in client.last_request.prompt

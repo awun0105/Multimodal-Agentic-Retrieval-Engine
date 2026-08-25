@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import sys
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
+from system1.asr import AsrResult
 from system1.asr import transcribe_video as transcribe_with_configured_provider
 from system1.asr.faster_whisper import build_shot_transcript_links, transcribe_video
 
@@ -63,6 +66,28 @@ def test_no_audio_is_valid_empty_asr() -> None:
     )
     assert result.status == "no_audio"
     assert result.rows == []
+
+
+def test_asr_dispatch_without_provider_uses_nemo(monkeypatch) -> None:
+    from system1 import asr
+
+    expected = AsrResult("no_audio", [], None, 0, None)
+    monkeypatch.setattr(asr, "_transcribe_nemo", lambda *_args, **_kwargs: expected)
+    monkeypatch.setattr(
+        asr,
+        "_transcribe_faster_whisper",
+        lambda *_args, **_kwargs: pytest.fail("faster-whisper should not be default"),
+    )
+
+    result = asr.transcribe_video(
+        "unused.mp4",
+        video_id="L21_V001",
+        frame_timeline=timeline(),
+        config={},
+        audio_present=False,
+    )
+
+    assert result is expected
 
 
 def test_no_speech_is_valid_empty_asr() -> None:
@@ -169,6 +194,53 @@ def test_nemo_provider_emits_canonical_chunk_rows(monkeypatch, tmp_path: Path) -
             "status": "pass",
         }
     ]
+
+
+def test_nemo_snapshot_download_uses_verified_alias_and_revision(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from system1.asr import nemo
+
+    calls = []
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "parakeet-ctc-0.6b-vi.nemo").write_bytes(b"model")
+
+    class FakeAsrModel:
+        @staticmethod
+        def restore_from(path):
+            return path
+
+    nemo_module = ModuleType("nemo")
+    collections_module = ModuleType("nemo.collections")
+    asr_module = ModuleType("nemo.collections.asr")
+    asr_module.models = type("Models", (), {"ASRModel": FakeAsrModel})
+    nemo_module.collections = collections_module
+    collections_module.asr = asr_module
+    monkeypatch.setitem(sys.modules, "nemo", nemo_module)
+    monkeypatch.setitem(sys.modules, "nemo.collections", collections_module)
+    monkeypatch.setitem(sys.modules, "nemo.collections.asr", asr_module)
+
+    def fake_snapshot_download(**kwargs):
+        calls.append(kwargs)
+        return str(snapshot)
+
+    monkeypatch.setattr(nemo, "snapshot_download", fake_snapshot_download)
+
+    restored = nemo._load_pinned_nemo_model(
+        "nvidia/parakeet-ctc-0.6b-vi",
+        config={
+            "model_revision": "b0493142b49458810324e3db8be9e8e07b4ebc17",
+            "model_file": "parakeet-ctc-0.6b-vi.nemo",
+        },
+    )
+
+    assert restored == str(snapshot / "parakeet-ctc-0.6b-vi.nemo")
+    assert calls == [{
+        "repo_id": "nvidia/parakeet-ctc-0.6b-vi",
+        "revision": "b0493142b49458810324e3db8be9e8e07b4ebc17",
+        "allow_patterns": ["parakeet-ctc-0.6b-vi.nemo"],
+    }]
 
 
 def test_nemo_silencedetect_ranges_are_speech_segments(monkeypatch, tmp_path: Path) -> None:

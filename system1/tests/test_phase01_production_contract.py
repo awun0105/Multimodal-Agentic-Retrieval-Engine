@@ -21,8 +21,10 @@ from system1.config.loader import _stage_config_hashes
 from system1.phase01.production import (
     PARQUET_COLUMNS,
     _assemble_package,
+    _build_captions,
     _required_text,
 )
+from system1.phase01.validation import validate_rows
 
 SYSTEM1_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = SYSTEM1_ROOT / "configs"
@@ -45,7 +47,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["pipeline_id"] == "phase01_production_v1_1"
+    assert phase01["pipeline_id"] == "phase01_production_v1_2"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -58,8 +60,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "low_disk_max_chunk_videos": 1,
     }
     assert phase01["execution"]["inference_batch_size"] == {
-        "ocr": 1,
-        "shot_captions": 1,
+        "ocr": 4,
+        "shot_captions": 2,
     }
     assert phase01["api"]["max_concurrency_per_video"] == 2
     assert phase01["api"]["request_cache_backend"] == "stage_local"
@@ -86,18 +88,108 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "scene_boundary",
         "scene_summary",
     }
-    assert models["phase01"]["asr"]["provider"] == "faster_whisper"
+    assert models["phase01"]["asr"]["provider"] == "nemo"
+    assert models["phase01"]["asr"]["model_id"] == "nvidia/parakeet-ctc-0.6b-vi"
     assert models["phase01"]["ocr"]["provider"] == "vintern_local"
     assert models["phase01"]["ocr"]["model_id"] == "5CD-AI/Vintern-1B-v3_5"
     assert models["phase01"]["shot_caption"]["provider"] == "qwen_local"
     assert models["phase01"]["shot_caption"]["model_id"] == "Qwen/Qwen2.5-VL-7B-Instruct"
+    assert models["phase01"]["shot_caption"]["quantization"] == {
+        "method": "bitsandbytes",
+        "package_version": "0.47.0",
+        "mode": "4bit",
+        "quant_type": "nf4",
+        "compute_dtype": "float16",
+        "double_quant": True,
+    }
+    assert models["phase01"]["scene_boundary"]["provider"] == "qwen_local"
+    assert models["phase01"]["scene_summary"]["provider"] == "qwen_local"
     assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
 
 
-def test_canonical_gemini_text_rejects_whitespace_only_values() -> None:
+def test_canonical_structured_text_rejects_whitespace_only_values() -> None:
     assert _required_text({"caption_vi": "  nội dung  "}, "caption_vi") == "nội dung"
     with pytest.raises(ValueError, match="non-whitespace"):
         _required_text({"caption_vi": "   "}, "caption_vi")
+
+
+def test_build_captions_submits_all_shots_through_request_many(
+    tmp_path: Path,
+) -> None:
+    class RequestManyOnlyClient:
+        def __init__(self) -> None:
+            self.batches = []
+
+        def request_many(self, requests):
+            self.batches.append(requests)
+            return [
+                {
+                    "caption_vi": f"Cảnh {index}",
+                    "caption_en": f"Scene {index}",
+                    "objects_vi": [],
+                    "objects_en": [],
+                    "actions_vi": [],
+                    "actions_en": [],
+                    "visible_text_summary_vi": "",
+                    "visible_text_summary_en": "",
+                    "scene_type": "unknown",
+                    "__provider": "qwen_local",
+                    "__model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+                    "__model_revision": "revision",
+                }
+                for index, _request in enumerate(requests)
+            ]
+
+    client = RequestManyOnlyClient()
+    shots = [{"shot_id": f"shot_{index:03d}"} for index in range(2)]
+    keyframes = [
+        {
+            "shot_id": shot["shot_id"],
+            "keyframe_id": f"keyframe_{index:03d}",
+            "keyframe_ref": f"media://keyframes/frame_{index:03d}.jpg",
+            "timestamp_sec": float(index),
+            "is_representative": True,
+        }
+        for index, shot in enumerate(shots)
+    ]
+    model_config = load_configs(CONFIG_DIR)["models"]["phase01"]["shot_caption"]
+
+    rows = _build_captions(
+        video_id="L21_V001",
+        shots=shots,
+        keyframes=keyframes,
+        ocr_rows=[],
+        stage_dir=tmp_path,
+        client=client,
+        model_config=model_config,
+        max_concurrency=2,
+    )
+
+    assert len(client.batches) == 1
+    assert len(client.batches[0]) == 2
+    assert [row["caption_en"] for row in rows] == ["Scene 0", "Scene 1"]
+
+
+@pytest.mark.parametrize("provider", ["qwen_local", "gemini"])
+def test_scene_summaries_v2_accepts_local_and_fallback_provenance(
+    provider: str,
+) -> None:
+    validate_rows(
+        "scene_summaries",
+        [{
+            "scene_id": "L21_V001_SC00000",
+            "video_id": "L21_V001",
+            "summary_vi": "Một cảnh",
+            "summary_en": "A scene",
+            "provider": provider,
+            "model_name": "model",
+            "model_version": "revision",
+            "prompt_version": "scene_summary_v1",
+            "schema_version": "scene_summary_response_v1",
+            "confidence": None,
+            "status": "pass",
+        }],
+    )
 
 
 def test_keyframe_config_uses_search_bands_and_relative_representative_rule() -> None:
@@ -135,12 +227,8 @@ def test_phase01_config_encodes_oom_and_dependency_invalidation_policy() -> None
     models = configs["models"]["phase01"]
     dependencies = phase01["stages"]["dependencies"]
 
-    assert models["asr"]["model_id"] == "Systran/faster-whisper-large-v3"
-    assert models["asr"]["compute_type"] == {
-        "cuda_default": "float16",
-        "cuda_oom_retry": "int8_float16",
-        "cpu": "int8",
-    }
+    assert models["asr"]["model_id"] == "nvidia/parakeet-ctc-0.6b-vi"
+    assert models["asr"]["model_file"] == "parakeet-ctc-0.6b-vi.nemo"
     assert phase01["asr"]["exhausted_oom_status"] == "failed_retryable"
     assert dependencies["keyframes"] == ["shots"]
     assert dependencies["ocr"] == ["keyframes"]
@@ -173,6 +261,40 @@ def test_runtime_chunk_policy_does_not_change_stage_fingerprints() -> None:
     assert _stage_config_hashes(modified) == resolved.stage_config_hashes
 
 
+def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+
+    ocr_changed = copy.deepcopy(resolved.payload)
+    ocr_changed["phase01"]["ocr"]["text_presence_filter"][
+        "max_no_text_gray_std"
+    ] = 11
+    ocr_hashes = _stage_config_hashes(ocr_changed)
+    assert ocr_hashes["ocr"] != resolved.stage_config_hashes["ocr"]
+    assert ocr_hashes["shots"] == resolved.stage_config_hashes["shots"]
+
+    quant_changed = copy.deepcopy(resolved.payload)
+    quant_changed["models"]["shot_caption"]["quantization"][
+        "double_quant"
+    ] = False
+    quant_hashes = _stage_config_hashes(quant_changed)
+    for stage in ("shot_captions", "scenes", "scene_summaries"):
+        assert quant_hashes[stage] != resolved.stage_config_hashes[stage]
+
+    boundary_changed = copy.deepcopy(resolved.payload)
+    boundary_changed["models"]["scene_boundary"]["provider"] = "gemini"
+    boundary_hashes = _stage_config_hashes(boundary_changed)
+    assert boundary_hashes["scenes"] != resolved.stage_config_hashes["scenes"]
+    assert (
+        boundary_hashes["scene_summaries"]
+        == resolved.stage_config_hashes["scene_summaries"]
+    )
+
+
 def test_phase01_config_can_select_nemo_asr_provider() -> None:
     resolved = resolve_phase01_config(
         CONFIG_DIR,
@@ -185,11 +307,25 @@ def test_phase01_config_can_select_nemo_asr_provider() -> None:
     )
     models = resolved.payload["models"]
     assert models["asr"]["provider"] == "nemo"
-    assert models["asr"]["model_id"] == "nvidia/parakeet-ctc-0.6b-Vietnamese"
-    assert models["asr"]["model_revision"] == "ac8e8de"
+    assert models["asr"]["model_id"] == "nvidia/parakeet-ctc-0.6b-vi"
+    assert models["asr"]["model_revision"] == "b0493142b49458810324e3db8be9e8e07b4ebc17"
     assert models["asr"]["model_file"] == "parakeet-ctc-0.6b-vi.nemo"
     assert models["asr"]["segmentation"] == "ffmpeg_silence"
     assert models["asr"]["max_segment_seconds"] == 12
+
+
+def test_phase01_config_can_select_faster_whisper_asr_provider() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings={**user_settings(), "asr_provider": "faster_whisper"},
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+
+    asr = resolved.payload["models"]["asr"]
+    assert asr["provider"] == "faster_whisper"
+    assert asr["model_id"] == "Systran/faster-whisper-large-v3"
+    assert asr["model_revision"] == "edaa852ec7e145841d8ffdb056a99866b5f0a478"
 
 
 def test_resolved_config_is_stable_secret_free_and_auto_resolves_release(tmp_path: Path) -> None:
