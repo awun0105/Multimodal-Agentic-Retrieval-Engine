@@ -11,6 +11,12 @@ POLICY = {
     "medium_free_disk_gb": 35,
     "medium_max_chunk_videos": 2,
     "low_disk_max_chunk_videos": 1,
+    "ram": {
+        "medium_available_gb": 8,
+        "minimum_available_gb": 4,
+        "medium_max_chunk_videos": 2,
+        "low_max_chunk_videos": 1,
+    },
 }
 
 
@@ -21,6 +27,7 @@ def test_chunk_planner_applies_video_count_and_manifest_order() -> None:
         video_ids,
         raw_bytes_by_video={video_id: 100 for video_id in video_ids},
         free_disk_gb=100,
+        available_ram_gb=100,
         policy=POLICY,
     )
 
@@ -36,6 +43,7 @@ def test_chunk_planner_applies_raw_byte_limit_without_splitting_a_video() -> Non
         ["a", "b", "large", "c"],
         raw_bytes_by_video={"a": 600, "b": 600, "large": 2_000, "c": 100},
         free_disk_gb=100,
+        available_ram_gb=100,
         policy=POLICY,
     )
 
@@ -65,6 +73,7 @@ def test_chunk_planner_reduces_chunk_size_under_disk_pressure(
         video_ids,
         raw_bytes_by_video={video_id: 1 for video_id in video_ids},
         free_disk_gb=free_disk_gb,
+        available_ram_gb=100,
         policy=POLICY,
     )
 
@@ -76,6 +85,7 @@ def test_chunk_planner_treats_unknown_raw_size_conservatively() -> None:
         ["unknown", "known"],
         raw_bytes_by_video={"unknown": None, "known": 1},
         free_disk_gb=100,
+        available_ram_gb=100,
         policy=POLICY,
     )
 
@@ -88,5 +98,31 @@ def test_chunk_planner_rejects_invalid_policy() -> None:
             ["video"],
             raw_bytes_by_video={"video": 1},
             free_disk_gb=100,
+            available_ram_gb=100,
             policy={**POLICY, "max_chunk_videos": 0},
         )
+
+
+@pytest.mark.parametrize(
+    ("available_ram_gb", "expected_sizes"),
+    [
+        (8.1, [4, 1]),
+        (8.0, [2, 2, 1]),
+        (4.0, [2, 2, 1]),
+        (3.9, [1, 1, 1, 1, 1]),
+    ],
+)
+def test_chunk_planner_reduces_chunk_size_under_ram_pressure(
+    available_ram_gb: float, expected_sizes: list[int]
+) -> None:
+    video_ids = [f"video_{index}" for index in range(5)]
+
+    chunks = plan_runtime_chunks(
+        video_ids,
+        raw_bytes_by_video={video_id: 1 for video_id in video_ids},
+        free_disk_gb=100,
+        available_ram_gb=available_ram_gb,
+        policy=POLICY,
+    )
+
+    assert [len(chunk.video_ids) for chunk in chunks] == expected_sizes

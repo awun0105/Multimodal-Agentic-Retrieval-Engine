@@ -211,6 +211,20 @@ state update have all succeeded.
    concurrency, memory cleanup, API cache reuse, package, sync, and restore.
 5. Run full Batch 1 only after the prior proof passes.
 
+### Work Package 7: Runtime Memory And Lifecycle Hardening
+
+1. Make the chunk scheduler RAM-aware and block heavy model loads below the
+   configured minimum after deterministic cleanup/recheck.
+2. Advance the shared semantic client through explicit caption, scene, and
+   summary yields; clear generator references before the owner closes Qwen.
+3. Reject Qwen CPU/disk offload, record process RSS and stage memory
+   milestones, and cleanup chunk-local references before measuring chunk end.
+4. Print Git/config/model identity before expensive work so stale Notebook code
+   is visible immediately.
+5. Preserve checkpoint semantics: caption failure leaves the first four stages
+   complete and downstream unpromoted; missing complete artifacts invalidate
+   the affected stage and downstream.
+
 ## Dependencies And Invalidation
 
 The minimum invalidation rules are:
@@ -266,6 +280,7 @@ completed stage.
 - [x] Complete Work Package 4 ASR, OCR, and local-first semantic stages.
 - [x] Complete Work Package 5 orchestration/package/sync.
 - [ ] Complete Work Package 6 real production proof.
+- [x] Complete Work Package 7 runtime memory and lifecycle hardening.
 
 ## Decisions
 
@@ -304,6 +319,9 @@ completed stage.
 - 2026-08-25: OCR runs a conservative config-hashed OpenCV text-presence gate
   before Vintern and maps confident no-text results to canonical `ocr_v2`
   `status=empty` rows without inventing a new status.
+- 2026-08-25: Runtime chunks use configured RAM pressure limits of 8/4 GiB for
+  4/2/1 video planning. Heavy model loads require at least 4 GiB available
+  after cleanup, and Qwen CPU/disk offload is a systemic provider failure.
 
 ## Still Required Before A Production Run
 
@@ -329,10 +347,14 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The complete local suite passes 298 tests. Scoped Ruff checks pass for all
+- The complete local suite passes 308 tests. Scoped Ruff checks pass for all
   undefined names and for import correctness across the new Phase01 surface.
   Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
   current; and `git diff --check` passes.
+- Runtime-hardening tests prove one Qwen load/close per chunk across captions,
+  scenes, and summaries; Vintern-before-Qwen release ordering; request/systemic
+  fallback separation; RAM-aware 4/2/1 scheduling; pre-load RAM blocking;
+  checkpoint failure semantics; and release of chunk client references.
 - CLI/notebook contracts prove that no Phase01 provider selector is exposed and
   Notebook 01 has one package invocation with minimal settings.
 - Real-provider one-video, heterogeneous-batch, disconnect-at-every-boundary,
@@ -340,11 +362,11 @@ the one-time official TransNet converter parity job. Before a production run:
 
 ## Result
 
-Active. Work Packages 0-5 are implemented locally. On 2026-08-25 the production
+Active. Work Packages 0-5 and 7 are implemented locally. On 2026-08-25 the production
 defaults moved to NeMo/FastConformer ASR, gated Vintern OCR, and a shared 4-bit
 Qwen semantic runtime with scoped Gemini fallback. These paths, checkpoint
-invalidation, lifecycle telemetry, and packaging are covered by the 298-test
-local suite. The intentionally deferred gate is
+invalidation, lifecycle telemetry, RAM guards, and packaging are covered by the
+308-test local suite. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation

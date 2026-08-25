@@ -96,6 +96,7 @@ def run_phase01_preflight(
         "onnx",
         "opencv-python-headless",
         "pillow",
+        "psutil",
     ):
         try:
             versions[package] = importlib.metadata.version(package)

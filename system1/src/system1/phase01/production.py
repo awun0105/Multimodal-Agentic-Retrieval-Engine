@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import psutil
 
 from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
@@ -46,6 +47,7 @@ from system1.vlm import (
     FallbackStructuredClient,
     LocalVisionStructuredClient,
     MetadataStructuredClient,
+    SystemicProviderError,
 )
 
 PARQUET_COLUMNS: dict[str, list[str]] = {
@@ -70,6 +72,10 @@ class _VideoFlow:
     scratch: Path
     manager: CheckpointManager
     pipeline: Generator[str, Any, dict[str, Any]]
+
+
+class InsufficientMemoryError(RuntimeError):
+    """Retryable host-memory pressure that blocks a heavy model load."""
 
 
 _MANAGER_RUNTIME_CONTEXT: weakref.WeakKeyDictionary[
@@ -105,6 +111,7 @@ def process_production_batch(
     media = pd.read_parquet(release_dir / "raw_mapping" / "media_store_manifest.parquet")
     videos_by_id = {str(row["video_id"]): row for row in videos.to_dict("records")}
     media_by_id = {str(row["video_id"]): row for row in media.to_dict("records")}
+    del videos, media
     result_slots: list[dict[str, Any] | None] = [None] * len(video_ids)
     scratch_root.mkdir(parents=True, exist_ok=True)
     _emit_progress(
@@ -129,6 +136,7 @@ def process_production_batch(
             pending,
             raw_bytes_by_video=raw_bytes_by_video,
             free_disk_gb=_scratch_free_gb(scratch_root),
+            available_ram_gb=_available_ram_gb(),
             policy=scheduler_policy,
         )[0]
         chunk_index += 1
@@ -147,6 +155,16 @@ def process_production_batch(
         _emit_progress(
             event="chunk",
             status="start",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            chunk_raw_bytes=planned.raw_bytes,
+        )
+        _emit_progress(
+            event="memory",
+            status="chunk_start",
             scratch=scratch_root,
             release_id=release_id,
             batch_id=batch_id,
@@ -253,14 +271,14 @@ def process_production_batch(
                     video_count=len(video_ids),
                 )
 
-        active = _run_chunk_model_stage(
+        active = _run_chunk_client_phase(
             active,
             model_config=config.payload["models"]["ocr"],
             phase01=config.payload["phase01"],
             cache=ArtifactStore(chunk_scratch / "ocr_api_cache"),
             cache_prefix="ocr",
-            expected_yield="shot_captions",
-            caption_chain=False,
+            expected_yields=("shot_captions",),
+            model_role="ocr",
             result_slots=result_slots,
             scratch_root=scratch_root,
             release_id=release_id,
@@ -269,14 +287,14 @@ def process_production_batch(
             chunk_index=chunk_index,
             chunk_size=chunk_size,
         )
-        active = _run_chunk_model_stage(
+        active = _run_chunk_client_phase(
             active,
             model_config=config.payload["models"]["shot_caption"],
             phase01=config.payload["phase01"],
             cache=ArtifactStore(chunk_scratch / "caption_api_cache"),
             cache_prefix="shot_caption",
-            expected_yield="finalize",
-            caption_chain=True,
+            expected_yields=("scenes", "scene_summaries", "finalize"),
+            model_role="semantic",
             result_slots=result_slots,
             scratch_root=scratch_root,
             release_id=release_id,
@@ -333,7 +351,24 @@ def process_production_batch(
                     batch_id=batch_id,
                     video_count=len(video_ids),
                 )
+        active.clear()
+        flow = None
+        pipeline = None
+        manager = None
+        checkpoint_store = None
+        release_store = None
         shutil.rmtree(chunk_scratch, ignore_errors=True)
+        _cleanup_runtime_resources()
+        _emit_progress(
+            event="memory",
+            status="chunk_end",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            chunk_raw_bytes=planned.raw_bytes,
+        )
         _emit_progress(
             event="chunk",
             status="complete",
@@ -420,15 +455,15 @@ def process_production_batch(
     return report
 
 
-def _run_chunk_model_stage(
+def _run_chunk_client_phase(
     flows: list[_VideoFlow],
     *,
     model_config: Mapping[str, Any],
     phase01: Mapping[str, Any],
     cache: ArtifactStore,
     cache_prefix: str,
-    expected_yield: str,
-    caption_chain: bool,
+    expected_yields: tuple[str, ...],
+    model_role: str,
     result_slots: list[dict[str, Any] | None],
     scratch_root: Path,
     release_id: str,
@@ -439,8 +474,12 @@ def _run_chunk_model_stage(
 ) -> list[_VideoFlow]:
     if not flows:
         return []
+    if model_role not in {"ocr", "semantic"}:
+        raise ValueError(f"Unsupported chunk model role: {model_role}")
+    if not expected_yields:
+        raise ValueError("Chunk client phase requires at least one expected yield")
 
-    stage = "shot_captions" if caption_chain else "ocr"
+    stage = "shot_captions" if model_role == "semantic" else "ocr"
     lifecycle_callback = _model_lifecycle_callback(
         scratch_root=scratch_root,
         release_id=release_id,
@@ -449,13 +488,22 @@ def _run_chunk_model_stage(
         chunk_size=chunk_size,
         stage=stage,
     )
+    pre_load_callback = _heavy_model_memory_guard(
+        scratch_root=scratch_root,
+        release_id=release_id,
+        batch_id=batch_id,
+        chunk_index=chunk_index,
+        chunk_size=chunk_size,
+        policy=phase01["execution"]["chunk_scheduler"]["ram"],
+    )
     try:
-        if caption_chain:
+        if model_role == "semantic":
             client = _caption_client_for_model(
                 model_config,
                 phase01=phase01,
                 cache=cache,
                 lifecycle_callback=lifecycle_callback,
+                pre_load_callback=pre_load_callback,
             )
         else:
             client = _structured_client_for_model(
@@ -464,6 +512,7 @@ def _run_chunk_model_stage(
                 cache=cache,
                 cache_prefix=cache_prefix,
                 lifecycle_callback=lifecycle_callback,
+                pre_load_callback=pre_load_callback,
             )
     except Exception as exc:  # noqa: BLE001 - fail only this chunk stage
         for flow in flows:
@@ -482,29 +531,73 @@ def _run_chunk_model_stage(
             )
         return []
 
-    survivors: list[_VideoFlow] = []
+    survivors = list(flows)
     try:
-        for flow in flows:
-            try:
-                yielded = flow.pipeline.send(client)
-                if yielded != expected_yield:
-                    raise RuntimeError(
-                        "Phase01 video flow expected "
-                        f"{expected_yield}, received {yielded!r}"
+        for step_index, expected_yield in enumerate(expected_yields):
+            next_survivors: list[_VideoFlow] = []
+            for flow in survivors:
+                try:
+                    yielded = flow.pipeline.send(client if step_index == 0 else None)
+                    if yielded != expected_yield:
+                        raise RuntimeError(
+                            "Phase01 video flow expected "
+                            f"{expected_yield}, received {yielded!r}"
+                        )
+                    next_survivors.append(flow)
+                except Exception as exc:  # noqa: BLE001 - isolate failures per video
+                    _finish_failed_video(
+                        flow,
+                        exc,
+                        result_slots=result_slots,
+                        scratch_root=scratch_root,
+                        release_id=release_id,
+                        batch_id=batch_id,
+                        video_count=video_count,
                     )
-                survivors.append(flow)
-            except Exception as exc:  # noqa: BLE001 - isolate failures per video
-                _finish_failed_video(
-                    flow,
-                    exc,
-                    result_slots=result_slots,
-                    scratch_root=scratch_root,
+            survivors = next_survivors
+            if not survivors:
+                break
+            if model_role == "semantic":
+                milestone = {
+                    "scenes": "after_captions",
+                    "scene_summaries": "after_scenes",
+                    "finalize": "after_summaries",
+                }[expected_yield]
+                _emit_progress(
+                    event="memory",
+                    status=milestone,
+                    scratch=scratch_root,
                     release_id=release_id,
                     batch_id=batch_id,
-                    video_count=video_count,
+                    chunk_index=chunk_index,
+                    chunk_size=chunk_size,
+                    active_video_count=len(survivors),
                 )
     finally:
         _release_structured_client(client)
+        client = None
+        if model_role == "ocr":
+            _emit_progress(
+                event="memory",
+                status="after_ocr",
+                scratch=scratch_root,
+                release_id=release_id,
+                batch_id=batch_id,
+                chunk_index=chunk_index,
+                chunk_size=chunk_size,
+                active_video_count=len(survivors),
+            )
+        else:
+            _emit_progress(
+                event="memory",
+                status="qwen_unloaded",
+                scratch=scratch_root,
+                release_id=release_id,
+                batch_id=batch_id,
+                chunk_index=chunk_index,
+                chunk_size=chunk_size,
+                active_video_count=len(survivors),
+            )
     return survivors
 
 
@@ -863,6 +956,7 @@ def _process_video_flow(
                 prompt_version=models["shot_caption"]["prompt_version"],
                 schema_version=phase01["schemas"]["shot_captions"],
             )
+            del caption_rows
         finally:
             pass  # The chunk scheduler owns the shared client lifecycle.
     _emit_stage_progress(
@@ -906,6 +1000,8 @@ def _process_video_flow(
     links_output_fingerprint = manager.stage_output_fingerprint(
         "shot_transcript_links"
     )
+
+    yield "scenes"
 
     manager.active_stage = "scenes"
     _emit_stage_progress(manager, "scenes", scratch, status="start")
@@ -956,12 +1052,15 @@ def _process_video_flow(
             prompt_version=scene_boundary_model["prompt_version"],
             schema_version=phase01["schemas"]["scenes"],
         )
+        del decisions, evidence, judge
     _emit_stage_progress(
         manager, "scenes", scratch, status="complete", reused=scenes_reused
     )
     scenes = pd.read_parquet(scenes_path).to_dict("records")
     scene_links = pd.read_parquet(scene_links_path).to_dict("records")
     scenes_output_fingerprint = manager.stage_output_fingerprint("scenes")
+
+    yield "scene_summaries"
 
     manager.active_stage = "scene_summaries"
     _emit_stage_progress(manager, "scene_summaries", scratch, status="start")
@@ -1002,6 +1101,7 @@ def _process_video_flow(
             prompt_version=scene_summary_model["prompt_version"],
             schema_version=phase01["schemas"]["scene_summaries"],
         )
+        del summary_rows
     _emit_stage_progress(
         manager,
         "scene_summaries",
@@ -1011,6 +1111,17 @@ def _process_video_flow(
     )
     summaries_output_fingerprint = manager.stage_output_fingerprint("scene_summaries")
 
+    # Package/sync read stage artifacts from disk. Drop semantic runtime and
+    # table references before the chunk owner closes Qwen and resumes this flow.
+    caption_client = None
+    shots = []
+    keyframes = []
+    asr_rows = []
+    ocr_rows = []
+    captions = []
+    links = []
+    scenes = []
+    scene_links = []
     yield "finalize"
 
     manager.active_stage = "package"
@@ -1191,6 +1302,7 @@ def _caption_client_for_model(
     phase01: Mapping[str, Any],
     cache: ArtifactStore,
     lifecycle_callback=None,
+    pre_load_callback=None,
 ):
     clients = [
         _structured_client_for_model(
@@ -1199,6 +1311,7 @@ def _caption_client_for_model(
             cache=cache,
             cache_prefix=f"{model_config['provider']}/shot_caption",
             lifecycle_callback=lifecycle_callback,
+            pre_load_callback=pre_load_callback,
         )
     ]
     for fallback in model_config.get("fallbacks", []):
@@ -1209,6 +1322,7 @@ def _caption_client_for_model(
                 cache=cache,
                 cache_prefix=f"{fallback['provider']}/shot_caption",
                 lifecycle_callback=lifecycle_callback,
+                pre_load_callback=pre_load_callback,
             )
         )
     return (
@@ -1241,6 +1355,7 @@ def _structured_client_for_model(
     cache: ArtifactStore,
     cache_prefix: str,
     lifecycle_callback=None,
+    pre_load_callback=None,
 ):
     provider = str(model_config["provider"])
     if provider == "gemini":
@@ -1275,6 +1390,7 @@ def _structured_client_for_model(
             cache=cache,
             cache_prefix=f"local_vlm/{cache_prefix}",
             lifecycle_callback=lifecycle_callback,
+            pre_load_callback=pre_load_callback,
         )
     raise RuntimeError(f"Unsupported structured provider: {provider}")
 
@@ -1380,8 +1496,15 @@ def _build_ocr(
         try:
             responses = list(client.request_many(requests))
         except BatchRequestError as exc:
+            if any(
+                isinstance(error, SystemicProviderError)
+                for error in exc.errors.values()
+            ):
+                raise
             responses = list(exc.results)
             errors = dict(exc.errors)
+        except InsufficientMemoryError:
+            raise
         except Exception as exc:  # noqa: BLE001 - preserve per-keyframe degradation
             errors = {index: exc for index in range(len(requests))}
 
@@ -1978,11 +2101,57 @@ def _model_lifecycle_callback(
     return emit
 
 
+def _heavy_model_memory_guard(
+    *,
+    scratch_root: Path,
+    release_id: str,
+    batch_id: str,
+    chunk_index: int,
+    chunk_size: int,
+    policy: Mapping[str, Any],
+):
+    try:
+        minimum_available_gb = float(policy["minimum_available_gb"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Phase01 RAM guard minimum_available_gb must be configured"
+        ) from exc
+    if minimum_available_gb < 0:
+        raise ValueError("Phase01 RAM guard minimum_available_gb must be non-negative")
+
+    def guard(provider: str) -> None:
+        before_cleanup_gb = _available_ram_gb()
+        _cleanup_runtime_resources()
+        available_gb = _available_ram_gb()
+        _emit_progress(
+            event="memory_guard",
+            status="pass" if available_gb >= minimum_available_gb else "blocked",
+            scratch=scratch_root,
+            release_id=release_id,
+            batch_id=batch_id,
+            chunk_index=chunk_index,
+            chunk_size=chunk_size,
+            provider=provider,
+            ram_available_before_cleanup_gb=before_cleanup_gb,
+            ram_available_after_cleanup_gb=available_gb,
+            minimum_available_gb=minimum_available_gb,
+        )
+        if available_gb < minimum_available_gb:
+            raise InsufficientMemoryError(
+                "insufficient RAM for heavy model load: "
+                f"available={available_gb:.3f} GiB, "
+                f"minimum={minimum_available_gb:.3f} GiB, provider={provider}"
+            )
+
+    return guard
+
+
 def _resource_snapshot(scratch: Path) -> dict[str, float | None]:
     snapshot: dict[str, float | None] = {
         "scratch_free_gb": None,
         "ram_used_gb": None,
         "ram_available_gb": None,
+        "process_rss_gb": None,
         "gpu_allocated_gb": None,
         "gpu_reserved_gb": None,
         "gpu_peak_allocated_gb": None,
@@ -1992,12 +2161,13 @@ def _resource_snapshot(scratch: Path) -> dict[str, float | None]:
     except (FileNotFoundError, OSError):
         pass
     try:
-        page_size = int(os.sysconf("SC_PAGE_SIZE"))
-        total_bytes = page_size * int(os.sysconf("SC_PHYS_PAGES"))
-        available_bytes = page_size * int(os.sysconf("SC_AVPHYS_PAGES"))
-        snapshot["ram_available_gb"] = _bytes_to_gb(available_bytes)
-        snapshot["ram_used_gb"] = _bytes_to_gb(total_bytes - available_bytes)
-    except (AttributeError, OSError, TypeError, ValueError):
+        memory = psutil.virtual_memory()
+        snapshot["ram_available_gb"] = _bytes_to_gb(memory.available)
+        snapshot["ram_used_gb"] = _bytes_to_gb(memory.total - memory.available)
+        snapshot["process_rss_gb"] = _bytes_to_gb(
+            psutil.Process().memory_info().rss
+        )
+    except (OSError, TypeError, ValueError):
         pass
     try:
         import torch
@@ -2025,6 +2195,10 @@ def _bytes_to_gb(value: float) -> float:
 
 def _scratch_free_gb(scratch: Path) -> float:
     return float(shutil.disk_usage(scratch).free) / (1024**3)
+
+
+def _available_ram_gb() -> float:
+    return float(psutil.virtual_memory().available) / (1024**3)
 
 
 def _mapping_raw_bytes(mapping: Mapping[str, Any]) -> int | None:
@@ -2060,6 +2234,10 @@ def _release_structured_client(client: Any) -> None:
     close = getattr(client, "close", None)
     if callable(close):
         close()
+    _cleanup_runtime_resources()
+
+
+def _cleanup_runtime_resources() -> None:
     # Third-party wrappers do not consistently release cyclic references or
     # CUDA caches even after their close hook returns.
     gc.collect()
@@ -2070,6 +2248,9 @@ def _release_structured_client(client: Any) -> None:
     try:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            ipc_collect = getattr(torch.cuda, "ipc_collect", None)
+            if callable(ipc_collect):
+                ipc_collect()
     except RuntimeError:
         pass
 
@@ -2184,5 +2365,7 @@ def _required_text(payload: Mapping[str, Any], key: str) -> str:
 
 
 def _retryable_video_error(exc):
+    if isinstance(exc, InsufficientMemoryError):
+        return True
     message = str(exc).lower()
-    return any(marker in message for marker in ("timeout", "timed out", "429", "500", "502", "503", "504", "out of memory", "temporarily unavailable", "connection reset", "decode", "i/o"))
+    return any(marker in message for marker in ("timeout", "timed out", "429", "500", "502", "503", "504", "out of memory", "insufficient ram", "temporarily unavailable", "connection reset", "decode", "i/o"))

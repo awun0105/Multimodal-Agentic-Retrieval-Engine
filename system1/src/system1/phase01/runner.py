@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -13,6 +14,7 @@ import pandas as pd
 from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.config import (
+    ResolvedPhase01Config,
     load_configs,
     persist_resolved_phase01_config,
     require_phase01_production_ready,
@@ -75,6 +77,16 @@ def run_phase01_pipeline(
         phase00_release_id=selected.release_id,
     )
     require_phase01_production_ready(resolved)
+    runtime_diagnostics = _build_runtime_diagnostics(configs, resolved)
+    print(
+        "[phase01] "
+        + json.dumps(
+            {"event": "runtime_identity", **runtime_diagnostics},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     scratch_root = _scratch_root(resolved.payload["storage"], output_root)
     if validate_remote:
         preflight_cache = scratch_root / ".hf_cache" / "storage_preflight"
@@ -138,6 +150,83 @@ def run_phase01_pipeline(
     )
     temporary.replace(last_run)
     return Phase01RunResult(release_id, release_dir, resolved_path, report, preflight)
+
+
+def _build_runtime_diagnostics(
+    configs: dict[str, Any], resolved: ResolvedPhase01Config
+) -> dict[str, Any]:
+    models = resolved.payload["models"]
+    caption = models["shot_caption"]
+    quantization = caption.get("quantization", {})
+    fallback_providers = [
+        str(model["provider"])
+        for model in caption.get("fallbacks", [])
+        if model.get("provider")
+    ]
+    git_identity = _git_identity()
+    expected_branch = str(os.environ.get("AIC_EXPECTED_GIT_BRANCH") or "") or None
+    actual_branch = git_identity["git_branch"]
+    return {
+        **git_identity,
+        "expected_git_branch": expected_branch,
+        "git_branch_matches_expected": (
+            None if expected_branch is None else actual_branch == expected_branch
+        ),
+        "config_hash": resolved.config_hash,
+        "pipeline_id": resolved.payload["phase01"]["pipeline_id"],
+        "phase01_schema_version": resolved.payload["phase01"]["schema_version"],
+        "models_schema_version": configs["models"]["schema_version"],
+        "asr": {
+            "provider": models["asr"]["provider"],
+            "model_id": models["asr"]["model_id"],
+        },
+        "ocr": {
+            "provider": models["ocr"]["provider"],
+            "model_id": models["ocr"]["model_id"],
+        },
+        "semantic": {
+            "provider": caption["provider"],
+            "model_id": caption["model_id"],
+            "quantization": (
+                f"{quantization.get('method', 'none')}:"
+                f"{quantization.get('mode', 'none')}:"
+                f"{quantization.get('quant_type', 'none')}"
+            ),
+            "stages": ["shot_captions", "scenes", "scene_summaries"],
+        },
+        "semantic_fallback_providers": fallback_providers,
+    }
+
+
+def _git_identity() -> dict[str, Any]:
+    repo_root = next(
+        (
+            parent
+            for parent in Path(__file__).resolve().parents
+            if (parent / ".git").exists()
+        ),
+        None,
+    )
+    if repo_root is None:
+        return {"git_commit_sha": None, "git_branch": None, "git_dirty": None}
+
+    def run(*args: str) -> str:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        return completed.stdout.strip()
+
+    try:
+        sha = run("rev-parse", "HEAD")
+        branch = run("branch", "--show-current") or None
+        dirty = bool(run("status", "--porcelain"))
+    except (OSError, subprocess.CalledProcessError):
+        return {"git_commit_sha": None, "git_branch": None, "git_dirty": None}
+    return {"git_commit_sha": sha, "git_branch": branch, "git_dirty": dirty}
 
 
 def _restore_phase00_if_needed(

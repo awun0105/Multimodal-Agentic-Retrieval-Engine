@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_2
-pipeline_id: phase01_production_v1_2
+schema_version: phase01_pipeline_v1_3
+pipeline_id: phase01_production_v1_3
 
 execution:
   video_order: batch_manifest
@@ -11,6 +11,11 @@ execution:
     medium_free_disk_gb: 35
     medium_max_chunk_videos: 2
     low_disk_max_chunk_videos: 1
+    ram:
+      medium_available_gb: 8
+      minimum_available_gb: 4
+      medium_max_chunk_videos: 2
+      low_max_chunk_videos: 1
   inference_batch_size:
     ocr: 4
     shot_captions: 2

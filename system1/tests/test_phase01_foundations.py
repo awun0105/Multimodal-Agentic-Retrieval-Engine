@@ -325,6 +325,26 @@ def test_corrupt_checkpoint_output_is_not_reusable(tmp_path: Path) -> None:
     assert checkpoint.load_state()["stages"]["shots"]["status"] == "invalidated"
 
 
+def test_missing_checkpoint_output_invalidates_complete_state(tmp_path: Path) -> None:
+    checkpoint = manager(tmp_path)
+    output = tmp_path / "shots.parquet"
+    output.write_bytes(b"valid")
+    fingerprint = compute_fingerprint("input")
+    record = checkpoint.promote_stage(
+        "shots",
+        input_fingerprint=fingerprint,
+        outputs=[output],
+        schema_version="shots_v1",
+    )
+    remote_path = next(iter(record["output_checksums"]))
+    (tmp_path / "persistent" / remote_path).unlink()
+
+    assert checkpoint.is_reusable("shots", input_fingerprint=fingerprint) is False
+    state = checkpoint.load_state()
+    assert state["stages"]["shots"]["status"] == "invalidated"
+    assert state["stages"]["shots"]["output_checksums"] == {}
+
+
 def test_changed_input_invalidates_complete_stage_and_only_its_downstream(
     tmp_path: Path,
 ) -> None:

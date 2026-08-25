@@ -24,6 +24,7 @@ from system1.phase01.production import (
     _build_captions,
     _required_text,
 )
+from system1.phase01.runner import _build_runtime_diagnostics
 from system1.phase01.validation import validate_rows
 
 SYSTEM1_ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +48,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["pipeline_id"] == "phase01_production_v1_2"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_3"
+    assert phase01["pipeline_id"] == "phase01_production_v1_3"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -58,6 +60,12 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "medium_free_disk_gb": 35,
         "medium_max_chunk_videos": 2,
         "low_disk_max_chunk_videos": 1,
+        "ram": {
+            "medium_available_gb": 8,
+            "minimum_available_gb": 4,
+            "medium_max_chunk_videos": 2,
+            "low_max_chunk_videos": 1,
+        },
     }
     assert phase01["execution"]["inference_batch_size"] == {
         "ocr": 4,
@@ -105,6 +113,47 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     assert models["phase01"]["scene_boundary"]["provider"] == "qwen_local"
     assert models["phase01"]["scene_summary"]["provider"] == "qwen_local"
     assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
+
+
+def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
+    monkeypatch,
+) -> None:
+    configs = load_configs(CONFIG_DIR)
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    monkeypatch.setenv("AIC_EXPECTED_GIT_BRANCH", "dev")
+    monkeypatch.setattr(
+        "system1.phase01.runner._git_identity",
+        lambda: {
+            "git_commit_sha": "a" * 40,
+            "git_branch": "dev",
+            "git_dirty": False,
+        },
+    )
+
+    diagnostics = _build_runtime_diagnostics(configs, resolved)
+
+    assert diagnostics["git_commit_sha"] == "a" * 40
+    assert diagnostics["git_branch_matches_expected"] is True
+    assert diagnostics["config_hash"] == resolved.config_hash
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_3"
+    assert diagnostics["models_schema_version"] == "phase01_models_v1_2"
+    assert diagnostics["asr"] == {
+        "provider": "nemo",
+        "model_id": "nvidia/parakeet-ctc-0.6b-vi",
+    }
+    assert diagnostics["ocr"]["model_id"] == "5CD-AI/Vintern-1B-v3_5"
+    assert diagnostics["semantic"] == {
+        "provider": "qwen_local",
+        "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "quantization": "bitsandbytes:4bit:nf4",
+        "stages": ["shot_captions", "scenes", "scene_summaries"],
+    }
+    assert diagnostics["semantic_fallback_providers"] == ["gemini"]
 
 
 def test_canonical_structured_text_rejects_whitespace_only_values() -> None:
@@ -253,6 +302,9 @@ def test_runtime_chunk_policy_does_not_change_stage_fingerprints() -> None:
     )
     modified = copy.deepcopy(resolved.payload)
     modified["phase01"]["execution"]["chunk_scheduler"]["max_chunk_videos"] = 1
+    modified["phase01"]["execution"]["chunk_scheduler"]["ram"][
+        "minimum_available_gb"
+    ] = 6
     modified["phase01"]["execution"]["inference_batch_size"] = {
         "ocr": 1,
         "shot_captions": 1,

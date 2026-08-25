@@ -17,9 +17,10 @@ def plan_runtime_chunks(
     *,
     raw_bytes_by_video: Mapping[str, int | None],
     free_disk_gb: float,
+    available_ram_gb: float,
     policy: Mapping[str, object],
 ) -> list[RuntimeChunk]:
-    """Partition manifest-ordered videos by disk pressure and raw input bytes."""
+    """Partition videos by disk, RAM, raw bytes, and manifest order."""
 
     max_videos = _positive_int(policy, "max_chunk_videos")
     max_raw_bytes = _positive_int(policy, "max_chunk_raw_bytes")
@@ -27,8 +28,23 @@ def plan_runtime_chunks(
     medium_free_disk_gb = _non_negative_float(policy, "medium_free_disk_gb")
     medium_max_videos = _positive_int(policy, "medium_max_chunk_videos")
     low_disk_max_videos = _positive_int(policy, "low_disk_max_chunk_videos")
+    ram_policy = _mapping(policy, "ram")
+    medium_available_gb = _non_negative_float(
+        ram_policy, "medium_available_gb"
+    )
+    minimum_available_gb = _non_negative_float(
+        ram_policy, "minimum_available_gb"
+    )
+    medium_ram_max_videos = _positive_int(
+        ram_policy, "medium_max_chunk_videos"
+    )
+    low_ram_max_videos = _positive_int(ram_policy, "low_max_chunk_videos")
     if medium_free_disk_gb < min_free_disk_gb:
         raise ValueError("medium_free_disk_gb must be >= min_free_disk_gb")
+    if medium_available_gb < minimum_available_gb:
+        raise ValueError(
+            "chunk scheduler ram medium_available_gb must be >= minimum_available_gb"
+        )
 
     if free_disk_gb < min_free_disk_gb:
         effective_max_videos = min(max_videos, low_disk_max_videos)
@@ -36,6 +52,14 @@ def plan_runtime_chunks(
         effective_max_videos = min(max_videos, medium_max_videos)
     else:
         effective_max_videos = max_videos
+
+    if available_ram_gb < minimum_available_gb:
+        ram_max_videos = low_ram_max_videos
+    elif available_ram_gb <= medium_available_gb:
+        ram_max_videos = medium_ram_max_videos
+    else:
+        ram_max_videos = max_videos
+    effective_max_videos = min(effective_max_videos, ram_max_videos)
 
     chunks: list[RuntimeChunk] = []
     current_ids: list[str] = []
@@ -85,4 +109,11 @@ def _non_negative_float(policy: Mapping[str, object], key: str) -> float:
         raise ValueError(f"chunk scheduler {key} must be non-negative") from exc
     if value < 0:
         raise ValueError(f"chunk scheduler {key} must be non-negative")
+    return value
+
+
+def _mapping(policy: Mapping[str, object], key: str) -> Mapping[str, object]:
+    value = policy.get(key)
+    if not isinstance(value, Mapping):
+        raise TypeError(f"chunk scheduler {key} must be a mapping")
     return value

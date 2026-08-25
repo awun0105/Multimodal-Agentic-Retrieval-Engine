@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import gc
 import importlib
 import json
+import weakref
 import zipfile
 from pathlib import Path
 from typing import ClassVar
@@ -16,6 +18,11 @@ from system1.config import resolve_phase01_config
 
 production = importlib.import_module("system1.phase01.production")
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
+
+
+@pytest.fixture(autouse=True)
+def _stable_available_ram(monkeypatch) -> None:
+    monkeypatch.setattr(production, "_available_ram_gb", lambda: 100.0)
 
 
 class FakeGeminiClient:
@@ -74,18 +81,23 @@ class FakeLocalStructuredClient:
 
 class ChunkLocalStructuredClient:
     load_counts: ClassVar[dict[str, int]] = {}
+    close_counts: ClassVar[dict[str, int]] = {}
     resident: ClassVar[set[str]] = set()
+    instances: ClassVar[list[weakref.ReferenceType]] = []
 
     def __init__(self, provider: str, lifecycle_callback=None) -> None:
         self.provider = provider
         self.provider_name = provider
         self.lifecycle_callback = lifecycle_callback
         self.loaded = False
+        self.instances.append(weakref.ref(self))
 
     @classmethod
     def reset(cls) -> None:
         cls.load_counts = {}
+        cls.close_counts = {}
         cls.resident = set()
+        cls.instances = []
 
     def request(self, request):
         if not self.loaded and self.provider in {"qwen_local", "vintern_local"}:
@@ -133,6 +145,7 @@ class ChunkLocalStructuredClient:
             return
         self.resident.remove(self.provider)
         self.loaded = False
+        self.close_counts[self.provider] = self.close_counts.get(self.provider, 0) + 1
         if self.lifecycle_callback is not None:
             self.lifecycle_callback(
                 {
@@ -392,6 +405,7 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     ).exists()
 
     # A second Run All restores every valid stage and makes no semantic API call.
+    monkeypatch.setattr(production, "_available_ram_gb", lambda: 3.0)
     second_report = production.process_production_batch(
         release_dir=release,
         config=resolved,
@@ -470,14 +484,54 @@ def test_eight_videos_load_each_heavy_model_once_per_chunk(
         "vintern_local": 2,
         "qwen_local": 2,
     }
+    assert ChunkLocalStructuredClient.close_counts == {
+        "vintern_local": 2,
+        "qwen_local": 2,
+    }
     assert ChunkLocalStructuredClient.resident == set()
+    gc.collect()
+    assert all(reference() is None for reference in ChunkLocalStructuredClient.instances)
     assert progress.count('"event": "chunk",') == 4
-    assert progress.count('"event": "model",') == 8
+    assert progress.count('"event": "model",') == 10
+    assert progress.count('"status": "closed"') == 2
     assert '"chunk_index": 1' in progress
     assert '"chunk_size": 4' in progress
     assert '"elapsed_seconds":' in progress
     assert '"gpu_peak_allocated_gb":' in progress
     assert '"ram_available_gb":' in progress
+    assert '"process_rss_gb":' in progress
+    for milestone in (
+        "chunk_start",
+        "after_ocr",
+        "after_captions",
+        "after_scenes",
+        "after_summaries",
+        "qwen_unloaded",
+        "chunk_end",
+    ):
+        assert f'"status": "{milestone}"' in progress
+    events = [
+        json.loads(line.removeprefix("[phase01] "))
+        for line in progress.splitlines()
+        if line.startswith("[phase01] ")
+    ]
+
+    def event_index(**expected):
+        return next(
+            index
+            for index, event in enumerate(events)
+            if all(event.get(key) == value for key, value in expected.items())
+        )
+
+    assert event_index(event="model", model="qwen_local", status="loaded") < event_index(
+        event="stage", stage="scene_summaries", status="complete"
+    )
+    assert event_index(
+        event="stage", stage="scene_summaries", status="complete"
+    ) < event_index(event="model", model="qwen_local", status="unloaded")
+    assert event_index(event="memory", status="qwen_unloaded") < event_index(
+        event="stage", stage="package", status="start"
+    )
     for video_id in video_ids:
         artifact = (
             release / "artifacts" / "structure" / f"{video_id}_structure.zip"
@@ -583,6 +637,32 @@ def test_caption_failure_for_one_video_does_not_block_other_video_checkpoint(
         "phase01_checkpoints/canonical_release_v001/L21_V002/state.json"
     )
     assert failed_state["stages"]["shot_captions"]["status"] == "failed_terminal"
+    assert {
+        stage
+        for stage, record in failed_state["stages"].items()
+        if record["status"] == "complete"
+    } == {"shots", "keyframes", "asr", "ocr"}
+    for stage in (
+        "shot_transcript_links",
+        "scenes",
+        "scene_summaries",
+        "package",
+        "sync",
+    ):
+        assert failed_state["stages"][stage]["status"] == "pending"
+    failed_stage_root = (
+        checkpoint_store.root
+        / "phase01_checkpoints"
+        / "canonical_release_v001"
+        / video_ids[0]
+        / "stages"
+    )
+    assert {path.name for path in failed_stage_root.iterdir()} == {
+        "shots",
+        "keyframes",
+        "asr",
+        "ocr",
+    }
     assert completed_state["stages"]["package"]["status"] == "complete"
     assert ChunkLocalStructuredClient.resident == set()
     report = json.loads(
@@ -596,3 +676,49 @@ def test_caption_failure_for_one_video_does_not_block_other_video_checkpoint(
     assert [video["video_id"] for video in report["videos"]] == video_ids
     assert report["videos"][0]["status"] == "failed_terminal"
     assert report["videos"][1]["status"] == "complete_local"
+
+
+def test_critical_ram_blocks_heavy_model_load_and_marks_ocr_retryable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    video_id = "L21_V001"
+    release, checkpoint_store, resolved = _configure_batch_fixture(
+        tmp_path, monkeypatch, [video_id]
+    )
+    client_factory_calls = 0
+    heavy_load_calls = 0
+
+    class GuardedClient:
+        def __init__(self, callback) -> None:
+            self.callback = callback
+
+        def request_many(self, _requests):
+            nonlocal heavy_load_calls
+            self.callback("vintern_local")
+            heavy_load_calls += 1
+            raise AssertionError("heavy model load must not be attempted")
+
+    def client_factory(*_args, **kwargs):
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        return GuardedClient(kwargs["pre_load_callback"])
+
+    monkeypatch.setattr(production, "_available_ram_gb", lambda: 3.0)
+    monkeypatch.setattr(production, "_structured_client_for_model", client_factory)
+
+    with pytest.raises(RuntimeError, match="1 failed video"):
+        production.process_production_batch(
+            release_dir=release,
+            config=resolved,
+            scratch_root=tmp_path / "scratch",
+            transnet_artifact_dir=tmp_path / "transnet",
+            sync_release=False,
+        )
+
+    state = checkpoint_store.read_json(
+        f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
+    )
+    assert client_factory_calls == 1
+    assert heavy_load_calls == 0
+    assert state["stages"]["ocr"]["status"] == "failed_retryable"
+    assert state["stages"]["ocr"]["error"]["error_type"] == "InsufficientMemoryError"
