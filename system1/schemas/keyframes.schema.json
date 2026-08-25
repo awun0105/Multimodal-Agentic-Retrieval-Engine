@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "keyframes_v2",
+  "title": "keyframes_v3",
   "type": "object",
   "required": ["keyframe_id", "video_id", "frame_id", "timestamp_sec", "shot_id", "scene_id", "keyframe_role", "quality_score", "is_representative", "selection_reason", "keyframe_ref", "thumbnail_ref", "status"],
   "properties": {
@@ -10,7 +10,7 @@
     "timestamp_sec": {"type": "number", "minimum": 0},
     "shot_id": {"type": "string", "minLength": 1},
     "scene_id": {"type": ["string", "null"]},
-    "keyframe_role": {"enum": ["early", "middle", "late"]},
+    "keyframe_role": {"enum": ["early", "middle", "late", "supplemental"]},
     "quality_score": {"type": "number", "minimum": 0},
     "is_representative": {"type": "boolean"},
     "selection_reason": {"type": "string", "minLength": 1},
@@ -18,5 +18,11 @@
     "thumbnail_ref": {"type": "string", "minLength": 1},
     "status": {"const": "pass"}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"keyframe_role": {"const": "supplemental"}}},
+      "then": {"properties": {"is_representative": {"const": false}}}
+    }
+  ],
   "additionalProperties": false
 }

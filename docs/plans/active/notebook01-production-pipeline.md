@@ -21,6 +21,8 @@ persisted resolved config and stage provenance.
 - Scene grouping design: `docs/architecture/system1-scene-grouping.md`.
 - Self-generated evidence decision:
   `docs/decisions/0015-system1-self-generated-production-evidence.md`.
+- Semantic-event keyframe decision:
+  `docs/decisions/0019-phase01-semantic-event-keyframes.md`.
 - Phase00 handoff: `docs/architecture/system1-ingestion.md`.
 - Current orchestration: `system1/notebooks/01_worker_structure_pipeline.ipynb`.
 - Current package entry point: `system1/src/system1/structure/builder.py`.
@@ -50,9 +52,10 @@ In scope:
 - Per-run and per-video Hugging Face download caches under disposable scratch,
   plus operator-visible video/stage/disk progress and post-run remote layout
   verification.
-- TransNet V2 shots, search-band keyframes, NVIDIA Vietnamese FastConformer
-  ASR, gated Vintern OCR, shared 4-bit Qwen2.5-VL caption/grouping/summaries,
-  scoped Gemini fallback, package, sync, and scratch cleanup.
+- TransNet V2 shots, mandatory search-band anchors plus bounded semantic-event
+  supplemental keyframes, NVIDIA Vietnamese FastConformer ASR, gated Vintern
+  OCR, shared 4-bit Qwen2.5-VL caption/grouping/summaries, scoped Gemini
+  fallback, package, sync, and scratch cleanup.
 - Focused, integration, recovery, and real-provider acceptance tests.
 
 Out of scope:
@@ -115,7 +118,7 @@ state update have all succeeded.
 2. Add versioned Phase01, model, media, artifact, and storage configuration.
 3. Add resolved-config and per-video checkpoint-state JSON schemas.
 4. Extend `keyframes.parquet` with `quality_score`, `is_representative`, and
-   `selection_reason` while retaining the semantic early/middle/late role.
+   `selection_reason` while retaining semantic early/middle/late anchor roles.
 5. Add contract tests. Required but undecided production values remain explicit
    `null` values and fail readiness validation instead of receiving guessed
    defaults.
@@ -237,6 +240,21 @@ state update have all succeeded.
 5. Validate path-safe batch/worker identifiers and stream ZIP payload checksum
    verification.
 
+### Work Package 9: Semantic-Event Keyframe Recall
+
+1. Preserve frame-ratio early/middle/late anchor selection and add bounded,
+   VFR-safe timestamp probes before the existing one-pass grouped decode.
+2. Select supplemental evidence with config-versioned dHash visual novelty,
+   candidate-present masked-edge text change, greedy recomputation, timestamp
+   separation, and deterministic ranking.
+3. Migrate `keyframes_v2` to `keyframes_v3` with a non-representative
+   `supplemental` role; keep caption and summary-image policies representative
+   only.
+4. Run supplemental frames through OCR and preserve every supplemental path in
+   focused scene evidence/contact sheets.
+5. Persist config-hashed keep/drop diagnostics and test VFR coverage, static
+   dedup, text change, budget, package, and downstream behavior.
+
 ## Dependencies And Invalidation
 
 The minimum invalidation rules are:
@@ -294,6 +312,7 @@ completed stage.
 - [ ] Complete Work Package 6 real production proof.
 - [x] Complete Work Package 7 runtime memory and lifecycle hardening.
 - [x] Complete Work Package 8 production audit hardening.
+- [x] Complete Work Package 9 semantic-event keyframe recall.
 
 ## Decisions
 
@@ -342,6 +361,10 @@ completed stage.
   containing outputs and the matching state marker. Resume accepts it only
   after checksum validation; documentation must not describe a separate state
   commit.
+- 2026-08-25: Mandatory anchor selection remains frame-ratio based. Supplemental
+  probes alone use exact `pts_time`; only visual/text novelty may produce a
+  bounded non-representative `supplemental` row, while captions and summary
+  images stay representative-only.
 
 ## Still Required Before A Production Run
 
@@ -367,7 +390,7 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The complete local suite passes 325 tests. Scoped Ruff checks pass for all
+- The complete local suite passes 342 tests. Scoped Ruff checks pass for all
   undefined names and for import correctness across the new Phase01 surface.
   Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
   current; and `git diff --check` passes.
@@ -384,10 +407,11 @@ the one-time official TransNet converter parity job. Before a production run:
 
 Active. Work Packages 0-5, 7, and 8 are implemented locally. On 2026-08-25 the
 production defaults moved to NeMo/FastConformer ASR, gated Vintern OCR, and a
-shared 4-bit Qwen semantic runtime with scoped Gemini fallback. These paths,
-checkpoint invalidation, lifecycle telemetry, RAM guards, batching isolation,
-and packaging are covered by the 325-test local suite. The intentionally
-deferred gate is
+shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
+also preserves mandatory anchors while adding bounded visual/text-novel
+supplemental keyframes. These paths, checkpoint invalidation, lifecycle
+telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
+are covered by the 342-test local suite. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation

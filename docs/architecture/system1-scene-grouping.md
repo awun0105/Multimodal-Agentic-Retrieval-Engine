@@ -99,9 +99,12 @@ thumbnail_ref
 
 Exactly one representative keyframe is expected per shot. A normal shot has
 early/middle/late rows selected from search bands centered at 20%/50%/80%; a
-short shot may have fewer roles after duplicate frame IDs are removed. Focused
-review selects available early/late rows through `keyframe_role`; role does not
-change the canonical `keyframe_id = "{video_id}:{frame_id}"` convention.
+short shot may have fewer roles after duplicate frame IDs are removed. A long
+shot can additionally have bounded non-representative `supplemental` rows
+selected by temporal, visual-novelty, and text-change signals. Focused review
+selects configured early/late/supplemental evidence; all supplemental paths are
+kept as an ordered list so repeated roles cannot overwrite one another. Roles
+do not change the canonical `keyframe_id = "{video_id}:{frame_id}"` convention.
 
 At scene-grouping input time, `keyframes.scene_id` may be null or provisional.
 It is assigned from the final shot partition after grouping.
@@ -395,9 +398,10 @@ three shots after
 ```
 
 Visual evidence includes representative images for all neighboring shots plus
-the late keyframe of `shot_left` and early keyframe of `shot_right` when those
-optional roles exist. If early/late images are unavailable, the request remains
-valid with representative images and records the reduced evidence.
+configured early/late/supplemental evidence when those optional roles exist.
+All supplemental images survive contact-sheet construction in frame order. If
+optional images are unavailable, the request remains valid with representative
+images and records the reduced evidence.
 
 Text evidence includes captions, transcripts, and timeline ranges.
 
@@ -718,7 +722,7 @@ for unit-test determinism.
 
 ```text
 load ordered shots
-  -> load representative and optional early/late keyframes
+  -> load representative and optional early/late/supplemental keyframes
   -> load canonical shot captions
   -> load ASR segments and shot-transcript links
   -> build ShotEvidence

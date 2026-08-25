@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from system1.scenes.gemini_judge import StructuredSceneBoundaryJudge
+from system1.phase01.production import _build_scene_evidence
+from system1.scenes.gemini_judge import (
+    StructuredSceneBoundaryJudge,
+    _write_role_contact_sheet,
+)
 from system1.scenes.grouping import group_scenes, plan_focus_windows, vote_weight
 
 
@@ -178,3 +182,62 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
     assert client.last_request.request_kind == "scene_boundary_focused_review"
     assert len(client.last_request.image_paths) == 2
     assert "ORDERED SHOT EVIDENCE" in client.last_request.prompt
+
+
+def test_two_supplementals_reach_focused_scene_evidence_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    shot_id = "v_SH00000"
+    keyframe_dir = tmp_path / "keyframes"
+    keyframe_dir.mkdir()
+    image_specs = [
+        ("representative.jpg", "middle", True, (20, 20, 20)),
+        ("supplemental_1.jpg", "supplemental", False, (220, 20, 20)),
+        ("supplemental_2.jpg", "supplemental", False, (20, 220, 20)),
+    ]
+    keyframes = []
+    for frame_id, (name, role, representative, color) in enumerate(image_specs):
+        Image.new("RGB", (32, 32), color=color).save(keyframe_dir / name)
+        keyframes.append(
+            {
+                "keyframe_id": f"v:{frame_id}",
+                "shot_id": shot_id,
+                "frame_id": frame_id,
+                "keyframe_role": role,
+                "is_representative": representative,
+                "keyframe_ref": f"media://keyframes/v/{name}",
+            }
+        )
+
+    evidence = _build_scene_evidence(
+        [{"shot_id": shot_id, "start_sec": 0.0, "end_sec": 3.0}],
+        keyframes,
+        [],
+        [
+            {
+                "shot_id": shot_id,
+                "caption_vi": "Một cảnh",
+                "caption_en": "A scene",
+            }
+        ],
+        [],
+        [],
+        tmp_path,
+    )
+
+    assert [path.name for path in evidence[0]["supplemental_paths"]] == [
+        "supplemental_1.jpg",
+        "supplemental_2.jpg",
+    ]
+    sheet = tmp_path / "supplemental_sheet.jpg"
+    assert _write_role_contact_sheet(
+        evidence,
+        (shot_id,),
+        sheet,
+        roles=("supplemental",),
+    )
+    with Image.open(sheet) as image:
+        first = image.getpixel((160, 90))
+        second = image.getpixel((480, 90))
+    assert first[0] > first[1] * 3
+    assert second[1] > second[0] * 3

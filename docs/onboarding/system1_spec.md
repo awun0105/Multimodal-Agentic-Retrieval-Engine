@@ -2158,7 +2158,7 @@ Signals:
 
 ```text
 representative keyframe visual context
-optional early/late keyframe context
+optional early/late/supplemental keyframe context
 canonical shot captions
 ASR transcript evidence joined through shot_transcript_links
 shot continuity
@@ -2289,6 +2289,16 @@ shot center. If only one selected frame remains, it is representative. If no
 valid frame can be decoded, fail the video. All frame mapping uses the Phase00
 decoded timeline; production does not silently replace missing exact mapping
 with timestamp-times-FPS estimates.
+
+For long shots, preserve that frame-ratio anchor algorithm unchanged and create
+additional probe IDs from exact `frame_timeline.pts_time`. Probe coverage uses
+safe-interior and nominal-anchor timestamps, largest-gap bisection, and a
+configured candidate cap. After the one-pass decode and actual-anchor
+selection, persist at most the configured number of `supplemental` rows when
+dHash visual novelty or candidate-present masked-text-edge change is new
+relative to every retained reference. Supplemental rows are never
+representative. OCR and focused scene evidence may use them; shot captions and
+scene-summary images remain representative-only.
 ```
 
 Output:
@@ -2297,6 +2307,7 @@ Output:
 keyframes/
 thumbnails/
 keyframes.parquet
+keyframe_diagnostics.jsonl
 ```
 
 `keyframes.parquet` schema:
@@ -2325,6 +2336,11 @@ height
 thumbnail_width
 thumbnail_height
 ```
+
+`keyframe_role` follows `keyframes_v3` and permits `early`, `middle`, `late`,
+or `supplemental`. The diagnostics file records probe coverage, novelty scores,
+signal errors, dedup targets, and deterministic keep/drop reasons without
+expanding the canonical table.
 
 ID convention:
 

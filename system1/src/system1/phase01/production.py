@@ -29,6 +29,9 @@ from system1.keyframes import (
     candidate_frame_ids_for_shot,
     iter_decode_frame_groups,
     select_keyframes_for_shot,
+    select_supplemental_keyframes,
+    temporal_probe_plan_for_shot,
+    text_presence_gate,
     write_keyframe_images,
 )
 from system1.phase01.checkpoint import CheckpointManager, compute_fingerprint
@@ -1039,6 +1042,12 @@ def _process_video_flow(
             prompt_dir=_prompt_dir(),
             diagnostics_dir=stage_dir / "diagnostics" / "scene_requests",
             model_config=scene_boundary_model,
+            focused_keyframe_roles=tuple(
+                str(role)
+                for role in phase01["scene_grouping"][
+                    "focused_review_keyframe_roles"
+                ]
+            ),
         )
         scenes, decisions = group_scenes(
             video_id=video_id,
@@ -1241,22 +1250,68 @@ def _build_keyframes(
     config: Mapping[str, Any],
 ) -> None:
     keyframe_config = config["keyframe"]
+    timeline_by_frame = {int(row["frame_id"]): row for row in timeline}
     candidate_groups = []
+    probe_plans = []
     for shot in shots:
         by_role = candidate_frame_ids_for_shot(shot, keyframe_config)
-        candidate_groups.append(
-            {frame_id for role_ids in by_role.values() for frame_id in role_ids}
+        shot_timeline = [
+            timeline_by_frame[frame_id]
+            for frame_id in range(
+                int(shot["start_frame"]), int(shot["end_frame"])
+            )
+            if frame_id in timeline_by_frame
+        ]
+        probe_plan = temporal_probe_plan_for_shot(
+            shot, shot_timeline, keyframe_config
         )
-    timeline_by_frame = {int(row["frame_id"]): row for row in timeline}
+        probe_plans.append(probe_plan)
+        candidate_groups.append(
+            {
+                *(
+                    frame_id
+                    for role_ids in by_role.values()
+                    for frame_id in role_ids
+                ),
+                *(probe.frame_id for probe in probe_plan.probes),
+            }
+        )
     rows: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
     decoded_groups = iter_decode_frame_groups(video_path, candidate_groups)
-    for shot, decoded in zip(shots, decoded_groups, strict=True):
-        selected, candidate_diagnostics = select_keyframes_for_shot(shot, decoded, keyframe_config)
+    for shot, decoded, probe_plan in zip(
+        shots, decoded_groups, probe_plans, strict=True
+    ):
+        anchors, candidate_diagnostics = select_keyframes_for_shot(
+            shot, decoded, keyframe_config
+        )
+        supplemental, supplemental_diagnostics = select_supplemental_keyframes(
+            shot=shot,
+            anchors=anchors,
+            probe_plan=probe_plan,
+            decoded_frames=decoded,
+            timestamp_by_frame={
+                frame_id: float(row["pts_time"])
+                for frame_id, row in timeline_by_frame.items()
+            },
+            config=keyframe_config,
+        )
+        selected = sorted(
+            [*anchors, *supplemental], key=lambda item: item.frame_id
+        )
         selected_roles = sorted(item.role for item in selected)
         selected_frame_ids = sorted(item.frame_id for item in selected)
+        selected_identity = {
+            (item.frame_id, item.role): item for item in selected
+        }
         shot_frame_span = int(shot["end_frame"]) - int(shot["start_frame"])
         shot_duration_sec = float(shot["end_sec"]) - float(shot["start_sec"])
+        candidate_count = len(candidate_diagnostics) + len(supplemental_diagnostics)
+        valid_candidate_count = sum(
+            1 for candidate in candidate_diagnostics if candidate.valid
+        ) + sum(
+            1 for candidate in supplemental_diagnostics if candidate.get("valid")
+        )
         diagnostics.extend(
             {
                 "shot_id": shot["shot_id"],
@@ -1264,12 +1319,54 @@ def _build_keyframes(
                 "shot_duration_sec": shot_duration_sec,
                 "selected_roles": selected_roles,
                 "selected_frame_ids": selected_frame_ids,
-                "candidate_count": len(candidate_diagnostics),
-                "valid_candidate_count": sum(1 for item in candidate_diagnostics if item.valid),
-                "long_shot_coverage_warning": shot_duration_sec > 10.0 and len(selected_frame_ids) < 3,
+                "candidate_count": candidate_count,
+                "valid_candidate_count": valid_candidate_count,
+                "long_shot_coverage_warning": shot_duration_sec > 10.0 and len(anchors) < 3,
+                "candidate_source": f"anchor_{item.role}_search_band",
+                "timestamp_sec": (
+                    float(timeline_by_frame[item.frame_id]["pts_time"])
+                    if item.frame_id in timeline_by_frame
+                    else None
+                ),
+                "temporal_gap_sec": None,
+                "visual_novelty_score": None,
+                "text_present": None,
+                "text_change_score": None,
+                "visual_trigger": False,
+                "text_trigger": False,
+                "triggered_signal_count": 0,
+                "max_triggered_signal_score": None,
+                "keep": (item.frame_id, item.role) in selected_identity,
+                "decision_reason": (
+                    selected_identity[(item.frame_id, item.role)].selection_reason
+                    if (item.frame_id, item.role) in selected_identity
+                    else item.invalid_reason or "lower_quality_in_role"
+                ),
+                "dedup_target_frame_id": None,
+                "distance_to_nearest_actual_anchor_sec": None,
+                "coverage_cap_reached": probe_plan.coverage_cap_reached,
+                "remaining_max_probe_gap_seconds": (
+                    probe_plan.remaining_max_probe_gap_seconds
+                ),
+                "signal_errors": [],
                 **item.__dict__,
             }
             for item in candidate_diagnostics
+        )
+        diagnostics.extend(
+            {
+                **item,
+                "shot_frame_span": shot_frame_span,
+                "shot_duration_sec": shot_duration_sec,
+                "selected_roles": selected_roles,
+                "selected_frame_ids": selected_frame_ids,
+                "candidate_count": candidate_count,
+                "valid_candidate_count": valid_candidate_count,
+                "long_shot_coverage_warning": (
+                    shot_duration_sec > 10.0 and len(anchors) < 3
+                ),
+            }
+            for item in supplemental_diagnostics
         )
         for item in selected:
             frame = decoded[item.frame_id]
@@ -1591,52 +1688,7 @@ def _ocr_row(
 def _text_presence_gate(
     image_path: Path, config: Mapping[str, Any]
 ) -> str:
-    import cv2
-
-    if str(config.get("policy")) != "opencv_conservative_v1":
-        raise ValueError(f"Unsupported OCR text gate policy: {config.get('policy')}")
-    grayscale = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if grayscale is None or grayscale.size == 0:
-        raise ValueError(f"OCR text gate could not decode {image_path}")
-    max_long_side = int(config["max_long_side"])
-    height, width = grayscale.shape[:2]
-    if max(height, width) > max_long_side:
-        scale = max_long_side / float(max(height, width))
-        grayscale = cv2.resize(
-            grayscale,
-            (max(1, round(width * scale)), max(1, round(height * scale))),
-            interpolation=cv2.INTER_AREA,
-        )
-    edges = cv2.Canny(
-        grayscale,
-        int(config["canny_low"]),
-        int(config["canny_high"]),
-    )
-    edge_density = float((edges > 0).mean())
-    gray_std = float(grayscale.std())
-    regions, boxes = cv2.MSER_create().detectRegions(grayscale)
-    plausible_regions = 0
-    image_area = float(grayscale.shape[0] * grayscale.shape[1])
-    for region, box in zip(regions, boxes, strict=False):
-        x, y, region_width, region_height = (int(value) for value in box)
-        del x, y
-        area = float(region_width * region_height)
-        aspect = region_width / float(max(1, region_height))
-        if (
-            len(region) >= 10
-            and 0.00002 <= area / image_area <= 0.08
-            and 0.15 <= aspect <= 20.0
-        ):
-            plausible_regions += 1
-            if plausible_regions >= 2:
-                break
-    if (
-        plausible_regions == 0
-        and edge_density <= float(config["max_no_text_edge_density"])
-        and gray_std <= float(config["max_no_text_gray_std"])
-    ):
-        return "no_text"
-    return "uncertain"
+    return text_presence_gate(image_path, config)
 
 
 def _ocr_text(payload: Mapping[str, Any]) -> str:
@@ -1804,7 +1856,13 @@ def _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links,
             / "keyframes"
             / Path(str(row["keyframe_ref"])).name
             for row in frames
+            if str(row["keyframe_role"]) != "supplemental"
         }
+        supplemental_paths = [
+            stage_dir / "keyframes" / Path(str(row["keyframe_ref"])).name
+            for row in sorted(frames, key=lambda value: int(value["frame_id"]))
+            if str(row["keyframe_role"]) == "supplemental"
+        ]
         linked_ids = {
             str(link["asr_segment_id"])
             for link in links_by_shot.get(shot_id, [])
@@ -1835,6 +1893,7 @@ def _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links,
             / "keyframes"
             / Path(str(representative["keyframe_ref"])).name,
             "early_path": role_paths.get("early"), "late_path": role_paths.get("late"),
+            "supplemental_paths": supplemental_paths,
             "caption_vi": caption["caption_vi"], "caption_en": caption["caption_en"],
             "objects_vi": _string_list(caption, "objects_vi"), "objects_en": _string_list(caption, "objects_en"),
             "actions_vi": _string_list(caption, "actions_vi"), "actions_en": _string_list(caption, "actions_en"),
@@ -2344,6 +2403,11 @@ def _validate_keyframe_rows(shots, rows):
     for shot in shots:
         members = [row for row in rows if row["shot_id"] == shot["shot_id"]]
         if not members or sum(row["is_representative"] for row in members) != 1: raise ValueError(f"Invalid keyframe selection for {shot['shot_id']}")
+        if any(
+            row["keyframe_role"] == "supplemental" and row["is_representative"]
+            for row in members
+        ):
+            raise ValueError("Supplemental keyframes cannot be representative")
         if any(not (shot["start_frame"] <= row["frame_id"] < shot["end_frame"]) for row in members): raise ValueError("Keyframe lies outside its shot")
 
 

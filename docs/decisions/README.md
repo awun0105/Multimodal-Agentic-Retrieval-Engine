@@ -11,6 +11,9 @@ documents here as real choices are accepted, then index them in this file.
 
 ## Recent Accepted Decisions
 
+- `0019-phase01-semantic-event-keyframes.md`: Phase01 preserves mandatory
+  early/middle/late anchors and adds bounded timestamp probes that persist only
+  visually novel or text-changing non-representative supplemental keyframes.
 - `0018-phase01-local-first-semantic-runtime.md`: Notebook 01 defaults to
   NVIDIA Vietnamese FastConformer ASR, gated Vintern OCR, and one shared
   4-bit Qwen2.5-VL runtime for all semantic stages, with scoped Gemini fallback.

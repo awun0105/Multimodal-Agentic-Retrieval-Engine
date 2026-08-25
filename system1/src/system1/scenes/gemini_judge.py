@@ -21,12 +21,14 @@ class StructuredSceneBoundaryJudge:
         prompt_dir: Path,
         diagnostics_dir: Path,
         model_config: Mapping[str, Any],
+        focused_keyframe_roles: tuple[str, ...] = ("early", "late"),
     ) -> None:
         self.client = client
         self.video_id = video_id
         self.prompt_dir = prompt_dir
         self.diagnostics_dir = diagnostics_dir
         self.model_config = model_config
+        self.focused_keyframe_roles = focused_keyframe_roles
         self.request_index = 0
         self._diagnostics: dict[str, dict[str, Any]] = {}
 
@@ -60,7 +62,12 @@ class StructuredSceneBoundaryJudge:
                 self.diagnostics_dir
                 / f"{self.request_index:05d}_{request_kind}_early_late.jpg"
             )
-            if _write_role_contact_sheet(context, focus_gap_ids, role_sheet):
+            if _write_role_contact_sheet(
+                context,
+                focus_gap_ids,
+                role_sheet,
+                roles=self.focused_keyframe_roles,
+            ):
                 image_paths.append(role_sheet)
         response_schema = {
             "type": "object",
@@ -142,6 +149,8 @@ def _write_role_contact_sheet(
     context: Sequence[Mapping[str, Any]],
     focus_gap_ids: tuple[str, ...],
     output: Path,
+    *,
+    roles: Sequence[str] = ("early", "late"),
 ) -> bool:
     relevant_ids = set(focus_gap_ids)
     for previous, current in pairwise(context):
@@ -152,7 +161,16 @@ def _write_role_contact_sheet(
         shot_id = str(item["shot_id"])
         if shot_id not in relevant_ids:
             continue
-        for role in ("early", "late"):
+        for role in roles:
+            if role == "supplemental":
+                values = item.get("supplemental_paths", [])
+                if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+                    tiles.extend(
+                        (shot_id, role, Path(str(value)))
+                        for value in values
+                        if value
+                    )
+                continue
             value = item.get(f"{role}_path")
             if value:
                 tiles.append((shot_id, role, Path(str(value))))
@@ -195,6 +213,7 @@ def _json_safe_evidence(item: Mapping[str, Any]) -> dict[str, Any]:
         "transcript": str(item.get("transcript", "")),
         "has_early_frame": bool(item.get("early_path")),
         "has_late_frame": bool(item.get("late_path")),
+        "supplemental_frame_count": len(item.get("supplemental_paths", [])),
     }
 
 

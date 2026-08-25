@@ -81,6 +81,12 @@ def validate_phase01_package(artifact_dir: Path) -> None:
     )
     if actual_representatives != expected_representatives:
         raise ValueError("Every shot must have exactly one representative keyframe")
+    supplemental_representatives = keyframes[
+        (keyframes["keyframe_role"] == "supplemental")
+        & keyframes["is_representative"]
+    ]
+    if not supplemental_representatives.empty:
+        raise ValueError("Supplemental keyframes cannot be representative")
     expected_keyframe_ids = {
         f"{row.video_id}:{int(row.frame_id)}" for row in keyframes.itertuples(index=False)
     }
