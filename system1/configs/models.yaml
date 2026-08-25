@@ -83,8 +83,9 @@ phase01:
     trust_remote_code: true
     torch_dtype: auto
     device_map: auto
-    prompt_version: keyframe_ocr_v1
+    prompt_version: keyframe_ocr_v2
     response_schema_version: keyframe_ocr_response_v1
+    structured_output_contract_version: json_schema_prompt_v1
     max_new_tokens: 512
 
   shot_caption:
@@ -95,6 +96,7 @@ phase01:
     trust_remote_code: false
     torch_dtype: float16
     device_map: cuda
+    structured_output_contract_version: json_schema_prompt_v1
     quantization:
       method: bitsandbytes
       package_version: 0.47.0

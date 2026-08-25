@@ -15,6 +15,7 @@ from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.store import ArtifactStore
 from system1.asr import AsrResult
 from system1.config import resolve_phase01_config
+from system1.vlm.client import BatchRequestError
 
 production = importlib.import_module("system1.phase01.production")
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
@@ -725,6 +726,63 @@ def test_critical_ram_blocks_heavy_model_load_and_marks_ocr_retryable(
     assert heavy_load_calls == 0
     assert state["stages"]["ocr"]["status"] == "failed_retryable"
     assert state["stages"]["ocr"]["error"]["error_type"] == "InsufficientMemoryError"
+
+
+def test_every_vintern_request_failure_does_not_promote_ocr(
+    tmp_path: Path, monkeypatch
+) -> None:
+    video_id = "L21_V001"
+    release, checkpoint_store, resolved = _configure_batch_fixture(
+        tmp_path, monkeypatch, [video_id]
+    )
+
+    class FailingOcrClient:
+        provider_name = "vintern_local"
+
+        def request_many(self, requests):
+            raise BatchRequestError(
+                results=[None] * len(requests),
+                errors={
+                    index: ValueError("invalid structured OCR response")
+                    for index in range(len(requests))
+                },
+            )
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(production, "_text_presence_gate", lambda *_args: "uncertain")
+    monkeypatch.setattr(
+        production,
+        "_structured_client_for_model",
+        lambda *_args, **_kwargs: FailingOcrClient(),
+    )
+
+    with pytest.raises(RuntimeError, match="1 failed video"):
+        production.process_production_batch(
+            release_dir=release,
+            config=resolved,
+            scratch_root=tmp_path / "scratch",
+            transnet_artifact_dir=tmp_path / "transnet",
+            sync_release=False,
+        )
+
+    state = checkpoint_store.read_json(
+        f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
+    )
+    assert state["stages"]["ocr"]["status"] == "failed_terminal"
+    assert state["stages"]["ocr"]["error"]["error_type"] == "RuntimeError"
+    assert "failed for every Vintern request" in state["stages"]["ocr"]["error"][
+        "message"
+    ]
+    assert not (
+        checkpoint_store.root
+        / "phase01_checkpoints"
+        / "canonical_release_v001"
+        / video_id
+        / "stages"
+        / "ocr"
+    ).exists()
 
 
 def test_critical_ram_blocks_asr_before_model_load(

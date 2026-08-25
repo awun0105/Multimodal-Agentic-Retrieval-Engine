@@ -6,13 +6,15 @@ from PIL import Image
 
 from system1.phase01 import production
 from system1.phase01.validation import validate_rows
+from system1.vlm.client import BatchRequestError
 
 MODEL_CONFIG = {
     "provider": "vintern_local",
     "model_id": "5CD-AI/Vintern-1B-v3_5",
     "model_revision": "revision",
-    "prompt_version": "keyframe_ocr_v1",
+    "prompt_version": "keyframe_ocr_v2",
     "response_schema_version": "keyframe_ocr_response_v1",
+    "structured_output_contract_version": "json_schema_prompt_v1",
 }
 OCR_CONFIG = {
     "run_on_keyframe_roles": ["middle"],
@@ -88,6 +90,7 @@ def test_high_confidence_no_text_skips_vintern_and_emits_empty_ocr_v2(
         "gate_no_text": 1,
         "gate_failures": 0,
         "vintern_processed": 0,
+        "vintern_failed": 0,
     }
     validate_rows("ocr", rows)
 
@@ -161,3 +164,58 @@ def test_supplemental_role_runs_through_existing_ocr_gate(
     assert len(client.requests) == 1
     assert client.requests[0].identity == {"keyframe_id": "L21_V001:0"}
     assert rows[0]["status"] == "pass"
+
+
+def test_ocr_failures_are_counted_per_vintern_request(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FailingClient:
+        def request_many(self, requests):
+            raise BatchRequestError(
+                results=[None] * len(requests),
+                errors={index: ValueError("invalid JSON") for index in range(len(requests))},
+            )
+
+    diagnostics = {}
+    monkeypatch.setattr(production, "_text_presence_gate", lambda *_args: "uncertain")
+
+    rows = production._build_ocr(
+        video_id="L21_V001",
+        keyframes=[_keyframe(tmp_path, color="white")],
+        stage_dir=tmp_path,
+        client=FailingClient(),
+        model_config=MODEL_CONFIG,
+        ocr_config=OCR_CONFIG,
+        diagnostics=diagnostics,
+    )
+
+    assert rows[0]["status"] == "failed"
+    assert diagnostics["vintern_processed"] == 1
+    assert diagnostics["vintern_failed"] == 1
+
+
+def test_ocr_stage_is_failed_when_every_vintern_request_fails() -> None:
+    status = production._ocr_stage_status(
+        {"failed": 3, "empty": 2},
+        {"vintern_processed": 3, "vintern_failed": 3},
+    )
+
+    assert status == "failed"
+
+
+def test_ocr_stage_is_partial_when_only_some_vintern_requests_fail() -> None:
+    status = production._ocr_stage_status(
+        {"pass": 2, "failed": 1, "empty": 2},
+        {"vintern_processed": 3, "vintern_failed": 1},
+    )
+
+    assert status == "partial"
+
+
+def test_ocr_stage_passes_when_gate_skips_every_image() -> None:
+    status = production._ocr_stage_status(
+        {"empty": 5},
+        {"vintern_processed": 0, "vintern_failed": 0},
+    )
+
+    assert status == "pass"

@@ -900,11 +900,7 @@ def _process_video_flow(
             for row in ocr_rows:
                 status = str(row["status"])
                 status_counts[status] = status_counts.get(status, 0) + 1
-            ocr_status = "pass"
-            if status_counts.get("failed") == len(ocr_rows) and ocr_rows:
-                ocr_status = "failed"
-            elif status_counts.get("failed"):
-                ocr_status = "partial"
+            ocr_status = _ocr_stage_status(status_counts, ocr_gate_counts)
             _write_json(ocr_status_path, {
                 "status": ocr_status,
                 "provider": models["ocr"]["provider"],
@@ -921,6 +917,14 @@ def _process_video_flow(
                 **_MANAGER_RUNTIME_CONTEXT.get(manager, {}),
                 **ocr_gate_counts,
             )
+            if ocr_status == "failed":
+                raise RuntimeError(
+                    "Phase01 OCR failed for every Vintern request: "
+                    f"video_id={video_id}, "
+                    f"failed={status_counts.get('failed', 0)}, "
+                    "vintern_processed="
+                    f"{ocr_gate_counts.get('vintern_processed', 0)}"
+                )
             manager.promote_stage(
                 "ocr",
                 input_fingerprint=ocr_fingerprint,
@@ -1576,6 +1580,7 @@ def _build_ocr(
         "gate_no_text": 0,
         "gate_failures": 0,
         "vintern_processed": 0,
+        "vintern_failed": 0,
     }
     rows_by_keyframe: dict[str, dict[str, Any]] = {}
     requests: list[StructuredRequest] = []
@@ -1654,6 +1659,7 @@ def _build_ocr(
             confidence = _nullable_confidence(response.get("confidence"))
             language = str(response.get("language") or "vi")
         except Exception:  # noqa: BLE001 - preserve per-keyframe degradation
+            counts["vintern_failed"] += 1
             text = ""
             status = "failed"
             provider = str(model_config["provider"])
@@ -1675,6 +1681,21 @@ def _build_ocr(
     if diagnostics is not None:
         diagnostics.update(counts)
     return [rows_by_keyframe[str(row["keyframe_id"])] for row in selected_keyframes]
+
+
+def _ocr_stage_status(
+    status_counts: Mapping[str, int],
+    diagnostics: Mapping[str, int],
+) -> str:
+    """Classify OCR stage health from actual Vintern requests."""
+
+    failed_count = int(status_counts.get("failed", 0))
+    vintern_processed = int(diagnostics.get("vintern_processed", 0))
+    if vintern_processed > 0 and failed_count == vintern_processed:
+        return "failed"
+    if failed_count > 0:
+        return "partial"
+    return "pass"
 
 
 def _ocr_row(

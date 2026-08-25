@@ -255,6 +255,18 @@ state update have all succeeded.
 5. Persist config-hashed keep/drop diagnostics and test VFR coverage, static
    dedup, text change, budget, package, and downstream behavior.
 
+### Work Package 10: Local Structured-Output Recovery
+
+1. Version the OCR prompt without changing the canonical OCR response schema.
+2. Attach the exact JSON Schema contract to every local Vintern/Qwen request
+   and include the contract version in local request-cache identity.
+3. Emit bounded parse-failure samples so provider output can be diagnosed
+   without flooding logs.
+4. Classify OCR health against actual Vintern requests and refuse checkpoint
+   promotion when every Vintern request fails.
+5. Preserve the OCR gate, batching, model revision, and image preprocessing;
+   validate locally before any one-video real-provider smoke.
+
 ## Dependencies And Invalidation
 
 The minimum invalidation rules are:
@@ -313,6 +325,7 @@ completed stage.
 - [x] Complete Work Package 7 runtime memory and lifecycle hardening.
 - [x] Complete Work Package 8 production audit hardening.
 - [x] Complete Work Package 9 semantic-event keyframe recall.
+- [x] Complete Work Package 10 local structured-output recovery.
 
 ## Decisions
 
@@ -365,6 +378,9 @@ completed stage.
   probes alone use exact `pts_time`; only visual/text novelty may produce a
   bounded non-representative `supplemental` row, while captions and summary
   images stay representative-only.
+- 2026-08-25: Local Vintern/Qwen generation receives a versioned exact JSON
+  Schema contract. OCR may degrade per request, but a video with zero
+  successful Vintern responses must fail the OCR stage before promotion.
 
 ## Still Required Before A Production Run
 
@@ -390,7 +406,7 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The complete local suite passes 348 tests. Scoped Ruff checks pass for all
+- The complete local suite passes 356 tests. Scoped Ruff checks pass for all
   undefined names and for import correctness across the new Phase01 surface.
   Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
   current; and `git diff --check` passes.
@@ -400,6 +416,11 @@ the one-time official TransNet converter parity job. Before a production run:
   checkpoint failure semantics; and release of chunk client references.
 - CLI/notebook contracts prove that no Phase01 provider selector is exposed and
   Notebook 01 has one package invocation with minimal settings.
+- Local structured-output recovery proof passes 37 focused OCR/VLM/orchestrator
+  tests and 39 Phase01 production-contract tests. It proves that exact schemas
+  reach both Vintern and Qwen, cache identity changes with the contract version,
+  parse telemetry is bounded, and all-request Vintern failure cannot promote
+  the OCR checkpoint. Ruff F/E9/I and `uv lock --check` pass.
 - Real-provider one-video, heterogeneous-batch, disconnect-at-every-boundary,
   and Colab/Kaggle platform proof remain Work Package 6.
 
@@ -411,7 +432,10 @@ shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
-are covered by the 348-test local suite. The intentionally deferred gate is
+are covered by the 356-test local suite. OCR and the shared Qwen runtime now
+receive the exact versioned JSON Schema in their prompts; OCR records bounded
+parse diagnostics and fails before checkpoint promotion when every Vintern
+request fails. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation

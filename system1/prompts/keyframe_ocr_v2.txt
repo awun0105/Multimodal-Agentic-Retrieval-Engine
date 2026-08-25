@@ -1,0 +1,16 @@
+Read only text that is visibly present in the keyframe image.
+Do not paraphrase, translate, infer, normalize, or invent text.
+
+Return only the structured JSON object required by the output contract.
+Do not return Markdown, code fences, explanations, or any text outside the JSON object.
+
+If no readable text is visible:
+- full_text must be an empty string.
+- ocr_blocks must be an empty array.
+
+If readable text is visible:
+- full_text must contain only the visible text, preferably in reading order.
+- ocr_blocks must contain only visibly supported text spans.
+- use null for confidence when confidence is unavailable.
+
+Do not infer hidden text, names, locations, meanings, or context that are not visibly supported.

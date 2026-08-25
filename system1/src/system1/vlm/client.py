@@ -372,6 +372,7 @@ class LocalVisionStructuredClient:
         oom_reductions = 0
         batch_one_oom_attempts = 0
         systemic_attempts = 0
+        structured_parse_error_count = 0
         while cursor < len(misses):
             batch_indices = misses[cursor : cursor + effective_batch_size]
             batch_requests = [active_requests[index] for index in batch_indices]
@@ -526,6 +527,17 @@ class LocalVisionStructuredClient:
                     results[index] = self._with_metadata(normalized)
                 except Exception as exc:  # noqa: BLE001 - request-scoped fallback
                     errors[index] = exc
+                    structured_parse_error_count += 1
+                    if structured_parse_error_count <= 3:
+                        self._emit_lifecycle(
+                            "structured_parse_error",
+                            request_index=index,
+                            request_kind=request.request_kind,
+                            error_type=type(exc).__name__,
+                            error_message=str(exc)[:500],
+                            raw_response_preview=str(raw_text)[:500],
+                            quantization_mode=self._quantization_mode(),
+                        )
             cursor += len(batch_indices)
             batch_one_oom_attempts = 0
             systemic_attempts = 0
@@ -554,6 +566,10 @@ class LocalVisionStructuredClient:
                 "model_revision": self.model_revision,
                 "max_new_tokens": self.model_config.get("max_new_tokens"),
                 "quantization": self.model_config.get("quantization"),
+                "structured_output_contract_version": self.model_config.get(
+                    "structured_output_contract_version",
+                    "json_schema_prompt_v1",
+                ),
             },
         )
         return request_hash
@@ -641,7 +657,10 @@ class LocalVisionStructuredClient:
                                 {"type": "image", "image": str(path)}
                                 for path in request.image_paths
                             ],
-                            {"type": "text", "text": request.prompt},
+                            {
+                                "type": "text",
+                                "text": _structured_prompt(request),
+                            },
                         ],
                     }
                 ]
@@ -702,12 +721,14 @@ class LocalVisionStructuredClient:
                 pixel_values = pixel_values.to(dtype=dtype)
             except StopIteration:  # pragma: no cover
                 pass
-            prompts = [
-                request.prompt
-                if "<image>" in request.prompt
-                else "<image>\n" + request.prompt
-                for request in requests
-            ]
+            prompts: list[str] = []
+            for request in requests:
+                structured_prompt = _structured_prompt(request)
+                prompts.append(
+                    structured_prompt
+                    if "<image>" in structured_prompt
+                    else "<image>\n" + structured_prompt
+                )
             generation_config = {
                 "max_new_tokens": int(self.model_config.get("max_new_tokens", 768)),
                 "do_sample": False,
@@ -1095,6 +1116,26 @@ def _is_cuda_oom(exc: BaseException) -> bool:
     message = str(exc).lower()
     return "outofmemory" in name or "cuda out of memory" in message or (
         "cuda" in message and "out of memory" in message
+    )
+
+
+def _structured_prompt(request: StructuredRequest) -> str:
+    """Attach the exact JSON Schema contract to a local VLM request."""
+
+    schema_json = json.dumps(
+        request.response_schema,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return (
+        request.prompt.rstrip()
+        + "\n\nOUTPUT CONTRACT:\n"
+        + "Return exactly one valid JSON object matching the JSON Schema below.\n"
+        + "Do not use Markdown code fences. "
+        + "Do not add explanations or any text before or after the JSON object.\n"
+        + "Do not invent fields that are not allowed by the schema.\n"
+        + f"JSON Schema:\n{schema_json}"
     )
 
 

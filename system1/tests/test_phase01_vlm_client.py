@@ -9,6 +9,7 @@ import pytest
 from system1.artifacts.store import ArtifactStore
 from system1.gemini import GeminiRequest
 from system1.vlm.client import (
+    BatchRequestError,
     FallbackStructuredClient,
     LocalVisionStructuredClient,
     SystemicProviderError,
@@ -275,6 +276,8 @@ def test_local_vlm_rejects_non_positive_inference_batching() -> None:
 def test_two_qwen_requests_use_one_model_generate(
     tmp_path: Path, monkeypatch
 ) -> None:
+    structured_prompts: list[str] = []
+
     class FakeTensor:
         shape = (2, 3)
 
@@ -285,7 +288,8 @@ def test_two_qwen_requests_use_one_model_generate(
             return self
 
     class FakeProcessor:
-        def apply_chat_template(self, _conversation, **_kwargs):
+        def apply_chat_template(self, conversation, **_kwargs):
+            structured_prompts.append(conversation[0]["content"][-1]["text"])
             return "prompt"
 
         def __call__(self, *, text, **_kwargs):
@@ -346,6 +350,8 @@ def test_two_qwen_requests_use_one_model_generate(
 
     assert [response["value"] for response in responses] == ["first", "second"]
     assert model.generate_calls == 1
+    assert all("OUTPUT CONTRACT:" in prompt for prompt in structured_prompts)
+    assert all('"type":"object"' in prompt for prompt in structured_prompts)
 
 
 def test_request_many_preserves_order_and_only_batches_cache_misses(
@@ -594,7 +600,13 @@ def test_vintern_uses_native_batch_chat_when_available(
             **_kwargs,
         ):
             self.batch_calls += 1
-            return [f'{{"value": "{question[-1]}"}}' for question in questions]
+            assert all("OUTPUT CONTRACT:" in question for question in questions)
+            assert all(
+                "Return exactly one valid JSON object" in question
+                for question in questions
+            )
+            assert all('"type":"object"' in question for question in questions)
+            return ['{"value": "ok"}' for _question in questions]
 
     model = FakeModel()
     client = LocalVisionStructuredClient(
@@ -616,6 +628,72 @@ def test_vintern_uses_native_batch_chat_when_available(
 
     assert len(responses) == 2
     assert model.batch_calls == 1
+
+
+def test_local_vlm_cache_identity_includes_structured_output_contract() -> None:
+    request = GeminiRequest(
+        request_kind="test",
+        video_id="L21_V001",
+        prompt="return json",
+        prompt_version="prompt",
+        response_schema_version="schema",
+        response_schema={"type": "object"},
+    )
+    first = LocalVisionStructuredClient(
+        model_config={
+            "provider": "vintern_local",
+            "model_id": "vintern",
+            "model_revision": "revision",
+            "structured_output_contract_version": "json_schema_prompt_v1",
+        }
+    )
+    second = LocalVisionStructuredClient(
+        model_config={
+            "provider": "vintern_local",
+            "model_id": "vintern",
+            "model_revision": "revision",
+            "structured_output_contract_version": "json_schema_prompt_v2",
+        }
+    )
+
+    assert first._request_hash(request) != second._request_hash(request)
+
+
+def test_structured_parse_error_telemetry_is_bounded(monkeypatch) -> None:
+    lifecycle = []
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "vintern_local",
+            "model_id": "vintern",
+            "model_revision": "revision",
+            "inference_batch_size": 4,
+        },
+        lifecycle_callback=lambda payload: lifecycle.append(dict(payload)),
+    )
+    monkeypatch.setattr(
+        client,
+        "_call_models",
+        lambda requests: [f"not-json-{index}" for index, _request in enumerate(requests)],
+    )
+    request = GeminiRequest(
+        request_kind="keyframe_ocr",
+        video_id="L21_V001",
+        prompt="ocr",
+        prompt_version="prompt",
+        response_schema_version="schema",
+        response_schema={"type": "object"},
+    )
+
+    with pytest.raises(BatchRequestError):
+        client.request_many([request, request, request, request])
+
+    parse_errors = [
+        event for event in lifecycle if event["status"] == "structured_parse_error"
+    ]
+    assert len(parse_errors) == 3
+    assert parse_errors[0]["request_kind"] == "keyframe_ocr"
+    assert parse_errors[0]["error_type"] == "JSONDecodeError"
+    assert parse_errors[0]["raw_response_preview"] == "not-json-0"
 
 
 def test_vintern_without_native_batch_safely_uses_one_request(
