@@ -453,9 +453,12 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     assert FakeGeminiClient.requests == []
     artifact = release / "artifacts" / "structure" / f"{video_id}_structure.zip"
     with zipfile.ZipFile(artifact) as archive:
+        names = set(archive.namelist())
         normalized = json.loads(
             archive.read(f"{video_id}/metadata_normalized.json").decode("utf-8")
         )
+    assert f"{video_id}/diagnostics/ocr_status.json" in names
+    assert f"{video_id}/ocr_status.json" not in names
     assert normalized["title"] == "updated"
 
 
@@ -722,3 +725,46 @@ def test_critical_ram_blocks_heavy_model_load_and_marks_ocr_retryable(
     assert heavy_load_calls == 0
     assert state["stages"]["ocr"]["status"] == "failed_retryable"
     assert state["stages"]["ocr"]["error"]["error_type"] == "InsufficientMemoryError"
+
+
+def test_critical_ram_blocks_asr_before_model_load(
+    tmp_path: Path, monkeypatch
+) -> None:
+    video_id = "L21_V001"
+    release, checkpoint_store, resolved = _configure_batch_fixture(
+        tmp_path, monkeypatch, [video_id]
+    )
+    heavy_load_calls = 0
+    client_factory_calls = 0
+
+    def guarded_asr(*_args, pre_load_callback, **_kwargs):
+        nonlocal heavy_load_calls
+        pre_load_callback("nemo")
+        heavy_load_calls += 1
+        raise AssertionError("NeMo load must not be attempted")
+
+    def client_factory(*_args, **_kwargs):
+        nonlocal client_factory_calls
+        client_factory_calls += 1
+        raise AssertionError("OCR client must not be created after ASR failure")
+
+    monkeypatch.setattr(production, "_available_ram_gb", lambda: 3.0)
+    monkeypatch.setattr(production, "transcribe_video", guarded_asr)
+    monkeypatch.setattr(production, "_structured_client_for_model", client_factory)
+
+    with pytest.raises(RuntimeError, match="1 failed video"):
+        production.process_production_batch(
+            release_dir=release,
+            config=resolved,
+            scratch_root=tmp_path / "scratch",
+            transnet_artifact_dir=tmp_path / "transnet",
+            sync_release=False,
+        )
+
+    state = checkpoint_store.read_json(
+        f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
+    )
+    assert heavy_load_calls == 0
+    assert client_factory_calls == 0
+    assert state["stages"]["asr"]["status"] == "failed_retryable"
+    assert state["stages"]["asr"]["error"]["error_type"] == "InsufficientMemoryError"

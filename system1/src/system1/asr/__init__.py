@@ -19,6 +19,7 @@ def transcribe_video(
     config: Mapping[str, Any],
     model_factory: Callable[..., Any] | None = None,
     audio_present: bool | None = None,
+    pre_load_callback: Callable[[str], None] | None = None,
 ) -> AsrResult:
     provider = str(config.get("provider", "nemo"))
     if provider == "faster_whisper":
@@ -29,6 +30,7 @@ def transcribe_video(
             config=config,
             model_factory=model_factory,
             audio_present=audio_present,
+            pre_load_callback=pre_load_callback,
         )
     if provider == "nemo":
         return _transcribe_nemo(
@@ -38,6 +40,7 @@ def transcribe_video(
             config=config,
             model_factory=model_factory,
             audio_present=audio_present,
+            pre_load_callback=pre_load_callback,
         )
     raise ValueError(f"Unsupported Phase01 ASR provider: {provider}")
 

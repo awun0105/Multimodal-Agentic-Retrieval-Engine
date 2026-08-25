@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
 ARTIFACT_MANIFEST = "artifact_manifest.json"
 CHECKSUMS = "checksums.json"
 _PACKAGE_METADATA = {ARTIFACT_MANIFEST, CHECKSUMS}
@@ -167,15 +166,25 @@ def validate_artifact_zip(zip_path: Path | str) -> dict[str, Any]:
                 raise ValueError(f"checksummed path must live under {root_prefix}: {path}")
             if path not in names:
                 raise ValueError(f"checksummed file missing from zip: {path}")
-            data = archive.read(path)
-            size_bytes = len(data)
-            sha256 = hashlib.sha256(data).hexdigest()
+            size_bytes, sha256 = _stream_zip_checksum(archive, path)
             if int(expected["size_bytes"]) != size_bytes or str(expected["sha256"]) != sha256:
                 raise ValueError(f"checksum mismatch for {path}")
             manifest_item = manifest_files[path]
             if int(manifest_item["size_bytes"]) != size_bytes or str(manifest_item["sha256"]) != sha256:
                 raise ValueError(f"artifact manifest checksum mismatch for {path}")
     return manifest
+
+
+def _stream_zip_checksum(
+    archive: zipfile.ZipFile, member_name: str, *, chunk_size: int = 1024 * 1024
+) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size_bytes = 0
+    with archive.open(member_name, "r") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            size_bytes += len(chunk)
+            digest.update(chunk)
+    return size_bytes, digest.hexdigest()
 
 
 def extract_artifact_zip(

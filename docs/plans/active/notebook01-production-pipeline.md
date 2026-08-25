@@ -146,8 +146,8 @@ state update have all succeeded.
 4. Implement dependency invalidation without invalidating independent stages.
 5. Restore the checkpoint index at startup and skip only complete, checksum-
    valid, fingerprint-matching stages.
-6. Batch all outputs of one stage into one backend commit, then publish state
-   separately as the atomic completion marker.
+6. Batch all outputs of one stage and the matching complete state into one
+   atomic backend commit; verify recorded checksums during promotion/resume.
 
 ### Work Package 3: Shots And Search-Band Keyframes
 
@@ -225,6 +225,18 @@ state update have all succeeded.
    complete and downstream unpromoted; missing complete artifacts invalidate
    the affected stage and downstream.
 
+### Work Package 8: Production Audit Hardening
+
+1. Guard NeMo/Faster-Whisper loads with the existing host-RAM pre-load policy
+   and reject Vintern CPU/disk offload.
+2. Validate fixed execution and shared semantic primary/fallback invariants.
+3. Isolate non-systemic local batch errors to singleton requests and reduce
+   multi-image evidence evenly only after an observed CUDA OOM.
+4. Align checkpoint/package documentation with the atomic HF commit and
+   diagnostics layout used by code.
+5. Validate path-safe batch/worker identifiers and stream ZIP payload checksum
+   verification.
+
 ## Dependencies And Invalidation
 
 The minimum invalidation rules are:
@@ -281,6 +293,7 @@ completed stage.
 - [x] Complete Work Package 5 orchestration/package/sync.
 - [ ] Complete Work Package 6 real production proof.
 - [x] Complete Work Package 7 runtime memory and lifecycle hardening.
+- [x] Complete Work Package 8 production audit hardening.
 
 ## Decisions
 
@@ -300,9 +313,9 @@ completed stage.
   parity-verified artifact is produced.
 - 2026-08-13: Keyframe candidate decoding uses one sequential video pass and
   retains only one shot's candidate group, bounding peak RAM on Colab/Kaggle.
-- 2026-08-16: Gemini request caching is stage-local and checkpoint outputs are
-  batch-uploaded per stage. Persistent resume authority remains the verified
-  stage output plus its separately committed state marker.
+- 2026-08-16: Gemini request caching is stage-local. Persistent resume
+  authority is one atomic backend commit containing the stage outputs and
+  matching complete state marker; resume revalidates every recorded checksum.
 - 2026-08-16: Phase00 restore is batch-scoped and checksum-resumable; unrelated
   batch timelines are not downloaded into Colab/Kaggle scratch.
 - 2026-08-24: Checkpoint repository visibility is an operator choice. Public
@@ -322,6 +335,13 @@ completed stage.
 - 2026-08-25: Runtime chunks use configured RAM pressure limits of 8/4 GiB for
   4/2/1 video planning. Heavy model loads require at least 4 GiB available
   after cleanup, and Qwen CPU/disk offload is a systemic provider failure.
+- 2026-08-25: The pinned logical NeMo model ID resolves on Hugging Face to the
+  canonical Vietnamese source repository at the same immutable revision, so
+  no model identity migration is required.
+- 2026-08-25: A checkpoint stage promotion is one atomic backend commit
+  containing outputs and the matching state marker. Resume accepts it only
+  after checksum validation; documentation must not describe a separate state
+  commit.
 
 ## Still Required Before A Production Run
 
@@ -347,7 +367,7 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The complete local suite passes 308 tests. Scoped Ruff checks pass for all
+- The complete local suite passes 325 tests. Scoped Ruff checks pass for all
   undefined names and for import correctness across the new Phase01 surface.
   Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
   current; and `git diff --check` passes.
@@ -362,11 +382,12 @@ the one-time official TransNet converter parity job. Before a production run:
 
 ## Result
 
-Active. Work Packages 0-5 and 7 are implemented locally. On 2026-08-25 the production
-defaults moved to NeMo/FastConformer ASR, gated Vintern OCR, and a shared 4-bit
-Qwen semantic runtime with scoped Gemini fallback. These paths, checkpoint
-invalidation, lifecycle telemetry, RAM guards, and packaging are covered by the
-308-test local suite. The intentionally deferred gate is
+Active. Work Packages 0-5, 7, and 8 are implemented locally. On 2026-08-25 the
+production defaults moved to NeMo/FastConformer ASR, gated Vintern OCR, and a
+shared 4-bit Qwen semantic runtime with scoped Gemini fallback. These paths,
+checkpoint invalidation, lifecycle telemetry, RAM guards, batching isolation,
+and packaging are covered by the 325-test local suite. The intentionally
+deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation

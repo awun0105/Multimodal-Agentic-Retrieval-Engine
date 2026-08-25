@@ -377,10 +377,16 @@ The per-video structure package is:
 |-- scene_summaries.parquet
 |-- keyframes/
 |-- thumbnails/
+|-- diagnostics/
+|   |-- keyframe_diagnostics.jsonl
+|   |-- scene_boundary_diagnostics.jsonl
+|   |-- transnet_predictions.json
+|   |-- asr_status.json
+|   `-- ocr_status.json
 |-- manifest.json
 |-- artifact_manifest.json
 |-- checksums.json
-|-- ocr_status.json
+|-- resolved_config.json
 `-- errors.jsonl
 ```
 
@@ -446,9 +452,9 @@ independent retrieval indexes.
 - Each stage stores status, input fingerprint, relevant config hash,
   model/revision, prompt version when applicable, schema version, output
   checksums, and completion time.
-- Stage completion is atomic: write local temp, validate, checksum, sync to the
-  persistent artifact store, update `state.json`, then mark complete. Local
-  Colab/Kaggle storage is scratch, not resume authority.
+- Stage completion is atomic: write local temp, validate, checksum, then upload
+  the immutable outputs and matching complete `state.json` in one backend
+  commit. Local Colab/Kaggle storage is scratch, not resume authority.
 - A rerun reuses only complete stages whose persistent outputs, checksums,
   upstream fingerprints, and relevant versions still match. Dependency changes
   invalidate only downstream stages.
@@ -484,9 +490,10 @@ video's stage scratch. The completed canonical stage is the persistent cache
 and is promoted to the configured writable checkpoint repository, which may be
 public or private. This avoids one Hugging Face commit per Gemini request while
 preserving stage-level resume semantics.
-All output files belonging to one checkpoint stage are uploaded in one backend
-commit; the separate `state.json` update remains the final atomic completion
-marker after output checksum verification.
+All output files belonging to one checkpoint stage and the matching
+`state.json` completion marker are uploaded in one atomic backend commit. A
+resume still downloads and verifies every recorded checksum; a missing or
+corrupt output invalidates that stage and its downstream stages.
 
 After the worker report commit, Notebook 01 lists the remote
 `{release_id}/phase01_structure` tree and fails unless every completed video

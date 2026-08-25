@@ -196,6 +196,52 @@ def test_nemo_provider_emits_canonical_chunk_rows(monkeypatch, tmp_path: Path) -
     ]
 
 
+def test_nemo_runs_memory_guard_before_load_and_releases_after_use(
+    monkeypatch,
+) -> None:
+    from system1.asr import nemo
+
+    events: list[str] = []
+
+    class FakeNemoModel:
+        def to(self, _device):
+            events.append("to")
+            return self
+
+        def eval(self) -> None:
+            events.append("eval")
+
+    def factory(_model_id):
+        events.append("load")
+        return FakeNemoModel()
+
+    monkeypatch.setattr(
+        nemo,
+        "_transcribe_chunked",
+        lambda *_args, **_kwargs: events.append("transcribe") or [],
+    )
+    monkeypatch.setattr(
+        nemo, "_release_gpu_memory", lambda: events.append("release")
+    )
+
+    result = nemo.transcribe_video(
+        "unused.mp4",
+        video_id="L21_V001",
+        frame_timeline=timeline(),
+        config={
+            "model_id": "nvidia/parakeet-ctc-0.6b-vi",
+            "language": "vi",
+            "total_attempts": 1,
+        },
+        model_factory=factory,
+        audio_present=True,
+        pre_load_callback=lambda provider: events.append(f"guard:{provider}"),
+    )
+
+    assert result.status == "no_speech"
+    assert events == ["guard:nemo", "load", "to", "eval", "transcribe", "release"]
+
+
 def test_nemo_snapshot_download_uses_verified_alias_and_revision(
     monkeypatch, tmp_path: Path
 ) -> None:

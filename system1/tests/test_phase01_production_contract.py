@@ -115,6 +115,65 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_concurrent_videos", 2),
+        ("gpu_heavy_models_resident", 2),
+        ("checkpoint_after_each_stage", False),
+        ("release_gpu_objects_before_empty_cache", False),
+    ],
+)
+def test_fixed_execution_fields_are_validated_invariants(
+    field: str, value: object
+) -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["phase01"]["execution"][field] = value
+
+    with pytest.raises(ValueError, match=f"execution.{field}.*enforced invariant"):
+        require_phase01_production_ready(resolved)
+
+
+def test_shared_semantic_runtime_rejects_fallback_config_drift() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["models"]["scene_summary"]["fallbacks"][0][
+        "model_id"
+    ] = "different-gemini-model"
+
+    with pytest.raises(ValueError, match="shared semantic runtime mismatch"):
+        require_phase01_production_ready(resolved)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("batch_id", "../batch_000"),
+        ("batch_id", "batch/000"),
+        ("worker_id", "worker\\000"),
+        ("worker_id", " worker_000"),
+        ("worker_id", ".."),
+    ],
+)
+def test_runtime_identifiers_must_be_path_safe(field: str, value: str) -> None:
+    with pytest.raises(ValueError, match=f"{field}.*path-safe identifier"):
+        resolve_phase01_config(
+            CONFIG_DIR,
+            user_settings=user_settings(**{field: value}),
+            phase00_release_id="canonical_release_v001",
+            environment="local",
+        )
+
+
 def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     monkeypatch,
 ) -> None:

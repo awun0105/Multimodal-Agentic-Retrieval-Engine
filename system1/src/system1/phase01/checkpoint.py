@@ -101,7 +101,7 @@ def downstream_stages(stage: str) -> tuple[str, ...]:
 
 
 class CheckpointManager:
-    """Promote immutable stage outputs, then update state in a separate commit."""
+    """Atomically promote immutable stage outputs and their complete state."""
 
     def __init__(
         self,

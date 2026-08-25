@@ -179,6 +179,12 @@ def resolve_phase01_config(
     )
     if missing:
         raise ValueError(f"missing Phase01 user settings: {', '.join(missing)}")
+    batch_id = _validated_runtime_identifier(
+        normalized_settings["batch_id"], field_name="batch_id"
+    )
+    worker_id = _validated_runtime_identifier(
+        normalized_settings["worker_id"], field_name="worker_id"
+    )
 
     release_override = str(normalized_settings.get("release_id_override") or "").strip()
     discovered_release = str(phase00_release_id or "").strip()
@@ -241,8 +247,8 @@ def resolve_phase01_config(
             "environment": environment or detect_environment(),
             "release_id": release_id,
             "release_id_source": "user_override" if release_override else "phase00_auto_resolve",
-            "batch_id": str(normalized_settings["batch_id"]),
-            "worker_id": str(normalized_settings["worker_id"]),
+            "batch_id": batch_id,
+            "worker_id": worker_id,
         },
     }
     asr_provider = str(normalized_settings.get("asr_provider") or "").strip()
@@ -265,12 +271,12 @@ def resolve_phase01_config(
 
 
 def require_phase01_production_ready(config: ResolvedPhase01Config) -> None:
-    if config.production_ready:
-        return
-    raise ValueError(
-        "Phase01 production config has unresolved required fields: "
-        + ", ".join(config.unresolved_required_fields)
-    )
+    if not config.production_ready:
+        raise ValueError(
+            "Phase01 production config has unresolved required fields: "
+            + ", ".join(config.unresolved_required_fields)
+        )
+    _validate_phase01_runtime_invariants(config.payload)
 
 
 def persist_resolved_phase01_config(config: ResolvedPhase01Config, path: Path | str) -> Path:
@@ -383,6 +389,86 @@ def _resolved_semantic_model(
     if str(model_key) not in models:
         raise ValueError(f"unknown Phase01 semantic model_key: {model_key}")
     return {**copy.deepcopy(models[str(model_key)]), **stage}
+
+
+def _validated_runtime_identifier(value: Any, *, field_name: str) -> str:
+    text = str(value)
+    if (
+        not text
+        or text != text.strip()
+        or text in {".", ".."}
+        or any(separator in text for separator in ("/", "\\"))
+        or any(ord(character) < 32 for character in text)
+    ):
+        raise ValueError(
+            f"Phase01 {field_name} must be a non-empty path-safe identifier"
+        )
+    return text
+
+
+def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
+    execution = payload["phase01"]["execution"]
+    expected_execution = {
+        "max_concurrent_videos": 1,
+        "gpu_heavy_models_resident": 1,
+        "checkpoint_after_each_stage": True,
+        "release_gpu_objects_before_empty_cache": True,
+    }
+    for key, expected in expected_execution.items():
+        if execution.get(key) != expected:
+            raise ValueError(
+                f"Phase01 execution.{key} is an enforced invariant and must be "
+                f"{expected!r}"
+            )
+
+    models = payload["models"]
+    caption_signature = _semantic_runtime_signature(
+        _resolved_semantic_model(models, "shot_caption")
+    )
+    for stage_key in ("scene_boundary", "scene_summary"):
+        signature = _semantic_runtime_signature(
+            _resolved_semantic_model(models, stage_key)
+        )
+        if signature != caption_signature:
+            raise ValueError(
+                "Phase01 shared semantic runtime mismatch: "
+                f"shot_caption and {stage_key} must use the same primary/fallback "
+                "client chain"
+            )
+
+
+def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:
+    runtime_keys = (
+        "provider",
+        "sdk",
+        "sdk_version",
+        "model_id",
+        "model_revision",
+        "thinking_level",
+        "trust_remote_code",
+        "torch_dtype",
+        "device_map",
+        "quantization",
+        "low_cpu_mem_usage",
+        "use_fast_tokenizer",
+        "use_flash_attn",
+        "max_new_tokens",
+    )
+
+    def client_signature(config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: copy.deepcopy(config[key])
+            for key in runtime_keys
+            if key in config
+        }
+
+    return {
+        "primary": client_signature(model),
+        "fallbacks": [
+            client_signature(dict(fallback))
+            for fallback in model.get("fallbacks", [])
+        ],
+    }
 
 
 def _apply_phase01_asr_provider(payload: dict[str, Any], provider: str) -> None:
