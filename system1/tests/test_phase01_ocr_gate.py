@@ -12,9 +12,9 @@ MODEL_CONFIG = {
     "provider": "vintern_local",
     "model_id": "5CD-AI/Vintern-1B-v3_5",
     "model_revision": "revision",
-    "prompt_version": "keyframe_ocr_v2",
+    "prompt_version": "keyframe_ocr_v3",
     "response_schema_version": "keyframe_ocr_response_v1",
-    "structured_output_contract_version": "json_schema_prompt_v1",
+    "structured_output_contract_version": "vintern_plain_text_ocr_v1",
 }
 OCR_CONFIG = {
     "run_on_keyframe_roles": ["middle"],

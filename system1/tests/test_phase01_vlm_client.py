@@ -577,7 +577,7 @@ def test_local_vlm_pre_load_guard_blocks_before_model_factory(monkeypatch) -> No
     assert calls[-1]["status"] == "load_blocked"
 
 
-def test_vintern_uses_native_batch_chat_when_available(
+def test_vintern_plain_text_ocr_uses_native_batch_chat(
     tmp_path: Path, monkeypatch
 ) -> None:
     torch = _install_fake_torch(monkeypatch)
@@ -600,13 +600,9 @@ def test_vintern_uses_native_batch_chat_when_available(
             **_kwargs,
         ):
             self.batch_calls += 1
-            assert all("OUTPUT CONTRACT:" in question for question in questions)
-            assert all(
-                "Return exactly one valid JSON object" in question
-                for question in questions
-            )
-            assert all('"type":"object"' in question for question in questions)
-            return ['{"value": "ok"}' for _question in questions]
+            assert all("OUTPUT CONTRACT:" not in question for question in questions)
+            assert all("JSON Schema:" not in question for question in questions)
+            return ["HTV9\n08:20:19", "<NO_TEXT>"]
 
     model = FakeModel()
     client = LocalVisionStructuredClient(
@@ -615,6 +611,7 @@ def test_vintern_uses_native_batch_chat_when_available(
             "model_id": "vintern",
             "model_revision": "revision",
             "inference_batch_size": 2,
+            "structured_output_contract_version": "vintern_plain_text_ocr_v1",
         }
     )
     monkeypatch.setattr(client, "_load_vintern", lambda: (FakeTokenizer(), model))
@@ -622,12 +619,42 @@ def test_vintern_uses_native_batch_chat_when_available(
         "system1.vlm.client._vintern_pixel_values",
         lambda _path: _FakeTensor(),
     )
-    requests = _image_requests(tmp_path, prompts=["a", "b"])
+    schema = {
+        "type": "object",
+        "properties": {
+            "full_text": {"type": "string"},
+            "ocr_blocks": {"type": "array"},
+            "language": {"type": "string"},
+            "confidence": {"type": ["number", "null"]},
+        },
+        "required": ["full_text", "ocr_blocks"],
+        "additionalProperties": False,
+    }
+    requests = []
+    for index in range(2):
+        image = tmp_path / f"image_{index}.jpg"
+        image.write_bytes(b"image")
+        requests.append(
+            GeminiRequest(
+                request_kind="keyframe_ocr",
+                video_id="L21_V001",
+                prompt="Read visible text only.",
+                prompt_version="keyframe_ocr_v3",
+                response_schema_version="keyframe_ocr_response_v1",
+                response_schema=schema,
+                image_paths=(image,),
+            )
+        )
 
     responses = client.request_many(requests)
 
-    assert len(responses) == 2
     assert model.batch_calls == 1
+    assert responses[0]["full_text"] == "HTV9\n08:20:19"
+    assert responses[0]["ocr_blocks"] == []
+    assert responses[0]["language"] == "vi"
+    assert responses[0]["confidence"] is None
+    assert responses[1]["full_text"] == ""
+    assert responses[1]["ocr_blocks"] == []
 
 
 def test_local_vlm_cache_identity_includes_structured_output_contract() -> None:

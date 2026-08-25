@@ -520,7 +520,13 @@ class LocalVisionStructuredClient:
                 batch_indices, batch_requests, raw_texts, strict=True
             ):
                 try:
-                    normalized = _parse_json_object(raw_text, request.response_schema)
+                    if self._uses_vintern_plain_text_ocr(request):
+                        normalized = _normalize_vintern_ocr_text(raw_text)
+                        validate(normalized, request.response_schema)
+                    else:
+                        normalized = _parse_json_object(
+                            raw_text, request.response_schema
+                        )
                     self._write_cached(
                         cache_paths[index], request=request, normalized=normalized
                     )
@@ -556,6 +562,19 @@ class LocalVisionStructuredClient:
         if errors:
             raise BatchRequestError(results=results, errors=errors)
         return _complete_batch_or_raise(results)
+
+    def _uses_vintern_plain_text_ocr(self, request: StructuredRequest) -> bool:
+        return (
+            self.provider_name == "vintern_local"
+            and request.request_kind == "keyframe_ocr"
+            and str(
+                self.model_config.get(
+                    "structured_output_contract_version",
+                    "",
+                )
+            )
+            == "vintern_plain_text_ocr_v1"
+        )
 
     def _request_hash(self, request: StructuredRequest) -> str:
         request_hash = build_request_hash(
@@ -723,11 +742,14 @@ class LocalVisionStructuredClient:
                 pass
             prompts: list[str] = []
             for request in requests:
-                structured_prompt = _structured_prompt(request)
+                if self._uses_vintern_plain_text_ocr(request):
+                    model_prompt = request.prompt
+                else:
+                    model_prompt = _structured_prompt(request)
                 prompts.append(
-                    structured_prompt
-                    if "<image>" in structured_prompt
-                    else "<image>\n" + structured_prompt
+                    model_prompt
+                    if "<image>" in model_prompt
+                    else "<image>\n" + model_prompt
                 )
             generation_config = {
                 "max_new_tokens": int(self.model_config.get("max_new_tokens", 768)),
@@ -1117,6 +1139,20 @@ def _is_cuda_oom(exc: BaseException) -> bool:
     return "outofmemory" in name or "cuda out of memory" in message or (
         "cuda" in message and "out of memory" in message
     )
+
+
+def _normalize_vintern_ocr_text(raw_text: str) -> dict[str, Any]:
+    """Normalize plain Vintern OCR text into the canonical OCR response."""
+
+    text = raw_text.strip()
+    if text == "<NO_TEXT>":
+        text = ""
+    return {
+        "full_text": text,
+        "ocr_blocks": [],
+        "language": "vi",
+        "confidence": None,
+    }
 
 
 def _structured_prompt(request: StructuredRequest) -> str:
