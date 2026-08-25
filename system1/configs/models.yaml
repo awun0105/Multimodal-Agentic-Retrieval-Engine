@@ -96,6 +96,7 @@ phase01:
     trust_remote_code: false
     torch_dtype: float16
     device_map: cuda
+    padding_side: left
     structured_output_contract_version: json_schema_prompt_v1
     quantization:
       method: bitsandbytes

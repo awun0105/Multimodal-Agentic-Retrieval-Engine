@@ -409,10 +409,14 @@ def test_qwen_loader_passes_explicit_nf4_quantization(monkeypatch) -> None:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
+    class FakeProcessor:
+        def __init__(self):
+            self.tokenizer = SimpleNamespace(padding_side="right")
+
     class FakeProcessorFactory:
         @staticmethod
         def from_pretrained(*_args, **_kwargs):
-            return object()
+            return FakeProcessor()
 
     class FakeModel:
         def eval(self):
@@ -466,10 +470,14 @@ def test_qwen_loader_rejects_cpu_or_disk_offload(
         def __init__(self, **_kwargs):
             pass
 
+    class FakeProcessor:
+        def __init__(self):
+            self.tokenizer = SimpleNamespace(padding_side="right")
+
     class FakeProcessorFactory:
         @staticmethod
         def from_pretrained(*_args, **_kwargs):
-            return object()
+            return FakeProcessor()
 
     class FakeModel:
         def __init__(self) -> None:
@@ -1011,3 +1019,75 @@ def test_repeated_batch_one_oom_opens_circuit_and_uses_gemini(monkeypatch) -> No
     assert response == {"value": "fallback"}
     assert attempts == 2
     assert client.circuit_open is True
+
+def test_qwen_loader_sets_left_padding(monkeypatch) -> None:
+    _install_fake_torch(monkeypatch)
+
+    captured: dict[str, object] = {}
+
+    class FakeBitsAndBytesConfig:
+        def __init__(self, **_kwargs):
+            pass
+
+    class FakeProcessor:
+        def __init__(self) -> None:
+            self.tokenizer = SimpleNamespace(
+                padding_side="right"
+            )
+
+    class FakeProcessorFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            processor = FakeProcessor()
+            captured["processor"] = processor
+            return processor
+
+    class FakeModel:
+        def eval(self):
+            return None
+
+    class FakeModelFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return FakeModel()
+
+    transformers = ModuleType("transformers")
+    transformers.AutoProcessor = FakeProcessorFactory
+    transformers.BitsAndBytesConfig = (
+        FakeBitsAndBytesConfig
+    )
+    transformers.Qwen2_5_VLForConditionalGeneration = (
+        FakeModelFactory
+    )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        transformers,
+    )
+
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "qwen_local",
+            "model_id": (
+                "Qwen/Qwen2.5-VL-7B-Instruct"
+            ),
+            "model_revision": "revision",
+            "torch_dtype": "float16",
+            "device_map": "cuda",
+            "padding_side": "left",
+            "quantization": {
+                "method": "bitsandbytes",
+                "mode": "4bit",
+                "quant_type": "nf4",
+                "compute_dtype": "float16",
+                "double_quant": True,
+            },
+        }
+    )
+
+    client._load_qwen()
+
+    processor = captured["processor"]
+
+    assert processor.tokenizer.padding_side == "left"

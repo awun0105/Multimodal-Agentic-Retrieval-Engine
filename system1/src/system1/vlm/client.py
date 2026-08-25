@@ -577,20 +577,29 @@ class LocalVisionStructuredClient:
         )
 
     def _request_hash(self, request: StructuredRequest) -> str:
+        cache_identity: dict[str, Any] = {
+            "provider": self.provider_name,
+            "model_revision": self.model_revision,
+            "max_new_tokens": self.model_config.get("max_new_tokens"),
+            "quantization": self.model_config.get("quantization"),
+            "structured_output_contract_version": self.model_config.get(
+                "structured_output_contract_version",
+                "json_schema_prompt_v1",
+            ),
+        }
+
+        if self.provider_name == "qwen_local":
+            cache_identity["padding_side"] = self.model_config.get(
+                "padding_side",
+                "left",
+            )
+
         request_hash = build_request_hash(
             request,
             model_id=self.model_id,
-            cache_identity={
-                "provider": self.provider_name,
-                "model_revision": self.model_revision,
-                "max_new_tokens": self.model_config.get("max_new_tokens"),
-                "quantization": self.model_config.get("quantization"),
-                "structured_output_contract_version": self.model_config.get(
-                    "structured_output_contract_version",
-                    "json_schema_prompt_v1",
-                ),
-            },
+            cache_identity=cache_identity,
         )
+
         return request_hash
 
     def _read_cached(
@@ -820,6 +829,24 @@ class LocalVisionStructuredClient:
                         self.model_config.get("trust_remote_code", False)
                     ),
                 )
+
+                padding_side = str(
+                    self.model_config.get("padding_side", "left")
+                )
+
+                if padding_side != "left":
+                    raise ValueError(
+                        "qwen_local requires padding_side='left' "
+                        "for batched decoder-only generation"
+                    )
+
+                tokenizer = getattr(processor, "tokenizer", None)
+                if tokenizer is None:
+                    raise RuntimeError(
+                        "qwen_local processor does not expose a tokenizer"
+                    )
+
+                tokenizer.padding_side = padding_side
                 model = AutoModel.from_pretrained(
                     self.model_id,
                     revision=self.model_revision,
