@@ -10,7 +10,7 @@ from system1.artifacts.store import ArtifactStore
 from system1.gemini import GeminiRequest
 from system1.vlm.client import (
     BatchRequestError,
-    FallbackStructuredClient,
+    ExclusiveLocalFallbackClient,
     LocalVisionStructuredClient,
     SystemicProviderError,
 )
@@ -73,7 +73,7 @@ def test_request_error_falls_back_without_opening_circuit() -> None:
         },
     )
 
-    client = FallbackStructuredClient([FailingClient(), PassingClient()])
+    client = ExclusiveLocalFallbackClient(FailingClient(), PassingClient())
     response = client.request(request)
     second = client.request(request)
 
@@ -139,7 +139,7 @@ def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
     primary.provider_name = "qwen_local"
     fallback = PassingFallback()
     fallback.provider_name = "gemini"
-    client = FallbackStructuredClient(
+    client = ExclusiveLocalFallbackClient(
         [primary, fallback],
         telemetry_callback=lambda payload: telemetry.append(dict(payload)),
     )
@@ -203,7 +203,7 @@ def test_fallback_client_reports_all_provider_failures() -> None:
     )
 
     with pytest.raises(RuntimeError, match="first.*second"):
-        FallbackStructuredClient(
+        ExclusiveLocalFallbackClient(
             [FailingClient("first"), FailingClient("second")]
         ).request(request)
 
@@ -845,7 +845,7 @@ def test_invalid_json_falls_back_only_failed_request_and_keeps_qwen_primary(
             response_schema=schema,
         )
 
-    client = FallbackStructuredClient([primary, GeminiFallback()])
+    client = ExclusiveLocalFallbackClient(primary, GeminiFallback())
     responses = client.request_many([make_request("good"), make_request("bad")])
     next_response = client.request(make_request("next"))
 
@@ -905,7 +905,7 @@ def test_batch_call_error_retries_singletons_and_falls_back_only_failed_request(
             response_schema=schema,
         )
 
-    client = FallbackStructuredClient([primary, GeminiFallback()])
+    client = ExclusiveLocalFallbackClient(primary, GeminiFallback())
     responses = client.request_many([make_request("good"), make_request("bad")])
     next_response = client.request(make_request("next"))
 
@@ -1012,7 +1012,7 @@ def test_repeated_batch_one_oom_opens_circuit_and_uses_gemini(monkeypatch) -> No
             "additionalProperties": False,
         },
     )
-    client = FallbackStructuredClient([primary, GeminiFallback()])
+    client = ExclusiveLocalFallbackClient(primary, GeminiFallback())
 
     response = client.request(request)
 

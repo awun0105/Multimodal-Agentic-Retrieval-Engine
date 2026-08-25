@@ -97,7 +97,18 @@ phase01:
     torch_dtype: float16
     device_map: cuda
     padding_side: left
-    structured_output_contract_version: json_schema_prompt_v1
+    generation_contract_version: shot_caption_plain_text_fields_v1
+    prompt_bundle_version: shot_caption_plain_text_fields_v1
+    prompt_versions:
+      caption_vi: shot_caption_vi_v1
+      caption_en: shot_caption_en_v1
+      objects_vi: shot_objects_vi_v1
+      objects_en: shot_objects_en_v1
+      actions_vi: shot_actions_vi_v1
+      actions_en: shot_actions_en_v1
+      visible_text_summary_vi: shot_visible_text_summary_vi_v1
+      visible_text_summary_en: shot_visible_text_summary_en_v1
+    response_schema_version: shot_caption_response_v3
     quantization:
       method: bitsandbytes
       package_version: 0.47.0
@@ -105,43 +116,40 @@ phase01:
       quant_type: nf4
       compute_dtype: float16
       double_quant: true
-    prompt_version: shot_caption_v2
-    response_schema_version: shot_caption_response_v3
     max_new_tokens: 768
     fallbacks:
-      - provider: gemini
-        sdk: google-genai
-        sdk_version: 2.13.0
-        model_id: gemini-3.6-flash
-        model_revision: gemini-3.6-flash
-        thinking_level: medium
-        prompt_version: shot_caption_v2
-        response_schema_version: shot_caption_response_v3
+      - provider: vintern_reasoning_local
+        sdk: transformers
+        model_id: 5CD-AI/Vintern-3B-R-beta
+        model_revision: 4fd34d713dfca446cdecc00d921f5038909e3efb
+        trust_remote_code: true
+        torch_dtype: float16
+        low_cpu_mem_usage: true
+        use_fast_tokenizer: false
+        use_flash_attn: false
+        image_size: 448
+        max_dynamic_patches: 6
+        use_thumbnail: true
+        generation_contract_version: semantic_plain_text_v1
+        max_new_tokens: 256
+        do_sample: false
+        num_beams: 1
+        repetition_penalty: 1.0
 
   scene_boundary:
     provider: qwen_local
     model_key: shot_caption
-    prompt_version: scene_boundary_primary_v1
-    focused_prompt_version: scene_boundary_focused_v1
-    consistency_prompt_version: scene_boundary_consistency_v1
-    response_schema_version: scene_boundary_response_v1
-    fallbacks:
-      - provider: gemini
-        sdk: google-genai
-        sdk_version: 2.13.0
-        model_id: gemini-3.6-flash
-        model_revision: gemini-3.6-flash
-        thinking_level: medium
+    prompt_version: scene_boundary_primary_label_v2
+    focused_prompt_version: scene_boundary_focused_label_v2
+    consistency_prompt_version: scene_boundary_consistency_label_v2
+    decision_contract_version: scene_boundary_label_v2
 
   scene_summary:
     provider: qwen_local
     model_key: shot_caption
-    prompt_version: scene_summary_v1
+    prompt_bundle_version: scene_summary_plain_text_v2
+    prompt_versions:
+      summary_vi: scene_summary_vi_v2
+      summary_en: scene_summary_en_v2
+    generation_contract_version: scene_summary_plain_text_v2
     response_schema_version: scene_summary_response_v1
-    fallbacks:
-      - provider: gemini
-        sdk: google-genai
-        sdk_version: 2.13.0
-        model_id: gemini-3.6-flash
-        model_revision: gemini-3.6-flash
-        thinking_level: medium

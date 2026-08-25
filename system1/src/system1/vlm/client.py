@@ -15,7 +15,11 @@ import numpy as np
 from jsonschema import validate
 from PIL import Image
 
-from system1.gemini import StructuredRequest, build_request_hash
+from .contracts import (
+    ModelRequest,
+    build_request_hash,
+    normalize_text_response,
+)
 
 
 class JsonCache(Protocol):
@@ -27,10 +31,10 @@ class JsonCache(Protocol):
 
 
 class StructuredClient(Protocol):
-    def request(self, request: StructuredRequest) -> dict[str, Any]: ...
+    def request(self, request: ModelRequest) -> dict[str, Any]: ...
 
     def request_many(
-        self, requests: list[StructuredRequest]
+        self, requests: list[ModelRequest]
     ) -> list[dict[str, Any]]: ...
 
 
@@ -74,11 +78,11 @@ class MetadataStructuredClient:
         self.model_id = model_id
         self.model_revision = model_revision
 
-    def request(self, request: StructuredRequest) -> dict[str, Any]:
+    def request(self, request: ModelRequest) -> dict[str, Any]:
         return self._with_metadata(self.client.request(request))
 
     def request_many(
-        self, requests: list[StructuredRequest]
+        self, requests: list[ModelRequest]
     ) -> list[dict[str, Any]]:
         try:
             responses = _client_request_many(self.client, requests)
@@ -103,196 +107,142 @@ class MetadataStructuredClient:
         _close_client(self.client)
 
 
-class FallbackStructuredClient:
-    """Request-level fallback with a systemic-failure circuit breaker."""
+def _for_local_fallback(request: ModelRequest) -> ModelRequest:
+    fallback_paths = request.fallback_image_paths
+    if not fallback_paths:
+        return request
+    from dataclasses import replace
+    return replace(request, image_paths=fallback_paths)
+
+class ExclusiveLocalFallbackClient:
+    """Sticky local failover with one GPU-heavy model resident."""
 
     def __init__(
         self,
-        clients: list[StructuredClient],
+        primary: StructuredClient,
+        fallback: StructuredClient,
         *,
         telemetry_callback: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
-        if not clients:
-            raise ValueError("at least one structured client is required")
-        self.clients = clients
+        self.primary = primary
+        self.fallback = fallback
         self.telemetry_callback = telemetry_callback
         self._request_lock = threading.Lock()
-        self._circuit_open = False
+        self._fallback_active = False
         self._closed = False
-        self._closed_client_ids: set[int] = set()
         self._counts = {
             "qwen_request_count": 0,
-            "gemini_request_count": 0,
+            "vintern_fallback_request_count": 0,
             "fallback_request_count": 0,
+            "fallback_activation_count": 0,
         }
 
     @property
     def circuit_open(self) -> bool:
-        return self._circuit_open
+        return self._fallback_active
 
-    def request(self, request: StructuredRequest) -> dict[str, Any]:
+    def request(self, request: ModelRequest) -> dict[str, Any]:
         try:
             return self.request_many([request])[0]
         except BatchRequestError as exc:
             raise RuntimeError(str(exc)) from exc
 
-    def request_many(
-        self, requests: list[StructuredRequest]
-    ) -> list[dict[str, Any]]:
+    def request_many(self, requests: list[ModelRequest]) -> list[dict[str, Any]]:
         if not requests:
             return []
+        
         with self._request_lock:
             if self._closed:
-                raise RuntimeError("structured fallback client is closed")
-            if self._circuit_open or len(self.clients) == 1:
-                start = 1 if self._circuit_open and len(self.clients) > 1 else 0
-                return self._request_all_from(start, requests)
+                raise RuntimeError("client is closed")
+                
+            if self._fallback_active:
+                fallback_reqs = [_for_local_fallback(r) for r in requests]
+                self._record_provider_requests("vintern", len(requests))
+                return _client_request_many(self.fallback, fallback_reqs)
 
-            primary = self.clients[0]
-            self._record_provider_requests(primary, len(requests))
+            self._record_provider_requests("qwen", len(requests))
             try:
-                return _client_request_many(primary, requests)
+                return _client_request_many(self.primary, requests)
+            except SystemicProviderError:
+                self._activate_fallback()
+                fallback_reqs = [_for_local_fallback(r) for r in requests]
+                self._record_provider_requests("vintern", len(requests))
+                self._counts["fallback_request_count"] += len(requests)
+                return _client_request_many(self.fallback, fallback_reqs)
             except BatchRequestError as exc:
                 results = list(exc.results)
-                failed_indices = sorted(exc.errors)
-                systemic = any(
-                    _is_systemic_provider_error(error)
-                    for error in exc.errors.values()
-                )
-                reason = _fallback_reason(next(iter(exc.errors.values())))
-                if systemic:
-                    self._open_circuit(primary, reason=reason)
-                self._fallback_indices(
-                    requests,
-                    results,
-                    failed_indices,
-                    errors=exc.errors,
-                    reason=reason,
-                )
-                return _complete_batch_or_raise(results)
-            except Exception as exc:  # noqa: BLE001 - provider boundary
-                if _is_systemic_provider_error(exc):
-                    self._open_circuit(primary, reason=_fallback_reason(exc))
-                results: list[dict[str, Any] | None] = [None] * len(requests)
-                self._fallback_indices(
-                    requests,
-                    results,
-                    list(range(len(requests))),
-                    errors={index: exc for index in range(len(requests))},
-                    reason=_fallback_reason(exc),
-                )
-                return _complete_batch_or_raise(results)
+                errors = exc.errors
+                
+                self._activate_fallback()
+                
+                failed_indices = [i for i, err in enumerate(errors) if err is not None]
+                fallback_reqs = [_for_local_fallback(requests[i]) for i in failed_indices]
+                
+                if fallback_reqs:
+                    self._record_provider_requests("vintern", len(fallback_reqs))
+                    self._counts["fallback_request_count"] += len(fallback_reqs)
+                    try:
+                        fallback_results = _client_request_many(self.fallback, fallback_reqs)
+                        for fallback_idx, original_idx in enumerate(failed_indices):
+                            results[original_idx] = fallback_results[fallback_idx]
+                            errors[original_idx] = None
+                    except BatchRequestError as fallback_exc:
+                        for fallback_idx, original_idx in enumerate(failed_indices):
+                            results[original_idx] = fallback_exc.results[fallback_idx]
+                            errors[original_idx] = fallback_exc.errors[fallback_idx]
+                            
+                if any(err is not None for err in errors):
+                    raise BatchRequestError(
+                        "exclusive fallback failed to repair all items",
+                        tuple(results),
+                        tuple(errors),
+                    ) from exc
+                
+                return results
 
-    def _request_all_from(
-        self, start: int, requests: list[StructuredRequest]
-    ) -> list[dict[str, Any]]:
-        results: list[dict[str, Any] | None] = [None] * len(requests)
-        self._fallback_indices(
-            requests,
-            results,
-            list(range(len(requests))),
-            errors={},
-            reason="circuit_open" if self._circuit_open else "primary_only",
-            start=start,
-        )
-        return _complete_batch_or_raise(results)
+    def _activate_fallback(self) -> None:
+        if not self._fallback_active:
+            self._fallback_active = True
+            self._counts["fallback_activation_count"] += 1
+            if self.telemetry_callback:
+                self.telemetry_callback(
+                    {
+                        "event": "semantic_fallback_activated",
+                        "event_kind": "lifecycle",
+                    }
+                )
+            try:
+                self.primary.close()
+            except Exception:
+                pass
+            _release_torch_memory()
 
-    def _fallback_indices(
-        self,
-        requests: list[StructuredRequest],
-        results: list[dict[str, Any] | None],
-        indices: list[int],
-        *,
-        errors: Mapping[int, Exception],
-        reason: str,
-        start: int = 1,
-    ) -> None:
-        unresolved = list(indices)
-        all_errors: dict[int, Exception] = dict(errors)
-        for client in self.clients[start:]:
-            if not unresolved:
-                break
-            next_unresolved: list[int] = []
-            for index in unresolved:
-                self._counts["fallback_request_count"] += 1
-                self._record_provider_requests(client, 1)
-                try:
-                    results[index] = client.request(requests[index])
-                    all_errors.pop(index, None)
-                except Exception as exc:  # noqa: BLE001 - try next fallback
-                    previous = all_errors.get(index)
-                    all_errors[index] = (
-                        RuntimeError(
-                            f"{type(previous).__name__}: {previous} | "
-                            f"{type(exc).__name__}: {exc}"
-                        )
-                        if previous is not None
-                        else exc
-                    )
-                    next_unresolved.append(index)
-            unresolved = next_unresolved
-        self._emit(
-            "fallback",
-            fallback_reason=reason,
-            circuit_breaker_state="open" if self._circuit_open else "closed",
-            unresolved_count=len(unresolved),
-            **self._counts,
-        )
-        if unresolved:
-            raise BatchRequestError(results=results, errors=all_errors)
-
-    def _record_provider_requests(self, client: StructuredClient, count: int) -> None:
-        provider = str(getattr(client, "provider_name", ""))
-        if provider == "qwen_local":
+    def _record_provider_requests(self, provider: str, count: int) -> None:
+        if provider == "qwen":
             self._counts["qwen_request_count"] += count
-        elif provider == "gemini":
-            self._counts["gemini_request_count"] += count
+        else:
+            self._counts["vintern_fallback_request_count"] += count
 
-    def _open_circuit(self, primary: StructuredClient, *, reason: str) -> None:
-        if self._circuit_open:
-            return
-        self._circuit_open = True
-        self._close_once(primary)
-        _release_torch_memory()
-        self._emit(
-            "circuit_breaker",
-            circuit_breaker_state="open",
-            circuit_breaker_reason=reason,
+    def report_telemetry(self) -> dict[str, int]:
+        primary_counts = self.primary.report_telemetry()
+        fallback_counts = self.fallback.report_telemetry()
+        return {
+            **primary_counts,
+            **fallback_counts,
             **self._counts,
-        )
-
-    def _emit(self, status: str, **details: Any) -> None:
-        if self.telemetry_callback is None:
-            return
-        try:
-            self.telemetry_callback({"status": status, **details})
-        except Exception as exc:  # noqa: BLE001 - telemetry cannot break inference
-            warnings.warn(
-                f"structured-client telemetry callback failed: {exc}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        }
 
     def close(self) -> None:
         with self._request_lock:
-            if self._closed:
-                return
-            for client in self.clients:
-                self._close_once(client)
             self._closed = True
-            _release_torch_memory()
-            self._emit(
-                "closed",
-                circuit_breaker_state="open" if self._circuit_open else "closed",
-                **self._counts,
-            )
-
-    def _close_once(self, client: StructuredClient) -> None:
-        identity = id(client)
-        if identity in self._closed_client_ids:
-            return
-        self._closed_client_ids.add(identity)
-        _close_client(client)
+            try:
+                self.primary.close()
+            except Exception:
+                pass
+            try:
+                self.fallback.close()
+            except Exception:
+                pass
 
 
 class LocalVisionStructuredClient:
@@ -328,14 +278,14 @@ class LocalVisionStructuredClient:
         self._last_effective_batch_size = 0
         self._total_oom_reductions = 0
 
-    def request(self, request: StructuredRequest) -> dict[str, Any]:
+    def request(self, request: ModelRequest) -> dict[str, Any]:
         try:
             return self.request_many([request])[0]
         except BatchRequestError as exc:
             raise next(iter(exc.errors.values())) from exc
 
     def request_many(
-        self, requests: list[StructuredRequest]
+        self, requests: list[ModelRequest]
     ) -> list[dict[str, Any]]:
         if not requests:
             return []
@@ -523,6 +473,9 @@ class LocalVisionStructuredClient:
                     if self._uses_vintern_plain_text_ocr(request):
                         normalized = _normalize_vintern_ocr_text(raw_text)
                         validate(normalized, request.response_schema)
+                    elif request.response_mode == "text":
+                        normalized = normalize_text_response(raw_text, request)
+                        validate(normalized, request.response_schema)
                     else:
                         normalized = _parse_json_object(
                             raw_text, request.response_schema
@@ -536,9 +489,10 @@ class LocalVisionStructuredClient:
                     structured_parse_error_count += 1
                     if structured_parse_error_count <= 3:
                         self._emit_lifecycle(
-                            "structured_parse_error",
+                            "response_parse_error",
                             request_index=index,
                             request_kind=request.request_kind,
+                            response_mode=request.response_mode,
                             error_type=type(exc).__name__,
                             error_message=str(exc)[:500],
                             raw_response_preview=str(raw_text)[:500],
@@ -563,7 +517,7 @@ class LocalVisionStructuredClient:
             raise BatchRequestError(results=results, errors=errors)
         return _complete_batch_or_raise(results)
 
-    def _uses_vintern_plain_text_ocr(self, request: StructuredRequest) -> bool:
+    def _uses_vintern_plain_text_ocr(self, request: ModelRequest) -> bool:
         return (
             self.provider_name == "vintern_local"
             and request.request_kind == "keyframe_ocr"
@@ -576,22 +530,42 @@ class LocalVisionStructuredClient:
             == "vintern_plain_text_ocr_v1"
         )
 
-    def _request_hash(self, request: StructuredRequest) -> str:
+    def _request_hash(self, request: ModelRequest) -> str:
+        if request.response_mode == "text":
+            contract_version = self.model_config.get(
+                "generation_contract_version",
+                "plain_text_v1",
+            )
+        else:
+            contract_version = self.model_config.get(
+                "structured_output_contract_version",
+                "json_schema_prompt_v1",
+            )
+
         cache_identity: dict[str, Any] = {
             "provider": self.provider_name,
             "model_revision": self.model_revision,
             "max_new_tokens": self.model_config.get("max_new_tokens"),
             "quantization": self.model_config.get("quantization"),
-            "structured_output_contract_version": self.model_config.get(
-                "structured_output_contract_version",
-                "json_schema_prompt_v1",
-            ),
+            "generation_contract_version": contract_version,
         }
 
         if self.provider_name == "qwen_local":
             cache_identity["padding_side"] = self.model_config.get(
                 "padding_side",
                 "left",
+            )
+
+        if self.provider_name == "vintern_reasoning_local":
+            cache_identity.update(
+                {
+                    "image_size": self.model_config.get("image_size"),
+                    "max_dynamic_patches": self.model_config.get("max_dynamic_patches"),
+                    "use_thumbnail": self.model_config.get("use_thumbnail"),
+                    "num_beams": self.model_config.get("num_beams"),
+                    "do_sample": self.model_config.get("do_sample"),
+                    "repetition_penalty": self.model_config.get("repetition_penalty"),
+                }
             )
 
         request_hash = build_request_hash(
@@ -603,7 +577,7 @@ class LocalVisionStructuredClient:
         return request_hash
 
     def _read_cached(
-        self, cache_path: Path, request: StructuredRequest
+        self, cache_path: Path, request: ModelRequest
     ) -> dict[str, Any] | None:
         if self.cache is None:
             return None
@@ -624,7 +598,7 @@ class LocalVisionStructuredClient:
         self,
         cache_path: Path,
         *,
-        request: StructuredRequest,
+        request: ModelRequest,
         normalized: dict[str, Any],
     ) -> None:
         if self.cache is None:
@@ -653,16 +627,18 @@ class LocalVisionStructuredClient:
         response["__model_revision"] = self.model_revision
         return response
 
-    def _call_models(self, requests: list[StructuredRequest]) -> list[str]:
+    def _call_models(self, requests: list[ModelRequest]) -> list[str]:
         if self.provider_name == "qwen_local":
             return self._call_qwen_many(requests)
         if self.provider_name == "vintern_local":
             return self._call_vintern_many(requests)
+        if self.provider_name == "vintern_reasoning_local":
+            return self._call_vintern_reasoning_many(requests)
         raise SystemicProviderError(
             f"unsupported local VLM provider: {self.provider_name}"
         )
 
-    def _call_qwen_many(self, requests: list[StructuredRequest]) -> list[str]:
+    def _call_qwen_many(self, requests: list[ModelRequest]) -> list[str]:
         processor, model = self._load_qwen()
         try:
             from qwen_vl_utils import process_vision_info
@@ -687,7 +663,11 @@ class LocalVisionStructuredClient:
                             ],
                             {
                                 "type": "text",
-                                "text": _structured_prompt(request),
+                                "text": (
+                                    request.prompt
+                                    if request.response_mode == "text"
+                                    else _structured_prompt(request)
+                                ),
                             },
                         ],
                     }
@@ -729,7 +709,7 @@ class LocalVisionStructuredClient:
         finally:
             del inputs, generated_ids, image_inputs, video_inputs
 
-    def _call_vintern_many(self, requests: list[StructuredRequest]) -> list[str]:
+    def _call_vintern_many(self, requests: list[ModelRequest]) -> list[str]:
         if any(len(request.image_paths) != 1 for request in requests):
             raise RuntimeError("vintern_local expects exactly one image per request")
         tokenizer, model = self._load_vintern()
@@ -752,6 +732,8 @@ class LocalVisionStructuredClient:
             prompts: list[str] = []
             for request in requests:
                 if self._uses_vintern_plain_text_ocr(request):
+                    model_prompt = request.prompt
+                elif request.response_mode == "text":
                     model_prompt = request.prompt
                 else:
                     model_prompt = _structured_prompt(request)
@@ -789,6 +771,84 @@ class LocalVisionStructuredClient:
             return normalized
         finally:
             del pixel_values
+
+
+    def _call_vintern_reasoning_many(self, requests: list[ModelRequest]) -> list[str]:
+        if len(requests) > 1:
+            raise _NativeBatchUnavailable(
+                "vintern_reasoning_local starts with serial inference"
+            )
+
+        request = requests[0]
+
+        if request.response_mode != "text":
+            raise ValueError(
+                "vintern_reasoning_local only supports text mode in Phase01"
+            )
+
+        tokenizer, model = self._load_vintern_reasoning()
+        import torch
+        from system1.vlm.vintern_reasoning import load_vintern_reasoning_image
+
+        image_path = (request.fallback_image_paths[0] if request.fallback_image_paths else request.image_paths[0])
+        
+        configured_max_tiles = int(self.model_config.get("max_dynamic_patches", 6))
+        patch_plan = _vintern_patch_plan(configured_max_tiles)
+
+        model_prompt = request.prompt
+        if "<image>" not in model_prompt:
+            model_prompt = "<image>\n" + model_prompt
+
+        generation_config = {
+            "max_new_tokens": int(self.model_config.get("max_new_tokens", 256)),
+            "do_sample": False,
+            "num_beams": int(self.model_config.get("num_beams", 1)),
+            "repetition_penalty": float(self.model_config.get("repetition_penalty", 1.0)),
+        }
+
+        for i, max_tiles in enumerate(patch_plan):
+            pixel_values = None
+            try:
+                pixel_values = load_vintern_reasoning_image(
+                    image_path,
+                    image_size=int(self.model_config.get("image_size", 448)),
+                    max_tiles=max_tiles,
+                    use_thumbnail=bool(self.model_config.get("use_thumbnail", True)),
+                ).unsqueeze(0).to(_model_device(model))
+
+                try:
+                    dtype = next(model.parameters()).dtype
+                    pixel_values = pixel_values.to(dtype=dtype)
+                except StopIteration:
+                    pass
+
+                with torch.no_grad():
+                    output = model.chat(
+                        tokenizer,
+                        pixel_values,
+                        model_prompt,
+                        generation_config,
+                    )
+                    output_text = output[0] if isinstance(output, tuple) else output
+
+                if not str(output_text).strip():
+                    raise ValueError("vintern_reasoning_local returned an empty response")
+
+                return [str(output_text).strip()]
+
+            except Exception as exc:
+                if _is_cuda_oom(exc):
+                    self._emit_lifecycle(
+                        "vintern_patch_oom_reduction",
+                        previous_patch_limit=max_tiles,
+                        effective_patch_limit=patch_plan[i + 1] if i + 1 < len(patch_plan) else 0,
+                    )
+                    _release_torch_memory()
+                    if i + 1 < len(patch_plan):
+                        continue
+                raise
+            finally:
+                del pixel_values
 
     def _load_qwen(self) -> tuple[Any, Any]:
         with self._model_lock:
@@ -944,6 +1004,57 @@ class LocalVisionStructuredClient:
             )
             return tokenizer, model
 
+
+    def _load_vintern_reasoning(self) -> tuple[Any, Any]:
+        with self._model_lock:
+            if self._loaded is not None:
+                return self._loaded  # type: ignore[return-value]
+            self._run_pre_load_callback()
+            started = time.monotonic()
+            _reset_cuda_peak_memory()
+            try:
+                from transformers import AutoModel, AutoTokenizer
+            except ImportError as exc:
+                raise SystemicProviderError(
+                    "transformers is required for vintern_reasoning_local"
+                ) from exc
+            try:
+                import torch
+                tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_id,
+                    revision=self.model_revision,
+                    trust_remote_code=True,
+                    use_fast=False,
+                )
+                model = AutoModel.from_pretrained(
+                    self.model_id,
+                    revision=self.model_revision,
+                    torch_dtype=torch.float16,
+                    low_cpu_mem_usage=True,
+                    trust_remote_code=True,
+                    use_flash_attn=False,
+                )
+                model = model.eval().cuda()
+                self._loaded = (tokenizer, model)
+            except Exception as exc:
+                _release_torch_memory()
+                self._emit_lifecycle(
+                    "load_failed",
+                    load_seconds=round(time.monotonic() - started, 3),
+                    error_type=type(exc).__name__,
+                    quantization_mode="none",
+                )
+                raise SystemicProviderError(
+                    f"failed to load vintern_reasoning_local {self.model_id}: {exc}"
+                ) from exc
+            self._emit_lifecycle(
+                "loaded",
+                load_seconds=round(time.monotonic() - started, 3),
+                quantization_mode="none",
+                native_batch_capable=False,
+            )
+            return tokenizer, model
+
     def _quantization_mode(self) -> str:
         quantization = self.model_config.get("quantization", {})
         if not isinstance(quantization, Mapping):
@@ -1034,9 +1145,33 @@ def _reject_cpu_disk_offload(model: Any, *, provider_name: str) -> None:
         )
 
 
+def _vintern_patch_plan(
+    configured: int,
+) -> tuple[int, ...]:
+    candidates = [
+        configured,
+        4,
+        2,
+        1,
+    ]
+
+    result: list[int] = []
+
+    for value in candidates:
+        value = min(
+            configured,
+            max(1, value),
+        )
+
+        if value not in result:
+            result.append(value)
+
+    return tuple(result)
+
+
 def _reduce_multimage_request(
-    request: StructuredRequest,
-) -> StructuredRequest | None:
+    request: ModelRequest,
+) -> ModelRequest | None:
     image_count = len(request.image_paths)
     if image_count <= 1:
         return None
@@ -1074,7 +1209,7 @@ def _torch_dtype(value: Any, torch: Any):
 
 
 def _client_request_many(
-    client: StructuredClient, requests: list[StructuredRequest]
+    client: StructuredClient, requests: list[ModelRequest]
 ) -> list[dict[str, Any]]:
     request_many = getattr(client, "request_many", None)
     if callable(request_many):
@@ -1182,7 +1317,7 @@ def _normalize_vintern_ocr_text(raw_text: str) -> dict[str, Any]:
     }
 
 
-def _structured_prompt(request: StructuredRequest) -> str:
+def _structured_prompt(request: ModelRequest) -> str:
     """Attach the exact JSON Schema contract to a local VLM request."""
 
     schema_json = json.dumps(

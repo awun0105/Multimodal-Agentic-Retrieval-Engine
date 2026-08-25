@@ -61,8 +61,6 @@ def run_phase01_preflight(
         if shutil.which(executable) is None:
             raise RuntimeError(f"Required executable is unavailable: {executable}")
     models = config.payload["models"]
-    if _requires_gemini(models) and not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY"):
-        raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY is required")
     if not os.environ.get("AIC_HF_TOKEN") and not os.environ.get("HF_TOKEN"):
         raise RuntimeError("AIC_HF_TOKEN or HF_TOKEN is required")
     _validate_phase00_batch(release_dir, batch_path)
@@ -151,15 +149,6 @@ def run_phase01_preflight(
             ) from exc
     else:
         raise RuntimeError(f"Unsupported Phase01 ASR provider: {asr_provider}")
-    semantic_models = [expected.get(key, {}) for key in ("shot_caption", "scene_boundary", "scene_summary")]
-    gemini_versions = [
-        model.get("sdk_version")
-        for configured in semantic_models
-        for model in [configured, *configured.get("fallbacks", [])]
-        if model.get("provider") == "gemini" and model.get("sdk_version") is not None
-    ]
-    if gemini_versions and versions["google-genai"] not in {str(value) for value in gemini_versions}:
-        raise RuntimeError("Installed google-genai version differs from resolved config")
     _validate_local_vlm_dependencies(expected, versions=versions)
     if versions["torch"] == "missing":
         raise RuntimeError("PyTorch is required for TransNet V2")
@@ -326,11 +315,7 @@ def _validate_prompt_files(config: ResolvedPhase01Config) -> None:
         raise RuntimeError("Phase01 prompt files are missing or empty: " + ", ".join(missing))
 
 
-def _requires_gemini(models: dict[str, Any]) -> bool:
-    return any(
-        str(models.get(key, {}).get("provider")) == "gemini"
-        for key in ("shot_caption", "scene_boundary", "scene_summary")
-    )
+
 
 
 def _validate_local_vlm_dependencies(

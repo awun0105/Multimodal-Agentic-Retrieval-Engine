@@ -40,7 +40,6 @@ _PHASE01_USER_SETTING_KEYS = {
 _PHASE01_REQUIRED_USER_SETTINGS = {"batch_id", "worker_id"}
 _SECRET_SETTING_KEYS = {
     "aic_hf_token",
-    "gemini_api_key",
     "hf_token",
     "huggingface_hub_token",
 }
@@ -424,8 +423,59 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
     _validate_semantic_sampling_policy(payload)
 
     models = payload["models"]
+    
+    caption_model = _resolved_semantic_model(
+        models,
+        "shot_caption",
+    )
+
+    if (
+        str(caption_model.get("provider"))
+        != "qwen_local"
+    ):
+        raise ValueError(
+            "Phase01 semantic primary must be qwen_local"
+        )
+
+    fallbacks = caption_model.get(
+        "fallbacks",
+        [],
+    )
+
+    if (
+        not isinstance(fallbacks, list)
+        or len(fallbacks) != 1
+    ):
+        raise ValueError(
+            "Phase01 semantic runtime requires "
+            "exactly one local fallback"
+        )
+
+    fallback = fallbacks[0]
+
+    if (
+        str(fallback.get("provider"))
+        != "vintern_reasoning_local"
+    ):
+        raise ValueError(
+            "Phase01 semantic fallback must be "
+            "vintern_reasoning_local"
+        )
+
+    for field in (
+        "model_id",
+        "model_revision",
+    ):
+        if not str(
+            fallback.get(field, "")
+        ).strip():
+            raise ValueError(
+                "Phase01 semantic fallback "
+                f"requires {field}"
+            )
+
     caption_signature = _semantic_runtime_signature(
-        _resolved_semantic_model(models, "shot_caption")
+        caption_model
     )
     for stage_key in ("scene_boundary", "scene_summary"):
         signature = _semantic_runtime_signature(
@@ -533,6 +583,13 @@ def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:
         "use_fast_tokenizer",
         "use_flash_attn",
         "max_new_tokens",
+        "image_size",
+        "max_dynamic_patches",
+        "use_thumbnail",
+        "generation_contract_version",
+        "do_sample",
+        "num_beams",
+        "repetition_penalty",
     )
 
     def client_signature(config: dict[str, Any]) -> dict[str, Any]:

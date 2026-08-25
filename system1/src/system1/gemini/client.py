@@ -22,45 +22,13 @@ class JsonCache(Protocol):
     def write_json(self, relative_path: str | Path, payload: dict[str, Any]) -> Path: ...
 
 
-@dataclass(frozen=True)
-class StructuredRequest:
-    request_kind: str
-    video_id: str
-    prompt: str
-    prompt_version: str
-    response_schema_version: str
-    response_schema: dict[str, Any]
-    image_paths: tuple[Path, ...] = ()
-    identity: Mapping[str, Any] | None = None
+from system1.vlm.contracts import (
+    ModelRequest,
+    build_request_hash,
+)
 
-
-def build_request_hash(
-    request: StructuredRequest,
-    *,
-    model_id: str,
-    cache_identity: Mapping[str, Any] | None = None,
-) -> str:
-    images = [
-        {
-            "name": path.name,
-            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        }
-        for path in request.image_paths
-    ]
-    payload = {
-        "request_kind": request.request_kind,
-        "video_id": request.video_id,
-        "prompt": request.prompt,
-        "prompt_version": request.prompt_version,
-        "response_schema_version": request.response_schema_version,
-        "response_schema": request.response_schema,
-        "model_id": model_id,
-        "images": images,
-        "identity": request.identity or {},
-        "cache_identity": cache_identity or {},
-    }
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+StructuredRequest = ModelRequest
+GeminiRequest = ModelRequest
 
 
 class GeminiStructuredClient:

@@ -23,7 +23,7 @@ from system1.artifacts.reports import utc_now, write_worker_report
 from system1.artifacts.store import ArtifactStore
 from system1.asr import build_shot_transcript_links, transcribe_video
 from system1.config import ResolvedPhase01Config, persist_resolved_phase01_config
-from system1.gemini import GeminiStructuredClient, StructuredRequest
+
 from system1.ingest.discovery import read_metadata
 from system1.keyframes import (
     candidate_frame_ids_for_shot,
@@ -39,7 +39,7 @@ from system1.phase01.qa import write_manual_review_report
 from system1.phase01.scheduler import plan_runtime_chunks
 from system1.phase01.validation import validate_phase01_package, validate_rows
 from system1.scenes import group_scenes
-from system1.scenes.gemini_judge import StructuredSceneBoundaryJudge
+from system1.scenes.vlm_judge import VlmSceneBoundaryJudge
 from system1.shots import (
     detect_shot_scenes,
     load_transnet_artifact,
@@ -47,10 +47,12 @@ from system1.shots import (
 )
 from system1.vlm import (
     BatchRequestError,
-    FallbackStructuredClient,
+    ExclusiveLocalFallbackClient,
     LocalVisionStructuredClient,
     MetadataStructuredClient,
+    ModelRequest,
     SystemicProviderError,
+    TEXT_RESPONSE_SCHEMA,
 )
 
 PARQUET_COLUMNS: dict[str, list[str]] = {
@@ -602,7 +604,7 @@ def _run_chunk_client_phase(
         else:
             _emit_progress(
                 event="memory",
-                status="qwen_unloaded",
+                status="semantic_models_unloaded",
                 scratch=scratch_root,
                 release_id=release_id,
                 batch_id=batch_id,
@@ -1040,7 +1042,7 @@ def _process_video_flow(
     )
     if not scenes_reused:
         evidence = _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links, stage_dir)
-        judge = StructuredSceneBoundaryJudge(
+        judge = VlmSceneBoundaryJudge(
             caption_client,
             video_id=video_id,
             prompt_dir=_prompt_dir(),
@@ -1438,33 +1440,35 @@ def _caption_client_for_model(
     lifecycle_callback=None,
     pre_load_callback=None,
 ):
-    clients = [
-        _structured_client_for_model(
-            model_config,
-            phase01=phase01,
-            cache=cache,
-            cache_prefix=f"{model_config['provider']}/shot_caption",
-            lifecycle_callback=lifecycle_callback,
-            pre_load_callback=pre_load_callback,
-        )
-    ]
-    for fallback in model_config.get("fallbacks", []):
-        clients.append(
-            _structured_client_for_model(
-                fallback,
-                phase01=phase01,
-                cache=cache,
-                cache_prefix=f"{fallback['provider']}/shot_caption",
-                lifecycle_callback=lifecycle_callback,
-                pre_load_callback=pre_load_callback,
-            )
-        )
-    return (
-        clients[0]
-        if len(clients) == 1
-        else FallbackStructuredClient(
-            clients, telemetry_callback=lifecycle_callback
-        )
+    fallbacks = list(model_config.get("fallbacks", []))
+    if len(fallbacks) > 1:
+        raise ValueError("Phase01 semantic runtime supports exactly one local fallback")
+
+    primary = _structured_client_for_model(
+        model_config,
+        phase01=phase01,
+        cache=cache,
+        cache_prefix=f"{model_config['provider']}/shot_caption",
+        lifecycle_callback=lifecycle_callback,
+        pre_load_callback=pre_load_callback,
+    )
+
+    if not fallbacks:
+        return primary
+
+    fallback = _structured_client_for_model(
+        fallbacks[0],
+        phase01=phase01,
+        cache=cache,
+        cache_prefix=f"{fallbacks[0]['provider']}/shot_caption",
+        lifecycle_callback=lifecycle_callback,
+        pre_load_callback=pre_load_callback,
+    )
+
+    return ExclusiveLocalFallbackClient(
+        primary=primary,
+        fallback=fallback,
+        telemetry_callback=lifecycle_callback,
     )
 
 
@@ -1492,34 +1496,27 @@ def _structured_client_for_model(
     pre_load_callback=None,
 ):
     provider = str(model_config["provider"])
-    if provider == "gemini":
-        client = GeminiStructuredClient(
-            model_id=str(model_config["model_id"]),
-            api_config={
-                **phase01["api"],
-                "schema_repair_attempts": phase01["retry"]["schema_repair_attempts"],
-                "thinking_level": model_config.get("thinking_level", "medium"),
-            },
-            cache=cache,
-            cache_prefix=f"gemini/{cache_prefix}",
-        )
-        return MetadataStructuredClient(
-            client,
-            provider_name="gemini",
-            model_id=str(model_config["model_id"]),
-            model_revision=str(model_config["model_revision"]),
-        )
-    if provider in {"qwen_local", "vintern_local"}:
-        inference_stage = (
-            "shot_captions" if "shot_caption" in cache_prefix else "ocr"
-        )
+
+    local_providers = {
+        "qwen_local",
+        "vintern_local",
+        "vintern_reasoning_local",
+    }
+
+    if provider in local_providers:
+        if provider == "vintern_reasoning_local":
+            inference_batch_size = 1
+        else:
+            inference_stage = (
+                "shot_captions" if "shot_caption" in cache_prefix else "ocr"
+            )
+            inference_batch_size = phase01["execution"]["inference_batch_size"][inference_stage]
+
         return LocalVisionStructuredClient(
             model_config={
                 **model_config,
                 "total_attempts": phase01["retry"]["local_model_total_attempts"],
-                "inference_batch_size": phase01["execution"][
-                    "inference_batch_size"
-                ][inference_stage],
+                "inference_batch_size": inference_batch_size,
             },
             cache=cache,
             cache_prefix=f"local_vlm/{cache_prefix}",
@@ -1583,7 +1580,7 @@ def _build_ocr(
         "vintern_failed": 0,
     }
     rows_by_keyframe: dict[str, dict[str, Any]] = {}
-    requests: list[StructuredRequest] = []
+    requests: list[ModelRequest] = []
     request_keyframes: list[dict[str, Any]] = []
     for keyframe in selected_keyframes:
         keyframe_id = str(keyframe["keyframe_id"])
@@ -1611,7 +1608,7 @@ def _build_ocr(
             )
             continue
         requests.append(
-            StructuredRequest(
+            ModelRequest(
                 request_kind="keyframe_ocr",
                 video_id=video_id,
                 prompt=prompt,
@@ -1790,89 +1787,91 @@ def _build_captions(
 ) -> list[dict[str, Any]]:
     if max_concurrency < 1:
         raise ValueError("caption max_concurrency must be positive")
-    if str(model_config.get("provider")) != "gemini":
+    if str(model_config.get("provider")) != "qwen_local":
         max_concurrency = 1
     representative = {str(row["shot_id"]): row for row in keyframes if row["is_representative"]}
-    prompt = (_prompt_dir() / f"{model_config['prompt_version']}.txt").read_text(encoding="utf-8")
+    
+    from system1.vlm.prompts import TEXT_BUNDLE_VERSIONS, build_text_prompt
+    
+    bundle_version = str(model_config["prompt_bundle_version"])
+    bundle = TEXT_BUNDLE_VERSIONS[bundle_version]
+    
+    field_order = [
+        "caption_vi", "caption_en",
+        "objects_vi", "objects_en",
+        "actions_vi", "actions_en",
+        "visible_text_summary_vi", "visible_text_summary_en",
+    ]
+    
     ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
-    schema = {
-        "type": "object",
-        "properties": {
-            "caption_vi": {"type": "string", "minLength": 1},
-            "caption_en": {"type": "string", "minLength": 1},
-            "objects_vi": {"type": "array", "items": {"type": "string"}},
-            "objects_en": {"type": "array", "items": {"type": "string"}},
-            "actions_vi": {"type": "array", "items": {"type": "string"}},
-            "actions_en": {"type": "array", "items": {"type": "string"}},
-            "visible_text_summary_vi": {"type": "string"},
-            "visible_text_summary_en": {"type": "string"},
-        },
-        "required": [
-            "caption_vi",
-            "caption_en",
-            "objects_vi",
-            "objects_en",
-            "actions_vi",
-            "actions_en",
-            "visible_text_summary_vi",
-            "visible_text_summary_en",
-        ],
-        "additionalProperties": False,
-    }
     ordered_shots = sorted(shots, key=lambda row: str(row["shot_id"]))
-    requests: list[StructuredRequest] = []
+    
+    requests: list[ModelRequest] = []
     request_context: list[tuple[dict[str, Any], dict[str, Any], str]] = []
+    
     for shot in ordered_shots:
         keyframe = representative[str(shot["shot_id"])]
         keyframe_id = str(keyframe["keyframe_id"])
         image = stage_dir / "keyframes" / Path(str(keyframe["keyframe_ref"])).name
-        ocr_text = ocr_by_keyframe.get(keyframe_id, "")
-        request_prompt = (
-            prompt
-            + "\n\nOCR TEXT DETECTED FOR THIS REPRESENTATIVE KEYFRAME:\n"
-            + (ocr_text if ocr_text else "<none>")
-        )
-        requests.append(
-            StructuredRequest(
-                request_kind="shot_caption",
-                video_id=video_id,
-                prompt=request_prompt,
-                prompt_version=str(model_config["prompt_version"]),
-                response_schema_version=str(model_config["response_schema_version"]),
-                response_schema=schema,
-                image_paths=(image,),
-                identity={"shot_id": shot["shot_id"]},
+        ocr_text = ocr_by_keyframe.get(keyframe_id, "<none>")
+        
+        for field in field_order:
+            field_prompt = build_text_prompt(
+                bundle[field],
+                variables={"ocr_text": ocr_text}
             )
-        )
-        request_context.append((shot, keyframe, keyframe_id))
+            
+            if "visible_text" in field:
+                field_prompt += f"\n\nOCR TEXT DETECTED FOR THIS REPRESENTATIVE KEYFRAME:\n{ocr_text}"
+                
+            requests.append(
+                ModelRequest(
+                    request_kind="shot_caption",
+                    video_id=video_id,
+                    prompt=field_prompt,
+                    prompt_version=bundle[field],
+                    response_schema_version=str(model_config["response_schema_version"]),
+                    response_mode="text",
+                    response_schema=TEXT_RESPONSE_SCHEMA,
+                    image_paths=(image,),
+                    identity={"shot_id": shot["shot_id"], "field": field},
+                )
+            )
+            request_context.append((shot, keyframe, field))
+            
     responses = client.request_many(requests)
     if len(responses) != len(request_context):
         raise ValueError(
             "caption client returned a different number of responses than requests"
         )
-    rows: list[dict[str, Any]] = []
+    
+    grouped: dict[str, dict[str, Any]] = {}
     for response, context in zip(responses, request_context, strict=True):
-        shot, keyframe, keyframe_id = context
-        caption_vi = _required_text(response, "caption_vi")
-        caption_en = _required_text(response, "caption_en")
-        provider = str(response.get("__provider", model_config["provider"]))
-        model_name = str(response.get("__model_id", model_config["model_id"]))
-        model_version = str(response.get("__model_revision", model_config["model_revision"]))
-        rows.append({
-            "shot_caption_id": f"{shot['shot_id']}_caption", "video_id": video_id,
-            "shot_id": shot["shot_id"], "representative_keyframe_id": keyframe_id,
-            "representative_timestamp_sec": keyframe["timestamp_sec"],
-            "caption_vi": caption_vi, "caption_en": caption_en,
-            "objects_vi": _string_list(response, "objects_vi"),
-            "objects_en": _string_list(response, "objects_en"),
-            "actions_vi": _string_list(response, "actions_vi"),
-            "actions_en": _string_list(response, "actions_en"),
-            "visible_text_summary_vi": str(response.get("visible_text_summary_vi", "")),
-            "visible_text_summary_en": str(response.get("visible_text_summary_en", "")),
-            "provider": provider, "model_name": model_name,
-            "model_version": model_version, "prompt_version": model_config["prompt_version"],
-            "schema_version": model_config["response_schema_version"], "confidence": None, "status": "pass",
-        })
+        shot, keyframe, field = context
+        shot_id = str(shot["shot_id"])
+        if shot_id not in grouped:
+            grouped[shot_id] = {
+                "shot_caption_id": f"{shot_id}_caption",
+                "video_id": video_id,
+                "shot_id": shot["shot_id"],
+                "representative_keyframe_id": str(keyframe["keyframe_id"]),
+                "representative_timestamp_sec": keyframe["timestamp_sec"],
+                "provider": str(response.get("__provider", model_config["provider"])),
+                "model_name": str(response.get("__model_id", model_config["model_id"])),
+                "model_version": str(response.get("__model_revision", model_config["model_revision"])),
+                "prompt_version": model_config["prompt_bundle_version"],
+                "schema_version": model_config["response_schema_version"],
+                "confidence": None,
+                "status": "pass",
+            }
+        
+        text_val = str(response.get("text", "")).strip()
+        if field.startswith("objects_") or field.startswith("actions_"):
+            grouped[shot_id][field] = [line.strip() for line in text_val.split("\n") if line.strip()]
+        else:
+            grouped[shot_id][field] = text_val
+            
+    rows = [grouped[str(shot["shot_id"])] for shot in ordered_shots]
     return rows
 
 
@@ -1958,8 +1957,11 @@ def _build_scene_transcript_links(scenes, asr_rows):
 
 
 def _build_scene_summaries(*, video_id, scenes, shots, keyframes, ocr_rows, captions, asr_rows, scene_links, stage_dir, client, model_config, summary_config):
-    prompt_base = (_prompt_dir() / f"{model_config['prompt_version']}.txt").read_text(encoding="utf-8")
-    schema = {"type": "object", "properties": {"summary_vi": {"type": "string", "minLength": 1}, "summary_en": {"type": "string", "minLength": 1}}, "required": ["summary_vi", "summary_en"], "additionalProperties": False}
+    from system1.vlm.prompts import TEXT_BUNDLE_VERSIONS, build_text_prompt
+    
+    bundle_version = str(model_config["prompt_bundle_version"])
+    bundle = TEXT_BUNDLE_VERSIONS[bundle_version]
+    
     captions_by_shot = {str(row["shot_id"]): row for row in captions}
     ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
     representative = {str(row["shot_id"]): row for row in keyframes if row["is_representative"]}
@@ -1969,7 +1971,10 @@ def _build_scene_summaries(*, video_id, scenes, shots, keyframes, ocr_rows, capt
     asr_by_id = {str(row["asr_segment_id"]): row for row in asr_rows}
     links_by_scene: dict[str, list[dict[str, Any]]] = {}
     for link in scene_links: links_by_scene.setdefault(str(link["scene_id"]), []).append(link)
-    rows = []
+    
+    requests: list[ModelRequest] = []
+    request_context: list[tuple[dict[str, Any], str]] = []
+    
     for scene in scenes:
         scene_shots = [shot for shot in shots if float(shot["start_sec"]) >= float(scene["start_sec"]) and float(shot["end_sec"]) <= float(scene["end_sec"]) + 1e-6]
         sampled_shots = _evenly_sample(
@@ -1981,10 +1986,21 @@ def _build_scene_summaries(*, video_id, scenes, shots, keyframes, ocr_rows, capt
             / Path(str(representative[str(shot["shot_id"])]["keyframe_ref"])).name
             for shot in sampled_shots
         )
+        
+        # Build evidence
         shot_evidence = []
-        for shot in scene_shots:
+        max_shots = int(summary_config.get("max_shot_evidence_items", 48))
+        for shot in _evenly_sample(scene_shots, max_shots):
             shot_id = str(shot["shot_id"])
             caption = captions_by_shot[shot_id]
+            
+            ocr_texts = [
+                ocr_by_keyframe[str(row["keyframe_id"])]
+                for row in keyframes_by_shot.get(shot_id, [])
+                if ocr_by_keyframe.get(str(row["keyframe_id"]))
+            ]
+            ocr_text = " ".join(ocr_texts)[:int(summary_config.get("max_ocr_chars_per_shot", 800))]
+            
             shot_evidence.append({
                 "shot_id": shot_id,
                 "caption_vi": caption["caption_vi"],
@@ -1995,44 +2011,64 @@ def _build_scene_summaries(*, video_id, scenes, shots, keyframes, ocr_rows, capt
                 "actions_en": _string_list(caption, "actions_en"),
                 "visible_text_summary_vi": caption.get("visible_text_summary_vi", ""),
                 "visible_text_summary_en": caption.get("visible_text_summary_en", ""),
-                "ocr_text": [
-                    ocr_by_keyframe[str(row["keyframe_id"])]
-                    for row in keyframes_by_shot.get(shot_id, [])
-                    if ocr_by_keyframe.get(str(row["keyframe_id"]))
-                ],
+                "ocr_text": ocr_text,
             })
-        evidence = {"shots": shot_evidence, "transcript": [asr_by_id[str(link["asr_segment_id"])]["text"] for link in links_by_scene.get(str(scene["scene_id"]), [])], "timeline": [scene["start_sec"], scene["end_sec"]]}
-        response = client.request(
-            StructuredRequest(
-                request_kind="scene_summary",
-                video_id=video_id,
-                prompt=prompt_base
-                + "\n\nSCENE EVIDENCE:\n"
-                + json.dumps(evidence, ensure_ascii=False),
-                prompt_version=str(model_config["prompt_version"]),
-                response_schema_version=str(
-                    model_config["response_schema_version"]
-                ),
-                response_schema=schema,
-                image_paths=image_paths,
-                identity={"scene_id": scene["scene_id"]},
+            
+        transcript_parts = [asr_by_id[str(link["asr_segment_id"])]["text"] for link in links_by_scene.get(str(scene["scene_id"]), [])]
+        transcript = " ".join(transcript_parts)[:int(summary_config.get("max_transcript_chars", 12000))]
+        
+        evidence = {
+            "shots": shot_evidence,
+            "transcript": transcript,
+            "timeline": [scene["start_sec"], scene["end_sec"]]
+        }
+        
+        evidence_json = __import__("json").dumps(evidence, ensure_ascii=False)[:int(summary_config.get("max_total_evidence_chars", 30000))]
+        
+        for field in ("summary_vi", "summary_en"):
+            prompt = build_text_prompt(
+                bundle[field],
+                variables={}
             )
-        )
-        rows.append({
-            "scene_id": scene["scene_id"],
-            "video_id": video_id,
-            "summary_vi": _required_text(response, "summary_vi"),
-            "summary_en": _required_text(response, "summary_en"),
-            "provider": str(response.get("__provider", model_config["provider"])),
-            "model_name": str(response.get("__model_id", model_config["model_id"])),
-            "model_version": str(
-                response.get("__model_revision", model_config["model_revision"])
-            ),
-            "prompt_version": model_config["prompt_version"],
-            "schema_version": model_config["response_schema_version"],
-            "confidence": None,
-            "status": "pass",
-        })
+            prompt += f"\n\nSCENE EVIDENCE:\n{evidence_json}"
+            
+            requests.append(
+                ModelRequest(
+                    request_kind="scene_summary",
+                    video_id=video_id,
+                    prompt=prompt,
+                    prompt_version=bundle[field],
+                    response_schema_version=str(model_config["response_schema_version"]),
+                    response_mode="text",
+                    response_schema=TEXT_RESPONSE_SCHEMA,
+                    image_paths=image_paths,
+                    identity={"scene_id": scene["scene_id"], "field": field},
+                )
+            )
+            request_context.append((scene, field))
+
+    request_many = getattr(client, "request_many", None)
+    if callable(request_many):
+        responses = request_many(requests)
+    else:
+        responses = [client.request(req) for req in requests]
+        
+    grouped: dict[str, dict[str, Any]] = {}
+    for (scene, field), response in zip(request_context, responses, strict=True):
+        scene_id = str(scene["scene_id"])
+        if scene_id not in grouped:
+            grouped[scene_id] = {
+                "scene_id": scene["scene_id"],
+                "video_id": video_id,
+                "provider": str(response.get("__provider", model_config["provider"])),
+                "model_name": str(response.get("__model_id", model_config["model_id"])),
+                "model_version": str(response.get("__model_revision", model_config["model_revision"])),
+                "prompt_version": model_config["prompt_bundle_version"],
+                "schema_version": model_config["response_schema_version"],
+            }
+        grouped[scene_id][field] = str(response.get("text", "")).strip()
+        
+    rows = [grouped[str(scene["scene_id"])] for scene in scenes]
     return rows
 
 

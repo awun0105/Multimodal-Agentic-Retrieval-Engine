@@ -8,11 +8,11 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageOps
 
-from system1.gemini import StructuredRequest
+from system1.vlm import ModelRequest, TEXT_RESPONSE_SCHEMA
 from system1.vlm import StructuredClient
 
 
-class StructuredSceneBoundaryJudge:
+class VlmSceneBoundaryJudge:
     def __init__(
         self,
         client: StructuredClient,
@@ -34,29 +34,21 @@ class StructuredSceneBoundaryJudge:
 
     def judge(
         self,
-        *,
-        request_kind: str,
         focus_gap_ids: tuple[str, ...],
         context: Sequence[Mapping[str, Any]],
-    ) -> Mapping[str, bool]:
-        prompt_version = {
-            "primary": self.model_config["prompt_version"],
-            "focused_review": self.model_config["focused_prompt_version"],
-            "consistency_review": self.model_config["consistency_prompt_version"],
-        }[request_kind]
-        base_prompt = (self.prompt_dir / f"{prompt_version}.txt").read_text(encoding="utf-8")
-        evidence_payload = [_json_safe_evidence(item) for item in context]
-        prompt = (
-            base_prompt
-            + "\n\nFOCUS GAPS:\n"
-            + json.dumps(focus_gap_ids, ensure_ascii=False)
-            + "\n\nORDERED SHOT EVIDENCE:\n"
-            + json.dumps(evidence_payload, ensure_ascii=False)
-        )
+        request_kind: str = "primary",
+    ) -> dict[str, bool]:
+        if not focus_gap_ids:
+            return {}
+
+        base_prompt = str(self.model_config[f"prompt_version"]) if request_kind == "primary" else str(self.model_config[f"{request_kind}_prompt_version"])
+        from system1.vlm.prompts import build_text_prompt
+
         self.diagnostics_dir.mkdir(parents=True, exist_ok=True)
         contact_sheet = self.diagnostics_dir / f"{self.request_index:05d}_{request_kind}.jpg"
         _write_contact_sheet(context, contact_sheet)
         image_paths = [contact_sheet]
+        
         if request_kind != "primary":
             role_sheet = (
                 self.diagnostics_dir
@@ -69,58 +61,52 @@ class StructuredSceneBoundaryJudge:
                 roles=self.focused_keyframe_roles,
             ):
                 image_paths.append(role_sheet)
-        response_schema = {
-            "type": "object",
-            "properties": {
-                "boundaries": {
-                    "type": "array",
-                    "minItems": len(focus_gap_ids),
-                    "maxItems": len(focus_gap_ids),
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "after_shot_id": {"type": "string"},
-                            "is_scene_boundary": {"type": "boolean"},
-                            "reason": {"type": "string"},
-                            "confidence": {"type": ["number", "null"]},
-                            "evidence_used": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
-                        },
-                        "required": ["after_shot_id", "is_scene_boundary"],
-                        "additionalProperties": False,
-                    },
-                }
-            },
-            "required": ["boundaries"],
-            "additionalProperties": False,
-        }
-        response = self.client.request(
-            StructuredRequest(
+
+        evidence_payload = [_json_safe_evidence(item) for item in context]
+        
+        requests = []
+        for gap_id in focus_gap_ids:
+            prompt = build_text_prompt(
+                base_prompt,
+                variables={}
+            )
+            prompt += f"\n\nEVIDENCE FOR SHOT {gap_id}:\n" + __import__("json").dumps(evidence_payload, ensure_ascii=False)
+            
+            requests.append(ModelRequest(
                 request_kind=f"scene_boundary_{request_kind}",
                 video_id=self.video_id,
                 prompt=prompt,
-                prompt_version=prompt_version,
-                response_schema_version=str(self.model_config["response_schema_version"]),
-                response_schema=response_schema,
+                prompt_version=base_prompt,
+                response_schema_version=str(self.model_config.get("decision_contract_version", "scene_boundary_label_v2")),
+                response_mode="text",
+                response_schema=TEXT_RESPONSE_SCHEMA,
                 image_paths=tuple(image_paths),
-                identity={"focus_gap_ids": focus_gap_ids},
-            )
-        )
+                identity={"gap_id": gap_id},
+            ))
+            
         self.request_index += 1
-        boundaries = response["boundaries"]
+        
+        request_many = getattr(self.client, "request_many", None)
+        if callable(request_many):
+            responses = request_many(requests)
+        else:
+            responses = [self.client.request(req) for req in requests]
+            
         result: dict[str, bool] = {}
-        for item in boundaries:
-            gap_id = str(item["after_shot_id"])
-            if gap_id in result:
-                raise ValueError(f"Structured judge duplicated scene gap: {gap_id}")
-            result[gap_id] = item["is_scene_boundary"]
+        for req, resp in zip(requests, responses, strict=True):
+            gap_id = req.identity["gap_id"]
+            text_resp = str(resp.get("text", "")).strip().upper()
+            
+            is_boundary = "BOUNDARY" in text_resp
+            result[gap_id] = is_boundary
+            
             self._diagnostics[gap_id] = {
-                "reason": str(item.get("reason", "")),
-                "confidence": item.get("confidence"),
-                "evidence_used": item.get("evidence_used", []),
+                "reason": "Text fallback extracted",
+                "confidence": 1.0,
+                "evidence_used": [],
+                "raw_text": text_resp
             }
+            
         return result
 
     def diagnostics_for(self, gap_id: str) -> Mapping[str, Any]:
@@ -229,4 +215,4 @@ def _string_list(value: Any) -> list[str]:
 
 # Compatibility for existing imports while production call sites use the
 # provider-neutral name.
-GeminiSceneBoundaryJudge = StructuredSceneBoundaryJudge
+GeminiSceneBoundaryJudge = VlmSceneBoundaryJudge

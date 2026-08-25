@@ -6,8 +6,8 @@ import pytest
 from PIL import Image
 
 from system1.phase01.production import _build_scene_evidence
-from system1.scenes.gemini_judge import (
-    StructuredSceneBoundaryJudge,
+from system1.scenes.vlm_judge import (
+    VlmSceneBoundaryJudge,
     _write_role_contact_sheet,
 )
 from system1.scenes.grouping import group_scenes, plan_focus_windows, vote_weight
@@ -159,7 +159,7 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
         })
     client = RecordingClient()
     prompt_dir = Path(__file__).resolve().parents[1] / "prompts"
-    judge = StructuredSceneBoundaryJudge(
+    judge = VlmSceneBoundaryJudge(
         client,
         video_id="v",
         prompt_dir=prompt_dir,
