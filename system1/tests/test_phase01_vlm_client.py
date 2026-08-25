@@ -92,6 +92,7 @@ def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
     telemetry = []
     primary_calls = 0
     fallback_calls = 0
+    primary_close_calls = 0
 
     class FailingPrimary:
         def request(self, _request):
@@ -102,6 +103,8 @@ def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
             raise SystemicProviderError("qwen failed")
 
         def close(self) -> None:
+            nonlocal primary_close_calls
+            primary_close_calls += 1
             if "qwen" in resident:
                 resident.remove("qwen")
 
@@ -160,6 +163,9 @@ def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
 
     client.close()
     assert resident == []
+    assert primary_close_calls == 1
+    assert telemetry[-1]["status"] == "closed"
+    assert telemetry[-1]["circuit_breaker_state"] == "open"
 
 
 def test_local_vlm_client_close_releases_loaded_model_handles() -> None:
@@ -442,6 +448,82 @@ def test_qwen_loader_passes_explicit_nf4_quantization(monkeypatch) -> None:
     assert quantization.kwargs["bnb_4bit_use_double_quant"] is True
     assert str(quantization.kwargs["bnb_4bit_compute_dtype"]) == "torch.float16"
     assert captured["device_map"] == "cuda"
+
+
+@pytest.mark.parametrize("offload_device", ["cpu", "disk"])
+def test_qwen_loader_rejects_cpu_or_disk_offload(
+    monkeypatch, offload_device: str
+) -> None:
+    _install_fake_torch(monkeypatch)
+
+    class FakeBitsAndBytesConfig:
+        def __init__(self, **_kwargs):
+            pass
+
+    class FakeProcessorFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return object()
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.hf_device_map = {"vision": 0, "language": offload_device}
+
+        def eval(self):
+            return None
+
+    class FakeModelFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return FakeModel()
+
+    transformers = ModuleType("transformers")
+    transformers.AutoProcessor = FakeProcessorFactory
+    transformers.BitsAndBytesConfig = FakeBitsAndBytesConfig
+    transformers.Qwen2_5_VLForConditionalGeneration = FakeModelFactory
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "qwen_local",
+            "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+            "model_revision": "revision",
+            "torch_dtype": "float16",
+            "device_map": "cuda",
+            "quantization": {
+                "method": "bitsandbytes",
+                "mode": "4bit",
+                "quant_type": "nf4",
+                "compute_dtype": "float16",
+                "double_quant": True,
+            },
+        }
+    )
+
+    with pytest.raises(SystemicProviderError, match="CPU/disk offload is forbidden"):
+        client._load_qwen()
+
+    assert client._loaded is None
+
+
+def test_local_vlm_pre_load_guard_blocks_before_model_factory(monkeypatch) -> None:
+    calls = []
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "qwen_local",
+            "model_id": "qwen",
+            "model_revision": "revision",
+        },
+        pre_load_callback=lambda provider: (_ for _ in ()).throw(
+            RuntimeError(f"blocked:{provider}")
+        ),
+        lifecycle_callback=lambda payload: calls.append(dict(payload)),
+    )
+
+    with pytest.raises(SystemicProviderError, match="pre-load guard failed"):
+        client._load_qwen()
+
+    assert client._loaded is None
+    assert calls[-1]["status"] == "load_blocked"
 
 
 def test_vintern_uses_native_batch_chat_when_available(

@@ -117,6 +117,8 @@ class FallbackStructuredClient:
         self.telemetry_callback = telemetry_callback
         self._request_lock = threading.Lock()
         self._circuit_open = False
+        self._closed = False
+        self._closed_client_ids: set[int] = set()
         self._counts = {
             "qwen_request_count": 0,
             "gemini_request_count": 0,
@@ -139,6 +141,8 @@ class FallbackStructuredClient:
         if not requests:
             return []
         with self._request_lock:
+            if self._closed:
+                raise RuntimeError("structured fallback client is closed")
             if self._circuit_open or len(self.clients) == 1:
                 start = 1 if self._circuit_open and len(self.clients) > 1 else 0
                 return self._request_all_from(start, requests)
@@ -247,7 +251,7 @@ class FallbackStructuredClient:
         if self._circuit_open:
             return
         self._circuit_open = True
-        _close_client(primary)
+        self._close_once(primary)
         _release_torch_memory()
         self._emit(
             "circuit_breaker",
@@ -270,9 +274,24 @@ class FallbackStructuredClient:
 
     def close(self) -> None:
         with self._request_lock:
+            if self._closed:
+                return
             for client in self.clients:
-                _close_client(client)
+                self._close_once(client)
+            self._closed = True
             _release_torch_memory()
+            self._emit(
+                "closed",
+                circuit_breaker_state="open" if self._circuit_open else "closed",
+                **self._counts,
+            )
+
+    def _close_once(self, client: StructuredClient) -> None:
+        identity = id(client)
+        if identity in self._closed_client_ids:
+            return
+        self._closed_client_ids.add(identity)
+        _close_client(client)
 
 
 class LocalVisionStructuredClient:
@@ -283,6 +302,7 @@ class LocalVisionStructuredClient:
         cache: JsonCache | None = None,
         cache_prefix: str | Path = "cache/local_vlm",
         lifecycle_callback: Callable[[Mapping[str, Any]], None] | None = None,
+        pre_load_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.model_config = dict(model_config)
         self.provider_name = str(self.model_config["provider"])
@@ -291,6 +311,7 @@ class LocalVisionStructuredClient:
         self.cache = cache
         self.cache_prefix = Path(cache_prefix)
         self.lifecycle_callback = lifecycle_callback
+        self.pre_load_callback = pre_load_callback
         self.total_attempts = int(self.model_config.get("total_attempts", 2))
         self.inference_batch_size = int(
             self.model_config.get("inference_batch_size", 1)
@@ -302,6 +323,9 @@ class LocalVisionStructuredClient:
         self._cache_lock = threading.Lock()
         self._model_lock = threading.Lock()
         self._loaded: tuple[Any, ...] | None = None
+        self._last_requested_batch_size = 0
+        self._last_effective_batch_size = 0
+        self._total_oom_reductions = 0
 
     def request(self, request: StructuredRequest) -> dict[str, Any]:
         try:
@@ -330,6 +354,8 @@ class LocalVisionStructuredClient:
 
         requested_batch_size = min(self.inference_batch_size, max(1, len(misses)))
         effective_batch_size = requested_batch_size
+        self._last_requested_batch_size = requested_batch_size
+        self._last_effective_batch_size = effective_batch_size
         cache_hits = len(requests) - len(misses)
         self._emit_lifecycle(
             "batch_start",
@@ -368,7 +394,9 @@ class LocalVisionStructuredClient:
                     if effective_batch_size > 1:
                         previous = effective_batch_size
                         effective_batch_size = max(1, effective_batch_size // 2)
+                        self._last_effective_batch_size = effective_batch_size
                         oom_reductions += 1
+                        self._total_oom_reductions += 1
                         self._emit_lifecycle(
                             "oom_reduction",
                             requested_batch_size=requested_batch_size,
@@ -662,6 +690,7 @@ class LocalVisionStructuredClient:
         with self._model_lock:
             if self._loaded is not None:
                 return self._loaded  # type: ignore[return-value]
+            self._run_pre_load_callback()
             started = time.monotonic()
             _reset_cuda_peak_memory()
             try:
@@ -712,6 +741,7 @@ class LocalVisionStructuredClient:
                     ),
                 )
                 model.eval()
+                _reject_cpu_disk_offload(model)
                 self._loaded = (processor, model)
             except Exception as exc:
                 _release_torch_memory()
@@ -735,6 +765,7 @@ class LocalVisionStructuredClient:
         with self._model_lock:
             if self._loaded is not None:
                 return self._loaded  # type: ignore[return-value]
+            self._run_pre_load_callback()
             started = time.monotonic()
             _reset_cuda_peak_memory()
             try:
@@ -803,8 +834,27 @@ class LocalVisionStructuredClient:
         _release_torch_memory()
         if was_loaded:
             self._emit_lifecycle(
-                "unloaded", quantization_mode=self._quantization_mode()
+                "unloaded",
+                quantization_mode=self._quantization_mode(),
+                requested_batch_size=self._last_requested_batch_size,
+                effective_batch_size=self._last_effective_batch_size,
+                oom_reductions=self._total_oom_reductions,
             )
+
+    def _run_pre_load_callback(self) -> None:
+        if self.pre_load_callback is None:
+            return
+        try:
+            self.pre_load_callback(self.provider_name)
+        except Exception as exc:
+            self._emit_lifecycle(
+                "load_blocked",
+                error_type=type(exc).__name__,
+                quantization_mode=self._quantization_mode(),
+            )
+            raise SystemicProviderError(
+                f"{self.provider_name} pre-load guard failed: {exc}"
+            ) from exc
 
     def _emit_lifecycle(self, status: str, **details: Any) -> None:
         if self.lifecycle_callback is None:
@@ -843,6 +893,22 @@ def _qwen_quantization_config(
         ),
         bnb_4bit_use_double_quant=bool(quantization.get("double_quant", True)),
     )
+
+
+def _reject_cpu_disk_offload(model: Any) -> None:
+    device_map = getattr(model, "hf_device_map", None)
+    if not isinstance(device_map, Mapping):
+        return
+    offloaded = {
+        str(module): str(device)
+        for module, device in device_map.items()
+        if str(device).lower().split(":", maxsplit=1)[0] in {"cpu", "disk"}
+    }
+    if offloaded:
+        raise SystemicProviderError(
+            "qwen_local CPU/disk offload is forbidden: "
+            + json.dumps(offloaded, sort_keys=True)
+        )
 
 
 def _torch_dtype(value: Any, torch: Any):

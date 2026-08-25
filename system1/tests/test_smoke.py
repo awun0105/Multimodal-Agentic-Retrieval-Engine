@@ -601,6 +601,10 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "AIOU26_checkpoints" in joined
             assert "phase01_structure" in joined
             assert "list_repo_tree" in joined
+            assert "SOURCE IDENTITY" in joined
+            assert "origin_branch_sha" in joined
+            assert "AIC_EXPECTED_GIT_BRANCH" in joined
+            assert "Source code stale/mismatch" in joined
         elif path.name == "02_worker_feature_enrichment.ipynb":
             assert "providers" in joined
         assert "run_cli" in joined
