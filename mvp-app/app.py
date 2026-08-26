@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+from dataclasses import replace
 from pathlib import Path
 
 try:
@@ -30,6 +31,7 @@ from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
 from db import SearchMechanism
+from query_parser import parse_search_query
 from schemas import SearchFilters
 from trake import SUBMISSION_MAX_ROWS, TrakeSearcher, format_submission
 from trake_submission import export_csv_file
@@ -270,9 +272,43 @@ class SearchController:
         *,
         translate_vietnamese: bool | None = None,
     ) -> tuple[list[dict], str]:
+        parsed = parse_search_query(query)
+        mechanism = self.search_mechanism
+
+        # Fast paths: pure metadata input never touches CLIP or translation.
+        if parsed.is_exact_keyframe:
+            row = mechanism.find_exact_keyframe(
+                parsed.exact_video_id, parsed.exact_keyframe_no
+            )
+            if row is None:
+                return [], (
+                    f"Không tìm thấy keyframe "
+                    f"{parsed.exact_video_id}_{parsed.exact_keyframe_no:03d}"
+                )
+            return [row.to_dict()], f"Metadata: đúng keyframe {row.keyframe_id}"
+
+        scope_collections = tuple(
+            dict.fromkeys([*(collections or ()), *parsed.collections])
+        )
+        dropdown_video = video_id or None
+        scope_videos = tuple(
+            dict.fromkeys([*parsed.video_ids, *([dropdown_video] if dropdown_video else [])])
+        )
+
+        if parsed.has_scope and not parsed.semantic_text:
+            rows = []
+            for video_id_item in parsed.video_ids:
+                rows.extend(mechanism.get_video_keyframes(video_id_item))
+            for collection_id in parsed.collections:
+                rows.extend(mechanism.get_collection_keyframes(collection_id))
+            return (
+                [result.to_dict() for result in rows],
+                f"Metadata: {parsed.scope_label} — {len(rows)} keyframes",
+            )
+
         filters = self._search_filters(
-            collections,
-            video_id,
+            scope_collections,
+            None,
             object_entities,
             object_match_mode,
             minimum_object_confidence,
@@ -280,8 +316,9 @@ class SearchController:
             publish_date_from,
             publish_date_to,
         )
+        filters = replace(filters, video_ids=scope_videos)
         outcome = self.search_mechanism.search_by_text(
-            query,
+            parsed.semantic_text or query,
             int(top_k),
             str(query_language).lower(),
             filters,
@@ -299,6 +336,8 @@ class SearchController:
             f"Original query: {outcome.query.original_query} | "
             f"CLIP query: {outcome.query.clip_query}"
         )
+        if parsed.has_scope:
+            status = f"{status} | Scope: {parsed.scope_label}"
         if outcome.query.warning:
             status = f"{status} | {outcome.query.warning}"
         return rows, status
@@ -747,7 +786,10 @@ def build_app(
                     with gr.Row(equal_height=True):
                         query = gr.Textbox(
                             label="Query",
-                            placeholder="Describe the keyframe you want to find",
+                            placeholder=(
+                                "Describe the keyframe you want to find — hoặc nhập "
+                                "L26 · L26_V306 · L26_V306_049 · 'con cá, L26'"
+                            ),
                             scale=5,
                         )
                         translate_vietnamese = gr.Checkbox(

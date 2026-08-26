@@ -17,7 +17,7 @@ from app import (
     search_keyframes_gpu,
     search_keyframes_gpu_v2,
 )
-from schemas import KeyframeDetails, SearchResult
+from schemas import KeyframeDetails, PreparedQuery, SearchOutcome, SearchResult
 
 
 class FakeSearchMechanism:
@@ -374,3 +374,110 @@ def test_generate_preview_text_promotes_pinned_frames_to_top(tmp_path):
     assert first_line == "V02,999"
     # The AI prediction for the pinned video stays as a lower-ranked guess.
     assert preview.splitlines() == ["V02,999", "V01,30", "V02,60"]
+
+
+# --- Inline metadata parsing in _run_search ---
+
+
+class RecordingMechanism(FakeSearchMechanism):
+    """Records what the controller passes down and serves canned rows."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen_query = None
+        self.seen_filters = None
+        self.listed_videos = []
+        self.exact_lookup = None
+
+    @staticmethod
+    def _canned_result(video_id="V01", number=1):
+        return SearchResult(
+            0,
+            f"{video_id}_{number:03d}",
+            video_id,
+            "C01",
+            number,
+            "/tmp/x.jpg",
+            "keyframes/C01/x.jpg",
+            1.0,
+            1.0,
+            30,
+            30.0,
+            640,
+            360,
+            "Title",
+            "Alice",
+        )
+
+    def search_by_text(self, query, top_k, language, filters, *, translate_vietnamese=None):
+        self.seen_query = query
+        self.seen_filters = filters
+        prepared = PreparedQuery(query, query, "auto", "english", translation_enabled=False)
+        return SearchOutcome((self._canned_result(),), prepared)
+
+    def get_video_keyframes(self, video_id):
+        self.listed_videos.append(video_id)
+        return [self._canned_result()]
+
+    def find_exact_keyframe(self, video_id, keyframe_no):
+        self.exact_lookup = (video_id, keyframe_no)
+        return self._canned_result(number=keyframe_no)
+
+
+def _run(mechanism, query, **overrides):
+    controller = SearchController(mechanism, page_size=10)
+    arguments = {
+        "collections": (),
+        "video_id": "",
+        "object_entities": (),
+        "object_match_mode": "any",
+        "minimum_object_confidence": 0.3,
+        "author": None,
+        "publish_date_from": None,
+        "publish_date_to": None,
+    }
+    arguments.update(overrides)
+    return controller._run_search(query, 100, "auto", **arguments)
+
+
+def test_run_search_scopes_semantic_query_to_inline_video():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "con ca, L26_V306", translate_vietnamese=False)
+
+    assert mechanism.seen_query == "con ca"
+    assert mechanism.seen_filters.video_ids == ("L26_V306",)
+    assert len(rows) == 1
+    assert "Scope: video L26_V306" in status
+
+
+def test_run_search_merges_inline_scope_with_dropdown_selections():
+    mechanism = RecordingMechanism()
+    _run(
+        mechanism,
+        "con ca, L26",
+        collections=("C02",),
+        video_id="L28_V009",
+        translate_vietnamese=False,
+    )
+
+    assert mechanism.seen_filters.collections == ("C02", "L26")
+    assert mechanism.seen_filters.video_ids == ("L28_V009",)
+
+
+def test_run_search_lists_whole_video_without_clip():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306")
+
+    assert mechanism.listed_videos == ["L26_V306"]
+    assert mechanism.seen_query is None  # embedding path never invoked
+    assert len(rows) == 1 and rows[0]["score"] == 1.0
+    assert status.startswith("Metadata: video L26_V306")
+
+
+def test_run_search_resolves_exact_keyframe_pair():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306, 49")
+
+    assert mechanism.exact_lookup == ("L26_V306", 49)
+    assert rows[0]["keyframe_id"] == "V01_049"
+    assert status.startswith("Metadata: đúng keyframe")

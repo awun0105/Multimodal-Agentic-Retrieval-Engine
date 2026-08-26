@@ -163,9 +163,18 @@ class SearchMechanism:
             placeholders = ",".join("?" for _ in filters.collections)
             conditions.append(f"k.collection_id IN ({placeholders})")
             parameters.extend(filters.collections)
-        if filters.video_id:
-            conditions.append("k.video_id = ?")
-            parameters.append(filters.video_id)
+        scope_videos = tuple(
+            dict.fromkeys(
+                [
+                    *(filters.video_ids or ()),
+                    *([filters.video_id] if filters.video_id else []),
+                ]
+            )
+        )
+        if scope_videos:
+            placeholders = ",".join("?" for _ in scope_videos)
+            conditions.append(f"k.video_id IN ({placeholders})")
+            parameters.extend(scope_videos)
         if filters.author:
             conditions.append("v.author = ?")
             parameters.append(filters.author)
@@ -258,28 +267,59 @@ class SearchMechanism:
             }
         results = []
         for vector_id, score in zip(ordered_ids, ordered_scores, strict=True):
-            row = by_id[vector_id]
-            image_relpath = str(row["image_relpath"])
-            results.append(
-                SearchResult(
-                    vector_id=vector_id,
-                    keyframe_id=str(row["keyframe_id"]),
-                    video_id=str(row["video_id"]),
-                    collection_id=str(row["collection_id"]),
-                    keyframe_no=int(row["keyframe_no"]),
-                    image_path=str(self.data_root / image_relpath),
-                    image_relpath=image_relpath,
-                    score=score,
-                    pts_time_sec=float(row["pts_time_sec"]),
-                    frame_idx=int(row["frame_idx"]),
-                    fps=float(row["fps"]),
-                    width=int(row["width"]),
-                    height=int(row["height"]),
-                    title=str(row["title"]),
-                    author=str(row["author"]),
-                )
-            )
+            results.append(self._row_to_result(by_id[vector_id], score))
         return results
+
+    def _row_to_result(self, row: dict, score: float) -> SearchResult:
+        image_relpath = str(row["image_relpath"])
+        return SearchResult(
+            vector_id=int(row["vector_id"]),
+            keyframe_id=str(row["keyframe_id"]),
+            video_id=str(row["video_id"]),
+            collection_id=str(row["collection_id"]),
+            keyframe_no=int(row["keyframe_no"]),
+            image_path=str(self.data_root / image_relpath),
+            image_relpath=image_relpath,
+            score=score,
+            pts_time_sec=float(row["pts_time_sec"]),
+            frame_idx=int(row["frame_idx"]),
+            fps=float(row["fps"]),
+            width=int(row["width"]),
+            height=int(row["height"]),
+            title=str(row["title"]),
+            author=str(row["author"]),
+        )
+
+    def _ordered_results(self, where: str, parameters: list[Any]) -> list[SearchResult]:
+        """All matching keyframes in canonical order (video, then keyframe_no),
+        scored 1.0 because no similarity ranking is involved."""
+        query = f"""
+            SELECT k.vector_id, k.keyframe_id, k.video_id, k.collection_id,
+                   k.keyframe_no, k.image_relpath, k.pts_time_sec, k.frame_idx,
+                   k.fps, k.width, k.height, v.title, v.author
+            FROM keyframes k
+            JOIN videos v ON v.video_id = k.video_id
+            WHERE {where}
+            ORDER BY k.vector_id
+        """
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return [self._row_to_result(dict(row), 1.0) for row in rows]
+
+    def get_video_keyframes(self, video_id: str) -> list[SearchResult]:
+        return self._ordered_results("k.video_id = ?", [str(video_id)])
+
+    def get_collection_keyframes(self, collection_id: str) -> list[SearchResult]:
+        return self._ordered_results("k.collection_id = ?", [str(collection_id)])
+
+    def find_exact_keyframe(
+        self, video_id: str, keyframe_no: int
+    ) -> SearchResult | None:
+        rows = self._ordered_results(
+            "k.video_id = ? AND k.keyframe_no = ?",
+            [str(video_id), int(keyframe_no)],
+        )
+        return rows[0] if rows else None
 
     def get_keyframe_details(self, keyframe_id: str) -> KeyframeDetails:
         with self._connect() as connection:
