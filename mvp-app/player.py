@@ -95,6 +95,9 @@ _PLAYER_HEAD_JS = """
 
 _BOOT_JS = """
 window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
+  if (svgEl.dataset.booted){ return; }
+  svgEl.dataset.booted = '1';
+  window.__aiouBootCount = (window.__aiouBootCount || 0) + 1;
   var cfg;
   try { cfg = JSON.parse(svgEl.dataset.player); } catch (err) { return; }
   var pid = cfg.id;
@@ -236,6 +239,40 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
   // kind === 'none'
   setFrame(null, 'none');
 };
+
+// Gradio mounts component HTML via innerHTML, where inline <svg onload>
+// handlers are not guaranteed to fire. A MutationObserver boots every player
+// node as soon as it appears, regardless of how it was inserted.
+function __aiouScan(root){
+  var nodes = root.querySelectorAll('svg[data-player]');
+  Array.prototype.forEach.call(nodes, function(el){
+    if (!el.dataset.booted){ window.__aiouPlayerBoot(el); }
+  });
+}
+window.__aiouScanPlayers = __aiouScan;
+function __aiouStartObserver(){
+  __aiouScan(document);
+  var mo = new MutationObserver(function(muts){
+    for (var i = 0; i < muts.length; i++){
+      var added = muts[i].addedNodes;
+      for (var j = 0; j < added.length; j++){
+        var n = added[j];
+        if (n.nodeType !== 1) continue;
+        if (n.matches && n.matches('svg[data-player]') && !n.dataset.booted){
+          window.__aiouPlayerBoot(n);
+        } else if (n.querySelectorAll){
+          __aiouScan(n);
+        }
+      }
+    }
+  });
+  mo.observe(document.body || document.documentElement, {childList: true, subtree: true});
+}
+if (document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', function(){ __aiouStartObserver(); }, {once: true});
+} else {
+  __aiouStartObserver();
+}
 """
 
 _CSS = """
@@ -285,8 +322,10 @@ def build_player(
 
     if kind == "local":
         safe_path = html.escape(str(source), quote=True)
+        # The #t= media fragment makes the browser start at the keyframe even
+        # before any player JavaScript runs.
         body = (
-            f'<video id="{pid}" src="/gradio_api/file={safe_path}" '
+            f'<video id="{pid}" src="/gradio_api/file={safe_path}#t={start}" '
             f'controls playsinline preload="auto"></video>'
         )
     elif kind == "youtube":
