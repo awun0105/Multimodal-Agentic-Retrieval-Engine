@@ -87,20 +87,10 @@ ocr:
     max_no_text_gray_std: 12
 
 api:
-  max_concurrency_per_video: 2
   request_cache_backend: stage_local
-  total_attempts: 4
-  timeout_seconds: 120
-  backoff_initial_seconds: 2
-  backoff_max_seconds: 30
-  jitter: true
-  retryable_http_statuses: [408, 429, 500, 502, 503, 504]
-  terminal_http_statuses: [400, 401, 403, 404]
-  schema_repair_prompt_version: schema_repair_v1
 
 retry:
   local_model_total_attempts: 2
-  schema_repair_attempts: 1
 
 scene_grouping:
   focused_review_keyframe_roles: [early, late, supplemental]
@@ -115,10 +105,16 @@ scene_grouping:
   strong_disagreement_requires_both_labels: true
   max_consistency_review_rounds: 1
   scene_confidence_aggregation: null_v1
+  max_ocr_chars_per_shot: 800
+  max_transcript_chars_per_shot: 1600
 
 scene_summary:
   max_representative_images: 12
   image_sampling: evenly_spaced_shots
+  max_shot_evidence_items: 48
+  max_ocr_chars_per_shot: 800
+  max_transcript_chars: 12000
+  max_total_evidence_chars: 30000
 
 manual_review:
   sample_size: 12

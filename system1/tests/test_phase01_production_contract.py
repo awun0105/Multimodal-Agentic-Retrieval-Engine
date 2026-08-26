@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from PIL import Image
 from typer.testing import CliRunner
 
 from system1.cli import app
@@ -22,7 +23,9 @@ from system1.phase01.production import (
     PARQUET_COLUMNS,
     _assemble_package,
     _build_captions,
+    _build_scene_summaries,
     _keyframe_diagnostic_counts,
+    _normalize_required_text,
     _required_text,
 )
 from system1.phase01.runner import _build_runtime_diagnostics
@@ -72,8 +75,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "ocr": 4,
         "shot_captions": 2,
     }
-    assert phase01["api"]["max_concurrency_per_video"] == 2
-    assert phase01["api"]["request_cache_backend"] == "stage_local"
+    assert phase01["api"] == {"request_cache_backend": "stage_local"}
     assert phase01["stages"]["order"] == [
         "shots",
         "keyframes",
@@ -159,9 +161,10 @@ def test_shared_semantic_runtime_rejects_fallback_config_drift() -> None:
         phase00_release_id="canonical_release_v001",
         environment="local",
     )
-    resolved.payload["models"]["scene_summary"]["fallbacks"][0][
-        "model_id"
-    ] = "different-gemini-model"
+    resolved.payload["models"]["scene_summary"]["fallbacks"] = [{
+        **resolved.payload["models"]["shot_caption"]["fallbacks"][0],
+        "model_id": "different-local-model",
+    }]
 
     with pytest.raises(ValueError, match="shared semantic runtime mismatch"):
         require_phase01_production_ready(resolved)
@@ -316,7 +319,7 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
         "quantization": "bitsandbytes:4bit:nf4",
         "stages": ["shot_captions", "scenes", "scene_summaries"],
     }
-    assert diagnostics["semantic_fallback_providers"] == ["gemini"]
+    assert diagnostics["semantic_fallback_providers"] == ["vintern_reasoning_local"]
 
 
 def test_canonical_structured_text_rejects_whitespace_only_values() -> None:
@@ -334,29 +337,39 @@ def test_build_captions_submits_all_shots_through_request_many(
 
         def request_many(self, requests):
             self.batches.append(requests)
-            return [
-                {
-                    "caption_vi": f"Cảnh {index}",
-                    "caption_en": f"Scene {index}",
-                    "objects_vi": [],
-                    "objects_en": [],
-                    "actions_vi": [],
-                    "actions_en": [],
-                    "visible_text_summary_vi": "",
-                    "visible_text_summary_en": "",
-                    "__provider": "qwen_local",
-                    "__model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
-                    "__model_revision": "revision",
-                }
-                for index, _request in enumerate(requests)
-            ]
+            responses = []
+            for request_index, request in enumerate(requests):
+                field = request.identity["field"]
+                shot_index = request_index // 8
+                if field == "caption_vi":
+                    text = f"Cảnh {shot_index}"
+                elif field == "caption_en":
+                    text = f"Scene {shot_index}"
+                elif field in {"objects_vi", "objects_en"}:
+                    text = "người\nngười" if field.endswith("_vi") else "person"
+                else:
+                    text = "<NONE>"
+                fallback_field = shot_index == 1 and field == "caption_en"
+                responses.append({
+                    "text": text,
+                    "__provider": (
+                        "vintern_reasoning_local" if fallback_field else "qwen_local"
+                    ),
+                    "__model_id": (
+                        "5CD-AI/Vintern-3B-R-beta"
+                        if fallback_field
+                        else "Qwen/Qwen2.5-VL-7B-Instruct"
+                    ),
+                    "__model_revision": "fallback-revision" if fallback_field else "revision",
+                })
+            return responses
 
     client = RequestManyOnlyClient()
-    shots = [{"shot_id": f"shot_{index:03d}"} for index in range(2)]
+    shots = [{"shot_id": f"L21_V001_SH{index:05d}"} for index in range(2)]
     keyframes = [
         {
             "shot_id": shot["shot_id"],
-            "keyframe_id": f"keyframe_{index:03d}",
+            "keyframe_id": f"L21_V001:{index}",
             "keyframe_ref": f"media://keyframes/frame_{index:03d}.jpg",
             "timestamp_sec": float(index),
             "is_representative": True,
@@ -373,15 +386,145 @@ def test_build_captions_submits_all_shots_through_request_many(
         stage_dir=tmp_path,
         client=client,
         model_config=model_config,
-        max_concurrency=2,
     )
 
     assert len(client.batches) == 1
-    assert len(client.batches[0]) == 2
+    assert len(client.batches[0]) == 16
+    assert [request.identity["field"] for request in client.batches[0][:8]] == [
+        "caption_vi",
+        "caption_en",
+        "objects_vi",
+        "objects_en",
+        "actions_vi",
+        "actions_en",
+        "visible_text_summary_vi",
+        "visible_text_summary_en",
+    ]
     assert [row["caption_en"] for row in rows] == ["Scene 0", "Scene 1"]
+    assert rows[0]["objects_vi"] == ["người"]
+    assert rows[0]["actions_vi"] == []
+    assert rows[0]["provider"] == "qwen_local"
+    assert rows[1]["provider"] == "mixed"
+    assert rows[1]["model_name"] == "mixed"
+    provenance = [
+        json.loads(line)
+        for line in (tmp_path / "shot_caption_field_provenance.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert len(provenance) == 16
+    assert {row["field"] for row in provenance} == {
+        "caption_vi",
+        "caption_en",
+        "objects_vi",
+        "objects_en",
+        "actions_vi",
+        "actions_en",
+        "visible_text_summary_vi",
+        "visible_text_summary_en",
+    }
 
 
-@pytest.mark.parametrize("provider", ["qwen_local", "gemini"])
+def test_required_caption_rejects_none_sentinel() -> None:
+    with pytest.raises(ValueError, match="required semantic text is empty"):
+        _normalize_required_text("<NONE>")
+
+
+def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
+    tmp_path: Path,
+) -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.batches = []
+
+        def request_many(self, requests):
+            self.batches.append(requests)
+            if requests[0].request_kind == "scene_summary_vi":
+                return [{
+                    "text": "Một người đang phát biểu.",
+                    "__provider": "qwen_local",
+                    "__model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+                    "__model_revision": "qwen-revision",
+                }]
+            assert "VIETNAMESE_SUMMARY_REFERENCE:\nMột người đang phát biểu." in requests[0].prompt
+            return [{
+                "text": "A person is speaking.",
+                "__provider": "vintern_reasoning_local",
+                "__model_id": "5CD-AI/Vintern-3B-R-beta",
+                "__model_revision": "vintern-revision",
+            }]
+
+    stage_dir = tmp_path
+    (stage_dir / "keyframes").mkdir()
+    image_name = "L21_V001_f0000000.jpg"
+    Image.new("RGB", (16, 16), "white").save(stage_dir / "keyframes" / image_name)
+    shot_id = "L21_V001_SH00000"
+    scene_id = "L21_V001_SC00000"
+    shots = [{"shot_id": shot_id, "start_sec": 0.0, "end_sec": 1.0}]
+    scenes = [{
+        "scene_id": scene_id,
+        "start_shot_id": shot_id,
+        "end_shot_id": shot_id,
+        "start_sec": 0.0,
+        "end_sec": 1.0,
+    }]
+    keyframes = [{
+        "shot_id": shot_id,
+        "keyframe_id": "L21_V001:0",
+        "keyframe_ref": f"media://keyframes/L21_V001/{image_name}",
+        "timestamp_sec": 0.0,
+        "is_representative": True,
+    }]
+    captions = [{
+        "shot_id": shot_id,
+        "caption_vi": "Một người đang phát biểu.",
+        "caption_en": "A person is speaking.",
+        "objects_vi": ["người"],
+        "objects_en": ["person"],
+        "actions_vi": ["phát biểu"],
+        "actions_en": ["speaking"],
+        "visible_text_summary_vi": "",
+        "visible_text_summary_en": "",
+    }]
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    client = RecordingClient()
+
+    rows = _build_scene_summaries(
+        video_id="L21_V001",
+        scenes=scenes,
+        shots=shots,
+        keyframes=keyframes,
+        ocr_rows=[],
+        captions=captions,
+        asr_rows=[],
+        scene_links=[],
+        stage_dir=stage_dir,
+        client=client,
+        model_config=resolved.payload["models"]["scene_summary"],
+        summary_config=resolved.payload["phase01"]["scene_summary"],
+    )
+
+    assert [[request.request_kind for request in batch] for batch in client.batches] == [
+        ["scene_summary_vi"],
+        ["scene_summary_en"],
+    ]
+    assert rows[0]["summary_vi"] == "Một người đang phát biểu."
+    assert rows[0]["summary_en"] == "A person is speaking."
+    assert rows[0]["provider"] == "mixed"
+    provenance = (
+        stage_dir / "scene_summary_field_provenance.jsonl"
+    ).read_text(encoding="utf-8").splitlines()
+    assert len(provenance) == 2
+
+
+@pytest.mark.parametrize(
+    "provider", ["qwen_local", "vintern_reasoning_local", "mixed"]
+)
 def test_scene_summaries_v2_accepts_local_and_fallback_provenance(
     provider: str,
 ) -> None:
@@ -395,7 +538,7 @@ def test_scene_summaries_v2_accepts_local_and_fallback_provenance(
             "provider": provider,
             "model_name": "model",
             "model_version": "revision",
-            "prompt_version": "scene_summary_v1",
+            "prompt_version": "scene_summary_plain_text_v2",
             "schema_version": "scene_summary_response_v1",
             "confidence": None,
             "status": "pass",
@@ -523,7 +666,9 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
         assert quant_hashes[stage] != resolved.stage_config_hashes[stage]
 
     boundary_changed = copy.deepcopy(resolved.payload)
-    boundary_changed["models"]["scene_boundary"]["provider"] = "gemini"
+    boundary_changed["models"]["scene_boundary"][
+        "prompt_version"
+    ] = "scene_boundary_primary_label_v999"
     boundary_hashes = _stage_config_hashes(boundary_changed)
     assert boundary_hashes["scenes"] != resolved.stage_config_hashes["scenes"]
     assert (
@@ -675,7 +820,7 @@ def test_process_batch_does_not_override_versioned_storage_defaults(
     assert "hf_release_prefix" not in captured
 
 
-@pytest.mark.parametrize("secret_key", ["HF_TOKEN", "AIC_HF_TOKEN", "GEMINI_API_KEY"])
+@pytest.mark.parametrize("secret_key", ["HF_TOKEN", "AIC_HF_TOKEN"])
 def test_resolved_config_rejects_secret_values(secret_key: str) -> None:
     with pytest.raises(ValueError, match="secret values"):
         resolve_phase01_config(
@@ -831,7 +976,7 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "provider": "qwen_local",
             "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
             "model_version": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
-            "prompt_version": "shot_caption_v2",
+            "prompt_version": "shot_caption_plain_text_fields_v1",
             "schema_version": "shot_caption_response_v3", "confidence": None,
             "status": "pass",
         }],
@@ -847,9 +992,10 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
         }],
         "scene_summaries": [{
             "scene_id": scene_id, "video_id": video_id, "summary_vi": "Một cảnh",
-            "summary_en": "A scene", "provider": "gemini",
-            "model_name": "gemini-3.6-flash", "model_version": "gemini-3.6-flash",
-            "prompt_version": "scene_summary_v1",
+            "summary_en": "A scene", "provider": "qwen_local",
+            "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
+            "model_version": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+            "prompt_version": "scene_summary_plain_text_v2",
             "schema_version": "scene_summary_response_v1", "confidence": None,
             "status": "pass",
         }],

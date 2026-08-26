@@ -586,11 +586,13 @@ def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:
         "image_size",
         "max_dynamic_patches",
         "use_thumbnail",
-        "generation_contract_version",
         "do_sample",
         "num_beams",
         "repetition_penalty",
     )
+    # Note: generation_contract_version is intentionally excluded. It is a
+    # task/output contract that legitimately differs between shot_caption and
+    # scene_summary; it must not participate in the shared-runtime invariant.
 
     def client_signature(config: dict[str, Any]) -> dict[str, Any]:
         return {

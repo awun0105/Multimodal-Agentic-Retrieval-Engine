@@ -5,7 +5,6 @@ import json
 import re
 import threading
 import time
-import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -111,8 +110,8 @@ def _for_local_fallback(request: ModelRequest) -> ModelRequest:
     fallback_paths = request.fallback_image_paths
     if not fallback_paths:
         return request
-    from dataclasses import replace
     return replace(request, image_paths=fallback_paths)
+
 
 class ExclusiveLocalFallbackClient:
     """Sticky local failover with one GPU-heavy model resident."""
@@ -129,6 +128,7 @@ class ExclusiveLocalFallbackClient:
         self.telemetry_callback = telemetry_callback
         self._request_lock = threading.Lock()
         self._fallback_active = False
+        self._primary_closed = False
         self._closed = False
         self._counts = {
             "qwen_request_count": 0,
@@ -150,14 +150,15 @@ class ExclusiveLocalFallbackClient:
     def request_many(self, requests: list[ModelRequest]) -> list[dict[str, Any]]:
         if not requests:
             return []
-        
+
         with self._request_lock:
             if self._closed:
                 raise RuntimeError("client is closed")
-                
+
             if self._fallback_active:
                 fallback_reqs = [_for_local_fallback(r) for r in requests]
                 self._record_provider_requests("vintern", len(requests))
+                self._counts["fallback_request_count"] += len(requests)
                 return _client_request_many(self.fallback, fallback_reqs)
 
             self._record_provider_requests("qwen", len(requests))
@@ -171,51 +172,80 @@ class ExclusiveLocalFallbackClient:
                 return _client_request_many(self.fallback, fallback_reqs)
             except BatchRequestError as exc:
                 results = list(exc.results)
-                errors = exc.errors
-                
+                errors = dict(exc.errors)
+                failed_indices = sorted(errors)
+
                 self._activate_fallback()
-                
-                failed_indices = [i for i, err in enumerate(errors) if err is not None]
+
                 fallback_reqs = [_for_local_fallback(requests[i]) for i in failed_indices]
-                
+
                 if fallback_reqs:
                     self._record_provider_requests("vintern", len(fallback_reqs))
                     self._counts["fallback_request_count"] += len(fallback_reqs)
                     try:
                         fallback_results = _client_request_many(self.fallback, fallback_reqs)
-                        for fallback_idx, original_idx in enumerate(failed_indices):
-                            results[original_idx] = fallback_results[fallback_idx]
-                            errors[original_idx] = None
+                        if len(fallback_results) != len(failed_indices):
+                            raise RuntimeError(
+                                "fallback returned a different number of responses "
+                                f"({len(fallback_results)}) than retried requests "
+                                f"({len(failed_indices)})"
+                            )
+                        for offset, original_idx in enumerate(failed_indices):
+                            results[original_idx] = fallback_results[offset]
+                            errors.pop(original_idx, None)
                     except BatchRequestError as fallback_exc:
-                        for fallback_idx, original_idx in enumerate(failed_indices):
-                            results[original_idx] = fallback_exc.results[fallback_idx]
-                            errors[original_idx] = fallback_exc.errors[fallback_idx]
-                            
-                if any(err is not None for err in errors):
+                        fallback_errors = dict(fallback_exc.errors)
+                        if len(fallback_exc.results) < len(failed_indices):
+                            raise RuntimeError(
+                                "fallback returned a different number of results "
+                                f"({len(fallback_exc.results)}) than retried requests "
+                                f"({len(failed_indices)})"
+                            ) from fallback_exc
+                        for offset, original_idx in enumerate(failed_indices):
+                            results[original_idx] = fallback_exc.results[offset]
+                            error = fallback_errors.get(offset)
+                            if error is not None:
+                                errors[original_idx] = error
+                            else:
+                                errors.pop(original_idx, None)
+
+                if errors:
                     raise BatchRequestError(
-                        "exclusive fallback failed to repair all items",
-                        tuple(results),
-                        tuple(errors),
+                        results=results,
+                        errors=errors,
                     ) from exc
-                
-                return results
+
+                return _complete_batch_or_raise(results)
+            except Exception:  # noqa: BLE001 - request-only clients have no batch error contract
+                # A client implementing only request() cannot expose partial
+                # results. Treat its unresolved batch as a local failover and
+                # keep the fallback sticky for the rest of the chunk.
+                self._activate_fallback()
+                fallback_reqs = [_for_local_fallback(r) for r in requests]
+                self._record_provider_requests("vintern", len(requests))
+                self._counts["fallback_request_count"] += len(requests)
+                return _client_request_many(self.fallback, fallback_reqs)
 
     def _activate_fallback(self) -> None:
         if not self._fallback_active:
+            _close_client(self.primary)
+            self._primary_closed = True
+            _release_torch_memory()
             self._fallback_active = True
             self._counts["fallback_activation_count"] += 1
-            if self.telemetry_callback:
-                self.telemetry_callback(
-                    {
-                        "event": "semantic_fallback_activated",
-                        "event_kind": "lifecycle",
-                    }
-                )
-            try:
-                self.primary.close()
-            except Exception:
-                pass
-            _release_torch_memory()
+            if self.telemetry_callback is not None:
+                try:
+                    self.telemetry_callback(
+                        {
+                            "status": "semantic_fallback_activated",
+                            "event_kind": "lifecycle",
+                            "provider": str(
+                                getattr(self.fallback, "provider_name", "fallback")
+                            ),
+                        }
+                    )
+                except Exception:  # noqa: BLE001, S110 - telemetry cannot break inference
+                    pass
 
     def _record_provider_requests(self, provider: str, count: int) -> None:
         if provider == "qwen":
@@ -224,25 +254,29 @@ class ExclusiveLocalFallbackClient:
             self._counts["vintern_fallback_request_count"] += count
 
     def report_telemetry(self) -> dict[str, int]:
-        primary_counts = self.primary.report_telemetry()
-        fallback_counts = self.fallback.report_telemetry()
-        return {
-            **primary_counts,
-            **fallback_counts,
-            **self._counts,
-        }
+        merged: dict[str, int] = {}
+        for client in (self.primary, self.fallback):
+            reporter = getattr(client, "report_telemetry", None)
+            if callable(reporter):
+                merged.update(reporter())
+        merged.update(self._counts)
+        return merged
 
     def close(self) -> None:
         with self._request_lock:
+            if self._closed:
+                return
             self._closed = True
+            if not self._primary_closed:
+                try:
+                    _close_client(self.primary)
+                except Exception:  # noqa: BLE001, S110 - cleanup is best effort
+                    pass
             try:
-                self.primary.close()
-            except Exception:
+                _close_client(self.fallback)
+            except Exception:  # noqa: BLE001, S110 - cleanup is best effort
                 pass
-            try:
-                self.fallback.close()
-            except Exception:
-                pass
+            _release_torch_memory()
 
 
 class LocalVisionStructuredClient:
@@ -731,9 +765,7 @@ class LocalVisionStructuredClient:
                 pass
             prompts: list[str] = []
             for request in requests:
-                if self._uses_vintern_plain_text_ocr(request):
-                    model_prompt = request.prompt
-                elif request.response_mode == "text":
+                if self._uses_vintern_plain_text_ocr(request) or request.response_mode == "text":
                     model_prompt = request.prompt
                 else:
                     model_prompt = _structured_prompt(request)
@@ -785,13 +817,18 @@ class LocalVisionStructuredClient:
             raise ValueError(
                 "vintern_reasoning_local only supports text mode in Phase01"
             )
+        if len(request.image_paths) != 1:
+            raise ValueError(
+                "vintern_reasoning_local expects exactly one fallback image"
+            )
 
         tokenizer, model = self._load_vintern_reasoning()
         import torch
+
         from system1.vlm.vintern_reasoning import load_vintern_reasoning_image
 
-        image_path = (request.fallback_image_paths[0] if request.fallback_image_paths else request.image_paths[0])
-        
+        image_path = request.image_paths[0]
+
         configured_max_tiles = int(self.model_config.get("max_dynamic_patches", 6))
         patch_plan = _vintern_patch_plan(configured_max_tiles)
 
@@ -814,7 +851,7 @@ class LocalVisionStructuredClient:
                     image_size=int(self.model_config.get("image_size", 448)),
                     max_tiles=max_tiles,
                     use_thumbnail=bool(self.model_config.get("use_thumbnail", True)),
-                ).unsqueeze(0).to(_model_device(model))
+                ).to(_model_device(model))
 
                 try:
                     dtype = next(model.parameters()).dtype
@@ -838,13 +875,13 @@ class LocalVisionStructuredClient:
 
             except Exception as exc:
                 if _is_cuda_oom(exc):
-                    self._emit_lifecycle(
-                        "vintern_patch_oom_reduction",
-                        previous_patch_limit=max_tiles,
-                        effective_patch_limit=patch_plan[i + 1] if i + 1 < len(patch_plan) else 0,
-                    )
                     _release_torch_memory()
                     if i + 1 < len(patch_plan):
+                        self._emit_lifecycle(
+                            "vintern_patch_oom_reduction",
+                            previous_patch_limit=max_tiles,
+                            effective_patch_limit=patch_plan[i + 1],
+                        )
                         continue
                 raise
             finally:
@@ -1023,16 +1060,28 @@ class LocalVisionStructuredClient:
                 tokenizer = AutoTokenizer.from_pretrained(
                     self.model_id,
                     revision=self.model_revision,
-                    trust_remote_code=True,
-                    use_fast=False,
+                    trust_remote_code=bool(
+                        self.model_config.get("trust_remote_code", True)
+                    ),
+                    use_fast=bool(
+                        self.model_config.get("use_fast_tokenizer", False)
+                    ),
                 )
                 model = AutoModel.from_pretrained(
                     self.model_id,
                     revision=self.model_revision,
-                    torch_dtype=torch.float16,
-                    low_cpu_mem_usage=True,
-                    trust_remote_code=True,
-                    use_flash_attn=False,
+                    torch_dtype=_torch_dtype(
+                        self.model_config.get("torch_dtype", "float16"), torch
+                    ),
+                    low_cpu_mem_usage=bool(
+                        self.model_config.get("low_cpu_mem_usage", True)
+                    ),
+                    trust_remote_code=bool(
+                        self.model_config.get("trust_remote_code", True)
+                    ),
+                    use_flash_attn=bool(
+                        self.model_config.get("use_flash_attn", False)
+                    ),
                 )
                 model = model.eval().cuda()
                 self._loaded = (tokenizer, model)

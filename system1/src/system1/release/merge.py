@@ -429,7 +429,12 @@ def _build_release_capabilities(
         ocr,
         provider=ocr_provider,
         row_count_optional=False,
-        implemented_providers={"vintern_local", "qwen_local", "gemini"},
+        implemented_providers={
+            "vintern_local",
+            "qwen_local",
+            "vintern_reasoning_local",
+            "mixed",
+        },
     )
     rows = [
         {"capability": "core_runtime", "status": "pass", "reason": "merged release tables available"},

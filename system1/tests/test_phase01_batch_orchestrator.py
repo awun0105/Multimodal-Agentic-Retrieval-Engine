@@ -10,6 +10,7 @@ from typing import ClassVar
 
 import pandas as pd
 import pytest
+from PIL import Image
 
 from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.store import ArtifactStore
@@ -26,22 +27,57 @@ def _stable_available_ram(monkeypatch) -> None:
     monkeypatch.setattr(production, "_available_ram_gb", lambda: 100.0)
 
 
-class FakeGeminiClient:
-    requests: ClassVar[list[str]] = []
+SEMANTIC_REQUEST_KINDS = [
+    "shot_caption_caption_vi",
+    "shot_caption_caption_en",
+    "shot_caption_objects_vi",
+    "shot_caption_objects_en",
+    "shot_caption_actions_vi",
+    "shot_caption_actions_en",
+    "shot_caption_visible_text_summary_vi",
+    "shot_caption_visible_text_summary_en",
+    "scene_summary_vi",
+    "scene_summary_en",
+]
 
-    def __init__(self, **_kwargs) -> None:
-        pass
 
-    def request(self, request):
-        self.requests.append(request.request_kind)
-        if request.request_kind == "shot_caption":
-            return {"caption_vi": "Một cảnh", "caption_en": "A scene"}
-        if request.request_kind == "scene_summary":
-            return {"summary_vi": "Một cảnh", "summary_en": "A scene"}
-        raise AssertionError(request.request_kind)
+def _write_fixture_keyframe(path: Path) -> None:
+    image = Image.new("RGB", (32, 32))
+    image.putdata(
+        [
+            (255, 255, 255) if (x + y) % 2 else (0, 0, 0)
+            for y in range(32)
+            for x in range(32)
+        ]
+    )
+    image.save(path)
 
-    def request_many(self, requests):
-        return [self.request(request) for request in requests]
+
+def _fake_model_response(request):
+    if request.request_kind == "keyframe_ocr":
+        return {
+            "full_text": "",
+            "ocr_blocks": [],
+            "language": "vi",
+            "confidence": None,
+        }
+    if request.request_kind == "shot_caption_caption_vi":
+        return {"text": "Một cảnh"}
+    if request.request_kind == "shot_caption_caption_en":
+        return {"text": "A scene"}
+    if request.request_kind == "shot_caption_objects_vi":
+        return {"text": "cảnh"}
+    if request.request_kind == "shot_caption_objects_en":
+        return {"text": "scene"}
+    if request.request_kind.startswith("shot_caption_"):
+        return {"text": "<NONE>"}
+    if request.request_kind == "scene_summary_vi":
+        return {"text": "Một cảnh"}
+    if request.request_kind == "scene_summary_en":
+        return {"text": "A scene"}
+    if request.request_kind.startswith("scene_boundary_"):
+        return {"text": "SAME_SCENE"}
+    raise AssertionError(request.request_kind)
 
 
 class FakeLocalStructuredClient:
@@ -53,27 +89,7 @@ class FakeLocalStructuredClient:
 
     def request(self, request):
         self.requests.append(request.request_kind)
-        if request.request_kind == "keyframe_ocr":
-            return {
-                "full_text": "",
-                "ocr_blocks": [],
-                "language": "vi",
-                "confidence": None,
-            }
-        if request.request_kind == "shot_caption":
-            return {
-                "caption_vi": "Một cảnh",
-                "caption_en": "A scene",
-                "objects_vi": ["cảnh"],
-                "objects_en": ["scene"],
-                "actions_vi": [],
-                "actions_en": [],
-                "visible_text_summary_vi": "",
-                "visible_text_summary_en": "",
-            }
-        if request.request_kind == "scene_summary":
-            return {"summary_vi": "Một cảnh", "summary_en": "A scene"}
-        raise AssertionError(request.request_kind)
+        return _fake_model_response(request)
 
     def request_many(self, requests):
         return [self.request(request) for request in requests]
@@ -100,7 +116,11 @@ class ChunkLocalStructuredClient:
         cls.instances = []
 
     def request(self, request):
-        if not self.loaded and self.provider in {"qwen_local", "vintern_local"}:
+        if not self.loaded and self.provider in {
+            "qwen_local",
+            "vintern_local",
+            "vintern_reasoning_local",
+        }:
             assert not self.resident
             self.loaded = True
             self.resident.add(self.provider)
@@ -114,27 +134,7 @@ class ChunkLocalStructuredClient:
                         "load_seconds": 0.01,
                     }
                 )
-        if request.request_kind == "keyframe_ocr":
-            return {
-                "full_text": "",
-                "ocr_blocks": [],
-                "language": "vi",
-                "confidence": None,
-            }
-        if request.request_kind == "shot_caption":
-            return {
-                "caption_vi": "Một cảnh",
-                "caption_en": "A scene",
-                "objects_vi": ["cảnh"],
-                "objects_en": ["scene"],
-                "actions_vi": [],
-                "actions_en": [],
-                "visible_text_summary_vi": "",
-                "visible_text_summary_en": "",
-            }
-        if request.request_kind == "scene_summary":
-            return {"summary_vi": "Một cảnh", "summary_en": "A scene"}
-        raise AssertionError(request.request_kind)
+        return _fake_model_response(request)
 
     def request_many(self, requests):
         return [self.request(request) for request in requests]
@@ -227,7 +227,7 @@ def _configure_batch_fixture(
         (output_dir / "keyframes").mkdir()
         (output_dir / "thumbnails").mkdir()
         image_name = f"{video_id}_f0000000"
-        (output_dir / "keyframes" / f"{image_name}.jpg").write_bytes(b"jpg")
+        _write_fixture_keyframe(output_dir / "keyframes" / f"{image_name}.jpg")
         (output_dir / "thumbnails" / f"{image_name}.webp").write_bytes(b"webp")
         pd.DataFrame(
             [
@@ -256,7 +256,6 @@ def _configure_batch_fixture(
         "transcribe_video",
         lambda *_args, **_kwargs: AsrResult("no_audio", [], None, 0, None),
     )
-    monkeypatch.setattr(production, "GeminiStructuredClient", FakeGeminiClient)
     monkeypatch.setattr(
         production,
         "_structured_client_for_model",
@@ -280,7 +279,6 @@ def _configure_batch_fixture(
 def test_single_video_production_orchestrator_checkpoints_and_packages(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    FakeGeminiClient.requests = []
     FakeLocalStructuredClient.requests = []
     video_id = "L21_V001"
     release = tmp_path / "output" / "canonical_release_v001"
@@ -336,7 +334,7 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         (output_dir / "keyframes").mkdir()
         (output_dir / "thumbnails").mkdir()
         image_name = f"{video_id}_f0000000"
-        (output_dir / "keyframes" / f"{image_name}.jpg").write_bytes(b"jpg")
+        _write_fixture_keyframe(output_dir / "keyframes" / f"{image_name}.jpg")
         (output_dir / "thumbnails" / f"{image_name}.webp").write_bytes(b"webp")
         pd.DataFrame([{
             "keyframe_id": f"{video_id}:0", "video_id": video_id,
@@ -356,7 +354,6 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         "transcribe_video",
         lambda *_args, **_kwargs: AsrResult("no_audio", [], None, 0, None),
     )
-    monkeypatch.setattr(production, "GeminiStructuredClient", FakeGeminiClient)
     monkeypatch.setattr(
         production,
         "_structured_client_for_model",
@@ -415,10 +412,8 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     assert second_report == report
     assert FakeLocalStructuredClient.requests == [
         "keyframe_ocr",
-        "shot_caption",
-        "scene_summary",
+        *SEMANTIC_REQUEST_KINDS,
     ]
-    assert FakeGeminiClient.requests == []
 
     before_metadata_change = checkpoint_store.read_json(
         f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
@@ -446,10 +441,8 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     )
     assert FakeLocalStructuredClient.requests == [
         "keyframe_ocr",
-        "shot_caption",
-        "scene_summary",
+        *SEMANTIC_REQUEST_KINDS,
     ]
-    assert FakeGeminiClient.requests == []
     artifact = release / "artifacts" / "structure" / f"{video_id}_structure.zip"
     with zipfile.ZipFile(artifact) as archive:
         names = set(archive.namelist())
@@ -466,7 +459,6 @@ def test_eight_videos_load_each_heavy_model_once_per_chunk(
 ) -> None:
     video_ids = [f"L21_V{index:03d}" for index in range(1, 9)]
     ChunkLocalStructuredClient.reset()
-    FakeGeminiClient.requests = []
     release, checkpoint_store, resolved = _configure_batch_fixture(
         tmp_path, monkeypatch, video_ids
     )
@@ -494,8 +486,7 @@ def test_eight_videos_load_each_heavy_model_once_per_chunk(
     gc.collect()
     assert all(reference() is None for reference in ChunkLocalStructuredClient.instances)
     assert progress.count('"event": "chunk",') == 4
-    assert progress.count('"event": "model",') == 10
-    assert progress.count('"status": "closed"') == 2
+    assert progress.count('"event": "model",') == 8
     assert '"chunk_index": 1' in progress
     assert '"chunk_size": 4' in progress
     assert '"elapsed_seconds":' in progress
@@ -508,7 +499,7 @@ def test_eight_videos_load_each_heavy_model_once_per_chunk(
         "after_captions",
         "after_scenes",
         "after_summaries",
-        "qwen_unloaded",
+        "semantic_models_unloaded",
         "chunk_end",
     ):
         assert f'"status": "{milestone}"' in progress
@@ -531,7 +522,9 @@ def test_eight_videos_load_each_heavy_model_once_per_chunk(
     assert event_index(
         event="stage", stage="scene_summaries", status="complete"
     ) < event_index(event="model", model="qwen_local", status="unloaded")
-    assert event_index(event="memory", status="qwen_unloaded") < event_index(
+    assert event_index(
+        event="memory", status="semantic_models_unloaded"
+    ) < event_index(
         event="stage", stage="package", status="start"
     )
     for video_id in video_ids:
@@ -554,7 +547,6 @@ def test_interruption_during_second_chunk_resumes_completed_stages(
 ) -> None:
     video_ids = [f"L21_V{index:03d}" for index in range(1, 9)]
     ChunkLocalStructuredClient.reset()
-    FakeGeminiClient.requests = []
     release, checkpoint_store, resolved = _configure_batch_fixture(
         tmp_path, monkeypatch, video_ids
     )

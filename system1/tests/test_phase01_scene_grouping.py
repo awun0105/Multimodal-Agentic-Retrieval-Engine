@@ -6,11 +6,11 @@ import pytest
 from PIL import Image
 
 from system1.phase01.production import _build_scene_evidence
+from system1.scenes.grouping import group_scenes, plan_focus_windows, vote_weight
 from system1.scenes.vlm_judge import (
-    VlmSceneBoundaryJudge,
+    SemanticSceneBoundaryJudge,
     _write_role_contact_sheet,
 )
-from system1.scenes.grouping import group_scenes, plan_focus_windows, vote_weight
 
 
 def shots(count: int) -> list[dict]:
@@ -124,19 +124,19 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
 ) -> None:
     class RecordingClient:
         def __init__(self) -> None:
-            self.last_request = None
+            self.requests = []
 
-        def request(self, request):
-            self.last_request = request
-            return {
-                "boundaries": [{
-                    "after_shot_id": "v_SH00000",
-                    "is_scene_boundary": True,
-                    "reason": "location changed",
-                    "confidence": 0.8,
-                    "evidence_used": ["caption", "images"],
-                }]
-            }
+        def request_many(self, requests):
+            self.requests.extend(requests)
+            return [
+                {
+                    "text": "BOUNDARY",
+                    "__provider": "qwen_local",
+                    "__model_id": "qwen",
+                    "__model_revision": "revision",
+                }
+                for _request in requests
+            ]
 
     context = []
     for index in range(2):
@@ -159,16 +159,16 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
         })
     client = RecordingClient()
     prompt_dir = Path(__file__).resolve().parents[1] / "prompts"
-    judge = VlmSceneBoundaryJudge(
+    judge = SemanticSceneBoundaryJudge(
         client,
         video_id="v",
         prompt_dir=prompt_dir,
         diagnostics_dir=tmp_path / "diagnostics",
         model_config={
-            "prompt_version": "scene_boundary_primary_v1",
-            "focused_prompt_version": "scene_boundary_focused_v1",
-            "consistency_prompt_version": "scene_boundary_consistency_v1",
-            "response_schema_version": "scene_boundary_response_v1",
+            "prompt_version": "scene_boundary_primary_label_v2",
+            "focused_prompt_version": "scene_boundary_focused_label_v2",
+            "consistency_prompt_version": "scene_boundary_consistency_label_v2",
+            "decision_contract_version": "scene_boundary_label_v2",
         },
     )
 
@@ -179,9 +179,71 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
     )
 
     assert result == {"v_SH00000": True}
-    assert client.last_request.request_kind == "scene_boundary_focused_review"
-    assert len(client.last_request.image_paths) == 2
-    assert "ORDERED SHOT EVIDENCE" in client.last_request.prompt
+    request = client.requests[0]
+    assert request.request_kind == "scene_boundary_focused_review"
+    assert request.allowed_text_values == ("BOUNDARY", "SAME_SCENE")
+    assert len(request.image_paths) == 2
+    assert len(request.fallback_image_paths) == 1
+    assert request.fallback_image_paths[0].is_file()
+    assert "TARGET_LEFT_SHOT_ID: v_SH00000" in request.prompt
+    assert "TARGET_RIGHT_SHOT_ID: v_SH00001" in request.prompt
+    assert "BEGIN_EVIDENCE" in request.prompt
+
+
+def test_semantic_boundary_judge_creates_one_ordered_request_per_gap(
+    tmp_path: Path,
+) -> None:
+    class AlternatingClient:
+        def __init__(self) -> None:
+            self.requests = []
+
+        def request_many(self, requests):
+            self.requests.extend(requests)
+            return [
+                {"text": "BOUNDARY" if index % 2 == 0 else "SAME_SCENE"}
+                for index, _request in enumerate(requests)
+            ]
+
+    context = []
+    for index in range(9):
+        path = tmp_path / f"representative_{index:02d}.jpg"
+        Image.new("RGB", (16, 16), color=(index * 20, 10, 10)).save(path)
+        context.append(
+            {
+                "shot_id": f"v_SH{index:05d}",
+                "start_sec": float(index),
+                "end_sec": float(index + 1),
+                "representative_path": path,
+                "caption_vi": "Một cảnh",
+                "caption_en": "A scene",
+                "ocr_text": [],
+                "transcript": "",
+            }
+        )
+    gap_ids = tuple(f"v_SH{index:05d}" for index in range(8))
+    client = AlternatingClient()
+    judge = SemanticSceneBoundaryJudge(
+        client,
+        video_id="v",
+        prompt_dir=Path(__file__).resolve().parents[1] / "prompts",
+        diagnostics_dir=tmp_path / "diagnostics",
+        model_config={
+            "prompt_version": "scene_boundary_primary_label_v2",
+            "focused_prompt_version": "scene_boundary_focused_label_v2",
+            "consistency_prompt_version": "scene_boundary_consistency_label_v2",
+            "decision_contract_version": "scene_boundary_label_v2",
+        },
+    )
+
+    result = judge.judge(gap_ids, context, request_kind="primary")
+
+    assert len(client.requests) == 8
+    assert [request.identity["after_shot_id"] for request in client.requests] == list(
+        gap_ids
+    )
+    assert result == {
+        gap_id: index % 2 == 0 for index, gap_id in enumerate(gap_ids)
+    }
 
 
 def test_two_supplementals_reach_focused_scene_evidence_without_overwrite(

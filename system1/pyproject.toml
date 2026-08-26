@@ -23,7 +23,6 @@ dependencies = [
 phase01-production = [
     "bitsandbytes==0.47.0",
     "faster-whisper==1.2.1",
-    "google-genai[aiohttp]==2.13.0",
     "nemo_toolkit[asr]==2.6.0",
     "onnx==1.18.0",
     "accelerate>=0.33.0",

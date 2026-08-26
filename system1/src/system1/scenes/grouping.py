@@ -34,6 +34,9 @@ class BoundaryDecision:
     reason: str | None = None
     confidence: float | None = None
     evidence_used: tuple[str, ...] = ()
+    provider: str | None = None
+    model_name: str | None = None
+    model_version: str | None = None
 
 
 class SceneBoundaryJudge(Protocol):
@@ -207,6 +210,9 @@ def group_scenes(
                 reason=diagnostics.get("reason"),
                 confidence=diagnostics.get("confidence"),
                 evidence_used=tuple(diagnostics.get("evidence_used", ())),
+                provider=diagnostics.get("provider"),
+                model_name=diagnostics.get("model_name"),
+                model_version=diagnostics.get("model_version"),
             )
         )
     return partition_scenes(video_id=video_id, shots=shots, decisions=decisions), decisions
@@ -293,7 +299,17 @@ def _diagnostics_for_gap(judge: SceneBoundaryJudge, gap_id: str) -> dict[str, An
         "reason": str(reason) if reason is not None else None,
         "confidence": float(confidence) if isinstance(confidence, (int, float)) else None,
         "evidence_used": tuple(str(item) for item in evidence_used),
+        "provider": _optional_string(value.get("provider")),
+        "model_name": _optional_string(value.get("model_name")),
+        "model_version": _optional_string(value.get("model_version")),
     }
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _focused_context_indices(gap_index: int, *, shot_count: int, each_side: int) -> range:

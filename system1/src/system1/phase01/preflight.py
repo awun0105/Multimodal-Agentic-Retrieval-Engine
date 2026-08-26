@@ -17,7 +17,6 @@ from system1.artifacts.reports import utc_now
 from system1.config import ResolvedPhase01Config, require_phase01_production_ready
 from system1.shots import load_transnet_artifact
 
-
 _EXPECTED_TORCH_STACK = {
     "torch": "2.8.0",
     "torchaudio": "2.8.0",
@@ -47,7 +46,7 @@ def run_phase01_preflight(
     require_phase01_production_ready(config)
     runtime = config.payload["runtime"]
     if config.payload["phase01"]["api"].get("request_cache_backend") != "stage_local":
-        raise RuntimeError("Phase01 Gemini request cache backend must be stage_local")
+        raise RuntimeError("Phase01 request cache backend must be stage_local")
     batch_path = release_dir / "manifests" / f"{runtime['batch_id']}.txt"
     required = [
         release_dir / "tables" / "videos.parquet",
@@ -95,7 +94,6 @@ def run_phase01_preflight(
     for package in (
         "bitsandbytes",
         "faster-whisper",
-        "google-genai",
         "huggingface-hub",
         "nemo-toolkit",
         "onnx",
@@ -295,13 +293,12 @@ def _validate_phase00_batch(release_dir: Path, batch_path: Path) -> None:
 def _validate_prompt_files(config: ResolvedPhase01Config) -> None:
     models = config.payload["models"]
     versions = {
-        str(config.payload["phase01"]["api"]["schema_repair_prompt_version"]),
         str(models["ocr"]["prompt_version"]),
-        str(models["shot_caption"]["prompt_version"]),
+        *map(str, models["shot_caption"]["prompt_versions"].values()),
         str(models["scene_boundary"]["prompt_version"]),
         str(models["scene_boundary"]["focused_prompt_version"]),
         str(models["scene_boundary"]["consistency_prompt_version"]),
-        str(models["scene_summary"]["prompt_version"]),
+        *map(str, models["scene_summary"]["prompt_versions"].values()),
     }
     prompt_root = Path(__file__).resolve().parents[3] / "prompts"
     missing = []
@@ -318,20 +315,33 @@ def _validate_prompt_files(config: ResolvedPhase01Config) -> None:
 
 
 
-def _validate_local_vlm_dependencies(
-    models: dict[str, Any], *, versions: dict[str, str]
-) -> None:
-    local_models = [
+LOCAL_VLM_PROVIDERS = {
+    "qwen_local",
+    "vintern_local",
+    "vintern_reasoning_local",
+}
+
+
+def _local_vlm_models(models: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
         models.get("ocr", {}),
         models.get("shot_caption", {}),
         *models.get("shot_caption", {}).get("fallbacks", []),
     ]
-    if not any(str(model.get("provider")) in {"qwen_local", "vintern_local"} for model in local_models):
+
+
+def _validate_local_vlm_dependencies(
+    models: dict[str, Any], *, versions: dict[str, str]
+) -> None:
+    local_models = _local_vlm_models(models)
+    if not any(str(model.get("provider")) in LOCAL_VLM_PROVIDERS for model in local_models):
         return
     required_modules = {
         "transformers": "transformers",
         "accelerate": "accelerate",
         "torch": "torch",
+        "torchvision": "torchvision",
+        "PIL": "pillow",
     }
     if any(str(model.get("provider")) == "qwen_local" for model in local_models):
         required_modules["qwen_vl_utils"] = "qwen-vl-utils"
@@ -396,14 +406,9 @@ def _validate_model_cache_free_space(
 
 
 def _uses_local_vlm(models: dict[str, Any]) -> bool:
-    local_models = [
-        models.get("ocr", {}),
-        models.get("shot_caption", {}),
-        *models.get("shot_caption", {}).get("fallbacks", []),
-    ]
     return any(
-        str(model.get("provider")) in {"qwen_local", "vintern_local"}
-        for model in local_models
+        str(model.get("provider")) in LOCAL_VLM_PROVIDERS
+        for model in _local_vlm_models(models)
     )
 
 

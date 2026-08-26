@@ -5,15 +5,22 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from system1.artifacts.store import ArtifactStore
-from system1.gemini import GeminiRequest
+from system1.vlm import (
+    TEXT_RESPONSE_SCHEMA,
+    ModelRequest,
+    build_request_hash,
+    normalize_text_response,
+)
 from system1.vlm.client import (
     BatchRequestError,
     ExclusiveLocalFallbackClient,
     LocalVisionStructuredClient,
     SystemicProviderError,
 )
+from system1.vlm.vintern_reasoning import split_dynamic_tiles
 
 
 class _FakeTensor:
@@ -43,7 +50,7 @@ def _install_fake_torch(monkeypatch):
     return module
 
 
-def test_request_error_falls_back_without_opening_circuit() -> None:
+def test_request_error_activates_sticky_fallback() -> None:
     events: list[str] = []
 
     class FailingClient:
@@ -59,7 +66,7 @@ def test_request_error_falls_back_without_opening_circuit() -> None:
             events.append("pass_request")
             return {"value": "ok"}
 
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="test",
         video_id="L21_V001",
         prompt="return json",
@@ -79,13 +86,62 @@ def test_request_error_falls_back_without_opening_circuit() -> None:
 
     assert response == {"value": "ok"}
     assert second == {"value": "ok"}
-    assert client.circuit_open is False
+    assert client.circuit_open is True
     assert events == [
         "fail_request",
+        "fail_close",
         "pass_request",
-        "fail_request",
         "pass_request",
     ]
+
+
+def test_text_request_hash_differs_from_json_request_hash() -> None:
+    base = {
+        "request_kind": "semantic",
+        "video_id": "L21_V001",
+        "prompt": "describe",
+        "prompt_version": "prompt_v1",
+        "response_schema_version": "response_v1",
+        "response_schema": TEXT_RESPONSE_SCHEMA,
+    }
+    text_request = ModelRequest(**base, response_mode="text")
+    json_request = ModelRequest(**base, response_mode="json")
+
+    assert build_request_hash(
+        text_request, model_id="model"
+    ) != build_request_hash(json_request, model_id="model")
+
+
+@pytest.mark.parametrize("label", ["BOUNDARY", "same_scene"])
+def test_boundary_label_normalization_accepts_exact_labels(label: str) -> None:
+    request = ModelRequest(
+        request_kind="scene_boundary_primary",
+        video_id="L21_V001",
+        prompt="classify",
+        prompt_version="prompt_v1",
+        response_schema_version="plain_text_response_v1",
+        response_schema=TEXT_RESPONSE_SCHEMA,
+        response_mode="text",
+        allowed_text_values=("BOUNDARY", "SAME_SCENE"),
+    )
+
+    assert normalize_text_response(label, request) == {"text": label.upper()}
+
+
+def test_boundary_label_normalization_rejects_extra_text() -> None:
+    request = ModelRequest(
+        request_kind="scene_boundary_primary",
+        video_id="L21_V001",
+        prompt="classify",
+        prompt_version="prompt_v1",
+        response_schema_version="plain_text_response_v1",
+        response_schema=TEXT_RESPONSE_SCHEMA,
+        response_mode="text",
+        allowed_text_values=("BOUNDARY", "SAME_SCENE"),
+    )
+
+    with pytest.raises(ValueError, match="invalid label"):
+        normalize_text_response("BOUNDARY because the view changed", request)
 
 
 def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
@@ -122,7 +178,7 @@ def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
             if "vintern" in resident:
                 resident.remove("vintern")
 
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="test",
         video_id="L21_V001",
         prompt="return json",
@@ -138,9 +194,10 @@ def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
     primary = FailingPrimary()
     primary.provider_name = "qwen_local"
     fallback = PassingFallback()
-    fallback.provider_name = "gemini"
+    fallback.provider_name = "vintern_reasoning_local"
     client = ExclusiveLocalFallbackClient(
-        [primary, fallback],
+        primary,
+        fallback,
         telemetry_callback=lambda payload: telemetry.append(dict(payload)),
     )
 
@@ -150,23 +207,23 @@ def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
     assert fallback_calls == 2
     assert client.circuit_open is True
     assert resident == ["vintern"]
-    assert any(
-        event["status"] == "circuit_breaker"
-        and event["circuit_breaker_state"] == "open"
-        for event in telemetry
-    )
-    fallback_event = [
-        event for event in telemetry if event["status"] == "fallback"
-    ][-1]
-    assert fallback_event["qwen_request_count"] == 1
-    assert fallback_event["gemini_request_count"] == 2
-    assert fallback_event["fallback_request_count"] == 2
+    assert telemetry == [
+        {
+            "status": "semantic_fallback_activated",
+            "event_kind": "lifecycle",
+            "provider": "vintern_reasoning_local",
+        }
+    ]
+    assert client.report_telemetry() == {
+        "qwen_request_count": 1,
+        "vintern_fallback_request_count": 2,
+        "fallback_request_count": 2,
+        "fallback_activation_count": 1,
+    }
 
     client.close()
     assert resident == []
     assert primary_close_calls == 1
-    assert telemetry[-1]["status"] == "closed"
-    assert telemetry[-1]["circuit_breaker_state"] == "open"
 
 
 def test_local_vlm_client_close_releases_loaded_model_handles() -> None:
@@ -192,7 +249,7 @@ def test_fallback_client_reports_all_provider_failures() -> None:
         def request(self, _request):
             raise RuntimeError(self.name)
 
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="test",
         video_id="L21_V001",
         prompt="return json",
@@ -202,9 +259,9 @@ def test_fallback_client_reports_all_provider_failures() -> None:
         image_paths=(Path("missing.jpg"),),
     )
 
-    with pytest.raises(RuntimeError, match="first.*second"):
+    with pytest.raises(RuntimeError, match="second"):
         ExclusiveLocalFallbackClient(
-            [FailingClient("first"), FailingClient("second")]
+            FailingClient("first"), FailingClient("second")
         ).request(request)
 
 
@@ -235,7 +292,7 @@ def test_local_vlm_adaptive_oom_reduces_to_one(monkeypatch) -> None:
         "system1.vlm.client._release_torch_memory",
         lambda: releases.append("released"),
     )
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="test",
         video_id="L21_V001",
         prompt="return json",
@@ -334,7 +391,7 @@ def test_two_qwen_requests_use_one_model_generate(
         "additionalProperties": False,
     }
     requests = [
-        GeminiRequest(
+        ModelRequest(
             request_kind="shot_caption",
             video_id="L21_V001",
             prompt=f"prompt {index}",
@@ -352,6 +409,70 @@ def test_two_qwen_requests_use_one_model_generate(
     assert model.generate_calls == 1
     assert all("OUTPUT CONTRACT:" in prompt for prompt in structured_prompts)
     assert all('"type":"object"' in prompt for prompt in structured_prompts)
+
+
+def test_qwen_text_mode_does_not_inject_json_contract_and_wraps_response(
+    tmp_path: Path, monkeypatch
+) -> None:
+    prompts: list[str] = []
+
+    class FakeTensor:
+        shape = (1, 2)
+
+        def to(self, _device):
+            return self
+
+        def __getitem__(self, _item):
+            return self
+
+    class FakeProcessor:
+        def apply_chat_template(self, conversation, **_kwargs):
+            prompts.append(conversation[0]["content"][-1]["text"])
+            return "prompt"
+
+        def __call__(self, **_kwargs):
+            return {"input_ids": FakeTensor()}
+
+        def batch_decode(self, _generated, **_kwargs):
+            return ["  plain semantic answer  "]
+
+    class FakeModel:
+        def parameters(self):
+            return iter([SimpleNamespace(device="cpu")])
+
+        def generate(self, **_kwargs):
+            return FakeTensor()
+
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "qwen_local",
+            "model_id": "qwen",
+            "model_revision": "revision",
+            "inference_batch_size": 1,
+        }
+    )
+    monkeypatch.setattr(client, "_load_qwen", lambda: (FakeProcessor(), FakeModel()))
+    qwen_utils = ModuleType("qwen_vl_utils")
+    qwen_utils.process_vision_info = lambda _conversations: ([], None)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "qwen_vl_utils", qwen_utils)
+    image = tmp_path / "frame.jpg"
+    image.write_bytes(b"fixture")
+    request = ModelRequest(
+        request_kind="shot_caption_caption_en",
+        video_id="L21_V001",
+        prompt="Describe the image in English.",
+        prompt_version="shot_caption_en_v1",
+        response_schema_version="plain_text_response_v1",
+        response_schema=TEXT_RESPONSE_SCHEMA,
+        image_paths=(image,),
+        response_mode="text",
+    )
+
+    response = client.request(request)
+
+    assert prompts == ["Describe the image in English."]
+    assert "OUTPUT CONTRACT:" not in prompts[0]
+    assert response["text"] == "plain semantic answer"
 
 
 def test_request_many_preserves_order_and_only_batches_cache_misses(
@@ -381,8 +502,8 @@ def test_request_many_preserves_order_and_only_batches_cache_misses(
         "additionalProperties": False,
     }
 
-    def make_request(prompt: str) -> GeminiRequest:
-        return GeminiRequest(
+    def make_request(prompt: str) -> ModelRequest:
+        return ModelRequest(
             request_kind="shot_caption",
             video_id="L21_V001",
             prompt=prompt,
@@ -643,7 +764,7 @@ def test_vintern_plain_text_ocr_uses_native_batch_chat(
         image = tmp_path / f"image_{index}.jpg"
         image.write_bytes(b"image")
         requests.append(
-            GeminiRequest(
+            ModelRequest(
                 request_kind="keyframe_ocr",
                 video_id="L21_V001",
                 prompt="Read visible text only.",
@@ -666,7 +787,7 @@ def test_vintern_plain_text_ocr_uses_native_batch_chat(
 
 
 def test_local_vlm_cache_identity_includes_structured_output_contract() -> None:
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="test",
         video_id="L21_V001",
         prompt="return json",
@@ -710,7 +831,7 @@ def test_structured_parse_error_telemetry_is_bounded(monkeypatch) -> None:
         "_call_models",
         lambda requests: [f"not-json-{index}" for index, _request in enumerate(requests)],
     )
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="keyframe_ocr",
         video_id="L21_V001",
         prompt="ocr",
@@ -723,7 +844,7 @@ def test_structured_parse_error_telemetry_is_bounded(monkeypatch) -> None:
         client.request_many([request, request, request, request])
 
     parse_errors = [
-        event for event in lifecycle if event["status"] == "structured_parse_error"
+        event for event in lifecycle if event["status"] == "response_parse_error"
     ]
     assert len(parse_errors) == 3
     assert parse_errors[0]["request_kind"] == "keyframe_ocr"
@@ -775,7 +896,7 @@ def test_vintern_without_native_batch_safely_uses_one_request(
     )
 
 
-def _image_requests(tmp_path: Path, *, prompts: list[str]) -> list[GeminiRequest]:
+def _image_requests(tmp_path: Path, *, prompts: list[str]) -> list[ModelRequest]:
     schema = {
         "type": "object",
         "properties": {"value": {"type": "string"}},
@@ -787,7 +908,7 @@ def _image_requests(tmp_path: Path, *, prompts: list[str]) -> list[GeminiRequest
         image = tmp_path / f"image_{index}.jpg"
         image.write_bytes(prompt.encode())
         requests.append(
-            GeminiRequest(
+            ModelRequest(
                 request_kind="keyframe_ocr",
                 video_id="L21_V001",
                 prompt=prompt,
@@ -800,7 +921,7 @@ def _image_requests(tmp_path: Path, *, prompts: list[str]) -> list[GeminiRequest
     return requests
 
 
-def test_invalid_json_falls_back_only_failed_request_and_keeps_qwen_primary(
+def test_invalid_json_falls_back_only_failed_request_then_stays_on_fallback(
     monkeypatch,
 ) -> None:
     calls = []
@@ -822,8 +943,8 @@ def test_invalid_json_falls_back_only_failed_request_and_keeps_qwen_primary(
 
     monkeypatch.setattr(primary, "_call_models", call_models)
 
-    class GeminiFallback:
-        provider_name = "gemini"
+    class VinternFallback:
+        provider_name = "vintern_reasoning_local"
 
         def request(self, request):
             return {"value": f"fallback:{request.prompt}"}
@@ -836,7 +957,7 @@ def test_invalid_json_falls_back_only_failed_request_and_keeps_qwen_primary(
     }
 
     def make_request(prompt):
-        return GeminiRequest(
+        return ModelRequest(
             request_kind="shot_caption",
             video_id="L21_V001",
             prompt=prompt,
@@ -845,7 +966,7 @@ def test_invalid_json_falls_back_only_failed_request_and_keeps_qwen_primary(
             response_schema=schema,
         )
 
-    client = ExclusiveLocalFallbackClient(primary, GeminiFallback())
+    client = ExclusiveLocalFallbackClient(primary, VinternFallback())
     responses = client.request_many([make_request("good"), make_request("bad")])
     next_response = client.request(make_request("next"))
 
@@ -853,12 +974,12 @@ def test_invalid_json_falls_back_only_failed_request_and_keeps_qwen_primary(
         "primary",
         "fallback:bad",
     ]
-    assert next_response["value"] == "primary"
-    assert client.circuit_open is False
-    assert calls == [["good", "bad"], ["next"]]
+    assert next_response["value"] == "fallback:next"
+    assert client.circuit_open is True
+    assert calls == [["good", "bad"]]
 
 
-def test_batch_call_error_retries_singletons_and_falls_back_only_failed_request(
+def test_batch_call_error_isolates_failure_then_stays_on_fallback(
     monkeypatch,
 ) -> None:
     calls: list[list[str]] = []
@@ -882,8 +1003,8 @@ def test_batch_call_error_retries_singletons_and_falls_back_only_failed_request(
 
     monkeypatch.setattr(primary, "_call_models", call_models)
 
-    class GeminiFallback:
-        provider_name = "gemini"
+    class VinternFallback:
+        provider_name = "vintern_reasoning_local"
 
         def request(self, request):
             return {"value": f"fallback:{request.prompt}"}
@@ -896,7 +1017,7 @@ def test_batch_call_error_retries_singletons_and_falls_back_only_failed_request(
     }
 
     def make_request(prompt):
-        return GeminiRequest(
+        return ModelRequest(
             request_kind="shot_caption",
             video_id="L21_V001",
             prompt=prompt,
@@ -905,7 +1026,7 @@ def test_batch_call_error_retries_singletons_and_falls_back_only_failed_request(
             response_schema=schema,
         )
 
-    client = ExclusiveLocalFallbackClient(primary, GeminiFallback())
+    client = ExclusiveLocalFallbackClient(primary, VinternFallback())
     responses = client.request_many([make_request("good"), make_request("bad")])
     next_response = client.request(make_request("next"))
 
@@ -913,9 +1034,9 @@ def test_batch_call_error_retries_singletons_and_falls_back_only_failed_request(
         "primary",
         "fallback:bad",
     ]
-    assert next_response["value"] == "primary"
-    assert client.circuit_open is False
-    assert calls == [["good", "bad"], ["good"], ["bad"], ["next"]]
+    assert next_response["value"] == "fallback:next"
+    assert client.circuit_open is True
+    assert calls == [["good", "bad"], ["good"], ["bad"]]
 
 
 def test_multi_image_oom_reduces_evidence_evenly_before_circuit(
@@ -947,7 +1068,7 @@ def test_multi_image_oom_reduces_evidence_evenly_before_circuit(
 
     monkeypatch.setattr(client, "_call_models", call_models)
     monkeypatch.setattr("system1.vlm.client._release_torch_memory", lambda: None)
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="scene_summary",
         video_id="L21_V001",
         prompt="summary",
@@ -974,7 +1095,7 @@ def test_multi_image_oom_reduces_evidence_evenly_before_circuit(
     assert [event["effective_image_count"] for event in reductions] == [6, 3]
 
 
-def test_repeated_batch_one_oom_opens_circuit_and_uses_gemini(monkeypatch) -> None:
+def test_repeated_batch_one_oom_opens_circuit_and_uses_vintern(monkeypatch) -> None:
     attempts = 0
     primary = LocalVisionStructuredClient(
         model_config={
@@ -993,13 +1114,13 @@ def test_repeated_batch_one_oom_opens_circuit_and_uses_gemini(monkeypatch) -> No
 
     monkeypatch.setattr(primary, "_call_models", oom)
 
-    class GeminiFallback:
-        provider_name = "gemini"
+    class VinternFallback:
+        provider_name = "vintern_reasoning_local"
 
         def request(self, _request):
             return {"value": "fallback"}
 
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="scene_summary",
         video_id="L21_V001",
         prompt="summary",
@@ -1012,7 +1133,7 @@ def test_repeated_batch_one_oom_opens_circuit_and_uses_gemini(monkeypatch) -> No
             "additionalProperties": False,
         },
     )
-    client = ExclusiveLocalFallbackClient(primary, GeminiFallback())
+    client = ExclusiveLocalFallbackClient(primary, VinternFallback())
 
     response = client.request(request)
 
@@ -1109,7 +1230,7 @@ def test_qwen_cache_identity_includes_padding_side() -> None:
             "padding_side": "right",
         }
     )
-    request = GeminiRequest(
+    request = ModelRequest(
         request_kind="test",
         video_id="video",
         prompt="prompt",
@@ -1120,3 +1241,161 @@ def test_qwen_cache_identity_includes_padding_side() -> None:
     hash_left = client_left._request_hash(request)
     hash_right = client_right._request_hash(request)
     assert hash_left != hash_right
+
+
+def test_vintern_reasoning_loader_uses_pinned_revision(monkeypatch) -> None:
+    captured: dict[str, dict[str, object]] = {}
+
+    class FakeFactory:
+        def __init__(self, key: str, value: object) -> None:
+            self.key = key
+            self.value = value
+
+        def from_pretrained(self, _model_id, **kwargs):
+            captured[self.key] = kwargs
+            return self.value
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+        def cuda(self):
+            return self
+
+    transformers = ModuleType("transformers")
+    transformers.AutoTokenizer = FakeFactory("tokenizer", object())  # type: ignore[attr-defined]
+    transformers.AutoModel = FakeFactory("model", FakeModel())  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    monkeypatch.setattr("system1.vlm.client._reset_cuda_peak_memory", lambda: None)
+    revision = "4fd34d713dfca446cdecc00d921f5038909e3efb"
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "vintern_reasoning_local",
+            "model_id": "5CD-AI/Vintern-3B-R-beta",
+            "model_revision": revision,
+            "torch_dtype": "float16",
+            "trust_remote_code": True,
+            "use_fast_tokenizer": False,
+            "use_flash_attn": False,
+        }
+    )
+
+    client._load_vintern_reasoning()
+
+    assert captured["tokenizer"]["revision"] == revision
+    assert captured["model"]["revision"] == revision
+
+
+def test_vintern_reasoning_dynamic_tiles_include_global_thumbnail() -> None:
+    image = Image.new("RGB", (1600, 500), "white")
+
+    tiles = split_dynamic_tiles(
+        image,
+        image_size=448,
+        max_tiles=6,
+        use_thumbnail=True,
+    )
+
+    assert 2 <= len(tiles) <= 7
+    assert all(tile.size == (448, 448) for tile in tiles)
+
+
+def test_vintern_reasoning_reduces_patch_count_on_oom(
+    tmp_path: Path, monkeypatch
+) -> None:
+    patch_limits: list[int] = []
+    lifecycle: list[dict[str, object]] = []
+
+    class FakeTensor:
+        def to(self, *_args, **_kwargs):
+            return self
+
+    class FakeModel:
+        calls = 0
+
+        def parameters(self):
+            return iter([SimpleNamespace(device="cuda", dtype="float16")])
+
+        def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError("CUDA out of memory")
+            return "semantic answer"
+
+    def load_image(_path, *, max_tiles, **_kwargs):
+        patch_limits.append(max_tiles)
+        return FakeTensor()
+
+    client = LocalVisionStructuredClient(
+        model_config={
+            "provider": "vintern_reasoning_local",
+            "model_id": "vintern",
+            "model_revision": "revision",
+            "max_dynamic_patches": 6,
+            "image_size": 448,
+            "use_thumbnail": True,
+        },
+        lifecycle_callback=lambda payload: lifecycle.append(dict(payload)),
+    )
+    model = FakeModel()
+    monkeypatch.setattr(client, "_load_vintern_reasoning", lambda: (object(), model))
+    monkeypatch.setattr(
+        "system1.vlm.vintern_reasoning.load_vintern_reasoning_image", load_image
+    )
+    monkeypatch.setattr("system1.vlm.client._release_torch_memory", lambda: None)
+    image = tmp_path / "fallback.jpg"
+    image.write_bytes(b"fixture")
+    request = ModelRequest(
+        request_kind="scene_summary_vi",
+        video_id="L21_V001",
+        prompt="summarize",
+        prompt_version="scene_summary_vi_v2",
+        response_schema_version="plain_text_response_v1",
+        response_schema=TEXT_RESPONSE_SCHEMA,
+        image_paths=(image,),
+        response_mode="text",
+    )
+
+    assert client.request(request)["text"] == "semantic answer"
+    assert patch_limits == [6, 4, 2]
+    assert [
+        event["effective_patch_limit"]
+        for event in lifecycle
+        if event["status"] == "vintern_patch_oom_reduction"
+    ] == [4, 2]
+
+
+def test_vintern_fallback_uses_single_fallback_image(tmp_path: Path) -> None:
+    received: list[tuple[Path, ...]] = []
+
+    class FailingPrimary:
+        def request(self, _request):
+            raise RuntimeError("primary failed")
+
+    class RecordingFallback:
+        provider_name = "vintern_reasoning_local"
+
+        def request(self, request):
+            received.append(request.image_paths)
+            return {"text": "fallback"}
+
+    source_images = tuple(tmp_path / f"source-{index}.jpg" for index in range(3))
+    fallback_image = tmp_path / "fallback.jpg"
+    request = ModelRequest(
+        request_kind="scene_summary_vi",
+        video_id="L21_V001",
+        prompt="summarize",
+        prompt_version="scene_summary_vi_v2",
+        response_schema_version="plain_text_response_v1",
+        response_schema=TEXT_RESPONSE_SCHEMA,
+        image_paths=source_images,
+        fallback_image_paths=(fallback_image,),
+        response_mode="text",
+    )
+
+    response = ExclusiveLocalFallbackClient(
+        FailingPrimary(), RecordingFallback()
+    ).request(request)
+
+    assert response == {"text": "fallback"}
+    assert received == [(fallback_image,)]

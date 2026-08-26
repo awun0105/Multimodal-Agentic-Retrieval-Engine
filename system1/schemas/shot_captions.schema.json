@@ -38,7 +38,7 @@
     "actions_en": {"type": "array", "items": {"type": "string"}},
     "visible_text_summary_vi": {"type": "string"},
     "visible_text_summary_en": {"type": "string"},
-    "provider": {"enum": ["qwen_local", "vintern_local", "gemini"]},
+    "provider": {"enum": ["qwen_local", "vintern_reasoning_local", "mixed"]},
     "model_name": {"type": "string", "minLength": 1},
     "model_version": {"type": "string", "minLength": 1},
     "prompt_version": {"type": "string", "minLength": 1},

@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import torch
 import torchvision.transforms as T
 from PIL import Image
 
+# Official Vintern-3B-R-beta preprocessing uses ImageNet statistics.
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
 
 def build_vintern_transform(image_size: int):
-    mean = (0.48145466, 0.4578275, 0.40821073)
-    std = (0.26862954, 0.26130258, 0.27577711)
     return T.Compose(
         [
             T.ToTensor(),
-            T.Normalize(mean=mean, std=std),
+            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
     )
 
@@ -77,7 +78,10 @@ def split_dynamic_tiles(
             )
             tiles.append(resized_image.crop(box))
 
-    if use_thumbnail:
+    # Official implementation: the global thumbnail is only appended when the
+    # image splits into more than one tile, so a max_tiles=1 request really is
+    # a single patch during OOM reduction.
+    if use_thumbnail and len(tiles) != 1:
         thumbnail = image.resize((image_size, image_size), resample=Image.Resampling.BICUBIC)
         tiles.append(thumbnail)
 

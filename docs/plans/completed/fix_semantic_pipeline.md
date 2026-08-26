@@ -4021,3 +4021,50 @@ runtime_versions.yaml        ❌
 ```
 
 xong thi commit & push, không merge 
+
+------
+
+# 61. Kết quả implementation thực tế (2026-08-27)
+
+Đã hoàn tất pipeline semantic local-only theo spec, đồng thời sửa các lỗi được
+phát hiện trong lúc validation:
+
+- Qwen dùng plain-text contract cho caption, scene boundary và scene summary;
+- fallback sticky sang Vintern-3B-R-beta chỉ sau khi Qwen đã unload và CUDA
+  memory cleanup hoàn tất;
+- shot caption dùng đúng 8 request/shot, normalize và assemble bằng Python;
+- scene boundary dùng đúng 1 request/gap với label strict;
+- scene summary chạy toàn bộ VI trước EN, EN tham chiếu VI, evidence có budget và
+  Vintern nhận một fallback contact sheet;
+- field-level provenance được checkpoint và đóng gói trong diagnostics;
+- config, preflight, schema và Notebook 01 không còn active Gemini dependency,
+  secret hoặc runtime path;
+- xóa `vlm/client_patch_c.py`, là bản patch nháp không được import và chứa
+  fallback implementation cũ;
+- sửa request kind scene summary thành `scene_summary_vi` / `scene_summary_en`;
+- sửa model identity lookup để không evaluate fallback config key khi response
+  đã có provenance metadata;
+- giữ nguyên `uv.lock` theo scope đã chốt trong spec.
+
+Validation đã chạy:
+
+```text
+pytest -q tests/test_phase01*.py
+172 passed
+
+pytest -q
+371 passed
+
+ruff check trên toàn bộ file semantic/config/test đã thay đổi
+All checks passed
+
+Notebook 01 JSON parse và compile toàn bộ code cells
+pass
+
+grep active Phase01/config/notebook cho Gemini và google-genai
+không có kết quả
+```
+
+Chưa chạy inference thật với Qwen/Vintern trên GPU và chưa Run All trực tiếp
+trên Colab/Kaggle. Local tests chứng minh contract, lifecycle giả lập,
+checkpoint/package và orchestration; chúng không thay thế real-model smoke.

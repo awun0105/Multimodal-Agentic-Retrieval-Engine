@@ -1,7 +1,17 @@
+"""Prompt template loading for local VLM semantic requests.
+
+The source of truth for every prompt body is the versioned text file at
+``system1/prompts/<prompt_version>.txt``. This module only resolves and
+substitutes; it must never embed prompt bodies inline.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
+
+_PROMPT_ROOT = Path(__file__).resolve().parents[3] / "prompts"
 
 TEXT_BUNDLE_VERSIONS: dict[str, dict[str, str]] = {
     "shot_caption_plain_text_fields_v1": {
@@ -20,32 +30,37 @@ TEXT_BUNDLE_VERSIONS: dict[str, dict[str, str]] = {
     },
 }
 
-_PROMPT_TEMPLATES: dict[str, str] = {
-    "shot_caption_vi_v1": "Mô tả chi tiết nội dung chính của video này bằng tiếng Việt. Tập trung vào chủ thể, sự kiện, không gian, thời gian, và không khí chung.",
-    "shot_caption_en_v1": "Describe the main content of this video in English. Focus on subjects, events, settings, time, and overall atmosphere.",
-    "shot_objects_vi_v1": "Liệt kê các đối tượng vật lý quan trọng (người, động vật, xe cộ, đồ vật, công trình, v.v.) xuất hiện rõ trong video này bằng tiếng Việt. Mỗi đối tượng hoặc nhóm đối tượng trên một dòng.",
-    "shot_objects_en_v1": "List the key physical objects (people, animals, vehicles, items, structures, etc.) clearly visible in this video in English. One object or group per line.",
-    "shot_actions_vi_v1": "Mô tả các hành động, chuyển động, hoặc sự kiện cụ thể đang diễn ra trong video này bằng tiếng Việt.",
-    "shot_actions_en_v1": "Describe the specific actions, movements, or events happening in this video in English.",
-    "shot_visible_text_summary_vi_v1": "Tóm tắt ngắn gọn nội dung của bất kỳ văn bản nào có thể đọc được xuất hiện trong video (bảng hiệu, phụ đề cứng, chữ trên áo, v.v.) bằng tiếng Việt. Nếu không có chữ, trả về 'NONE'.",
-    "shot_visible_text_summary_en_v1": "Briefly summarize the content of any readable text appearing in the video (signs, hard subs, text on clothing, etc.) in English. If no text is visible, return 'NONE'.",
+_TEMPLATE_CACHE: dict[str, str] = {}
 
-    "scene_boundary_primary_label_v2": "You are a video editor. Look at this frame from Shot A and this frame from Shot B. Are they part of the exact same continuous scene/event? Answer strictly with one word: SAME_SCENE or BOUNDARY.",
-    "scene_boundary_focused_label_v2": "You are a video editor. Look closely at this frame from Shot A and this frame from Shot B. The context suggests they might be different, but are they physically part of the exact same continuous scene/event? Answer strictly with one word: SAME_SCENE or BOUNDARY.",
-    "scene_boundary_consistency_label_v2": "You are a video editor reviewing a sequence. Look at these two consecutive shots (A and B). Is there a clear, definitive scene change between them? Answer strictly with one word: SAME_SCENE or BOUNDARY.",
 
-    "scene_summary_vi_v2": "Dựa trên các hình ảnh từ các phân cảnh trong một video, hãy tóm tắt nội dung chính của toàn bộ chuỗi sự kiện này bằng tiếng Việt trong một đoạn văn duy nhất.",
-    "scene_summary_en_v2": "Based on the frames from various shots in a video, summarize the main content of this entire sequence of events in English in a single paragraph.",
-}
+def prompt_root() -> Path:
+    return _PROMPT_ROOT
+
+
+def read_prompt(prompt_version: str) -> str:
+    """Load a prompt body from ``system1/prompts/<version>.txt``."""
+
+    template = _TEMPLATE_CACHE.get(prompt_version)
+    if template is not None:
+        return template
+    if Path(prompt_version).name != prompt_version:
+        raise ValueError(f"Unsafe prompt version: {prompt_version}")
+    path = _PROMPT_ROOT / f"{prompt_version}.txt"
+    if not path.is_file():
+        raise ValueError(f"Unknown prompt_version: {prompt_version}")
+    template = path.read_text(encoding="utf-8").strip()
+    if not template:
+        raise ValueError(f"Prompt template is empty: {prompt_version}")
+    _TEMPLATE_CACHE[prompt_version] = template
+    return template
+
 
 def build_text_prompt(
     prompt_version: str,
     *,
     variables: Mapping[str, Any] | None = None,
 ) -> str:
-    template = _PROMPT_TEMPLATES.get(prompt_version)
-    if not template:
-        raise ValueError(f"Unknown prompt_version: {prompt_version}")
+    template = read_prompt(prompt_version)
 
     if not variables:
         return template

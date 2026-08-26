@@ -1,7 +1,7 @@
 schema_version: phase01_models_v1_2
 
-# One fixed local-first production model graph. Gemini remains an optional
-# request-level and runtime fallback for semantic stages.
+# One fixed local-only production model graph. Qwen is the semantic primary;
+# Vintern-3B-R is the sticky fallback after Qwen has been unloaded.
 # Model IDs and source revisions are pinned. Runtime workers never convert
 # weights themselves. The active artifact uses official pinned source plus
 # SHA-256 verified preconverted PyTorch weights because upstream Git LFS access
