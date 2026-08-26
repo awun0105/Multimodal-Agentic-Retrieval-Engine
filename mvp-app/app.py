@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import logging
 import os
 from dataclasses import replace
@@ -32,6 +31,9 @@ from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
 from db import SearchMechanism
 from frame_math import validate_frame
+from keyframe_details import detail_markdown as _detail_markdown
+from keyframe_details import detection_rows as _detection_rows
+from keyframe_details import timestamp as _timestamp
 from player import build_player, player_head_html
 from query_parser import parse_search_query
 from schemas import SearchFilters
@@ -72,11 +74,13 @@ body {
     align-content: start !important;
 }
 
-#selected-keyframe {
+#selected-keyframe,
+#trake-selected-keyframe {
     min-height: 400px;
 }
 
-#selected-keyframe img {
+#selected-keyframe img,
+#trake-selected-keyframe img {
     object-fit: contain !important;
 }
 
@@ -85,7 +89,8 @@ body {
         margin-top: 3.5rem;
     }
 
-    #selected-keyframe {
+    #selected-keyframe,
+    #trake-selected-keyframe {
         min-height: 260px;
     }
 }
@@ -101,21 +106,6 @@ RESULT_FIELD_CHOICES = [
     ("Keyframe No.", "keyframe_no"),
     ("Frame Index", "frame_idx"),
 ]
-
-
-def _timestamp(seconds: float) -> str:
-    total_milliseconds = max(0, round(float(seconds) * 1000))
-    hours, remainder = divmod(total_milliseconds, 3_600_000)
-    minutes, remainder = divmod(remainder, 60_000)
-    secs, milliseconds = divmod(remainder, 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
-
-
-def _watch_at(url: str, seconds: float) -> str:
-    if not url:
-        return ""
-    separator = "&" if "?" in url else "?"
-    return f"{url}{separator}t={max(0, int(seconds))}s"
 
 
 def _keyframe_directory(data_root: Path) -> Path:
@@ -162,50 +152,6 @@ def _generate_preview_text(rows: list[dict], pinned: object = None):
     # The contest accepts at most SUBMISSION_MAX_ROWS lines per file.
     submission_rows = [(video_id, (frame,)) for video_id, frame in ordered_rows]
     return format_submission(submission_rows[:SUBMISSION_MAX_ROWS])
-
-
-def _detail_markdown(details) -> str:
-    keyframe = details.keyframe
-    video = details.video
-    watch_url = _watch_at(str(video.get("watch_url") or ""), keyframe["pts_time_sec"])
-    watch_link = (
-        f'<a href="{html.escape(watch_url, quote=True)}" target="_blank" '
-        'rel="noopener noreferrer">Open video</a>'
-        if watch_url
-        else "N/A"
-    )
-    values = {
-        "Keyframe ID": keyframe["keyframe_id"],
-        "Video ID": keyframe["video_id"],
-        "Collection": keyframe["collection_id"],
-        "Keyframe no.": keyframe["keyframe_no"],
-        "Frame index": keyframe["frame_idx"],
-        "Timestamp": _timestamp(keyframe["pts_time_sec"]),
-        "FPS": f"{float(keyframe['fps']):.4g}",
-        "Resolution": f"{keyframe['width']} x {keyframe['height']}",
-        "Title": video.get("title") or "N/A",
-        "Author": video.get("author") or "N/A",
-        "Channel": video.get("channel_id") or "N/A",
-        "Published": video.get("publish_date_iso") or video.get("publish_date_raw") or "N/A",
-    }
-    rows = [f"| {label} | {html.escape(str(value))} |" for label, value in values.items()]
-    return "\n".join(["| Field | Value |", "|---|---|", *rows, f"| Source | {watch_link} |"])
-
-
-def _detection_rows(details) -> list[list]:
-    return [
-        [
-            row["entity"],
-            round(float(row["score"]), 4),
-            row["class_mid"],
-            row["class_label"],
-            round(float(row["ymin"]), 4),
-            round(float(row["xmin"]), 4),
-            round(float(row["ymax"]), 4),
-            round(float(row["xmax"]), 4),
-        ]
-        for row in details.detections
-    ]
 
 
 class SearchController:
@@ -1312,7 +1258,10 @@ def build_app(
 
             if trake_searcher is not None:
                 with gr.Tab("Query TRAKE"):
-                    build_trake_tab(trake_searcher)
+                    build_trake_tab(
+                        trake_searcher,
+                        keyframe_details_provider=search_mechanism,
+                    )
 
     return webui
 
