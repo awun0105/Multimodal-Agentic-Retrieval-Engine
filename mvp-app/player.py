@@ -231,18 +231,15 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
         // keyframe position instead, and keep Pin enabled (only an actual
         // buffer/seek blocks it).
         var raw = player.getCurrentTime() || 0;
-        var atRest = (ps === -1 || ps === 5 || ps === 2 || ps === 0);
         var t = window.__aiouNormalizeTime(
           (ps === -1 || ps === 5) ? cfg.start : raw
         );
-        // Two clocks on purpose:
-        //   paused/cued  -> the reported time IS the shown PTS -> floor
-        //                   (matches keyframes.frame_idx exactly at rest)
-        //   playing      -> getCurrentTime lags the rendered frame by up to
-        //                   half a frame -> Math.round compensates
-        // Values stay Estimated either way.
+        // Field calibration on the L-series batch: the YouTube readout ran
+        // exactly +1 against keyframes.frame_idx when Math.round was used
+        // during playback, so floor is applied uniformly here. Values stay
+        // Estimated — getCurrentTime() has no ground truth guarantee.
         st.latest = {
-          frame: atRest ? Math.floor(t * st.fps) : Math.round(t * st.fps),
+          frame: Math.floor(t * st.fps),
           accuracy: 'estimated'
         };
         setFrame(st.latest.frame, 'estimated');

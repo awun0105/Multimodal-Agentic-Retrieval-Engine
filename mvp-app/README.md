@@ -51,9 +51,11 @@ frame = floor(Number(presentationTime.toPrecision(6)) * fps)
 ```
 
 This matches `keyframes.frame_idx` on all 177,321 release rows; `round()`
-disagrees on 22,922 of them and is no longer used anywhere for local playback.
-YouTube's `getCurrentTime()` lags the rendered frame, so the YouTube branch
-intentionally uses `Math.round()` instead — its values remain Estimated.
+disagrees on 22,922 of them and is not used anywhere. Field testing on the
+L-series batch confirmed the YouTube readout ran exactly +1 with `round()`,
+so the floor mapping is applied uniformly to local and YouTube sources —
+YouTube values simply remain labelled Estimated because `getCurrentTime()`
+has no ground-truth guarantee.
 
 Labels you will see next to the number:
 
