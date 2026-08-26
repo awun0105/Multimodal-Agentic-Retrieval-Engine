@@ -613,3 +613,124 @@ def test_run_search_dedupes_video_inside_typed_collection():
 
     assert [row["vector_id"] for row in rows] == [10, 11, 12]
     assert status.endswith("— 3 keyframes")
+
+
+# --- KIS pin callback and player source resolution ---
+
+
+def test_process_pin_kis_uses_browser_frame_and_copies_dict():
+    from app import process_pin_kis
+
+    pins = {"V01": 10}
+    out, status = process_pin_kis(777, "calculated", pins, "V01", 55)
+    assert out == {"V01": 777}
+    assert out is not pins
+    assert "Calculated" in status
+
+    out2, status2 = process_pin_kis(None, "", pins, "V02", 42)
+    assert out2 == {"V01": 10, "V02": 42}
+    assert "Keyframe 42" in status2
+
+    out3, _s = process_pin_kis("-4", "estimated", {}, "V03", 9)
+    assert out3 == {"V03": 9}
+
+    unchanged, message = process_pin_kis(1, "calculated", pins, "", 5)
+    assert unchanged is pins
+    assert "Không có video" in message
+
+
+class _DetailFake(FakeSearchMechanism):
+    def __init__(self, details):
+        super().__init__()
+        self._details = details
+
+    def get_keyframe_details(self, _keyframe_id):
+        return self._details
+
+
+def test_select_keyframe_reads_fps_from_keyframe_row(tmp_path):
+    """The videos row carries no per-frame fps; the silent 25 FPS fallback is gone."""
+    from player import resolve_player_source
+
+    image = tmp_path / "kf.jpg"
+    image.write_bytes(b"jpeg")
+    details = KeyframeDetails(
+        keyframe={
+            "keyframe_id": "L26_V306_049",
+            "video_id": "L26_V306",
+            "collection_id": "L26",
+            "keyframe_no": 49,
+            "pts_time_sec": 3.0,
+            "fps": 30.0,
+            "frame_idx": 90,
+            "width": 640,
+            "height": 360,
+        },
+        video={"watch_url": f"https://youtu.be/{'dQw4w9WgXcQ'}"},
+        detections=(),
+    )
+    controller = SearchController(_DetailFake(details), page_size=10)
+    row = {"keyframe_id": details.keyframe["keyframe_id"], "image_path": str(image)}
+    event = SimpleNamespace(index=0)
+
+    result = controller.select_keyframe([row], event)
+
+    fps, video_id, kf_frame = result[-3], result[-2], result[-1]
+    assert fps == 30.0
+    assert video_id == "L26_V306"
+    assert kf_frame == 90
+
+    player_html = result[1]
+    assert 'data-player=' in player_html
+    assert "dQw4w9WgXcQ" in player_html
+    kind, source = resolve_player_source(local_path=None, watch_url=details.video["watch_url"])
+    assert (kind, source) == ("youtube", "dQw4w9WgXcQ")
+
+
+def test_select_keyframe_without_any_source_keeps_pin_available(tmp_path, monkeypatch):
+    from player import resolve_player_source
+
+    monkeypatch.setattr("app.get_video_path", lambda _video_id: None)
+    image = tmp_path / "kf.jpg"
+    image.write_bytes(b"jpeg")
+    details = KeyframeDetails(
+        keyframe={
+            "keyframe_id": "L26_V306_049",
+            "video_id": "L26_V306",
+            "collection_id": "L26",
+            "keyframe_no": 49,
+            "pts_time_sec": 3.0,
+            "fps": 25.0,
+            "frame_idx": 75,
+            "width": 640,
+            "height": 360,
+        },
+        video={},
+        detections=(),
+    )
+    controller = SearchController(_DetailFake(details), page_size=10)
+    row = {"keyframe_id": details.keyframe["keyframe_id"], "image_path": str(image)}
+    event = SimpleNamespace(index=0)
+
+    result = controller.select_keyframe([row], event)
+
+    pin_update = result[6]
+    prev_update, next_update = result[4], result[5]
+    assert pin_update["interactive"] is True
+    assert prev_update["interactive"] is False
+    assert next_update["interactive"] is False
+    assert resolve_player_source(local_path=None, watch_url="") == ("none", None)
+
+
+def test_player_head_ships_shared_runtime_once():
+    from player import player_head_html
+
+    head = player_head_html()
+    for marker in (
+        "__aiouPlayerBoot",
+        "__aiouFrameSnapshot",
+        "__aiouStep",
+        "onYouTubeIframeAPIReady",
+        "requestVideoFrameCallback",
+    ):
+        assert marker in head
