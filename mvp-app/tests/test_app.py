@@ -82,8 +82,8 @@ def test_build_app_exposes_keyframe_endpoints_and_filters():
     )
     assert components_by_label["Top K"]["value"] == 100
     assert components_by_label["Top K"]["maximum"] == 200
-    assert components_by_label["Keyframes"]["columns"] == 5
-    assert components_by_label["Keyframes"]["rows"] == 2
+    assert components_by_label["Keyframes"]["columns"] == 4
+    assert components_by_label["Keyframes"]["rows"] == 5
     assert components_by_label["Keyframes"]["height"] == "auto"
     assert components_by_label["Keyframes"]["allow_preview"] is False
     assert components_by_label["Keyframes"]["object_fit"] == "contain"

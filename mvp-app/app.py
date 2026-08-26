@@ -34,6 +34,7 @@ from frame_math import validate_frame
 from keyframe_details import detail_markdown as _detail_markdown
 from keyframe_details import detection_rows as _detection_rows
 from keyframe_details import timestamp as _timestamp
+from keyframe_details import watch_at as _watch_at
 from player import build_player, player_head_html
 from query_parser import parse_search_query
 from schemas import SearchFilters
@@ -66,7 +67,7 @@ body {
     overflow-x: visible !important;
 }
 
-/* Grid tự lấy chiều cao của 2 hàng */
+/* Grid tự lấy chiều cao theo số hàng đang cấu hình */
 #keyframe-gallery .grid-container {
     height: auto !important;
     max-height: none !important;
@@ -131,6 +132,19 @@ def _normalize_kis_pins(pinned: object) -> list[tuple[str, int]]:
     return normalized
 
 
+def _handoff_text(details) -> str:
+    """One selectable line the searcher hands to the teammate verifying the answer."""
+    keyframe = details.keyframe
+    seconds = float(keyframe["pts_time_sec"])
+    parts = [
+        str(keyframe["video_id"]),
+        _timestamp(seconds),
+        f"frame {int(keyframe['frame_idx'])}",
+        _watch_at(str(details.video.get("watch_url") or ""), seconds),
+    ]
+    return " | ".join(part for part in parts if part)
+
+
 def _generate_preview_text(rows: list[dict], pinned: object = None):
     """Put ordered pins first, then preserve ranked keyframe candidates."""
     pinned_rows = _normalize_kis_pins(pinned)
@@ -160,6 +174,9 @@ class SearchController:
     def __init__(self, search_mechanism: SearchMechanism, page_size: int) -> None:
         self.search_mechanism = search_mechanism
         self.page_size = page_size
+
+    def set_mmr(self, enabled: bool) -> None:
+        setattr(self.search_mechanism, "mmr_enabled", bool(enabled))
 
     def page_payload(
         self,
@@ -666,7 +683,7 @@ class SearchController:
         can_step_video = bool(video_path) or bool(watch_url)
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
                 gr.update(interactive=can_step_video), gr.update(interactive=can_step_video), gr.update(interactive=True),
-                fps, video_id, frame_idx)
+                _handoff_text(details), fps, video_id, frame_idx)
 
     def details_api(self, keyframe_id: str):
         details = self.search_mechanism.get_keyframe_details(keyframe_id)
@@ -790,6 +807,12 @@ def build_app(
                             info="Off: direct multilingual search. On: NLLB translation before search.",
                             scale=2,
                         )
+                        mmr_checkbox = gr.Checkbox(
+                            label="Gộp ảnh trùng lặp",
+                            value=True,
+                            info="Tắt nếu thấy gộp nhầm cảnh khác nhau.",
+                            scale=2,
+                        )
                         top_k = gr.Slider(
                             label="Top K",
                             minimum=1,
@@ -899,8 +922,8 @@ def build_app(
                 gallery = gr.Gallery(
                     label="Keyframes",
                     show_label=True,
-                    columns=5,
-                    rows=2,
+                    columns=4,
+                    rows=5,
                     height="auto",
                     object_fit="contain",
                     allow_preview=False,
@@ -942,6 +965,14 @@ def build_app(
                                     )
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
                                 pinned_frames_state = gr.State([])
+                        handoff_box = gr.Textbox(
+                            label="Bàn giao (copy cho người kiểm tra)",
+                            value="",
+                            lines=3,
+                            interactive=False,
+                            show_copy_button=True,
+                            elem_id="handoff-box",
+                        )
 
                     with gr.Column(scale=2):
                         detail_metadata = gr.Markdown("Select a keyframe to view metadata")
@@ -1050,6 +1081,13 @@ def build_app(
                     fn=search_keyframes_gpu_v2,
                     inputs=search_inputs_v2,
                     outputs=search_outputs_v2,
+                    api_name=False,
+                )
+                # kept out of search_inputs_v2 on purpose: the endpoint parameter count is asserted
+                mmr_checkbox.change(
+                    fn=controller.set_mmr,
+                    inputs=[mmr_checkbox],
+                    outputs=[],
                     api_name=False,
                 )
 
@@ -1203,7 +1241,7 @@ def build_app(
                     inputs=[page_rows_state],
                     outputs=[
                         detail_image, detail_video, detail_metadata, detections,
-                        prev_btn, next_btn, pin_btn,
+                        prev_btn, next_btn, pin_btn, handoff_box,
                         current_fps_box, current_video_id_box, current_kf_frame_box
                     ],
                     api_name=False,

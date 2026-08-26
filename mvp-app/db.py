@@ -16,6 +16,40 @@ from schemas import KeyframeDetails, SearchFilters, SearchOutcome, SearchResult
 from translation import QueryTranslator
 
 
+MMR_SIMILARITY_THRESHOLD = 0.92
+MMR_PENALTY_BASE = 0.5
+
+
+def _apply_mmr(
+    vectors: np.ndarray,
+    scores: np.ndarray,
+    vector_ids: np.ndarray,
+    threshold: float = MMR_SIMILARITY_THRESHOLD,
+    penalty_base: float = MMR_PENALTY_BASE,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Demote near-duplicate frames so one screen shows distinct scenes.
+
+    Walking best-first, each frame is scaled by penalty_base ** (number of already-kept
+    frames it resembles). Duplicates sink instead of disappearing, so they stay reachable.
+    `vectors` must already be float32 and L2-normalized.
+    """
+    if len(vector_ids) < 2:
+        return scores, vector_ids
+
+    similarity = vectors @ vectors.T
+    order = np.argsort(-scores, kind="stable")
+
+    kept: list[int] = []
+    adjusted = np.empty(len(order), dtype=np.float64)
+    for position in order:
+        duplicates = sum(1 for other in kept if similarity[position, other] >= threshold)
+        adjusted[position] = float(scores[position]) * penalty_base**duplicates
+        kept.append(int(position))
+
+    reranked = np.argsort(-adjusted, kind="stable")
+    return adjusted[reranked], np.asarray(vector_ids)[reranked]
+
+
 def _normalize_query_vector(vector: np.ndarray, expected_dimension: int) -> np.ndarray:
     query = np.asarray(vector, dtype=np.float32).reshape(1, -1)
     if query.shape[1] != expected_dimension:
@@ -67,6 +101,7 @@ class SearchMechanism:
                 f"({self.image_indexer.count}, {self.image_indexer.dimension})"
             )
         self._validate_database_count()
+        self.mmr_enabled: bool = True
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(f"file:{self.sqlite_file}?mode=ro", uri=True)
@@ -142,6 +177,10 @@ class SearchMechanism:
             scores, vector_ids = self._search_filtered(query_vector, eligible_ids, top_k)
         else:
             scores, vector_ids = self.image_indexer.search(query_vector, top_k)
+        if self.mmr_enabled and len(vector_ids) > 1:
+            # embeddings are stored float16; matmul needs float32 to stay accurate
+            vectors = np.asarray(self.embeddings[vector_ids], dtype=np.float32)
+            scores, vector_ids = _apply_mmr(vectors, scores, vector_ids)
         results = self._results_for_ids(vector_ids, scores)
         return SearchOutcome(tuple(results), prepared)
 
