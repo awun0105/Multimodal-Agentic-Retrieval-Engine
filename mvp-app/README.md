@@ -38,6 +38,39 @@ The Query box also accepts metadata tokens (comma-separated, order-free):
 Pure metadata input never loads CLIP. The Status line always echoes how the
 input was interpreted.
 
+## Video Player & Frame Accuracy
+
+Clicking a result opens one shared player used by both tabs. Sources resolve in
+this order: local proxy MP4 from `VIDEO_ROOT`, then the YouTube `watch_url`
+stored in video metadata, then keyframe-only (still pinnable).
+
+The player shows exactly one live number, **Current frame**, computed as:
+
+```text
+frame = floor(Number(presentationTime.toPrecision(6)) * fps)
+```
+
+This matches `keyframes.frame_idx` on all 177,321 release rows; `round()`
+disagrees on 22,922 of them and is not used anywhere. Field testing on the
+L-series batch confirmed the YouTube readout ran exactly +1 with `round()`,
+so the floor mapping is applied uniformly to local and YouTube sources —
+YouTube values simply remain labelled Estimated because `getCurrentTime()`
+has no ground-truth guarantee.
+
+Labels you will see next to the number:
+
+- **Calculated** — local MP4 via `requestVideoFrameCallback` (exact presentation time).
+- **Estimated** — YouTube embed, or browsers without `requestVideoFrameCallback`.
+- **Keyframe only** — no playable source; pinning still works and stores the
+  keyframe's own `frame_idx`.
+
+Pinning always takes the latest presented frame from the player; while a seek is
+in flight the button is temporarily disabled. If the reported frame cannot be
+parsed, the pin falls back to the keyframe's `frame_idx` and the status line
+says so. Submission CSVs contain plain integers — accuracy labels are display
+metadata only. FPS always comes from the selected keyframe row, never from
+video-level metadata.
+
 At startup, only `sentence-transformers/clip-ViT-B-32-multilingual-v1` is
 loaded. With `CLIP_DEVICE=auto`, it uses CUDA FP16 when available and falls back
 to CPU FP32 if CUDA runs out of memory. `facebook/nllb-200-distilled-600M` is

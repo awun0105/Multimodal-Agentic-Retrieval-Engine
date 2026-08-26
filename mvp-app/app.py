@@ -31,12 +31,13 @@ from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
 from db import SearchMechanism
+from frame_math import validate_frame
+from player import build_player, player_head_html
 from query_parser import parse_search_query
 from schemas import SearchFilters
 from trake import SUBMISSION_MAX_ROWS, TrakeSearcher, format_submission
 from trake_submission import export_csv_file
 from trake_ui import build_trake_tab
-from trake_ui_render import render_video_player
 from translation import QueryTranslator
 from video_locator import get_video_path
 
@@ -123,31 +124,27 @@ def _keyframe_directory(data_root: Path) -> Path:
 
 
 def _generate_preview_text(rows: list[dict], pinned: dict = None):
-    pinned = pinned or {}
-    if not rows:
+    """One line per video in `videoID, frameID` order. A pin REPLACES that
+    video's prediction and moves to the top — never a second row for the same
+    video, which the organizers' format would reject."""
+    pinned = {str(video_id): int(frame) for video_id, frame in (pinned or {}).items()}
+    if not rows and not pinned:
         return "Chưa có kết quả để xem trước."
 
-    submission_rows = []
-
-    # 1. Promote pinned frames to the top
-    for vid_id, frame_idx in pinned.items():
-        submission_rows.append((vid_id, (frame_idx,)))
-
-    # 2. Append remaining AI predictions
+    predictions: dict[str, int] = {}
     for r in rows:
-        video_id = r["video_id"]
-        frame_idx = r["frame_idx"]
+        video_id = str(r["video_id"])
+        if video_id not in predictions:
+            predictions[video_id] = int(r["frame_idx"])
 
-        # If this EXACT frame was pinned, skip it (we already put it at the top)
-        if pinned.get(video_id) == frame_idx:
-            continue
+    merged: dict[str, int] = dict(predictions)
+    merged.update(pinned)
 
-        submission_rows.append((video_id, (frame_idx,)))
+    ordered_video_ids = [*pinned.keys(), *[v for v in predictions if v not in pinned]]
+    submission_rows = [(v, (merged[v],)) for v in ordered_video_ids]
 
     # The contest accepts at most SUBMISSION_MAX_ROWS lines per file.
-    submission_rows = submission_rows[:SUBMISSION_MAX_ROWS]
-
-    return format_submission(submission_rows)
+    return format_submission(submission_rows[:SUBMISSION_MAX_ROWS])
 
 
 def _detail_markdown(details) -> str:
@@ -685,18 +682,28 @@ class SearchController:
         row = page_rows[local_index]
         details = self.search_mechanism.get_keyframe_details(row["keyframe_id"])
 
-        video_html = "<p style='color: #666; font-style: italic;'>Video file not found in VIDEO_ROOT.</p>"
+        video_html = "<p style='color: #666; font-style: italic;'>Select a keyframe to view its player.</p>"
         video_id = details.keyframe["video_id"]
         pts = float(details.keyframe["pts_time_sec"])
-        fps = float(details.video.get("fps", 25.0))
+        # The keyframe row is authoritative; the videos row has no per-frame fps.
+        fps = float(details.keyframe["fps"])
+        frame_idx = int(details.keyframe["frame_idx"])
+        watch_url = str(details.video.get("watch_url") or "")
         video_path = get_video_path(video_id)
-        if video_path:
-            video_html = render_video_player(video_id, video_path, pts, fps, player_id="query-text-player")
+        video_html = build_player(
+            video_id,
+            local_path=video_path,
+            watch_url=watch_url,
+            pts_time_sec=pts,
+            fps=fps,
+            player_id="query-text-player",
+            pin_button_id="query-text-pin-btn",
+        )
 
-        can_step_video = bool(video_path)
+        can_step_video = bool(video_path) or bool(watch_url)
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
                 gr.update(interactive=can_step_video), gr.update(interactive=can_step_video), gr.update(interactive=True),
-                fps, video_id, int(details.keyframe["frame_idx"]))
+                fps, video_id, frame_idx)
 
     def details_api(self, keyframe_id: str):
         details = self.search_mechanism.get_keyframe_details(keyframe_id)
@@ -792,7 +799,7 @@ def build_app(
     controller = SearchController(search_mechanism, page_size)
     _search_controller = controller
 
-    with gr.Blocks(css=APP_CSS) as webui:
+    with gr.Blocks(css=APP_CSS, head=player_head_html()) as webui:
         gr.Markdown("## AIOU", elem_id="app-title")
         with gr.Tabs():
             with gr.Tab("Query Text"):
@@ -964,7 +971,12 @@ def build_app(
                                 with gr.Row():
                                     prev_btn = gr.Button("Prev Frame", interactive=False)
                                     next_btn = gr.Button("Next Frame", interactive=False)
-                                    pin_btn = gr.Button("Chốt Frame (Đẩy lên Top)", interactive=False, variant="primary")
+                                    pin_btn = gr.Button(
+                                        "Chốt Frame (Đẩy lên Top)",
+                                        interactive=False,
+                                        variant="primary",
+                                        elem_id="query-text-pin-btn",
+                                    )
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
                                 pinned_frames_state = gr.State({})
 
@@ -988,10 +1000,11 @@ def build_app(
                     api_details = gr.JSON()
                     api_details_button = gr.Button("Metadata API")
 
-                    current_time_box = gr.Textbox(visible=False, elem_id="qt-current-time")
                     current_fps_box = gr.Number(visible=False, elem_id="qt-current-fps", value=25.0)
                     current_video_id_box = gr.Textbox(visible=False, elem_id="qt-current-video-id")
                     current_kf_frame_box = gr.Number(visible=False, elem_id="qt-current-kf-frame", value=0)
+                    pin_calc_frame_box = gr.Number(visible=False, elem_id="qt-pin-calc-frame", value=None)
+                    pin_accuracy_box = gr.Textbox(visible=False, elem_id="qt-pin-accuracy", value="")
 
 
                 gr.Markdown("---")
@@ -1234,25 +1247,20 @@ def build_app(
                 )
 
                 frame_step_js = """(fps) => {
-                    const video = document.getElementById('query-text-player');
-                    if (video) {
-                        video.pause();
-                        video.currentTime += (1.0 / fps);
-                    }
+                    if (window.__aiouStep) { window.__aiouStep('query-text-player', 1); }
                     return fps;
                 }"""
                 frame_prev_js = """(fps) => {
-                    const video = document.getElementById('query-text-player');
-                    if (video) {
-                        video.pause();
-                        video.currentTime -= (1.0 / fps);
-                    }
+                    if (window.__aiouStep) { window.__aiouStep('query-text-player', -1); }
                     return fps;
                 }"""
-                pin_js = """(c_time, pinned, vid, fps, kf_frame) => {
-                    const video = document.getElementById('query-text-player');
-                    const t = video ? video.currentTime.toString() : "";
-                    return [t, pinned, vid, fps, kf_frame];
+                # The browser sends the latest presented frame plus its accuracy
+                # label; the server never recomputes a frame from wall-clock time.
+                pin_js = """(vid, kf_frame, pinned, calc, acc) => {
+                    const snap = window.__aiouFrameSnapshot
+                        ? window.__aiouFrameSnapshot('query-text-player')
+                        : {frame: null, accuracy: 'none'};
+                    return [vid, kf_frame, pinned, snap.frame, snap.accuracy];
                 }"""
 
                 next_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_step_js)
@@ -1260,7 +1268,13 @@ def build_app(
 
                 pin_btn.click(
                     process_pin_kis,
-                    inputs=[current_time_box, pinned_frames_state, current_video_id_box, current_fps_box, current_kf_frame_box],
+                    inputs=[
+                        current_video_id_box,
+                        current_kf_frame_box,
+                        pinned_frames_state,
+                        pin_calc_frame_box,
+                        pin_accuracy_box,
+                    ],
                     outputs=[pinned_frames_state, status],
                     js=pin_js,
                     api_name=False
@@ -1287,19 +1301,31 @@ def build_app(
 
 
 
-def process_pin_kis(current_time, current_pins, video_id, fps, kf_frame):
+def process_pin_kis(video_id, kf_frame, current_pins, calc_frame, accuracy):
+    """Store the browser-reported frame; fall back to the keyframe's own
+    frame_idx whenever the player state is missing or malformed. Parameter
+    order matches the click handler's `inputs` list."""
     if not video_id:
         return current_pins, "Không có video nào được chọn."
 
+    fallback = validate_frame(kf_frame, 0)
     try:
-        current_time = float(current_time)
-        new_frame = round(current_time * fps)
-    except (ValueError, TypeError):
-        new_frame = kf_frame
+        candidate = int(str(calc_frame).strip())
+        parsed_candidate = candidate if candidate >= 0 else None
+    except (TypeError, ValueError):
+        parsed_candidate = None
+    new_frame = parsed_candidate if parsed_candidate is not None else fallback
+    trusted = parsed_candidate is not None and accuracy in {"calculated", "estimated"}
+    if accuracy == "calculated" and trusted:
+        label = "Calculated"
+    elif accuracy == "estimated" and trusted:
+        label = "Estimated"
+    else:
+        label = f"Keyframe {fallback}"
 
-    current_pins = current_pins or {}
-    current_pins[video_id] = new_frame
-    return current_pins, f"Đã chốt frame {new_frame} cho video {video_id}."
+    new_pins = dict(current_pins or {})
+    new_pins[str(video_id)] = new_frame
+    return new_pins, f"Đã chốt frame {new_frame} cho video {video_id} ({label})."
 
 def clear_pins_kis():
     return {}, "Đã gỡ bỏ toàn bộ frame chốt tay."
