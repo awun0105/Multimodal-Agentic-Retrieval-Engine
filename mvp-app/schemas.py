@@ -113,6 +113,7 @@ class TrakeVideoMatch:
     total_score: float
     events: tuple[TrakeEventMatch, ...]
     max_frame_idx: int = 0
+    watch_url: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

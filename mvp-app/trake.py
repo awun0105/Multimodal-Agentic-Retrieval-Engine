@@ -207,6 +207,7 @@ class TrakeSearcher:
                     total_score=float(score),
                     events=tuple(events_out),
                     max_frame_idx=max_frame_idx,
+                    watch_url=str(first_row.get("watch_url") or ""),
                 )
             )
         return TrakeOutcome(videos=tuple(videos), queries=tuple(queries))
@@ -218,7 +219,7 @@ class TrakeSearcher:
         query = f"""
             SELECT k.vector_id, k.keyframe_id, k.video_id, k.collection_id,
                    k.keyframe_no, k.frame_idx, k.pts_time_sec, k.fps, k.image_relpath,
-                   v.title, v.author
+                   v.title, v.author, v.watch_url
             FROM keyframes k
             JOIN videos v ON v.video_id = k.video_id
             WHERE k.vector_id IN ({placeholders})
