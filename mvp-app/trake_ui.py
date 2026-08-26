@@ -283,7 +283,11 @@ def process_pin(calc_frame, accuracy, pinned_frames, current_accuracies, v_id, e
         accuracy.capitalize() if trusted else f"Keyframe {fallback}"
     )
 
-    key = pin_key(v_id, int(e_idx))
+    try:
+        event_index = int(float(e_idx))
+    except (TypeError, ValueError):
+        event_index = 0
+    key = pin_key(str(v_id), event_index)
     new_frames = dict(pinned_frames or {})
     new_frames[key] = frame_id
     new_accuracies = dict(current_accuracies or {})

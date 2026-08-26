@@ -124,31 +124,27 @@ def _keyframe_directory(data_root: Path) -> Path:
 
 
 def _generate_preview_text(rows: list[dict], pinned: dict = None):
-    pinned = pinned or {}
-    if not rows:
+    """One line per video in `videoID, frameID` order. A pin REPLACES that
+    video's prediction and moves to the top — never a second row for the same
+    video, which the organizers' format would reject."""
+    pinned = {str(video_id): int(frame) for video_id, frame in (pinned or {}).items()}
+    if not rows and not pinned:
         return "Chưa có kết quả để xem trước."
 
-    submission_rows = []
-
-    # 1. Promote pinned frames to the top
-    for vid_id, frame_idx in pinned.items():
-        submission_rows.append((vid_id, (frame_idx,)))
-
-    # 2. Append remaining AI predictions
+    predictions: dict[str, int] = {}
     for r in rows:
-        video_id = r["video_id"]
-        frame_idx = r["frame_idx"]
+        video_id = str(r["video_id"])
+        if video_id not in predictions:
+            predictions[video_id] = int(r["frame_idx"])
 
-        # If this EXACT frame was pinned, skip it (we already put it at the top)
-        if pinned.get(video_id) == frame_idx:
-            continue
+    merged: dict[str, int] = dict(predictions)
+    merged.update(pinned)
 
-        submission_rows.append((video_id, (frame_idx,)))
+    ordered_video_ids = [*pinned.keys(), *[v for v in predictions if v not in pinned]]
+    submission_rows = [(v, (merged[v],)) for v in ordered_video_ids]
 
     # The contest accepts at most SUBMISSION_MAX_ROWS lines per file.
-    submission_rows = submission_rows[:SUBMISSION_MAX_ROWS]
-
-    return format_submission(submission_rows)
+    return format_submission(submission_rows[:SUBMISSION_MAX_ROWS])
 
 
 def _detail_markdown(details) -> str:

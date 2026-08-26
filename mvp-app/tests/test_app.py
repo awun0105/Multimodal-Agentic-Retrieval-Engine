@@ -452,10 +452,16 @@ def test_generate_preview_text_promotes_pinned_frames_to_top(tmp_path):
     ]
     preview = _generate_preview_text(rows, pinned={"V02": 999})
 
-    first_line = preview.splitlines()[0]
-    assert first_line == "V02,999"
-    # The AI prediction for the pinned video stays as a lower-ranked guess.
-    assert preview.splitlines() == ["V02,999", "V01,30", "V02,60"]
+    # The pin REPLACES V02's prediction and leads the file — one line per video,
+    # always in `videoID, frameID` shape.
+    assert preview.splitlines() == ["V02,999", "V01,30"]
+
+
+def test_generate_preview_text_accepts_pin_for_video_outside_results(tmp_path):
+    rows = [_result_row(tmp_path, "KF_001", "V01", "C01", "Alice", 0.9, 1, 30)]
+    preview = _generate_preview_text(rows, pinned={"L26_V306": 4321})
+
+    assert preview.splitlines() == ["L26_V306,4321", "V01,30"]
 
 
 # --- Inline metadata parsing in _run_search ---

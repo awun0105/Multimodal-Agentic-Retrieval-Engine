@@ -204,9 +204,11 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
         playerVars: {rel: 0, modestbranding: 1, playsinline: 1, autoplay: 0},
         events: {
           onReady: function(ev){
+            // Fractional seconds matter: flooring start loses up to a full
+            // second (~10-30 frames) and lands before the keyframe.
             ev.target.cueVideoById({
               videoId: cfg.videoId,
-              startSeconds: Math.max(Math.floor(cfg.start), 0)
+              startSeconds: Math.max(cfg.start, 0)
             });
           },
           onError: function(){
@@ -229,14 +231,20 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
         // keyframe position instead, and keep Pin enabled (only an actual
         // buffer/seek blocks it).
         var raw = player.getCurrentTime() || 0;
+        var atRest = (ps === -1 || ps === 5 || ps === 2 || ps === 0);
         var t = window.__aiouNormalizeTime(
           (ps === -1 || ps === 5) ? cfg.start : raw
         );
-        // YouTube-only branch: Math.round compensates getCurrentTime() lagging
-        // the rendered frame by up to half a frame on YT's transcode. The
-        // value stays Estimated — there is no ground truth on YouTube.
-        // Local sources keep floor(); see frame_math.youtube_estimated_frame.
-        st.latest = {frame: Math.round(t * st.fps), accuracy: 'estimated'};
+        // Two clocks on purpose:
+        //   paused/cued  -> the reported time IS the shown PTS -> floor
+        //                   (matches keyframes.frame_idx exactly at rest)
+        //   playing      -> getCurrentTime lags the rendered frame by up to
+        //                   half a frame -> Math.round compensates
+        // Values stay Estimated either way.
+        st.latest = {
+          frame: atRest ? Math.floor(t * st.fps) : Math.round(t * st.fps),
+          accuracy: 'estimated'
+        };
         setFrame(st.latest.frame, 'estimated');
         if (ps === 3 && !st.seeking){ st.seeking = true; pinOff(); }
         if (ps !== 3 && st.seeking){ st.seeking = false; }
