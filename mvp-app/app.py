@@ -740,28 +740,35 @@ def build_app(
                 page_rows_state = gr.State([])
                 page_state = gr.State(0)
 
-                with gr.Row(equal_height=True):
-                    query = gr.Textbox(
-                        label="Query",
-                        placeholder="Describe the keyframe you want to find",
-                        scale=5,
-                    )
-                    translate_vietnamese = gr.Checkbox(
-                        label="Translate Vietnamese query to English",
-                        value=True,
-                        info="Off: direct multilingual search. On: NLLB translation before search.",
-                        scale=2,
-                    )
-                    top_k = gr.Slider(
-                        label="Top K",
-                        minimum=1,
-                        maximum=200,
-                        step=1,
-                        value=100,
-                        scale=2,
+                # One visual search panel: query, pre-search filters, and the
+                # Search button share a bordered Group so the filters cannot
+                # be overlooked behind a collapsed accordion.
+                with gr.Group():
+                    with gr.Row(equal_height=True):
+                        query = gr.Textbox(
+                            label="Query",
+                            placeholder="Describe the keyframe you want to find",
+                            scale=5,
+                        )
+                        translate_vietnamese = gr.Checkbox(
+                            label="Translate Vietnamese query to English",
+                            value=True,
+                            info="Off: direct multilingual search. On: NLLB translation before search.",
+                            scale=2,
+                        )
+                        top_k = gr.Slider(
+                            label="Top K",
+                            minimum=1,
+                            maximum=200,
+                            step=1,
+                            value=100,
+                            scale=2,
+                        )
+
+                    gr.Markdown(
+                        "*Bộ lọc (tuỳ chọn) — được áp dụng ngay khi bấm Search*"
                     )
 
-                with gr.Accordion("Filters", open=False):
                     with gr.Row():
                         collections = gr.Dropdown(
                             label="Collections",
@@ -806,7 +813,7 @@ def build_app(
                         publish_date_from = gr.Textbox(label="Published from", placeholder="YYYY-MM-DD")
                         publish_date_to = gr.Textbox(label="Published to", placeholder="YYYY-MM-DD")
 
-                search_button = gr.Button("Search", variant="primary")
+                    search_button = gr.Button("Search", variant="primary")
                 status = gr.Textbox(label="Status", value="Ready", interactive=False)
 
                 with gr.Accordion("Refine current Top K results", open=False):
