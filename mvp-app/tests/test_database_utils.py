@@ -67,6 +67,8 @@ def test_default_runtime_models_are_pinned_to_multilingual_clip_and_nllb():
     assert database_utils.DEFAULTS["TRANSLATION_MODEL_REVISION"] == (
         "f8d333a098d19b4fd9a8b18f94170487ad3f821d"
     )
+    assert database_utils.DEFAULTS["CLIP_DEVICE"] == "auto"
+    assert database_utils.DEFAULTS["TRANSLATION_DEVICE"] == "auto"
 
 
 def test_prepare_runtime_repairs_corrupt_cached_file(tmp_path, monkeypatch):

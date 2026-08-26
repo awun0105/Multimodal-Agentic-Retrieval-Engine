@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 from collections import OrderedDict
 from threading import Lock
@@ -36,6 +37,7 @@ class QueryTranslator:
         self.revision = revision
         self.cache_size = max(1, int(cache_size))
         self._device = device
+        self._allow_cpu_fallback = device is None
         self._tokenizer: Any | None = None
         self._model: Any | None = None
         self._load_lock = Lock()
@@ -147,33 +149,53 @@ class QueryTranslator:
         with self._load_lock:
             if self._model is not None:
                 return
-            logger.info(
-                "Loading NLLB translation model %s on %s with %s",
-                self.model_id,
-                self.device,
-                self.dtype,
-            )
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.model_id,
                 revision=self.revision,
                 src_lang=SOURCE_LANGUAGE,
             )
-            self._model = AutoModelForSeq2SeqLM.from_pretrained(
-                self.model_id,
-                revision=self.revision,
-                dtype=self.dtype,
-            ).to(self.device)
+            try:
+                self._model = self._load_model()
+            except torch.OutOfMemoryError:
+                if not self._allow_cpu_fallback or self.device != "cuda":
+                    raise
+                logger.warning("Not enough CUDA memory for NLLB; retrying on CPU")
+            else:
+                return
+
+            self._device = "cpu"
+            gc.collect()
+            torch.cuda.empty_cache()
+            self._model = self._load_model()
+
+    def _load_model(self) -> Any:
+        logger.info(
+            "Loading NLLB translation model %s on %s with %s",
+            self.model_id,
+            self.device,
+            self.dtype,
+        )
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            self.model_id,
+            revision=self.revision,
+            dtype=self.dtype,
+        ).to(self.device)
+        model.eval()
+        return model
+
+    def _move_model_to_cpu(self) -> None:
+        with self._load_lock:
+            if self._model is None or self.device != "cuda":
+                return
+            logger.warning("CUDA ran out of memory during translation; switching NLLB to CPU")
+            self._model.to("cpu")
+            self._model.float()
             self._model.eval()
+            self._device = "cpu"
+            gc.collect()
+            torch.cuda.empty_cache()
 
-    @torch.no_grad()
-    def translate(self, query: str) -> str:
-        with self._cache_lock:
-            cached = self._cache.get(query)
-            if cached is not None:
-                self._cache.move_to_end(query)
-                return cached
-
-        self._ensure_loaded()
+    def _translate_uncached(self, query: str) -> str:
         assert self._tokenizer is not None and self._model is not None
         inputs = self._tokenizer(
             query,
@@ -191,7 +213,31 @@ class QueryTranslator:
         translated = self._tokenizer.batch_decode(output, skip_special_tokens=True)[0].strip()
         if not translated:
             raise ValueError("Translation model returned an empty query")
+        return translated
 
+    @torch.no_grad()
+    def translate(self, query: str) -> str:
+        with self._cache_lock:
+            cached = self._cache.get(query)
+            if cached is not None:
+                self._cache.move_to_end(query)
+                return cached
+
+        self._ensure_loaded()
+        assert self._tokenizer is not None and self._model is not None
+        try:
+            translated = self._translate_uncached(query)
+        except torch.OutOfMemoryError:
+            if not self._allow_cpu_fallback or self.device != "cuda":
+                raise
+        else:
+            return self._cache_translation(query, translated)
+
+        self._move_model_to_cpu()
+        translated = self._translate_uncached(query)
+        return self._cache_translation(query, translated)
+
+    def _cache_translation(self, query: str, translated: str) -> str:
         with self._cache_lock:
             self._cache[query] = translated
             self._cache.move_to_end(query)

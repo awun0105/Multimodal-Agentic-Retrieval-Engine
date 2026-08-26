@@ -39,8 +39,11 @@ Pure metadata input never loads CLIP. The Status line always echoes how the
 input was interpreted.
 
 At startup, only `sentence-transformers/clip-ViT-B-32-multilingual-v1` is
-loaded. `facebook/nllb-200-distilled-600M` is loaded lazily on the first search
-with translation enabled. CUDA uses FP16; CPU uses FP32. NLLB is released under
+loaded. With `CLIP_DEVICE=auto`, it uses CUDA FP16 when available and falls back
+to CPU FP32 if CUDA runs out of memory. `facebook/nllb-200-distilled-600M` is
+loaded lazily on the first search with translation enabled. With
+`TRANSLATION_DEVICE=auto`, NLLB tries CUDA FP16 first and automatically reloads
+on CPU FP32 if the GPU does not have enough memory. NLLB is released under
 CC-BY-NC-4.0 and its model card describes it as a research model rather than a
 production-deployment model.
 
@@ -383,10 +386,21 @@ so the existing image index remains in use:
 ```env
 MODEL_ID=sentence-transformers/clip-ViT-B-32-multilingual-v1
 MODEL_REVISION=58edf8cada9e398793dca955574a48cbb7f18be2
+CLIP_DEVICE=auto
 TRANSLATION_MODEL_ID=facebook/nllb-200-distilled-600M
 TRANSLATION_MODEL_REVISION=f8d333a098d19b4fd9a8b18f94170487ad3f821d
+TRANSLATION_DEVICE=auto
 RESULTS_PER_PAGE=10
 ```
+
+`CLIP_DEVICE` and `TRANSLATION_DEVICE` accept `auto`, `cpu`, or `cuda`. `auto`
+uses CUDA when available and falls back to CPU after a CUDA out-of-memory error.
+Set either value to `cpu` to skip the CUDA attempt, or to `cuda` to require CUDA
+and surface an error instead of falling back.
+
+`make dev` keeps the loaded runtime models when Gradio rebuilds the UI after a
+source change, so hot reload does not allocate another CLIP/NLLB copy. Restart
+`make dev` after changing release paths or model/device settings in `.env`.
 
 ## 7. Run the App
 

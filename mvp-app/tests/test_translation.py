@@ -162,3 +162,81 @@ def test_nllb_load_is_lazy_and_uses_device_precision(device, dtype):
     model.to.assert_called_once_with(device)
     loaded_model.eval.assert_called_once_with()
     assert translator.is_loaded
+
+
+def test_automatic_cuda_load_falls_back_to_cpu_on_oom():
+    gpu_model = MagicMock()
+    gpu_model.to.side_effect = torch.OutOfMemoryError("CUDA out of memory")
+    cpu_model = MagicMock()
+    loaded_cpu_model = cpu_model.to.return_value
+
+    with (
+        patch("translation.torch.cuda.is_available", return_value=True),
+        patch("translation.torch.cuda.empty_cache") as empty_cache,
+        patch("translation.AutoTokenizer"),
+        patch(
+            "translation.AutoModelForSeq2SeqLM.from_pretrained",
+            side_effect=[gpu_model, cpu_model],
+        ) as from_pretrained,
+    ):
+        translator = QueryTranslator()
+        translator._ensure_loaded()
+
+    assert translator.device == "cpu"
+    assert translator._model is loaded_cpu_model
+    assert from_pretrained.call_args_list[0].kwargs["dtype"] == torch.float16
+    assert from_pretrained.call_args_list[1].kwargs["dtype"] == torch.float32
+    gpu_model.to.assert_called_once_with("cuda")
+    cpu_model.to.assert_called_once_with("cpu")
+    loaded_cpu_model.eval.assert_called_once_with()
+    empty_cache.assert_called_once_with()
+
+
+def test_explicit_cuda_load_surfaces_oom_without_fallback():
+    model = MagicMock()
+    model.to.side_effect = torch.OutOfMemoryError("CUDA OOM")
+    translator = QueryTranslator(device="cuda")
+
+    with (
+        patch("translation.AutoTokenizer"),
+        patch("translation.AutoModelForSeq2SeqLM.from_pretrained", return_value=model),
+        patch("translation.torch.cuda.empty_cache") as empty_cache,
+        pytest.raises(torch.OutOfMemoryError, match="CUDA OOM"),
+    ):
+        translator._ensure_loaded()
+
+    assert translator.device == "cuda"
+    empty_cache.assert_not_called()
+
+
+def test_automatic_cuda_translation_falls_back_to_cpu_on_oom():
+    translator = QueryTranslator()
+    translator._device = "cuda"
+    tokenizer = MagicMock()
+    tokenized = MagicMock()
+    tokenized.to.side_effect = [
+        {"input_ids": MagicMock()},
+        {"input_ids": MagicMock()},
+    ]
+    tokenizer.return_value = tokenized
+    tokenizer.convert_tokens_to_ids.return_value = 256047
+    tokenizer.batch_decode.return_value = ["a person walking"]
+    model = MagicMock()
+    model.generate.side_effect = [
+        torch.OutOfMemoryError("CUDA out of memory"),
+        MagicMock(),
+    ]
+    translator._tokenizer = tokenizer
+    translator._model = model
+
+    with patch("translation.torch.cuda.empty_cache") as empty_cache:
+        result = translator.translate("một người đang đi bộ")
+
+    assert result == "a person walking"
+    assert translator.device == "cpu"
+    assert tokenized.to.call_args_list[0].args == ("cuda",)
+    assert tokenized.to.call_args_list[1].args == ("cpu",)
+    assert model.generate.call_count == 2
+    model.to.assert_called_once_with("cpu")
+    model.float.assert_called_once_with()
+    empty_cache.assert_called_once_with()

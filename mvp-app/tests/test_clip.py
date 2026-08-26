@@ -67,6 +67,63 @@ def test_text_model_load_uses_device_precision_and_eval(device, precision_method
     assert not searcher.is_image_model_loaded
 
 
+def test_automatic_cuda_load_falls_back_to_cpu_on_oom():
+    cpu_model = MagicMock()
+    with (
+        patch("clip.torch.cuda.is_available", return_value=True),
+        patch("clip.torch.cuda.empty_cache") as empty_cache,
+        patch(
+            "clip.SentenceTransformer",
+            side_effect=[torch.OutOfMemoryError("CUDA out of memory"), cpu_model],
+        ) as model_class,
+    ):
+        searcher = CLIPSearcher()
+        searcher.load()
+
+    assert searcher.device == "cpu"
+    assert searcher.is_loaded
+    assert model_class.call_args_list[0].kwargs["device"] == "cuda"
+    assert model_class.call_args_list[1].kwargs["device"] == "cpu"
+    cpu_model.float.assert_called_once_with()
+    cpu_model.eval.assert_called_once_with()
+    empty_cache.assert_called_once_with()
+
+
+def test_explicit_cuda_load_surfaces_oom_without_fallback():
+    searcher = CLIPSearcher(device="cuda")
+    with (
+        patch(
+            "clip.SentenceTransformer",
+            side_effect=torch.OutOfMemoryError("CUDA OOM"),
+        ),
+        patch("clip.torch.cuda.empty_cache") as empty_cache,
+        pytest.raises(torch.OutOfMemoryError, match="CUDA OOM"),
+    ):
+        searcher.load()
+
+    assert searcher.device == "cuda"
+    empty_cache.assert_not_called()
+
+
+def test_automatic_cuda_inference_falls_back_to_cpu_on_oom():
+    output = np.arange(4, dtype=np.float32).reshape(1, 4)
+    model = MagicMock()
+    model.encode.side_effect = [torch.OutOfMemoryError("CUDA out of memory"), output]
+    searcher = CLIPSearcher()
+    searcher._device = "cuda"
+    searcher._model = model
+
+    with patch("clip.torch.cuda.empty_cache") as empty_cache:
+        result = searcher.get_text_features("a bird")
+
+    assert searcher.device == "cpu"
+    assert model.encode.call_count == 2
+    model.to.assert_called_once_with("cpu")
+    model.float.assert_called_once_with()
+    empty_cache.assert_called_once_with()
+    assert result.shape == (1, 4)
+
+
 def test_text_features_use_sentence_transformer_and_return_float32():
     output = np.arange(4, dtype=np.float16).reshape(1, 4)
     searcher = _loaded_text_searcher(output)

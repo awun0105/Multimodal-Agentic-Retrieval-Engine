@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 from threading import Lock
 from typing import Any, cast
@@ -57,6 +58,7 @@ class CLIPSearcher:
         self.image_model_id = image_model_id
         self.image_model_revision = image_model_revision
         self._device = device
+        self._allow_cpu_fallback = device is None
         self._model: SentenceTransformer | None = None
         self._image_model: CLIPModel | None = None
         self._processor: CLIPProcessor | None = None
@@ -89,33 +91,78 @@ class CLIPSearcher:
         with self._load_lock:
             if self._model is not None:
                 return
-            logger.info(
-                "Loading multilingual CLIP text model %s on %s with %s",
-                self.model_id,
-                self.device,
-                self.dtype,
-            )
-            model_cls = cast(Any, SentenceTransformer)
-            model = cast(
-                SentenceTransformer,
-                model_cls(
-                    self.model_id,
-                    revision=self.revision,
-                    device=self.device,
-                    model_kwargs={"dtype": self.dtype},
-                ),
-            )
-            if self.dtype == torch.float16:
-                model.half()
+            try:
+                self._model = self._load_text_model()
+            except torch.OutOfMemoryError:
+                if not self._allow_cpu_fallback or self.device != "cuda":
+                    raise
+                logger.warning(
+                    "Not enough CUDA memory for multilingual CLIP; retrying on CPU"
+                )
             else:
-                model.float()
-            model.eval()
-            self._model = model
+                return
+
+            # Retry after leaving the exception block so its traceback cannot
+            # retain partially allocated CUDA tensors.
+            self._device = "cpu"
+            gc.collect()
+            torch.cuda.empty_cache()
+            self._model = self._load_text_model()
+
+    def _load_text_model(self) -> SentenceTransformer:
+        logger.info(
+            "Loading multilingual CLIP text model %s on %s with %s",
+            self.model_id,
+            self.device,
+            self.dtype,
+        )
+        model_cls = cast(Any, SentenceTransformer)
+        model = cast(
+            SentenceTransformer,
+            model_cls(
+                self.model_id,
+                revision=self.revision,
+                device=self.device,
+                model_kwargs={"dtype": self.dtype},
+            ),
+        )
+        if self.dtype == torch.float16:
+            model.half()
+        else:
+            model.float()
+        model.eval()
+        return model
+
+    def _move_text_model_to_cpu(self) -> None:
+        with self._load_lock:
+            if self._model is None or self.device != "cuda":
+                return
+            logger.warning("CUDA ran out of memory during CLIP inference; switching to CPU")
+            self._model.to("cpu")
+            self._model.float()
+            self._model.eval()
+            self._device = "cpu"
+            gc.collect()
+            torch.cuda.empty_cache()
 
     @torch.no_grad()
     def get_text_features(self, text: str) -> np.ndarray:
         self._ensure_loaded()
         assert self._model is not None
+        try:
+            output = self._model.encode(
+                [text],
+                convert_to_numpy=True,
+                normalize_embeddings=False,
+                show_progress_bar=False,
+            )
+        except torch.OutOfMemoryError:
+            if not self._allow_cpu_fallback or self.device != "cuda":
+                raise
+        else:
+            return _normalize(output)
+
+        self._move_text_model_to_cpu()
         output = self._model.encode(
             [text],
             convert_to_numpy=True,
@@ -167,5 +214,3 @@ class CLIPSearcher:
 
     def get_image_features(self, image: Any) -> np.ndarray:
         return self.get_image_batch_features([image])
-
-
