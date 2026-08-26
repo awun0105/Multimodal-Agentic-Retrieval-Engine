@@ -31,7 +31,8 @@ from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
 from db import SearchMechanism
 from schemas import SearchFilters
-from trake import TrakeSearcher
+from trake import SUBMISSION_MAX_ROWS, TrakeSearcher, format_submission
+from trake_submission import export_csv_file
 from trake_ui import build_trake_tab
 from trake_ui_render import render_video_player
 from translation import QueryTranslator
@@ -123,7 +124,6 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
     pinned = pinned or {}
     if not rows:
         return "Chưa có kết quả để xem trước."
-    from trake_submission import format_submission
 
     submission_rows = []
 
@@ -142,10 +142,10 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
 
         submission_rows.append((video_id, (frame_idx,)))
 
-    # Ensure we don't exceed the original result count if capped
-    submission_rows = submission_rows[:max(100, len(rows))]
+    # The contest accepts at most SUBMISSION_MAX_ROWS lines per file.
+    submission_rows = submission_rows[:SUBMISSION_MAX_ROWS]
 
-    return format_submission(submission_rows, delimiter=",", include_header=False, frame_index_base=0)
+    return format_submission(submission_rows)
 
 
 def _detail_markdown(details) -> str:
@@ -459,7 +459,8 @@ class SearchController:
             return (
                 gallery,
                 rows,
-                rows,
+                # Separate list objects: the two states are refined independently.
+                list(rows),
                 page_rows,
                 page,
                 status,
@@ -636,7 +637,6 @@ class SearchController:
         if video_path:
             video_html = render_video_player(video_id, video_path, pts, fps, player_id="query-text-player")
 
-        import gradio as gr
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
                 gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)),
                 fps, video_id, int(details.keyframe["frame_idx"]))
@@ -1021,7 +1021,6 @@ def build_app(
                     outputs=[preview_textbox],
                     api_name=False,
                 )
-                from trake_submission import export_csv_file
                 export_button.click(
                     fn=export_csv_file,
                     inputs=[preview_textbox, export_filename],

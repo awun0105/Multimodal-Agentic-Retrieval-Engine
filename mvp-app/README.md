@@ -458,8 +458,8 @@ Example: `athlete runs up` -> `athlete takes off` -> `athlete clears the bar` ->
 
 1. Open the **TRAKE** tab.
 2. Fill in the event boxes top to bottom, in the order the events happen.
-   Three boxes show by default; **Add event** / **Remove event** adjust between
-   2 and 6.
+   One box shows by default; **Add event** / **Remove event** adjust between
+   1 and 6.
 3. Press **Search event chain**.
 4. Results are ranked by video. Each row of the gallery is one video's event
    chain, left to right. The text below lists keyframe number, frame index,

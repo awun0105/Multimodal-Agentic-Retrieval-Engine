@@ -206,6 +206,10 @@ class SearchMechanism:
             rows = connection.execute(query, parameters).fetchall()
         return np.fromiter((int(row[0]) for row in rows), dtype=np.int64, count=len(rows))
 
+    # One chunk of vectors in memory instead of every eligible row at once —
+    # a broad filter on a 177k-keyframe release would otherwise copy ~360MB.
+    SCORE_CHUNK_SIZE = 16_384
+
     def _search_filtered(
         self,
         query: np.ndarray,
@@ -214,15 +218,20 @@ class SearchMechanism:
     ) -> tuple[np.ndarray, np.ndarray]:
         if eligible_ids.size == 0:
             return np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int64)
-        vectors = np.asarray(self.embeddings[eligible_ids], dtype=np.float32)
-        scores = vectors @ query[0]
         count = min(top_k, eligible_ids.size)
+        all_scores = np.empty(eligible_ids.size, dtype=np.float32)
+        for start in range(0, eligible_ids.size, self.SCORE_CHUNK_SIZE):
+            stop = min(start + self.SCORE_CHUNK_SIZE, eligible_ids.size)
+            vectors = np.asarray(
+                self.embeddings[eligible_ids[start:stop]], dtype=np.float32
+            )
+            all_scores[start:stop] = vectors @ query[0]
         if count == eligible_ids.size:
-            local_ids = np.argsort(scores)[::-1]
+            local_ids = np.argsort(all_scores)[::-1]
         else:
-            candidates = np.argpartition(scores, -count)[-count:]
-            local_ids = candidates[np.argsort(scores[candidates])[::-1]]
-        return scores[local_ids], eligible_ids[local_ids]
+            candidates = np.argpartition(all_scores, -count)[-count:]
+            local_ids = candidates[np.argsort(all_scores[candidates])[::-1]]
+        return all_scores[local_ids], eligible_ids[local_ids]
 
     def _results_for_ids(
         self,

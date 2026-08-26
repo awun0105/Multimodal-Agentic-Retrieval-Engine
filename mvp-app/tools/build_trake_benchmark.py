@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build TRAKE ground truth from consecutive keyframes in the same video."""
 
+import argparse
 import json
 import random
 import sqlite3
@@ -13,9 +14,7 @@ import numpy as np
 random.seed(42)
 np.random.seed(42)
 
-DB_PATH = Path("D:/AIC/aic25-b1-v1/metadata/runtime.sqlite")
-EMBEDDINGS_PATH = Path("D:/AIC/aic25-b1-v1/index/embeddings.f16.npy")
-OUTPUT_PATH = Path("D:/AIC/aic25-b1-v1/reports/trake-benchmark.json")
+DEFAULT_RELEASE_DIR = Path("data/aic25-b1-v1")
 
 class BenchmarkItem(TypedDict):
     """One test case: 3 keyframes (positive) or 2+1 distractor (negative)."""
@@ -23,9 +22,9 @@ class BenchmarkItem(TypedDict):
     expected_video_id: str
     category: str  # "positive" (3 from same video) or "distractor" (2 from A, 1 from B)
 
-def load_data():
+def load_data(db_path: Path, embeddings_path: Path):
     """Load metadata and embeddings."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     
@@ -39,7 +38,7 @@ def load_data():
     print(f"Loaded {len(keyframes)} keyframes")
     
     # Load embeddings
-    emb = np.load(EMBEDDINGS_PATH, allow_pickle=False)
+    emb = np.load(embeddings_path, allow_pickle=False)
     emb = emb.astype(np.float32)  # Convert from float16
     print(f"Loaded embeddings shape: {emb.shape}")
     
@@ -114,17 +113,33 @@ def build_benchmark(videos_kfs: dict, embeddings: np.ndarray) -> list[BenchmarkI
     
     return benchmark
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--release-dir",
+        type=Path,
+        default=DEFAULT_RELEASE_DIR,
+        help="Built release folder containing metadata/ and index/",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+    db_path = args.release_dir / "metadata" / "runtime.sqlite"
+    embeddings_path = args.release_dir / "index" / "embeddings.f16.npy"
+    output_path = args.release_dir / "reports" / "trake-benchmark.json"
+
     print("Building TRAKE benchmark...")
-    videos_kfs, embeddings = load_data()
+    videos_kfs, embeddings = load_data(db_path, embeddings_path)
     benchmark = build_benchmark(videos_kfs, embeddings)
-    
+
     # Save benchmark
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_PATH, 'w') as f:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, 'w') as f:
         json.dump(benchmark, f, indent=2)
-    
-    print(f"Benchmark saved to {OUTPUT_PATH}")
+
+    print(f"Benchmark saved to {output_path}")
     print(f"  Positive cases: {sum(1 for x in benchmark if x['category'] == 'positive')}")
     print(f"  Distractor cases: {sum(1 for x in benchmark if x['category'] == 'distractor')}")
 

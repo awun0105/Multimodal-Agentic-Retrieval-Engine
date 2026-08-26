@@ -33,6 +33,7 @@ from trake import (
     MAX_EVENTS,
     MIN_EVENTS,
     SPREAD_RADIUS,
+    SUBMISSION_MAX_ROWS,
     build_submission,
     format_submission,
 )
@@ -81,6 +82,18 @@ class TrakeController:
 
     def search_events(self, translate_vietnamese: bool, *event_texts: str):
         events = [e for e in event_texts if e and e.strip()]
+        if not events:
+            # Friendly guard instead of a ValueError escaping into the UI.
+            return (
+                gr.update(value=[]),
+                "",
+                "Hãy nhập mô tả cho ít nhất một sự kiện.",
+                None,
+                0,
+                "Page 1 / 1 | 0 results",
+                gr.update(interactive=False),
+                gr.update(interactive=False),
+            )
         started = time.perf_counter()
         outcome = self.trake_searcher.search(
             events, translate_vietnamese=bool(translate_vietnamese)
@@ -171,7 +184,10 @@ class TrakeController:
             for row in build_submission(outcome, pinned_frames=pinned_frames)
             if row not in primary and row[0] in answered
         ]
-        return primary + spread, len(primary)
+        # The 100-row contest budget counts the answers too — jitter only fills
+        # whatever room is left after one row per ranked video.
+        rows = (primary + spread)[:SUBMISSION_MAX_ROWS]
+        return rows, len(primary)
 
     def preview_submission(
         self, outcome: TrakeOutcome | None, pinned_frames: dict
@@ -179,13 +195,6 @@ class TrakeController:
         if not outcome:
             return gr.update(value="No search results to preview.")
         rows, _ = self._build_rows(outcome, pinned_frames)
-        pinned_counts: dict[str, int] = {}
-        for key in pinned_frames or {}:
-            parsed = parse_pin_key(key)
-            if parsed is None:
-                continue
-            video_id, _event_index = parsed
-            pinned_counts[video_id] = pinned_counts.get(video_id, 0) + 1
         content = format_submission(rows)
         return gr.update(value=content)
 
@@ -211,11 +220,12 @@ def render_pinned_frames(pinned_frames: dict) -> str:
     return "\n".join(lines) if len(lines) > 1 else PINNED_EMPTY_MARKDOWN
 
 
-def _selected_event(outcome, gallery_index: int):
-    """Map a gallery position back to its event. build_gallery_items drops events
-    whose image is missing, so the same filter has to run here or the indices skew."""
+def _selected_event(videos, gallery_index: int):
+    """Map a gallery position back to its event within `videos`. The gallery
+    builders drop events whose image is missing, so the same filter has to run
+    here or the indices skew."""
     position = 0
-    for video in outcome.videos:
+    for video in videos:
         for event in video.events:
             if not Path(event.image_path).is_file():
                 continue
@@ -499,8 +509,6 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     )
 
     def on_gallery_select(evt: gr.SelectData, outcome, page_idx: int):
-        import html
-        from pathlib import Path
         unchanged = (gr.update(),) * 8
         if not outcome or not outcome.videos:
             return unchanged
@@ -512,26 +520,10 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         start_idx = page_idx * per_page
         page_videos = outcome.videos[start_idx : start_idx + per_page]
 
-        target_video = None
-        target_event = None
-        c = 0
-        for video in page_videos:
-            for event in video.events:
-                if not Path(event.image_path).is_file():
-                    continue
-                if c == evt.index:
-                    target_video = video
-                    target_event = event
-                    break
-                c += 1
-            if target_video:
-                break
-
-        if not target_video or not target_event:
+        found = _selected_event(page_videos, evt.index)
+        if found is None:
             return unchanged
-
-        video = target_video
-        event = target_event
+        video, event = found
 
         video_path = get_video_path(video.video_id)
         if video_path:
