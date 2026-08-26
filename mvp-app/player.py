@@ -198,16 +198,16 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
     window.__aiouEnsureYT(function(){
       var holder = document.getElementById(pid + '-yt');
       if (!holder) return;
+      // Construct WITHOUT videoId: passing one here uses loadVideo semantics,
+      // which starts playback. cueVideoById in onReady stays PAUSED/cued.
       var player = new YT.Player(holder, {
-        videoId: cfg.videoId,
-        playerVars: {
-          start: Math.max(Math.floor(cfg.start), 0),
-          rel: 0, modestbranding: 1, playsinline: 1
-        },
+        playerVars: {rel: 0, modestbranding: 1, playsinline: 1, autoplay: 0},
         events: {
           onReady: function(ev){
-            ev.target.pauseVideo();
-            ev.target.seekTo(cfg.start, true);
+            ev.target.cueVideoById({
+              videoId: cfg.videoId,
+              startSeconds: Math.max(Math.floor(cfg.start), 0)
+            });
           },
           onError: function(){
             if (st.timer){ clearInterval(st.timer); st.timer = null; }
@@ -225,16 +225,21 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
       st.timer = setInterval(function(){
         if (!player.getCurrentTime) return;
         var ps = player.getPlayerState();
-        var t = window.__aiouNormalizeTime(player.getCurrentTime() || 0);
+        // While cued/unstarted, getCurrentTime() reads 0 — report the cued
+        // keyframe position instead, and keep Pin enabled (only an actual
+        // buffer/seek blocks it).
+        var raw = player.getCurrentTime() || 0;
+        var t = window.__aiouNormalizeTime(
+          (ps === -1 || ps === 5) ? cfg.start : raw
+        );
         // YouTube-only branch: Math.round compensates getCurrentTime() lagging
         // the rendered frame by up to half a frame on YT's transcode. The
         // value stays Estimated — there is no ground truth on YouTube.
         // Local sources keep floor(); see frame_math.youtube_estimated_frame.
         st.latest = {frame: Math.round(t * st.fps), accuracy: 'estimated'};
         setFrame(st.latest.frame, 'estimated');
-        var bufferingOrUnstarted = (ps === 3 || ps === 5 || ps === -1);
-        if (bufferingOrUnstarted && !st.seeking){ st.seeking = true; pinOff(); }
-        if (!bufferingOrUnstarted && st.seeking){ st.seeking = false; }
+        if (ps === 3 && !st.seeking){ st.seeking = true; pinOff(); }
+        if (ps !== 3 && st.seeking){ st.seeking = false; }
       }, 200);
     });
     return;
