@@ -7,11 +7,13 @@ import pytest
 import trake
 from app import (
     SearchController,
+    _configured_model_device,
     _detail_markdown,
     _generate_preview_text,
     _keyframe_directory,
     _timestamp,
     build_app,
+    create_app,
     create_search_mechanism,
     create_trake_searcher,
     search_keyframes_gpu,
@@ -150,8 +152,10 @@ def test_runtime_preloads_only_multilingual_text_model():
         environment={
             "MODEL_ID": "text-model",
             "MODEL_REVISION": "text-revision",
+            "CLIP_DEVICE": "auto",
             "TRANSLATION_MODEL_ID": "translation-model",
             "TRANSLATION_MODEL_REVISION": "translation-revision",
+            "TRANSLATION_DEVICE": "auto",
             "FAISS_NPROBE": "16",
         },
         index_file="index.faiss",
@@ -167,15 +171,61 @@ def test_runtime_preloads_only_multilingual_text_model():
     ):
         result = create_search_mechanism(runtime)
 
-    clip_class.assert_called_once_with(model_id="text-model", revision="text-revision")
+    clip_class.assert_called_once_with(
+        model_id="text-model",
+        revision="text-revision",
+        device=None,
+    )
     clip_class.return_value.load.assert_called_once_with()
     translator_class.assert_called_once_with(
         model_id="translation-model",
         revision="translation-revision",
+        device=None,
     )
     translator_class.return_value._ensure_loaded.assert_not_called()
     indexer_class.assert_called_once_with("index.faiss", nprobe=16)
     assert result is mechanism_class.return_value
+
+
+@pytest.mark.parametrize("value", ["gpu", "cuda:0"])
+def test_runtime_rejects_invalid_model_device(value):
+    with pytest.raises(ValueError, match="MODEL_DEVICE must be one of"):
+        _configured_model_device(value, "MODEL_DEVICE")
+
+
+@pytest.mark.parametrize(("value", "expected"), [("auto", None), ("", None), ("cpu", "cpu")])
+def test_runtime_normalizes_model_device(value, expected):
+    assert _configured_model_device(value, "MODEL_DEVICE") == expected
+
+
+def test_create_app_reuses_runtime_models_during_gradio_reload():
+    runtime = SimpleNamespace(
+        data_root=SimpleNamespace(),
+        environment={"RESULTS_PER_PAGE": "10"},
+    )
+    search_mechanism = FakeSearchMechanism()
+    trake_searcher = FakeTrakeSearcher()
+    first_app = object()
+    second_app = object()
+
+    with (
+        patch("app._runtime", None),
+        patch("app._search_mechanism", None),
+        patch("app._trake_searcher", None),
+        patch("app._keyframes_root", None),
+        patch("app.prepare_runtime", return_value=runtime) as prepare_runtime,
+        patch("app.create_search_mechanism", return_value=search_mechanism) as create_search,
+        patch("app.create_trake_searcher", return_value=trake_searcher) as create_trake,
+        patch("app._keyframe_directory", return_value=SimpleNamespace()),
+        patch("app.build_app", side_effect=[first_app, second_app]) as build,
+    ):
+        assert create_app() is first_app
+        assert create_app() is second_app
+
+    prepare_runtime.assert_called_once_with()
+    create_search.assert_called_once_with(runtime)
+    create_trake.assert_called_once_with(runtime, search_mechanism)
+    assert build.call_count == 2
 
 
 def test_build_app_without_trake_searcher_keeps_single_tab():
@@ -349,6 +399,38 @@ def test_page_payload_uses_ten_result_pages_and_rendered_row_mapping(tmp_path):
     assert label == "Page 3 / 3 | 21 results"
     assert previous["interactive"] is True
     assert next_["interactive"] is False
+
+
+def test_select_keyframe_allows_pinning_without_local_video(tmp_path):
+    class DetailSearchMechanism(FakeSearchMechanism):
+        def get_keyframe_details(self, _keyframe_id):
+            return KeyframeDetails(
+                keyframe={
+                    "keyframe_id": "V01_001",
+                    "video_id": "V01",
+                    "collection_id": "C01",
+                    "keyframe_no": 1,
+                    "frame_idx": 90,
+                    "pts_time_sec": 3.0,
+                    "fps": 30.0,
+                    "width": 1280,
+                    "height": 720,
+                },
+                video={},
+                detections=(),
+            )
+
+    controller = SearchController(DetailSearchMechanism(), page_size=10)
+    row = _result_row(tmp_path, "V01_001", "V01", "C01", "Alice", 1.0, 1, 90)
+
+    with patch("app.get_video_path", return_value=None):
+        result = controller.select_keyframe([row], SimpleNamespace(index=0))
+
+    previous_frame_update, next_frame_update, pin_update = result[4:7]
+    assert previous_frame_update["interactive"] is False
+    assert next_frame_update["interactive"] is False
+    assert pin_update["interactive"] is True
+    assert result[-1] == 90
 
 
 def test_generate_preview_text_caps_at_submission_max(tmp_path):

@@ -693,8 +693,9 @@ class SearchController:
         if video_path:
             video_html = render_video_player(video_id, video_path, pts, fps, player_id="query-text-player")
 
+        can_step_video = bool(video_path)
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
-                gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)),
+                gr.update(interactive=can_step_video), gr.update(interactive=can_step_video), gr.update(interactive=True),
                 fps, video_id, int(details.keyframe["frame_idx"]))
 
     def details_api(self, keyframe_id: str):
@@ -707,7 +708,11 @@ class SearchController:
 
 
 _search_controller: SearchController | None = None
-_keyframes_root: Path | None = None
+if gr.NO_RELOAD:
+    _keyframes_root: Path | None = None
+    _runtime: RuntimePaths | None = None
+    _search_mechanism: SearchMechanism | None = None
+    _trake_searcher: TrakeSearcher | None = None
 
 
 @spaces.GPU(duration=120)
@@ -1300,11 +1305,21 @@ def clear_pins_kis():
     return {}, "Đã gỡ bỏ toàn bộ frame chốt tay."
 
 
+def _configured_model_device(value: str, setting_name: str) -> str | None:
+    device = str(value or "auto").strip().lower()
+    if device == "auto":
+        return None
+    if device not in {"cpu", "cuda"}:
+        raise ValueError(f"{setting_name} must be one of: auto, cpu, cuda")
+    return device
+
+
 def create_search_mechanism(runtime: RuntimePaths) -> SearchMechanism:
     environment = runtime.environment
     clip_searcher = CLIPSearcher(
         model_id=environment["MODEL_ID"],
         revision=environment["MODEL_REVISION"],
+        device=_configured_model_device(environment["CLIP_DEVICE"], "CLIP_DEVICE"),
     )
     clip_searcher.load()
     return SearchMechanism(
@@ -1312,6 +1327,10 @@ def create_search_mechanism(runtime: RuntimePaths) -> SearchMechanism:
         translator=QueryTranslator(
             model_id=environment["TRANSLATION_MODEL_ID"],
             revision=environment["TRANSLATION_MODEL_REVISION"],
+            device=_configured_model_device(
+                environment["TRANSLATION_DEVICE"],
+                "TRANSLATION_DEVICE",
+            ),
         ),
         image_indexer=ImageIndexer(
             runtime.index_file,
@@ -1335,20 +1354,29 @@ def create_trake_searcher(runtime: RuntimePaths, search_mechanism: SearchMechani
 
 
 def create_app() -> gr.Blocks:
-    global _keyframes_root
+    global _keyframes_root, _runtime, _search_mechanism, _trake_searcher
 
-    runtime = prepare_runtime()
-    _keyframes_root = _keyframe_directory(runtime.data_root)
-    search_mechanism = create_search_mechanism(runtime)
-    try:
-        trake_searcher = create_trake_searcher(runtime, search_mechanism)
-    except Exception:
-        logger.warning("Failed to initialize TRAKE searcher; TRAKE tab disabled", exc_info=True)
-        trake_searcher = None
+    if _runtime is None:
+        runtime = prepare_runtime()
+        search_mechanism = create_search_mechanism(runtime)
+        try:
+            trake_searcher = create_trake_searcher(runtime, search_mechanism)
+        except Exception:
+            logger.warning(
+                "Failed to initialize TRAKE searcher; TRAKE tab disabled",
+                exc_info=True,
+            )
+            trake_searcher = None
+        _runtime = runtime
+        _search_mechanism = search_mechanism
+        _trake_searcher = trake_searcher
+
+    assert _search_mechanism is not None
+    _keyframes_root = _keyframe_directory(_runtime.data_root)
     return build_app(
-        search_mechanism,
-        page_size=int(runtime.environment["RESULTS_PER_PAGE"]),
-        trake_searcher=trake_searcher,
+        _search_mechanism,
+        page_size=int(_runtime.environment["RESULTS_PER_PAGE"]),
+        trake_searcher=_trake_searcher,
     )
 
 demo = create_app()
