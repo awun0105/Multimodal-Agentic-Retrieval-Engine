@@ -252,6 +252,17 @@ def test_build_app_with_trake_searcher_adds_second_tab():
         and component["props"].get("label") in {"Query Text", "Query TRAKE"}
     }
     assert top_tabs == {"Query Text", "Query TRAKE"}
+    nested_tab_labels = [
+        component["props"].get("label")
+        for component in config["components"]
+        if component["type"] == "tabitem"
+    ]
+    assert nested_tab_labels.count("Image Details") == 2
+    assert nested_tab_labels.count("Video Player") == 2
+    assert any(
+        component["props"].get("elem_id") == "trake-selected-keyframe"
+        for component in config["components"]
+    )
 
 
 def test_trake_tab_does_not_change_kis_endpoints():

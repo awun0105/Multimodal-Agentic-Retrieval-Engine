@@ -1,9 +1,10 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import trake_ui
-from schemas import TrakeOutcome
+from schemas import KeyframeDetails, TrakeOutcome, TrakeVideoMatch
 from trake import MAX_EVENTS, MIN_EVENTS, format_submission
 from trake_ui import TrakeController, search_trake_gpu
 
@@ -146,6 +147,112 @@ def _pv_outcome():
 
 def _controller():
     return TrakeController(trake_searcher=None)
+
+
+def test_select_gallery_event_populates_image_player_metadata_and_detections(
+    tmp_path, monkeypatch
+):
+    image = tmp_path / "event.jpg"
+    image.write_bytes(b"jpeg")
+    event = replace(
+        _pv_event(0, 351, "L21_V001", 0.41),
+        image_path=str(image),
+        image_relpath="keyframes/L21/L21_V001/001.jpg",
+    )
+    video = TrakeVideoMatch(
+        video_id="L21_V001",
+        collection_id="L21",
+        title="TRAKE title",
+        author="TRAKE author",
+        total_score=0.41,
+        events=(event,),
+        max_frame_idx=1000,
+        watch_url="https://youtu.be/dQw4w9WgXcQ",
+    )
+    details = KeyframeDetails(
+        keyframe={
+            "keyframe_id": event.keyframe_id,
+            "video_id": event.video_id,
+            "collection_id": "L21",
+            "keyframe_no": event.keyframe_no,
+            "frame_idx": event.frame_idx,
+            "pts_time_sec": event.pts_time_sec,
+            "fps": event.fps,
+            "width": 1280,
+            "height": 720,
+            "image_path": str(image),
+        },
+        video={
+            "title": "TRAKE title",
+            "author": "TRAKE author",
+            "channel_id": "channel-1",
+            "publish_date_iso": "2026-08-26",
+            "watch_url": video.watch_url,
+        },
+        detections=(
+            {
+                "entity": "Person",
+                "score": 0.98765,
+                "class_mid": "/m/01g317",
+                "class_label": 1,
+                "ymin": 0.1,
+                "xmin": 0.2,
+                "ymax": 0.8,
+                "xmax": 0.9,
+            },
+        ),
+    )
+
+    class DetailsProvider:
+        def get_keyframe_details(self, keyframe_id):
+            assert keyframe_id == event.keyframe_id
+            return details
+
+    monkeypatch.setattr(trake_ui, "get_video_path", lambda _video_id: None)
+    controller = TrakeController(None, DetailsProvider())
+
+    result = controller.select_gallery_event(
+        TrakeOutcome(videos=(video,), queries=()), 0, 0
+    )
+
+    assert result[0] == str(image)
+    assert "data-player=" in result[1]["value"]
+    assert "L21_V001" in result[2]
+    assert "1280 x 720" in result[2]
+    assert result[3][0][:4] == ["Person", 0.9877, "/m/01g317", 1]
+    assert result[4]["interactive"] is True
+    assert result[5]["interactive"] is True
+    assert result[6]["interactive"] is True
+    assert result[7:] == (25.0, "L21_V001", 0, 351)
+
+
+def test_select_gallery_event_without_details_provider_uses_event_metadata(
+    tmp_path, monkeypatch
+):
+    image = tmp_path / "event.jpg"
+    image.write_bytes(b"jpeg")
+    event = replace(_pv_event(0, 100, "L21_V001", 0.4), image_path=str(image))
+    video = TrakeVideoMatch(
+        video_id="L21_V001",
+        collection_id="L21",
+        title="Fallback title",
+        author="Fallback author",
+        total_score=0.4,
+        events=(event,),
+    )
+    monkeypatch.setattr(trake_ui, "get_video_path", lambda _video_id: None)
+
+    result = TrakeController(None).select_gallery_event(
+        TrakeOutcome(videos=(video,), queries=()), 0, (0, 0)
+    )
+
+    assert result[0] == str(image)
+    assert "Fallback title" in result[2]
+    assert "Resolution | N/A" in result[2]
+    assert result[3] == []
+    assert result[4]["interactive"] is False
+    assert result[5]["interactive"] is False
+    assert result[6]["interactive"] is True
 
 
 def test_primary_rows_come_before_spread_rows():
