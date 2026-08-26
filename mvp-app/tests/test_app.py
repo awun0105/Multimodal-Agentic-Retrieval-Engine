@@ -628,19 +628,20 @@ def test_process_pin_kis_uses_browser_frame_and_copies_dict():
     from app import process_pin_kis
 
     pins = {"V01": 10}
-    out, status = process_pin_kis(777, "calculated", pins, "V01", 55)
+    # Runtime argument order: (video_id, kf_frame, pins, calc_frame, accuracy)
+    out, status = process_pin_kis("V01", 55, pins, 777, "calculated")
     assert out == {"V01": 777}
     assert out is not pins
     assert "Calculated" in status
 
-    out2, status2 = process_pin_kis(None, "", pins, "V02", 42)
+    out2, status2 = process_pin_kis("V02", 42, pins, None, "")
     assert out2 == {"V01": 10, "V02": 42}
     assert "Keyframe 42" in status2
 
-    out3, _s = process_pin_kis("-4", "estimated", {}, "V03", 9)
+    out3, _s = process_pin_kis("V03", 9, {}, "-4", "estimated")
     assert out3 == {"V03": 9}
 
-    unchanged, message = process_pin_kis(1, "calculated", pins, "", 5)
+    unchanged, message = process_pin_kis("", 5, pins, 1, "calculated")
     assert unchanged is pins
     assert "Không có video" in message
 

@@ -86,7 +86,9 @@ def test_render_pinned_frames_skips_malformed_keys():
 def _pin(calc_frame, accuracy, pins=None, accs=None, v_id="L21_V001", e_idx=0, kf=290):
     from trake_ui import process_pin
 
-    return process_pin(calc_frame, accuracy, pins or {}, accs or {}, v_id, e_idx, kf)
+    # Runtime argument order follows the click handler's inputs list:
+    # (v_id, e_idx, kf_frame, pinned_frames, accuracies, calc_frame, accuracy)
+    return process_pin(v_id, e_idx, kf, pins or {}, accs or {}, calc_frame, accuracy)
 
 
 def test_process_pin_uses_browser_reported_frame():

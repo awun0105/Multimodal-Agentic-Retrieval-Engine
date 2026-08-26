@@ -1301,9 +1301,10 @@ def build_app(
 
 
 
-def process_pin_kis(calc_frame, accuracy, current_pins, video_id, kf_frame):
+def process_pin_kis(video_id, kf_frame, current_pins, calc_frame, accuracy):
     """Store the browser-reported frame; fall back to the keyframe's own
-    frame_idx whenever the player state is missing or malformed."""
+    frame_idx whenever the player state is missing or malformed. Parameter
+    order matches the click handler's `inputs` list."""
     if not video_id:
         return current_pins, "Không có video nào được chọn."
 

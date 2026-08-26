@@ -258,10 +258,12 @@ def _selected_event(videos, gallery_index: int):
     return None
 
 
-def process_pin(calc_frame, accuracy, pinned_frames, current_accuracies, v_id, e_idx, kf_frame):
-    """Pin the frame the browser reported. The video player is optional: when
-    its state is missing or malformed the keyframe's own frame_idx is stored,
-    so pinning works with or without a playable source."""
+def process_pin(v_id, e_idx, kf_frame, pinned_frames, current_accuracies, calc_frame, accuracy):
+    """Pin the frame the browser reported. Parameter order matches the click
+    handler's `inputs` list — Gradio binds arguments positionally. The video
+    player is optional: when its state is missing or malformed the keyframe's
+    own frame_idx is stored, so pinning works with or without a playable
+    source."""
     if not v_id:
         return (
             dict(pinned_frames or {}),
