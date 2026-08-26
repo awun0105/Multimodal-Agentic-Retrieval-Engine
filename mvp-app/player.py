@@ -195,21 +195,58 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
 
   if (cfg.kind === 'youtube'){
     setFrame(null, 'estimated');
+    pinOff();
     window.__aiouEnsureYT(function(){
       var holder = document.getElementById(pid + '-yt');
       if (!holder) return;
-      // Construct WITHOUT videoId: passing one here uses loadVideo semantics,
-      // which starts playback. cueVideoById in onReady stays PAUSED/cued.
+      var initialLoad = true;
+      var loadRequested = false;
+      var mutedForLoad = false;
+
+      function publishCurrentFrame(target){
+        var loaded = target.getVideoLoadedFraction ? target.getVideoLoadedFraction() : 0;
+        var raw = Number(target.getCurrentTime());
+        if (!(loaded > 0) || !isFinite(raw)) return false;
+        var t = window.__aiouNormalizeTime(raw);
+        st.latest = {
+          frame: Math.floor(t * st.fps),
+          accuracy: 'estimated'
+        };
+        st.seeking = false;
+        setFrame(st.latest.frame, 'estimated');
+        return true;
+      }
+
+      function finishInitialLoad(target){
+        if (!initialLoad || !publishCurrentFrame(target)) return;
+        initialLoad = false;
+        target.pauseVideo();
+        if (mutedForLoad && target.unMute){ target.unMute(); }
+      }
+
       var player = new YT.Player(holder, {
         playerVars: {rel: 0, modestbranding: 1, playsinline: 1, autoplay: 0},
         events: {
           onReady: function(ev){
-            // Fractional seconds matter: flooring start loses up to a full
-            // second (~10-30 frames) and lands before the keyframe.
-            ev.target.cueVideoById({
+            // A muted load requests actual media at the fractional timestamp.
+            // The first PLAYING event is paused immediately; only the resulting
+            // PAUSED time is exposed as Current frame.
+            st.seeking = true;
+            pinOff();
+            if (ev.target.mute){ ev.target.mute(); mutedForLoad = true; }
+            loadRequested = true;
+            ev.target.loadVideoById({
               videoId: cfg.videoId,
               startSeconds: Math.max(cfg.start, 0)
             });
+          },
+          onStateChange: function(ev){
+            if (!loadRequested || !initialLoad) return;
+            if (ev.data === 1){
+              ev.target.pauseVideo();
+            } else if (ev.data === 2){
+              finishInitialLoad(ev.target);
+            }
           },
           onError: function(){
             if (st.timer){ clearInterval(st.timer); st.timer = null; }
@@ -227,13 +264,14 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
       st.timer = setInterval(function(){
         if (!player.getCurrentTime) return;
         var ps = player.getPlayerState();
-        // While cued/unstarted, getCurrentTime() reads 0 — report the cued
-        // keyframe position instead, and keep Pin enabled (only an actual
-        // buffer/seek blocks it).
-        var raw = player.getCurrentTime() || 0;
-        var t = window.__aiouNormalizeTime(
-          (ps === -1 || ps === 5) ? cfg.start : raw
-        );
+        if (initialLoad){
+          if (loadRequested && ps === 1){ player.pauseVideo(); }
+          else if (loadRequested && ps === 2){ finishInitialLoad(player); }
+          return;
+        }
+        var raw = Number(player.getCurrentTime());
+        if (!isFinite(raw)) return;
+        var t = window.__aiouNormalizeTime(raw);
         // Field calibration on the L-series batch: the YouTube readout ran
         // exactly +1 against keyframes.frame_idx when Math.round was used
         // during playback, so floor is applied uniformly here. Values stay

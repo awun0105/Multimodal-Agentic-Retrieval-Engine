@@ -449,19 +449,43 @@ def test_generate_preview_text_promotes_pinned_frames_to_top(tmp_path):
     rows = [
         _result_row(tmp_path, "KF_001", "V01", "C01", "Alice", 0.9, 1, 30),
         _result_row(tmp_path, "KF_002", "V02", "C01", "Alice", 0.8, 2, 60),
+        _result_row(tmp_path, "KF_003", "V02", "C01", "Alice", 0.7, 3, 90),
     ]
-    preview = _generate_preview_text(rows, pinned={"V02": 999})
+    preview = _generate_preview_text(rows, pinned=[["V02", 999]])
 
-    # The pin REPLACES V02's prediction and leads the file — one line per video,
-    # always in `videoID, frameID` shape.
-    assert preview.splitlines() == ["V02,999", "V01,30"]
+    assert preview.splitlines() == ["V02,999", "V01,30", "V02,60", "V02,90"]
 
 
 def test_generate_preview_text_accepts_pin_for_video_outside_results(tmp_path):
     rows = [_result_row(tmp_path, "KF_001", "V01", "C01", "Alice", 0.9, 1, 30)]
-    preview = _generate_preview_text(rows, pinned={"L26_V306": 4321})
+    preview = _generate_preview_text(rows, pinned=[["L26_V306", 4321]])
 
     assert preview.splitlines() == ["L26_V306,4321", "V01,30"]
+
+
+def test_generate_preview_text_moves_existing_candidate_to_top(tmp_path):
+    rows = [
+        _result_row(tmp_path, "KF_001", "V01", "C01", "Alice", 0.9, 1, 30),
+        _result_row(tmp_path, "KF_002", "V02", "C01", "Alice", 0.8, 2, 60),
+    ]
+
+    preview = _generate_preview_text(rows, pinned=[["V02", 60]])
+
+    assert preview.splitlines() == ["V02,60", "V01,30"]
+
+
+def test_generate_preview_text_keeps_newest_pins_first_and_caps_rows(tmp_path):
+    rows = [
+        _result_row(tmp_path, f"KF_{index:03d}", f"V{index:03d}", "C01", "Alice", 0.9, index, index)
+        for index in range(120)
+    ]
+    pins = [["PIN_NEW", 2], ["PIN_OLD", 1]]
+
+    lines = _generate_preview_text(rows, pinned=pins).splitlines()
+
+    assert lines[:3] == ["PIN_NEW,2", "PIN_OLD,1", "V000,0"]
+    assert len(lines) == trake.SUBMISSION_MAX_ROWS
+    assert "V098,98" not in lines
 
 
 # --- Inline metadata parsing in _run_search ---
@@ -624,26 +648,56 @@ def test_run_search_dedupes_video_inside_typed_collection():
 # --- KIS pin callback and player source resolution ---
 
 
-def test_process_pin_kis_uses_browser_frame_and_copies_dict():
+def test_process_pin_kis_uses_browser_frame_and_keeps_ordered_pins():
     from app import process_pin_kis
 
-    pins = {"V01": 10}
+    pins = [["V01", 10]]
     # Runtime argument order: (video_id, kf_frame, pins, calc_frame, accuracy)
     out, status = process_pin_kis("V01", 55, pins, 777, "calculated")
-    assert out == {"V01": 777}
+    assert out == [["V01", 777], ["V01", 10]]
     assert out is not pins
     assert "Calculated" in status
 
     out2, status2 = process_pin_kis("V02", 42, pins, None, "")
-    assert out2 == {"V01": 10, "V02": 42}
+    assert out2 == [["V02", 42], ["V01", 10]]
     assert "Keyframe 42" in status2
 
-    out3, _s = process_pin_kis("V03", 9, {}, "-4", "estimated")
-    assert out3 == {"V03": 9}
+    out3, _s = process_pin_kis("V03", 9, [], "-4", "estimated")
+    assert out3 == [["V03", 9]]
 
     unchanged, message = process_pin_kis("", 5, pins, 1, "calculated")
     assert unchanged is pins
     assert "Không có video" in message
+
+
+def test_process_pin_kis_moves_existing_pin_to_front():
+    from app import process_pin_kis
+
+    pins = [["V01", 10], ["V02", 20], ["V01", 30]]
+
+    out, _status = process_pin_kis("V02", 20, pins, 20, "calculated")
+
+    assert out == [["V02", 20], ["V01", 10], ["V01", 30]]
+
+
+def test_process_pin_kis_accepts_legacy_dict_state():
+    from app import process_pin_kis
+
+    out, _status = process_pin_kis("V02", 20, {"V01": 10}, 20, "calculated")
+
+    assert out == [["V02", 20], ["V01", 10]]
+
+
+def test_process_pin_kis_drops_oldest_pin_above_submission_limit():
+    from app import process_pin_kis
+
+    pins = [[f"V{index:03d}", index] for index in range(trake.SUBMISSION_MAX_ROWS)]
+
+    out, _status = process_pin_kis("PIN_NEW", 999, pins, 999, "calculated")
+
+    assert len(out) == trake.SUBMISSION_MAX_ROWS
+    assert out[0] == ["PIN_NEW", 999]
+    assert pins[-1] not in out
 
 
 class _DetailFake(FakeSearchMechanism):

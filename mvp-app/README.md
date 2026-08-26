@@ -44,6 +44,11 @@ Clicking a result opens one shared player used by both tabs. Sources resolve in
 this order: local proxy MP4 from `VIDEO_ROOT`, then the YouTube `watch_url`
 stored in video metadata, then keyframe-only (still pinnable).
 
+For YouTube, the player loads the actual media at the selected fractional
+timestamp while muted, pauses immediately, and only then publishes Current
+frame from the time reported by the player. It does not report a frame from a
+cued thumbnail.
+
 The player shows exactly one live number, **Current frame**, computed as:
 
 ```text

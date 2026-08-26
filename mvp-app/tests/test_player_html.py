@@ -26,3 +26,13 @@ def test_head_ships_mutation_observer_boot():
     assert "__aiouScanPlayers" in head
     assert "MutationObserver" in head
     assert "dataset.booted" in head
+
+
+def test_youtube_loads_media_before_publishing_current_frame():
+    head = player_head_html()
+
+    assert "loadVideoById" in head
+    assert "cueVideoById" not in head
+    assert "finishInitialLoad" in head
+    assert "getVideoLoadedFraction" in head
+    assert "(ps === -1 || ps === 5) ? cfg.start : raw" not in head
