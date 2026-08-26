@@ -13,37 +13,10 @@ def _timestamp(seconds: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
-
-def build_single_gallery_items(video, rank: int) -> list[tuple[str, str]]:
-    items: list[tuple[str, str]] = []
-    for event in video.events:
-        if not Path(event.image_path).is_file():
-            continue
-        caption = (
-            f"#{rank} {video.video_id} | event {event.event_index + 1} | "
-            f"kf {event.keyframe_no} | {_timestamp(event.pts_time_sec)} | "
-            f"frame {event.frame_idx} | {event.score:.4f}"
-        )
-        items.append((event.image_path, caption))
-    return items
-
-def build_single_video_block(video, rank: int) -> str:
-    header = (
-        f"**#{rank} — {html.escape(video.video_id)}** "
-        f"(score {video.total_score:.4f}) — {html.escape(video.title or 'N/A')}"
-    )
-    rows = [
-        f"- event {event.event_index + 1}: keyframe {event.keyframe_no}, "
-        f"frame {event.frame_idx}, {_timestamp(event.pts_time_sec)}, "
-        f"fps {event.fps:g}, score {event.score:.4f}"
-        for event in video.events
-    ]
-    return "\n".join([header, *rows])
-
-def build_gallery_items(outcome: TrakeOutcome) -> list[tuple[str, str]]:
+def build_gallery_items_slice(videos: list, start_rank: int) -> list[tuple[str, str]]:
     """Flat (image_path, caption) list. Gradio serves these paths; markdown links do not."""
     items: list[tuple[str, str]] = []
-    for rank, video in enumerate(outcome.videos, start=1):
+    for rank, video in enumerate(videos, start=start_rank):
         for event in video.events:
             if not Path(event.image_path).is_file():
                 continue
@@ -56,12 +29,12 @@ def build_gallery_items(outcome: TrakeOutcome) -> list[tuple[str, str]]:
     return items
 
 
-def build_video_blocks(outcome: TrakeOutcome) -> str:
-    if not outcome.videos:
-        return "No matching video sequences found."
+def build_video_blocks_slice(videos: list, start_rank: int) -> str:
+    if not videos:
+        return "No matching video sequences found on this page."
 
     blocks = []
-    for rank, video in enumerate(outcome.videos, start=1):
+    for rank, video in enumerate(videos, start=start_rank):
         header = (
             f"**#{rank} — {html.escape(video.video_id)}** "
             f"(score {video.total_score:.4f}) — {html.escape(video.title or 'N/A')}"
@@ -108,91 +81,3 @@ def render_video_player(video_id: str, video_path: str, pts_time_sec: float, fps
         ></video>
     </div>
     """
-
-
-PREVIEW_SPREAD_SAMPLE = 8
-
-
-def _frames_text(frames: tuple[int, ...], frame_index_base: int = 0) -> str:
-    return ", ".join(str(frame + frame_index_base) for frame in frames)
-
-
-def build_submission_preview_markdown(
-    rows: list[tuple[str, tuple[int, ...]]],
-    primary_count: int,
-    pinned_counts: dict[str, int],
-    frame_index_base: int = 0,
-) -> str:
-    """Rows 0..primary_count-1 are the real answers, one per video, best first.
-    Everything after is jitter around them — labelled so nobody mistakes it for a result."""
-    if not rows:
-        return "Chưa có kết quả để xem trước."
-
-    remainder = rows[primary_count:]
-    lines = [
-        "### Xem trước file nộp bài",
-        "",
-        f"Tổng **{len(rows)}** dòng — **{primary_count}** đáp án, "
-        f"{len(remainder)} dòng rải tham khảo.",
-        "",
-        f"**Đáp án sẽ nộp** (dòng 1 là kết quả tốt nhất, {primary_count} video khác nhau):",
-        "",
-        "| # | Video | Frame | |",
-        "|---|---|---|---|",
-    ]
-    for position, (video_id, frames) in enumerate(rows[:primary_count], start=1):
-        pinned = pinned_counts.get(video_id, 0)
-        marker = f"{pinned}/{len(frames)} chốt tay" if pinned else ""
-        lines.append(
-            f"| {position} | {html.escape(video_id)} | {_frames_text(frames, frame_index_base)} | {marker} |"
-        )
-
-    if remainder:
-        lines += [
-            "",
-            f"**Dòng rải tham khảo** ({len(remainder)} dòng, lệch vài frame quanh đáp án trên):",
-            "",
-            "```csv",
-        ]
-        shown = remainder[:PREVIEW_SPREAD_SAMPLE]
-        lines += [f"{video_id}, {_frames_text(frames, frame_index_base)}" for video_id, frames in shown]
-        if len(remainder) > len(shown):
-            lines.append(f"... còn {len(remainder) - len(shown)} dòng")
-        lines.append("```")
-    return "\n".join(lines)
-
-
-def build_gallery_items_slice(videos: list, start_rank: int) -> list[tuple[str, str]]:
-    from pathlib import Path
-    items: list[tuple[str, str]] = []
-    for rank, video in enumerate(videos, start=start_rank):
-        for event in video.events:
-            if not Path(event.image_path).is_file():
-                continue
-            caption = (
-                f"#{rank} {video.video_id} | event {event.event_index + 1} | "
-                f"kf {event.keyframe_no} | {_timestamp(event.pts_time_sec)} | "
-                f"frame {event.frame_idx} | {event.score:.4f}"
-            )
-            items.append((event.image_path, caption))
-    return items
-
-def build_video_blocks_slice(videos: list, start_rank: int) -> str:
-    import html
-    if not videos:
-        return "No matching video sequences found on this page."
-
-    blocks = []
-    for rank, video in enumerate(videos, start=start_rank):
-        header = (
-            f"**#{rank} — {html.escape(video.video_id)}** "
-            f"(score {video.total_score:.4f}) — {html.escape(video.title or 'N/A')}"
-        )
-        rows = [
-            f"- event {event.event_index + 1}: keyframe {event.keyframe_no}, "
-            f"frame {event.frame_idx}, {_timestamp(event.pts_time_sec)}, "
-            f"fps {event.fps:g}, score {event.score:.4f}"
-            for event in video.events
-        ]
-        blocks.append("\n".join([header, *rows]))
-    return "\n\n".join(blocks)

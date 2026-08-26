@@ -4,7 +4,7 @@ import pytest
 
 import trake_ui
 from schemas import TrakeOutcome
-from trake import MAX_EVENTS, MIN_EVENTS
+from trake import MAX_EVENTS, MIN_EVENTS, format_submission
 from trake_ui import TrakeController, search_trake_gpu
 
 
@@ -64,11 +64,16 @@ def test_add_event_keeps_text_already_typed():
         assert "value" not in update
 
 
-def test_export_submission_without_results_returns_message_not_error():
-    controller = TrakeController(trake_searcher=None)
-    file_path, message = controller.export_submission(None, pinned_frames={})
-    assert file_path is None
-    assert "No search results" in message
+def test_search_events_without_events_shows_friendly_message():
+    """An empty form must not raise ValueError into the UI."""
+
+    class FailingSearcher:
+        def search(self, *_args, **_kwargs):
+            raise AssertionError("searcher must not be called without events")
+
+    result = TrakeController(FailingSearcher()).search_events(True, "  ", "")
+    assert "ít nhất một sự kiện" in result[2]
+    assert result[3] is None
 
 
 def test_search_trake_gpu_raises_when_controller_missing(monkeypatch):
@@ -144,28 +149,12 @@ def test_first_row_is_unjittered_answer():
     assert rows[0][1] == (1000, 2000, 3000)
 
 
-def test_preview_and_export_use_same_rows(tmp_path, monkeypatch):
-    controller = _controller()
-    outcome = _pv_outcome()
-    preview_rows, _c = controller._build_rows(outcome, {})
-    monkeypatch.setattr(trake_ui.tempfile, "gettempdir", lambda: str(tmp_path))
-    file_path, _msg = controller.export_submission(outcome, {})
-    exported = Path(file_path).read_text(encoding="utf-8").splitlines()
-    assert len(exported) == len(preview_rows)
-    assert exported[0].startswith(preview_rows[0][0])
-
-
-def test_preview_markdown_labels_answer_and_reference_sections():
+def test_preview_is_editable_csv_matching_built_rows():
     body = _controller().preview_submission(_pv_outcome(), {})["value"]
-    assert "nộp" in body.lower()
-    assert "tham khảo" in body.lower()
-
-
-def test_preview_markdown_escapes_video_id():
-    from trake_ui_render import build_submission_preview_markdown
-
-    body = build_submission_preview_markdown([("<b>x</b>", (1,))], 1, {})
-    assert "<b>" not in body
+    lines = body.splitlines()
+    assert len(lines) > 3
+    assert lines[0].startswith("L21_V001,")
+    assert all(line.split(",")[0] in {"L21_V001", "L21_V002", "L21_V003"} for line in lines)
 
 
 def test_preview_shows_pinned_marker():
@@ -181,38 +170,60 @@ def test_preview_without_results_returns_message():
     assert "No search results" in result["value"]
 
 
-def test_export_message_includes_filename_and_row_count(tmp_path, monkeypatch):
-    monkeypatch.setattr(trake_ui.tempfile, "gettempdir", lambda: str(tmp_path))
-    file_path, message = _controller().export_submission(_pv_outcome(), {})
-    assert Path(file_path).name in message
-    assert str(len(Path(file_path).read_text(encoding="utf-8").splitlines())) in message
+def _export(tmp_path, monkeypatch, content="L21_V001, 1000", filename="query-4-trake.csv"):
+    from trake_submission import export_csv_file
+
+    monkeypatch.setattr("trake_submission.tempfile.gettempdir", lambda: str(tmp_path))
+    return export_csv_file(content, filename)
 
 
-def test_export_writes_utf8(tmp_path, monkeypatch):
+def test_export_writes_utf8_without_bom(tmp_path, monkeypatch):
     """Organizers flagged wrong encoding as the most common submission failure."""
-    monkeypatch.setattr(trake_ui.tempfile, "gettempdir", lambda: str(tmp_path))
-    file_path, _msg = _controller().export_submission(_pv_outcome(), {})
-    raw = Path(file_path).read_bytes()
+    update, message = _export(tmp_path, monkeypatch)
+    raw = Path(update["value"]).read_bytes()
     assert not raw.startswith(b"\xef\xbb\xbf")
     assert raw.decode("utf-8")
+    assert Path(update["value"]).name in message
 
 
-def test_preview_frame_numbers_match_exported_file(monkeypatch, tmp_path):
+def test_export_rejects_empty_content():
+    from trake_submission import export_csv_file
+
+    update, message = export_csv_file("   \n", "query-4-trake.csv")
+    assert update["value"] is None
+    assert "No data" in message
+
+
+def test_export_sanitizes_path_traversal_in_filename(tmp_path, monkeypatch):
+    update, _msg = _export(tmp_path, monkeypatch, filename="../../etc/evil.csv")
+    written = Path(update["value"])
+    assert tmp_path in written.parents or written.parent == tmp_path / "aic26_submissions"
+    assert written.exists()
+
+
+def test_export_never_overwrites_existing_file(tmp_path, monkeypatch):
+    first, _m1 = _export(tmp_path, monkeypatch)
+    second, _m2 = _export(tmp_path, monkeypatch)
+    assert Path(first["value"]) != Path(second["value"])
+    assert Path(first["value"]).exists()
+    assert Path(second["value"]).exists()
+
+
+def test_preview_and_exported_file_share_frame_numbers(monkeypatch, tmp_path):
     """FRAME_INDEX_BASE is a knob the organizers may flip; the preview has to
     follow the file, not its own copy of the numbers."""
     import trake
 
     monkeypatch.setattr(trake, "FRAME_INDEX_BASE", 1)
-    monkeypatch.setattr(trake_ui.tempfile, "gettempdir", lambda: str(tmp_path))
     controller = _controller()
     outcome = _pv_outcome()
 
     preview = controller.preview_submission(outcome, {})["value"]
-    file_path, _msg = controller.export_submission(outcome, {})
-    first_row = Path(file_path).read_text(encoding="utf-8").splitlines()[0]
+    rows, _count = controller._build_rows(outcome, {})
+    file_body = format_submission(rows)
+    exported_first_row = file_body.splitlines()[0]
 
-    frames = first_row.split(", ")[1:]
-    assert all(frame in preview for frame in frames)
+    assert preview.splitlines()[0] == exported_first_row
 
 
 def test_every_ranked_video_gets_an_answer_row():
@@ -243,3 +254,35 @@ def test_every_ranked_video_gets_an_answer_row():
     rows, primary_count = _controller()._build_rows(outcome, {})
     assert primary_count == 20
     assert len({row[0] for row in rows[:primary_count]}) == 20
+
+
+def test_total_rows_never_exceed_submission_max():
+    """Answers plus jitter used to overflow the 100-row contest budget."""
+    from schemas import TrakeVideoMatch
+
+    videos = []
+    for rank in range(20):
+        video_id = f"L21_V{rank:03d}"
+        base = 1000 + rank * 100
+        events = tuple(
+            _pv_event(i, base + i * 1000, video_id, 0.5 - rank * 0.01) for i in range(3)
+        )
+        videos.append(
+            TrakeVideoMatch(
+                video_id=video_id,
+                collection_id="L21",
+                title="t",
+                author="a",
+                total_score=0.5 - rank * 0.01,
+                events=events,
+                max_frame_idx=base + 9000,
+            )
+        )
+    outcome = TrakeOutcome(videos=tuple(videos), queries=())
+
+    import trake
+
+    rows, _primary_count = _controller()._build_rows(outcome, {})
+    assert len(rows) <= trake.SUBMISSION_MAX_ROWS
+    # The one-answer-per-video block still leads the file.
+    assert [row[0] for row in rows[:20]] == [f"L21_V{rank:03d}" for rank in range(20)]

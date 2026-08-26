@@ -23,6 +23,21 @@ NLLB translates Vietnamese to English, then multilingual CLIP embeds the English
 query. Clear it for the faster path, where multilingual CLIP embeds the original
 Vietnamese or English query directly without loading NLLB.
 
+### Inline Metadata Shortcuts
+
+The Query box also accepts metadata tokens (comma-separated, order-free):
+
+| Input | Meaning |
+|---|---|
+| `L26` | every keyframe in collection L26, in canonical order |
+| `L26_V306` | every keyframe of that video, in canonical order |
+| `L26_V306_049` or `L26_V306, 49` | exactly that keyframe |
+| `con cá, L26_V306` | semantic search scoped to that video |
+| `con cá, L26` | semantic search scoped to that collection |
+
+Pure metadata input never loads CLIP. The Status line always echoes how the
+input was interpreted.
+
 At startup, only `sentence-transformers/clip-ViT-B-32-multilingual-v1` is
 loaded. `facebook/nllb-200-distilled-600M` is loaded lazily on the first search
 with translation enabled. CUDA uses FP16; CPU uses FP32. NLLB is released under
@@ -458,8 +473,8 @@ Example: `athlete runs up` -> `athlete takes off` -> `athlete clears the bar` ->
 
 1. Open the **TRAKE** tab.
 2. Fill in the event boxes top to bottom, in the order the events happen.
-   Three boxes show by default; **Add event** / **Remove event** adjust between
-   2 and 6.
+   One box shows by default; **Add event** / **Remove event** adjust between
+   1 and 6.
 3. Press **Search event chain**.
 4. Results are ranked by video. Each row of the gallery is one video's event
    chain, left to right. The text below lists keyframe number, frame index,

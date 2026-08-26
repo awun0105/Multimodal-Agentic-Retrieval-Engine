@@ -6,8 +6,12 @@ its own (possibly monkeypatched) module-level constants through unchanged.
 
 from __future__ import annotations
 
+import tempfile
+import time
 import zlib
+from pathlib import Path
 
+import gradio as gr
 import numpy as np
 
 from schemas import TrakeOutcome
@@ -90,7 +94,13 @@ def build_submission(
     if pinned_frames is None:
         pinned_frames = {}
 
-    pinned_vids = {k.split(":")[0] for k in pinned_frames.keys()}
+    # Keys are "video_id|event_index"; parse them instead of guessing a separator
+    # so a pin on any event promotes its video, and junk keys are ignored.
+    pinned_vids = {
+        parsed[0]
+        for parsed in (parse_pin_key(key) for key in pinned_frames)
+        if parsed is not None
+    }
 
     # 1. Promote videos with pinned frames to the top
     sorted_videos = sorted(
@@ -135,30 +145,27 @@ def format_submission(
         lines.append(delimiter.join([video_id, *shifted]))
     return "\n".join(lines)
 
-import tempfile
-import time
-from pathlib import Path
-
-import gradio as gr
-
 
 def export_csv_file(content: str, filename: str):
     if not content.strip():
         return gr.update(value=None, visible=False), "No data to export."
 
-    # Use a secure temp directory
     out_dir = Path(tempfile.gettempdir()) / "aic26_submissions"
     out_dir.mkdir(exist_ok=True)
 
-    # Clean up filename, defaulting if empty
-    safe_name = filename.strip()
-    if not safe_name:
+    # Strip any path components: a name like "../../x" must stay inside out_dir.
+    safe_name = Path(filename.strip()).name
+    if not safe_name or safe_name in {".", ".."}:
         timestamp = time.strftime("%y%m%d-%H%M")
         safe_name = f"submission_{timestamp}.csv"
     if not safe_name.endswith(".csv"):
         safe_name += ".csv"
 
     out_path = out_dir / safe_name
+    # Never silently overwrite an earlier export.
+    if out_path.exists():
+        stamp = time.strftime("%y%m%d-%H%M%S")
+        out_path = out_dir / f"{out_path.stem}_{stamp}.csv"
     out_path.write_text(content, encoding="utf-8")
 
-    return gr.update(value=str(out_path), visible=True), f"Đã lưu thành công {safe_name} tại {out_path}."
+    return gr.update(value=str(out_path), visible=True), f"Đã lưu thành công {out_path.name} tại {out_path}."

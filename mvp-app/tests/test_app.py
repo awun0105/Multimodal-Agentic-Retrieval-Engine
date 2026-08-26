@@ -4,9 +4,11 @@ from unittest.mock import patch
 
 import pytest
 
+import trake
 from app import (
     SearchController,
     _detail_markdown,
+    _generate_preview_text,
     _keyframe_directory,
     _timestamp,
     build_app,
@@ -15,7 +17,7 @@ from app import (
     search_keyframes_gpu,
     search_keyframes_gpu_v2,
 )
-from schemas import KeyframeDetails, SearchResult
+from schemas import KeyframeDetails, PreparedQuery, SearchOutcome, SearchResult
 
 
 class FakeSearchMechanism:
@@ -179,17 +181,27 @@ def test_runtime_preloads_only_multilingual_text_model():
 def test_build_app_without_trake_searcher_keeps_single_tab():
     app = build_app(FakeSearchMechanism())
     config = app.get_config_file()
-    tabs = [component for component in config["components"] if component["type"] == "tabitem"]
-    assert len(tabs) == 1
+    # gradio 5.x also reports the nested Image/Player tabs as tabitem components,
+    # so count only the top-level query tabs by label.
+    top_tabs = {
+        component["props"].get("label")
+        for component in config["components"]
+        if component["type"] == "tabitem"
+        and component["props"].get("label") in {"Query Text", "Query TRAKE"}
+    }
+    assert top_tabs == {"Query Text"}
 
 
 def test_build_app_with_trake_searcher_adds_second_tab():
     app = build_app(FakeSearchMechanism(), trake_searcher=FakeTrakeSearcher())
     config = app.get_config_file()
-    tabs = [component for component in config["components"] if component["type"] == "tabitem"]
-    assert len(tabs) == 2
-    tab_labels = {tab["props"].get("label") for tab in tabs}
-    assert "TRAKE" in tab_labels
+    top_tabs = {
+        component["props"].get("label")
+        for component in config["components"]
+        if component["type"] == "tabitem"
+        and component["props"].get("label") in {"Query Text", "Query TRAKE"}
+    }
+    assert top_tabs == {"Query Text", "Query TRAKE"}
 
 
 def test_trake_tab_does_not_change_kis_endpoints():
@@ -337,3 +349,185 @@ def test_page_payload_uses_ten_result_pages_and_rendered_row_mapping(tmp_path):
     assert label == "Page 3 / 3 | 21 results"
     assert previous["interactive"] is True
     assert next_["interactive"] is False
+
+
+def test_generate_preview_text_caps_at_submission_max(tmp_path):
+    """Top K up to 200 is allowed; the contest file accepts at most 100 rows."""
+    rows = [
+        _result_row(tmp_path, f"KF_{index:03d}", f"V{index:03d}", "C01", "Alice", 0.9, index, index)
+        for index in range(120)
+    ]
+
+    preview = _generate_preview_text(rows)
+    lines = preview.splitlines()
+    assert len(lines) == trake.SUBMISSION_MAX_ROWS
+
+
+def test_generate_preview_text_promotes_pinned_frames_to_top(tmp_path):
+    rows = [
+        _result_row(tmp_path, "KF_001", "V01", "C01", "Alice", 0.9, 1, 30),
+        _result_row(tmp_path, "KF_002", "V02", "C01", "Alice", 0.8, 2, 60),
+    ]
+    preview = _generate_preview_text(rows, pinned={"V02": 999})
+
+    first_line = preview.splitlines()[0]
+    assert first_line == "V02,999"
+    # The AI prediction for the pinned video stays as a lower-ranked guess.
+    assert preview.splitlines() == ["V02,999", "V01,30", "V02,60"]
+
+
+# --- Inline metadata parsing in _run_search ---
+
+
+class RecordingMechanism(FakeSearchMechanism):
+    """Records what the controller passes down and serves canned rows."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen_query = None
+        self.seen_filters = None
+        self.listed_videos = []
+        self.listed_collections = []
+        self.exact_lookups = []
+
+    @staticmethod
+    def _canned_result(video_id="V01", number=1, vector_id=0):
+        return SearchResult(
+            vector_id,
+            f"{video_id}_{number:03d}",
+            video_id,
+            "C01",
+            number,
+            "/tmp/x.jpg",
+            "keyframes/C01/x.jpg",
+            1.0,
+            1.0,
+            30,
+            30.0,
+            640,
+            360,
+            "Title",
+            "Alice",
+        )
+
+    def search_by_text(self, query, top_k, language, filters, *, translate_vietnamese=None):
+        self.seen_query = query
+        self.seen_filters = filters
+        prepared = PreparedQuery(query, query, "auto", "english", translation_enabled=False)
+        return SearchOutcome((self._canned_result(),), prepared)
+
+    def get_video_keyframes(self, video_id):
+        self.listed_videos.append(video_id)
+        return [self._canned_result()]
+
+    def get_collection_keyframes(self, collection_id):
+        self.listed_collections.append(collection_id)
+        return [self._canned_result(video_id="V02", number=1, vector_id=1)]
+
+    def find_exact_keyframe(self, video_id, keyframe_no):
+        self.exact_lookups.append((video_id, keyframe_no))
+        if keyframe_no == 999:
+            return None
+        return self._canned_result(number=keyframe_no)
+
+
+def _run(mechanism, query, **overrides):
+    controller = SearchController(mechanism, page_size=10)
+    arguments = {
+        "collections": (),
+        "video_id": "",
+        "object_entities": (),
+        "object_match_mode": "any",
+        "minimum_object_confidence": 0.3,
+        "author": None,
+        "publish_date_from": None,
+        "publish_date_to": None,
+    }
+    arguments.update(overrides)
+    return controller._run_search(query, 100, "auto", **arguments)
+
+
+def test_run_search_scopes_semantic_query_to_inline_video():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "con ca, L26_V306", translate_vietnamese=False)
+
+    assert mechanism.seen_query == "con ca"
+    assert mechanism.seen_filters.video_ids == ("L26_V306",)
+    assert len(rows) == 1
+    assert "Scope: video L26_V306" in status
+
+
+def test_run_search_merges_inline_scope_with_dropdown_selections():
+    mechanism = RecordingMechanism()
+    _run(
+        mechanism,
+        "con ca, L26",
+        collections=("C02",),
+        video_id="L28_V009",
+        translate_vietnamese=False,
+    )
+
+    assert mechanism.seen_filters.collections == ("C02", "L26")
+    assert mechanism.seen_filters.video_ids == ("L28_V009",)
+
+
+def test_run_search_lists_whole_video_without_clip():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306")
+
+    assert mechanism.listed_videos == ["L26_V306"]
+    assert mechanism.seen_query is None  # embedding path never invoked
+    assert len(rows) == 1 and rows[0]["score"] == 1.0
+    assert status.startswith("Metadata: video L26_V306")
+
+
+def test_run_search_resolves_exact_keyframe_pair():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306, 49")
+
+    assert mechanism.exact_lookups == [("L26_V306", 49)]
+    assert rows[0]["keyframe_id"] == "V01_049"
+    assert status.startswith("Metadata: đúng keyframe")
+
+
+def test_run_search_resolves_multiple_exact_keyframes_in_order():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306_049, L27_V001_007")
+
+    assert mechanism.exact_lookups == [
+        ("L26_V306", 49),
+        ("L27_V001", 7),
+    ]
+    assert [row["keyframe_id"] for row in rows] == ["V01_049", "V01_007"]
+    assert "V01_049, V01_007" in status
+
+
+def test_run_search_reports_missing_exact_keyframes():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306_049, L27_V001_999")
+
+    assert [row["keyframe_id"] for row in rows] == ["V01_049"]
+    assert "Không tìm thấy: L27_V001_999" in status
+
+
+def test_run_search_dedupes_video_inside_typed_collection():
+    """Typing a video plus its own collection must not duplicate its frames."""
+    mechanism = RecordingMechanism()
+
+    def video_rows(video_id):
+        return [mechanism._canned_result(video_id="L26_V306", number=3, vector_id=10)]
+
+    def collection_rows(collection_id):
+        return [
+            mechanism._canned_result(video_id="L26_V306", number=3, vector_id=10),
+            mechanism._canned_result(video_id="L26_V307", number=1, vector_id=11),
+            mechanism._canned_result(video_id="L26_V308", number=1, vector_id=12),
+        ]
+
+    mechanism.get_video_keyframes = video_rows
+    mechanism.get_collection_keyframes = collection_rows
+
+    rows, status = _run(mechanism, "L26_V306, L26")
+
+    assert [row["vector_id"] for row in rows] == [10, 11, 12]
+    assert status.endswith("— 3 keyframes")

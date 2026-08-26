@@ -8,21 +8,20 @@ videos, which production never does.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sqlite3
-import sys
+from pathlib import Path
 
 import numpy as np
 
-DB_PATH = "D:/AIC/aic25-b1-v1/metadata/runtime.sqlite"
-EMBEDDINGS_PATH = "D:/AIC/aic25-b1-v1/index/embeddings.f16.npy"
-BENCHMARK_PATH = "D:/AIC/aic25-b1-v1/reports/trake-benchmark.json"
+DEFAULT_RELEASE_DIR = Path("data/aic25-b1-v1")
 
 NEG = -1e9
 
 
-def load_data():
-    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+def load_data(db_path: str, embeddings_path: str):
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     rows = conn.execute(
         "SELECT vector_id, video_id FROM keyframes ORDER BY video_id, keyframe_no"
     ).fetchall()
@@ -38,7 +37,7 @@ def load_data():
             start = i
 
     embeddings = np.asarray(
-        np.load(EMBEDDINGS_PATH, mmap_mode="r", allow_pickle=False), dtype=np.float32
+        np.load(embeddings_path, mmap_mode="r", allow_pickle=False), dtype=np.float32
     )
     return embeddings, vector_ids, slices
 
@@ -92,10 +91,39 @@ def best_video(embeddings, vector_ids, slices, query_vector_ids, objective):
     return best_name
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--release-dir",
+        type=Path,
+        default=DEFAULT_RELEASE_DIR,
+        help="Built release folder containing metadata/, index/ and reports/",
+    )
+    parser.add_argument(
+        "--benchmark",
+        type=Path,
+        help="Override the benchmark JSON path (default: <release-dir>/reports/trake-benchmark.json)",
+    )
+    parser.add_argument(
+        "objectives",
+        nargs="*",
+        default=None,
+        help="Objectives to score; defaults to all of them",
+    )
+    return parser.parse_args()
+
+
 def main():
-    objectives = sys.argv[1:] or list(OBJECTIVES)
-    embeddings, vector_ids, slices = load_data()
-    benchmark = json.load(open(BENCHMARK_PATH, encoding="utf-8"))
+    args = parse_args()
+    objectives = args.objectives if args.objectives else list(OBJECTIVES)
+    db_path = str(args.release_dir / "metadata" / "runtime.sqlite")
+    embeddings_path = str(args.release_dir / "index" / "embeddings.f16.npy")
+    benchmark_path = args.benchmark or (
+        args.release_dir / "reports" / "trake-benchmark.json"
+    )
+    embeddings, vector_ids, slices = load_data(db_path, embeddings_path)
+    with open(benchmark_path, encoding="utf-8") as handle:
+        benchmark = json.load(handle)
     items = benchmark if isinstance(benchmark, list) else benchmark.get("items", [])
 
     print(f"Benchmark: {len(items)} cases, {len(slices)} videos\n")

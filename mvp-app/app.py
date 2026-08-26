@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+from dataclasses import replace
 from pathlib import Path
 
 try:
@@ -30,8 +31,10 @@ from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
 from db import SearchMechanism
+from query_parser import parse_search_query
 from schemas import SearchFilters
-from trake import TrakeSearcher
+from trake import SUBMISSION_MAX_ROWS, TrakeSearcher, format_submission
+from trake_submission import export_csv_file
 from trake_ui import build_trake_tab
 from trake_ui_render import render_video_player
 from translation import QueryTranslator
@@ -123,7 +126,6 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
     pinned = pinned or {}
     if not rows:
         return "Chưa có kết quả để xem trước."
-    from trake_submission import format_submission
 
     submission_rows = []
 
@@ -142,10 +144,10 @@ def _generate_preview_text(rows: list[dict], pinned: dict = None):
 
         submission_rows.append((video_id, (frame_idx,)))
 
-    # Ensure we don't exceed the original result count if capped
-    submission_rows = submission_rows[:max(100, len(rows))]
+    # The contest accepts at most SUBMISSION_MAX_ROWS lines per file.
+    submission_rows = submission_rows[:SUBMISSION_MAX_ROWS]
 
-    return format_submission(submission_rows, delimiter=",", include_header=False, frame_index_base=0)
+    return format_submission(submission_rows)
 
 
 def _detail_markdown(details) -> str:
@@ -270,9 +272,60 @@ class SearchController:
         *,
         translate_vietnamese: bool | None = None,
     ) -> tuple[list[dict], str]:
+        parsed = parse_search_query(query)
+        mechanism = self.search_mechanism
+
+        # Fast paths: pure metadata input never touches CLIP or translation.
+        if parsed.is_exact_keyframe:
+            rows = []
+            missing = []
+            for exact_video, exact_no in parsed.exact_keyframes:
+                row = mechanism.find_exact_keyframe(exact_video, exact_no)
+                if row is None:
+                    missing.append(f"{exact_video}_{exact_no:03d}")
+                else:
+                    rows.append(row.to_dict())
+            parts = []
+            if rows:
+                parts.append(
+                    "đúng keyframe " + ", ".join(row["keyframe_id"] for row in rows)
+                )
+            if missing:
+                parts.append("Không tìm thấy: " + ", ".join(missing))
+            return rows, "Metadata: " + " | ".join(parts)
+
+        scope_collections = tuple(
+            dict.fromkeys([*(collections or ()), *parsed.collections])
+        )
+        dropdown_video = video_id or None
+        scope_videos = tuple(
+            dict.fromkeys([*parsed.video_ids, *([dropdown_video] if dropdown_video else [])])
+        )
+
+        if parsed.has_scope and not parsed.semantic_text:
+            # A typed video may also sit inside a typed collection — keep the
+            # first occurrence so nothing shows up twice in the gallery.
+            rows = []
+            seen_vector_ids: set[int] = set()
+
+            def _extend(results):
+                for result in results:
+                    if result.vector_id not in seen_vector_ids:
+                        seen_vector_ids.add(result.vector_id)
+                        rows.append(result)
+
+            for video_id_item in parsed.video_ids:
+                _extend(mechanism.get_video_keyframes(video_id_item))
+            for collection_id in parsed.collections:
+                _extend(mechanism.get_collection_keyframes(collection_id))
+            return (
+                [result.to_dict() for result in rows],
+                f"Metadata: {parsed.scope_label} — {len(rows)} keyframes",
+            )
+
         filters = self._search_filters(
-            collections,
-            video_id,
+            scope_collections,
+            None,
             object_entities,
             object_match_mode,
             minimum_object_confidence,
@@ -280,8 +333,9 @@ class SearchController:
             publish_date_from,
             publish_date_to,
         )
+        filters = replace(filters, video_ids=scope_videos)
         outcome = self.search_mechanism.search_by_text(
-            query,
+            parsed.semantic_text or query,
             int(top_k),
             str(query_language).lower(),
             filters,
@@ -299,6 +353,8 @@ class SearchController:
             f"Original query: {outcome.query.original_query} | "
             f"CLIP query: {outcome.query.clip_query}"
         )
+        if parsed.has_scope:
+            status = f"{status} | Scope: {parsed.scope_label}"
         if outcome.query.warning:
             status = f"{status} | {outcome.query.warning}"
         return rows, status
@@ -459,7 +515,8 @@ class SearchController:
             return (
                 gallery,
                 rows,
-                rows,
+                # Separate list objects: the two states are refined independently.
+                list(rows),
                 page_rows,
                 page,
                 status,
@@ -636,7 +693,6 @@ class SearchController:
         if video_path:
             video_html = render_video_player(video_id, video_path, pts, fps, player_id="query-text-player")
 
-        import gradio as gr
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
                 gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)),
                 fps, video_id, int(details.keyframe["frame_idx"]))
@@ -740,28 +796,38 @@ def build_app(
                 page_rows_state = gr.State([])
                 page_state = gr.State(0)
 
-                with gr.Row(equal_height=True):
-                    query = gr.Textbox(
-                        label="Query",
-                        placeholder="Describe the keyframe you want to find",
-                        scale=5,
-                    )
-                    translate_vietnamese = gr.Checkbox(
-                        label="Translate Vietnamese query to English",
-                        value=True,
-                        info="Off: direct multilingual search. On: NLLB translation before search.",
-                        scale=2,
-                    )
-                    top_k = gr.Slider(
-                        label="Top K",
-                        minimum=1,
-                        maximum=200,
-                        step=1,
-                        value=100,
-                        scale=2,
+                # One visual search panel: query, pre-search filters, and the
+                # Search button share a bordered Group so the filters cannot
+                # be overlooked behind a collapsed accordion.
+                with gr.Group():
+                    with gr.Row(equal_height=True):
+                        query = gr.Textbox(
+                            label="Query",
+                            placeholder=(
+                                "Describe the keyframe you want to find — hoặc nhập "
+                                "L26 · L26_V306 · L26_V306_049 · 'con cá, L26'"
+                            ),
+                            scale=5,
+                        )
+                        translate_vietnamese = gr.Checkbox(
+                            label="Translate Vietnamese query to English",
+                            value=True,
+                            info="Off: direct multilingual search. On: NLLB translation before search.",
+                            scale=2,
+                        )
+                        top_k = gr.Slider(
+                            label="Top K",
+                            minimum=1,
+                            maximum=200,
+                            step=1,
+                            value=100,
+                            scale=2,
+                        )
+
+                    gr.Markdown(
+                        "*Bộ lọc (tuỳ chọn) — được áp dụng ngay khi bấm Search*"
                     )
 
-                with gr.Accordion("Filters", open=False):
                     with gr.Row():
                         collections = gr.Dropdown(
                             label="Collections",
@@ -806,7 +872,7 @@ def build_app(
                         publish_date_from = gr.Textbox(label="Published from", placeholder="YYYY-MM-DD")
                         publish_date_to = gr.Textbox(label="Published to", placeholder="YYYY-MM-DD")
 
-                search_button = gr.Button("Search", variant="primary")
+                    search_button = gr.Button("Search", variant="primary")
                 status = gr.Textbox(label="Status", value="Ready", interactive=False)
 
                 with gr.Accordion("Refine current Top K results", open=False):
@@ -1021,7 +1087,6 @@ def build_app(
                     outputs=[preview_textbox],
                     api_name=False,
                 )
-                from trake_submission import export_csv_file
                 export_button.click(
                     fn=export_csv_file,
                     inputs=[preview_textbox, export_filename],

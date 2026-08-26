@@ -149,6 +149,42 @@ def test_build_submission_uses_pinned_frame_over_algorithm_frame():
     assert rows[0][1] == (1000, 2500, 3000)
 
 
+def test_build_submission_promotes_pinned_video_to_top():
+    """A pin must lift its whole video above the untouched ranking — this
+    regressed when the video id was split on ':' instead of the pin separator."""
+    import trake
+
+    ranked_first, ranked_second = _outcome("L21_V001"), _outcome("L21_V002")
+    outcome = TrakeOutcome(
+        videos=(ranked_first.videos[0], ranked_second.videos[0]), queries=()
+    )
+
+    rows = trake.build_submission(
+        outcome,
+        max_rows=trake.SUBMISSION_MAX_ROWS,
+        pinned_frames={pin_key("L21_V002", 2): 4321},
+    )
+    assert rows[0] == ("L21_V002", (1000, 2000, 4321))
+
+
+def test_build_submission_ignores_malformed_pin_keys_for_promotion(monkeypatch):
+    import trake
+
+    ranked_first, ranked_second = _outcome("L21_V001"), _outcome("L21_V002")
+    outcome = TrakeOutcome(
+        videos=(ranked_first.videos[0], ranked_second.videos[0]), queries=()
+    )
+
+    # One row per video so both videos fit under max_rows.
+    monkeypatch.setattr(trake, "SPREAD_ROWS_PER_VIDEO", 1)
+    rows = trake.build_submission(
+        outcome,
+        max_rows=2,
+        pinned_frames={"junk-without-separator": 1},
+    )
+    assert [row[0] for row in rows] == ["L21_V001", "L21_V002"]
+
+
 def test_build_submission_ignores_pins_for_other_videos():
     import trake
 

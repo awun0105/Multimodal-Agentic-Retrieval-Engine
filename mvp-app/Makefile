@@ -3,10 +3,13 @@ PYTHON_VERSION ?= 3.10
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: run setup clean
+.PHONY: run dev setup clean
 
 run: setup
 	@. $(VENV)/bin/activate && exec python app.py
+
+dev: setup
+	@. $(VENV)/bin/activate && exec $(VENV)/bin/gradio app.py
 
 setup:
 	@command -v $(UV) >/dev/null 2>&1 || { echo "Error: uv is not installed or not on PATH." >&2; exit 1; }
