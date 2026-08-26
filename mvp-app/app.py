@@ -277,15 +277,22 @@ class SearchController:
 
         # Fast paths: pure metadata input never touches CLIP or translation.
         if parsed.is_exact_keyframe:
-            row = mechanism.find_exact_keyframe(
-                parsed.exact_video_id, parsed.exact_keyframe_no
-            )
-            if row is None:
-                return [], (
-                    f"Không tìm thấy keyframe "
-                    f"{parsed.exact_video_id}_{parsed.exact_keyframe_no:03d}"
+            rows = []
+            missing = []
+            for exact_video, exact_no in parsed.exact_keyframes:
+                row = mechanism.find_exact_keyframe(exact_video, exact_no)
+                if row is None:
+                    missing.append(f"{exact_video}_{exact_no:03d}")
+                else:
+                    rows.append(row.to_dict())
+            parts = []
+            if rows:
+                parts.append(
+                    "đúng keyframe " + ", ".join(row["keyframe_id"] for row in rows)
                 )
-            return [row.to_dict()], f"Metadata: đúng keyframe {row.keyframe_id}"
+            if missing:
+                parts.append("Không tìm thấy: " + ", ".join(missing))
+            return rows, "Metadata: " + " | ".join(parts)
 
         scope_collections = tuple(
             dict.fromkeys([*(collections or ()), *parsed.collections])
@@ -296,11 +303,21 @@ class SearchController:
         )
 
         if parsed.has_scope and not parsed.semantic_text:
+            # A typed video may also sit inside a typed collection — keep the
+            # first occurrence so nothing shows up twice in the gallery.
             rows = []
+            seen_vector_ids: set[int] = set()
+
+            def _extend(results):
+                for result in results:
+                    if result.vector_id not in seen_vector_ids:
+                        seen_vector_ids.add(result.vector_id)
+                        rows.append(result)
+
             for video_id_item in parsed.video_ids:
-                rows.extend(mechanism.get_video_keyframes(video_id_item))
+                _extend(mechanism.get_video_keyframes(video_id_item))
             for collection_id in parsed.collections:
-                rows.extend(mechanism.get_collection_keyframes(collection_id))
+                _extend(mechanism.get_collection_keyframes(collection_id))
             return (
                 [result.to_dict() for result in rows],
                 f"Metadata: {parsed.scope_label} — {len(rows)} keyframes",

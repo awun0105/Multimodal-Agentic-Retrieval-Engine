@@ -387,12 +387,13 @@ class RecordingMechanism(FakeSearchMechanism):
         self.seen_query = None
         self.seen_filters = None
         self.listed_videos = []
-        self.exact_lookup = None
+        self.listed_collections = []
+        self.exact_lookups = []
 
     @staticmethod
-    def _canned_result(video_id="V01", number=1):
+    def _canned_result(video_id="V01", number=1, vector_id=0):
         return SearchResult(
-            0,
+            vector_id,
             f"{video_id}_{number:03d}",
             video_id,
             "C01",
@@ -419,8 +420,14 @@ class RecordingMechanism(FakeSearchMechanism):
         self.listed_videos.append(video_id)
         return [self._canned_result()]
 
+    def get_collection_keyframes(self, collection_id):
+        self.listed_collections.append(collection_id)
+        return [self._canned_result(video_id="V02", number=1, vector_id=1)]
+
     def find_exact_keyframe(self, video_id, keyframe_no):
-        self.exact_lookup = (video_id, keyframe_no)
+        self.exact_lookups.append((video_id, keyframe_no))
+        if keyframe_no == 999:
+            return None
         return self._canned_result(number=keyframe_no)
 
 
@@ -478,6 +485,49 @@ def test_run_search_resolves_exact_keyframe_pair():
     mechanism = RecordingMechanism()
     rows, status = _run(mechanism, "L26_V306, 49")
 
-    assert mechanism.exact_lookup == ("L26_V306", 49)
+    assert mechanism.exact_lookups == [("L26_V306", 49)]
     assert rows[0]["keyframe_id"] == "V01_049"
     assert status.startswith("Metadata: đúng keyframe")
+
+
+def test_run_search_resolves_multiple_exact_keyframes_in_order():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306_049, L27_V001_007")
+
+    assert mechanism.exact_lookups == [
+        ("L26_V306", 49),
+        ("L27_V001", 7),
+    ]
+    assert [row["keyframe_id"] for row in rows] == ["V01_049", "V01_007"]
+    assert "V01_049, V01_007" in status
+
+
+def test_run_search_reports_missing_exact_keyframes():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306_049, L27_V001_999")
+
+    assert [row["keyframe_id"] for row in rows] == ["V01_049"]
+    assert "Không tìm thấy: L27_V001_999" in status
+
+
+def test_run_search_dedupes_video_inside_typed_collection():
+    """Typing a video plus its own collection must not duplicate its frames."""
+    mechanism = RecordingMechanism()
+
+    def video_rows(video_id):
+        return [mechanism._canned_result(video_id="L26_V306", number=3, vector_id=10)]
+
+    def collection_rows(collection_id):
+        return [
+            mechanism._canned_result(video_id="L26_V306", number=3, vector_id=10),
+            mechanism._canned_result(video_id="L26_V307", number=1, vector_id=11),
+            mechanism._canned_result(video_id="L26_V308", number=1, vector_id=12),
+        ]
+
+    mechanism.get_video_keyframes = video_rows
+    mechanism.get_collection_keyframes = collection_rows
+
+    rows, status = _run(mechanism, "L26_V306, L26")
+
+    assert [row["vector_id"] for row in rows] == [10, 11, 12]
+    assert status.endswith("— 3 keyframes")

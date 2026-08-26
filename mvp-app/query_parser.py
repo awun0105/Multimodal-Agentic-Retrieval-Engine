@@ -28,6 +28,7 @@ NUMBER_RE = re.compile(r"^\d{1,4}$")
 USAGE_HINT = (
     "Cú pháp hợp lệ: 'L26' (collection) · 'L26_V306' (video) · "
     "'L26_V306_049' hoặc 'L26_V306, 49' (đúng 1 keyframe) · "
+    "nhập nhiều keyframe/video ID cách nhau bằng dấu phẩy · "
     "'con cá, L26_V306' (search trong video)"
 )
 
@@ -39,8 +40,7 @@ class ParsedSearchQuery:
     semantic_text: str
     collections: tuple[str, ...] = ()
     video_ids: tuple[str, ...] = ()
-    exact_video_id: str | None = None
-    exact_keyframe_no: int | None = None
+    exact_keyframes: tuple[tuple[str, int], ...] = ()
 
     @property
     def has_scope(self) -> bool:
@@ -48,7 +48,7 @@ class ParsedSearchQuery:
 
     @property
     def is_exact_keyframe(self) -> bool:
-        return self.exact_video_id is not None
+        return bool(self.exact_keyframes)
 
     @property
     def scope_label(self) -> str:
@@ -62,7 +62,11 @@ class ParsedSearchQuery:
     def describe(self) -> str:
         """Human-readable interpretation shown in the Status line."""
         if self.is_exact_keyframe:
-            return f"đúng keyframe {self.exact_video_id}_{self.exact_keyframe_no:03d}"
+            names = ", ".join(
+                f"{video_id}_{keyframe_no:03d}"
+                for video_id, keyframe_no in self.exact_keyframes
+            )
+            return f"đúng keyframe {names}"
         if self.has_scope:
             return self.scope_label
         return self.semantic_text
@@ -96,31 +100,33 @@ def parse_search_query(raw: str) -> ParsedSearchQuery:
         else:
             texts.append(token)
 
-    # An exact keyframe must stand alone: mixing it with other scopes or free
-    # text makes the intent ambiguous, so refuse rather than guess.
+    # Exact-keyframe forms: many full IDs may be typed together, but they must
+    # stand alone — mixing them with scopes or free text is ambiguous, so
+    # refuse rather than guess.
     if explicit_keyframes or numbers:
-        if len(explicit_keyframes) + len(numbers) > 1:
+        if explicit_keyframes and (videos or collections or texts or numbers):
             raise ValueError(
-                f"Chỉ nhận MỘT keyframe chính xác mỗi truy vấn. {USAGE_HINT}"
+                "Keyframe chính xác không được kết hợp với scope/text khác. "
+                f"{USAGE_HINT}"
             )
-        if explicit_keyframes:
-            exact_video_id, exact_no = explicit_keyframes[0]
-            if videos or collections or texts:
+        if numbers:
+            if len(numbers) > 1:
                 raise ValueError(
-                    "Keyframe chính xác không được kết hợp với scope/text khác. "
-                    f"{USAGE_HINT}"
+                    f"Chỉ nhận MỘT 'video, số thứ tự' mỗi truy vấn. {USAGE_HINT}"
                 )
-        else:
             if len(videos) != 1 or collections or texts:
                 raise ValueError(
                     f"'số thứ tự keyframe' chỉ dùng kèm đúng MỘT video ID. {USAGE_HINT}"
                 )
-            exact_video_id, exact_no = videos[0], numbers[0]
+            entries = [(videos[0], numbers[0])]
+        else:
+            entries = explicit_keyframes
+
+        entries = tuple(dict.fromkeys(entries))
         return ParsedSearchQuery(
             semantic_text="",
-            video_ids=(exact_video_id,),
-            exact_video_id=exact_video_id,
-            exact_keyframe_no=exact_no,
+            video_ids=tuple(dict.fromkeys(video for video, _no in entries)),
+            exact_keyframes=entries,
         )
 
     return ParsedSearchQuery(

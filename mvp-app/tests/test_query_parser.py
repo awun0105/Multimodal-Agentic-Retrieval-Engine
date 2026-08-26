@@ -37,8 +37,20 @@ def test_single_video_token():
 def test_exact_keyframe_forms(raw, expected_no):
     parsed = parse_search_query(raw)
     assert parsed.is_exact_keyframe
-    assert parsed.exact_video_id == "L26_V306"
-    assert parsed.exact_keyframe_no == expected_no
+    assert parsed.exact_keyframes == (("L26_V306", expected_no),)
+
+
+def test_multiple_explicit_keyframes_kept_in_typed_order():
+    parsed = parse_search_query("L26_V306_049, L27_V001_003")
+    assert parsed.exact_keyframes == (("L26_V306", 49), ("L27_V001", 3))
+    assert parsed.describe() == (
+        "đúng keyframe L26_V306_049, L27_V001_003"
+    )
+
+
+def test_duplicate_exact_keyframes_are_deduped():
+    parsed = parse_search_query("L26_V306_049, L26_V306_049")
+    assert parsed.exact_keyframes == (("L26_V306", 49),)
 
 
 def test_text_scoped_to_video_in_any_order():
@@ -79,8 +91,13 @@ def test_scope_label_and_description():
 
 
 def test_two_exact_numbers_rejected():
-    with pytest.raises(ValueError, match="MỘT keyframe"):
+    with pytest.raises(ValueError, match="MỘT 'video, số thứ tự'"):
         parse_search_query("L26_V306, 49, 50")
+
+
+def test_number_form_cannot_mix_with_explicit_keyframes():
+    with pytest.raises(ValueError, match="không được kết hợp"):
+        parse_search_query("L21_V001_005, L26_V306, 49")
 
 
 def test_number_without_exactly_one_video_rejected():
