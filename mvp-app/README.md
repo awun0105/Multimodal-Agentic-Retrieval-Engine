@@ -51,7 +51,9 @@ frame = floor(Number(presentationTime.toPrecision(6)) * fps)
 ```
 
 This matches `keyframes.frame_idx` on all 177,321 release rows; `round()`
-disagrees on 22,922 of them and is no longer used anywhere.
+disagrees on 22,922 of them and is no longer used anywhere for local playback.
+YouTube's `getCurrentTime()` lags the rendered frame, so the YouTube branch
+intentionally uses `Math.round()` instead — its values remain Estimated.
 
 Labels you will see next to the number:
 

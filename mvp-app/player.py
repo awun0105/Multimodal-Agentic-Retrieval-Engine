@@ -226,7 +226,11 @@ window.__aiouPlayerBoot = window.__aiouPlayerBoot || function(svgEl){
         if (!player.getCurrentTime) return;
         var ps = player.getPlayerState();
         var t = window.__aiouNormalizeTime(player.getCurrentTime() || 0);
-        st.latest = {frame: Math.floor(t * st.fps), accuracy: 'estimated'};
+        // YouTube-only branch: Math.round compensates getCurrentTime() lagging
+        // the rendered frame by up to half a frame on YT's transcode. The
+        // value stays Estimated — there is no ground truth on YouTube.
+        // Local sources keep floor(); see frame_math.youtube_estimated_frame.
+        st.latest = {frame: Math.round(t * st.fps), accuracy: 'estimated'};
         setFrame(st.latest.frame, 'estimated');
         var bufferingOrUnstarted = (ps === 3 || ps === 5 || ps === -1);
         if (bufferingOrUnstarted && !st.seeking){ st.seeking = true; pinOff(); }
