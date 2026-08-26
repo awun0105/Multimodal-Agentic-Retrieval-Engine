@@ -123,27 +123,44 @@ def _keyframe_directory(data_root: Path) -> Path:
 
 
 
-def _generate_preview_text(rows: list[dict], pinned: dict = None):
-    """One line per video in `videoID, frameID` order. A pin REPLACES that
-    video's prediction and moves to the top — never a second row for the same
-    video, which the organizers' format would reject."""
-    pinned = {str(video_id): int(frame) for video_id, frame in (pinned or {}).items()}
-    if not rows and not pinned:
+def _normalize_kis_pins(pinned: object) -> list[tuple[str, int]]:
+    """Return ordered, unique KIS pins while accepting the legacy dict state."""
+    items = pinned.items() if isinstance(pinned, dict) else pinned or []
+    normalized: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for item in items:
+        try:
+            video_id, frame = item
+            pair = (str(video_id), int(frame))
+        except (TypeError, ValueError):
+            continue
+        if not pair[0] or pair[1] < 0 or pair in seen:
+            continue
+        normalized.append(pair)
+        seen.add(pair)
+    return normalized
+
+
+def _generate_preview_text(rows: list[dict], pinned: object = None):
+    """Put ordered pins first, then preserve ranked keyframe candidates."""
+    pinned_rows = _normalize_kis_pins(pinned)
+    if not rows and not pinned_rows:
         return "Chưa có kết quả để xem trước."
 
-    predictions: dict[str, int] = {}
-    for r in rows:
-        video_id = str(r["video_id"])
-        if video_id not in predictions:
-            predictions[video_id] = int(r["frame_idx"])
-
-    merged: dict[str, int] = dict(predictions)
-    merged.update(pinned)
-
-    ordered_video_ids = [*pinned.keys(), *[v for v in predictions if v not in pinned]]
-    submission_rows = [(v, (merged[v],)) for v in ordered_video_ids]
+    ordered_rows: list[tuple[str, int]] = []
+    seen = set()
+    candidates = [
+        (str(row["video_id"]), int(row["frame_idx"]))
+        for row in rows
+    ]
+    for pair in [*pinned_rows, *candidates]:
+        if pair in seen:
+            continue
+        ordered_rows.append(pair)
+        seen.add(pair)
 
     # The contest accepts at most SUBMISSION_MAX_ROWS lines per file.
+    submission_rows = [(video_id, (frame,)) for video_id, frame in ordered_rows]
     return format_submission(submission_rows[:SUBMISSION_MAX_ROWS])
 
 
@@ -978,7 +995,7 @@ def build_app(
                                         elem_id="query-text-pin-btn",
                                     )
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
-                                pinned_frames_state = gr.State({})
+                                pinned_frames_state = gr.State([])
 
                     with gr.Column(scale=2):
                         detail_metadata = gr.Markdown("Select a keyframe to view metadata")
@@ -1323,12 +1340,14 @@ def process_pin_kis(video_id, kf_frame, current_pins, calc_frame, accuracy):
     else:
         label = f"Keyframe {fallback}"
 
-    new_pins = dict(current_pins or {})
-    new_pins[str(video_id)] = new_frame
+    pair = (str(video_id), new_frame)
+    previous_pins = _normalize_kis_pins(current_pins)
+    ordered_pins = [pair, *(existing for existing in previous_pins if existing != pair)]
+    new_pins = [list(existing) for existing in ordered_pins[:SUBMISSION_MAX_ROWS]]
     return new_pins, f"Đã chốt frame {new_frame} cho video {video_id} ({label})."
 
 def clear_pins_kis():
-    return {}, "Đã gỡ bỏ toàn bộ frame chốt tay."
+    return [], "Đã gỡ bỏ toàn bộ frame chốt tay."
 
 
 def _configured_model_device(value: str, setting_name: str) -> str | None:
