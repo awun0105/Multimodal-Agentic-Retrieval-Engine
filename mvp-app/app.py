@@ -693,8 +693,9 @@ class SearchController:
         if video_path:
             video_html = render_video_player(video_id, video_path, pts, fps, player_id="query-text-player")
 
+        can_step_video = bool(video_path)
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
-                gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)),
+                gr.update(interactive=can_step_video), gr.update(interactive=can_step_video), gr.update(interactive=True),
                 fps, video_id, int(details.keyframe["frame_idx"]))
 
     def details_api(self, keyframe_id: str):

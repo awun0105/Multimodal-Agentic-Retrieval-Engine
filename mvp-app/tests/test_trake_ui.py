@@ -76,6 +76,24 @@ def test_search_events_without_events_shows_friendly_message():
     assert result[3] is None
 
 
+def test_search_events_failure_returns_error_status():
+    class FailingSearcher:
+        def search(self, *_args, **_kwargs):
+            raise RuntimeError("database unavailable")
+
+    result = TrakeController(FailingSearcher()).search_events(True, "event one")
+
+    gallery_update, details, status, outcome, page, page_label, previous, next_ = result
+    assert gallery_update["value"] == []
+    assert details == ""
+    assert status == "Error: database unavailable"
+    assert outcome is None
+    assert page == 0
+    assert page_label == "Page 1 / 1 | 0 results"
+    assert previous["interactive"] is False
+    assert next_["interactive"] is False
+
+
 def test_search_trake_gpu_raises_when_controller_missing(monkeypatch):
     monkeypatch.setattr(trake_ui, "_trake_controller", None)
     with pytest.raises(RuntimeError, match="not been initialized"):

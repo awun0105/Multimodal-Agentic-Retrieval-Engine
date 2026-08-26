@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,8 @@ from trake_ui_render import (
     render_video_player,
 )
 from video_locator import get_video_path
+
+logger = logging.getLogger(__name__)
 
 _trake_controller: TrakeController | None = None
 
@@ -94,15 +97,27 @@ class TrakeController:
                 gr.update(interactive=False),
                 gr.update(interactive=False),
             )
-        started = time.perf_counter()
-        outcome = self.trake_searcher.search(
-            events, translate_vietnamese=bool(translate_vietnamese)
-        )
-        elapsed = time.perf_counter() - started
-        status_markdown = build_status_markdown(outcome, elapsed)
-
-        gal_up, blocks_md, label, prev_up, next_up = self._render_video_page(outcome, 0)
-        return gal_up, blocks_md, status_markdown, outcome, 0, label, prev_up, next_up
+        try:
+            started = time.perf_counter()
+            outcome = self.trake_searcher.search(
+                events, translate_vietnamese=bool(translate_vietnamese)
+            )
+            elapsed = time.perf_counter() - started
+            status_markdown = build_status_markdown(outcome, elapsed)
+            gal_up, blocks_md, label, prev_up, next_up = self._render_video_page(outcome, 0)
+            return gal_up, blocks_md, status_markdown, outcome, 0, label, prev_up, next_up
+        except Exception as exc:
+            logger.exception("TRAKE search failed")
+            return (
+                gr.update(value=[]),
+                "",
+                f"Error: {exc}",
+                None,
+                0,
+                "Page 1 / 1 | 0 results",
+                gr.update(interactive=False),
+                gr.update(interactive=False),
+            )
 
 
     def _render_video_page(self, outcome, page_idx: int):

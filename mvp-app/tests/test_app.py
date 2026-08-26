@@ -351,6 +351,38 @@ def test_page_payload_uses_ten_result_pages_and_rendered_row_mapping(tmp_path):
     assert next_["interactive"] is False
 
 
+def test_select_keyframe_allows_pinning_without_local_video(tmp_path):
+    class DetailSearchMechanism(FakeSearchMechanism):
+        def get_keyframe_details(self, _keyframe_id):
+            return KeyframeDetails(
+                keyframe={
+                    "keyframe_id": "V01_001",
+                    "video_id": "V01",
+                    "collection_id": "C01",
+                    "keyframe_no": 1,
+                    "frame_idx": 90,
+                    "pts_time_sec": 3.0,
+                    "fps": 30.0,
+                    "width": 1280,
+                    "height": 720,
+                },
+                video={},
+                detections=(),
+            )
+
+    controller = SearchController(DetailSearchMechanism(), page_size=10)
+    row = _result_row(tmp_path, "V01_001", "V01", "C01", "Alice", 1.0, 1, 90)
+
+    with patch("app.get_video_path", return_value=None):
+        result = controller.select_keyframe([row], SimpleNamespace(index=0))
+
+    previous_frame_update, next_frame_update, pin_update = result[4:7]
+    assert previous_frame_update["interactive"] is False
+    assert next_frame_update["interactive"] is False
+    assert pin_update["interactive"] is True
+    assert result[-1] == 90
+
+
 def test_generate_preview_text_caps_at_submission_max(tmp_path):
     """Top K up to 200 is allowed; the contest file accepts at most 100 rows."""
     rows = [
