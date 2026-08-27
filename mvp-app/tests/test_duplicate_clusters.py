@@ -82,3 +82,25 @@ def test_summary_counts_pushed_down_frames_not_whole_clusters():
 
 def test_summary_says_so_when_nothing_was_grouped():
     assert "không có ảnh trùng" in SearchController.cluster_summary_text([], 20)
+
+
+def test_representative_is_labelled_in_the_main_gallery(tmp_path):
+    """Knowing which frame a duplicate was folded into is what makes the
+    grouping auditable — the demoted side was already marked, the kept side
+    was not."""
+    from tests.test_search import _make_store
+
+    controller = SearchController(_make_store(tmp_path), page_size=10)
+    image = tmp_path / "frame.jpg"
+    image.write_bytes(b"")
+    rows = [
+        {**_row(1), "image_path": str(image), "pts_time_sec": 1.0, "score": 0.9},
+        {**_row(2, similar_to=1, duplicates=1), "image_path": str(image),
+         "pts_time_sec": 2.0, "score": 0.4},
+    ]
+
+    gallery = controller.page_payload(rows, 0)[0]
+
+    assert "[đại diện]" in gallery[0][1]
+    assert "[gộp x1]" in gallery[1][1]
+    assert "[đại diện]" not in gallery[1][1]

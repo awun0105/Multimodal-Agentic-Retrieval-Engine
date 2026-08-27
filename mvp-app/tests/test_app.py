@@ -142,7 +142,8 @@ def test_click_and_enter_use_the_same_zerogpu_entrypoint():
         getattr(block_function.fn, "__name__", "") for block_function in app.fns.values()
     ]
 
-    assert callback_names.count("search_keyframes_gpu_v2") == 2
+    # Search button, Enter in the query box, and Apply in the refine panel
+    assert callback_names.count("search_keyframes_gpu_v2") == 3
     assert callback_names.count("search_keyframes_gpu") == 1
     assert "search_keyframes" not in callback_names
 

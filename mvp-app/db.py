@@ -16,11 +16,11 @@ from schemas import KeyframeDetails, PreparedQuery, SearchFilters, SearchOutcome
 from translation import QueryTranslator
 
 
-MMR_SIMILARITY_THRESHOLD = 0.95
-MMR_PENALTY_BASE = 0.5
-# same-studio frames with different anchors sit at 0.90-0.94, so grouping only
-# starts above them; the pool is widened because a raw top_k often holds far
-# fewer distinct scenes than slots (measured: 13 scenes across 100 frames)
+MMR_SIMILARITY_THRESHOLD = 0.94
+MMR_PENALTY_BASE = 0.4
+# same-studio frames with different anchors top out at 0.939 cosine, so
+# grouping starts just above them; the pool is widened because a raw top_k
+# often holds far fewer distinct scenes than slots (13 across 100 measured)
 MMR_OVERFETCH = 2
 
 
@@ -113,7 +113,8 @@ class SearchMechanism:
                 f"({self.image_indexer.count}, {self.image_indexer.dimension})"
             )
         self._validate_database_count()
-        self.mmr_enabled: bool = True
+        # first search stays raw; grouping is applied from the refine panel
+        self.mmr_enabled: bool = False
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(f"file:{self.sqlite_file}?mode=ro", uri=True)

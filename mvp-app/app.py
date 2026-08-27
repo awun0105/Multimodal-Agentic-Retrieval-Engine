@@ -250,10 +250,15 @@ class SearchController:
         start = page * self.page_size
         page_rows = rows[start : start + self.page_size]
         rendered_rows = [row for row in page_rows if Path(row["image_path"]).is_file()]
+        # a frame is a representative when others were demoted in its favour
+        anchors = {
+            row["similar_to"] for row in rows if row.get("similar_to") is not None
+        }
         gallery = [
             (
                 row["image_path"],
                 ("[ĐÃ LOẠI] " if row["keyframe_id"] in excluded else "")
+                + ("[đại diện] " if row.get("vector_id") in anchors else "")
                 + (f"[gộp x{row['duplicates']}] " if row.get("duplicates") else "")
                 + f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])} | {row['score']:.4f}",
             )
@@ -1083,12 +1088,6 @@ def build_app(
                             info="Off: direct multilingual search. On: NLLB translation before search.",
                             scale=2,
                         )
-                        mmr_checkbox = gr.Checkbox(
-                            label="Gộp ảnh trùng lặp",
-                            value=True,
-                            info="Tắt nếu thấy gộp nhầm cảnh khác nhau.",
-                            scale=2,
-                        )
                         top_k = gr.Slider(
                             label="Top K",
                             minimum=1,
@@ -1206,6 +1205,16 @@ def build_app(
                             scale=4,
                         )
                         clear_refinements_button = gr.Button("Clear all refinements", scale=1)
+                    with gr.Row(equal_height=True):
+                        mmr_checkbox = gr.Checkbox(
+                            label="Gộp ảnh trùng lặp",
+                            value=False,
+                            info="Tìm lại trên gấp đôi số ảnh rồi đẩy ảnh trùng xuống.",
+                            scale=4,
+                        )
+                        apply_mmr_button = gr.Button(
+                            "Áp dụng", variant="primary", scale=1, elem_id="apply-mmr-btn"
+                        )
 
                 gallery = gr.Gallery(
                     label="Keyframes",
@@ -1448,11 +1457,23 @@ def build_app(
                     outputs=[cluster_summary, cluster_dropdown, cluster_gallery],
                     api_name=False,
                 )
-                # kept out of search_inputs_v2 on purpose: the endpoint parameter count is asserted
-                mmr_checkbox.change(
+                # kept out of search_inputs_v2 on purpose: the endpoint parameter count is asserted.
+                # Applied on demand rather than on toggle: the first search stays raw so the
+                # grouped result can be compared against it.
+                apply_mmr_button.click(
                     fn=controller.set_mmr,
                     inputs=[mmr_checkbox],
                     outputs=[],
+                    api_name=False,
+                ).then(
+                    fn=search_keyframes_gpu_v2,
+                    inputs=search_inputs_v2,
+                    outputs=search_outputs_v2,
+                    api_name=False,
+                ).then(
+                    fn=controller.refresh_clusters,
+                    inputs=[original_results_state],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery],
                     api_name=False,
                 )
                 cluster_dropdown.change(

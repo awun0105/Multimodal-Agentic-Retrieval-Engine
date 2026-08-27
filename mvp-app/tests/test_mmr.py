@@ -247,3 +247,33 @@ def test_pool_scales_with_the_slider_maximum(tmp_path, monkeypatch):
     store.search_by_text("red car", top_k=200)
 
     assert asked == [200 * MMR_OVERFETCH]
+
+
+def test_first_search_is_raw(tmp_path):
+    """Grouping is applied from the refine panel, so the opening result set has
+    to be the unmodified ranking to compare against."""
+    store = _make_store(tmp_path)
+
+    assert store.mmr_enabled is False
+
+
+def test_apply_button_drives_grouping_not_the_checkbox(tmp_path):
+    """Toggling used to take effect immediately, which made the before/after
+    comparison impossible to hold on screen."""
+    from app import build_app
+    from tests.test_search import _make_store as make
+
+    demo = build_app(make(tmp_path))
+    checkboxes = [
+        block
+        for block in demo.blocks.values()
+        if getattr(block, "label", None) == "Gộp ảnh trùng lặp"
+    ]
+    assert checkboxes, "grouping checkbox missing"
+    checkbox_id = checkboxes[0]._id
+    changes = [
+        dep
+        for dep in demo.config["dependencies"]
+        if dep["targets"] and any(t[0] == checkbox_id and t[1] == "change" for t in dep["targets"])
+    ]
+    assert not changes, "checkbox should not re-rank on toggle"
