@@ -1143,8 +1143,8 @@ def build_app(
                 gallery = gr.Gallery(
                     label="Keyframes",
                     show_label=True,
-                    columns=4,
-                    rows=5,
+                    columns=5,
+                    rows=2,
                     height="auto",
                     object_fit="contain",
                     allow_preview=False,

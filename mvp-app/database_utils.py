@@ -19,7 +19,7 @@ DEFAULTS = {
     "MODEL_REVISION": "58edf8cada9e398793dca955574a48cbb7f18be2",
     "CLIP_DEVICE": "auto",
     "FAISS_NPROBE": "32",
-    "RESULTS_PER_PAGE": "20",
+    "RESULTS_PER_PAGE": "10",
     "TRANSLATION_MODEL_ID": "facebook/nllb-200-distilled-600M",
     "TRANSLATION_MODEL_REVISION": "f8d333a098d19b4fd9a8b18f94170487ad3f821d",
     "TRANSLATION_DEVICE": "auto",
