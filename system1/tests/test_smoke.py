@@ -596,7 +596,25 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "batch_id" in joined
         if path.name == "01_worker_structure_pipeline.ipynb":
             assert notebook["cells"][0]["cell_type"] == "markdown"
-            assert "REAL-PROVIDER SMOKE TEST" not in joined
+            cell_sources = [
+                "".join(cell.get("source", []))
+                for cell in notebook["cells"]
+            ]
+            step3_index = next(
+                index
+                for index, source in enumerate(cell_sources)
+                if source.startswith("# BƯỚC 3:")
+            )
+            smoke_index = next(
+                index
+                for index, source in enumerate(cell_sources)
+                if "OPTIONAL REAL-PROVIDER SMOKE TEST" in source
+            )
+            assert smoke_index == step3_index + 1
+            assert "RUN_REAL_PROVIDER_SMOKE = False" in cell_sources[smoke_index]
+            assert notebook["cells"][smoke_index]["metadata"]["tags"] == [
+                "manual-smoke"
+            ]
             assert "YOUR_DATASET" not in joined
             assert 'github_branch = "fix-qwen"' in joined
             assert "providers" not in joined
