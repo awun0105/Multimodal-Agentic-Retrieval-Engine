@@ -75,6 +75,8 @@ class SearchOutcome:
 
     results: tuple[SearchResult, ...]
     query: PreparedQuery
+    # vector_id -> {"duplicates": int, "similar_to": int | None}; empty when grouping is off
+    duplicate_details: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

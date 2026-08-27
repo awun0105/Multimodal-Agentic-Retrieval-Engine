@@ -54,7 +54,7 @@ def test_search_events_forwards_translate_checkbox():
 
     for flag in (True, False):
         searcher = RecordingSearcher()
-        TrakeController(searcher).search_events(flag, "one", "two")
+        TrakeController(searcher).search_events(flag, "dante_min", 0.005, "one", "two")
         assert searcher.seen is flag
 
 
@@ -72,7 +72,7 @@ def test_search_events_without_events_shows_friendly_message():
         def search(self, *_args, **_kwargs):
             raise AssertionError("searcher must not be called without events")
 
-    result = TrakeController(FailingSearcher()).search_events(True, "  ", "")
+    result = TrakeController(FailingSearcher()).search_events(True, "dante_min", 0.005, "  ", "")
     assert "ít nhất một sự kiện" in result[2]
     assert result[3] is None
 
@@ -82,7 +82,7 @@ def test_search_events_failure_returns_error_status():
         def search(self, *_args, **_kwargs):
             raise RuntimeError("database unavailable")
 
-    result = TrakeController(FailingSearcher()).search_events(True, "event one")
+    result = TrakeController(FailingSearcher()).search_events(True, "dante_min", 0.005, "event one")
 
     gallery_update, details, status, outcome, page, page_label, previous, next_ = result
     assert gallery_update["value"] == []
@@ -98,7 +98,7 @@ def test_search_events_failure_returns_error_status():
 def test_search_trake_gpu_raises_when_controller_missing(monkeypatch):
     monkeypatch.setattr(trake_ui, "_trake_controller", None)
     with pytest.raises(RuntimeError, match="not been initialized"):
-        search_trake_gpu(True, "an event")
+        search_trake_gpu(True, "dante_min", 0.005, "an event")
 
 
 # --- Preview / Export ---
@@ -217,6 +217,8 @@ def test_select_gallery_event_populates_image_player_metadata_and_detections(
 
     assert result[0] == str(image)
     assert "data-player=" in result[1]["value"]
+    assert 'id="trake-player-jump-frame"' in result[1]["value"]
+    assert 'id="trake-player-jump-btn"' in result[1]["value"]
     assert "L21_V001" in result[2]
     assert "1280 x 720" in result[2]
     assert result[3][0][:4] == ["Person", 0.9877, "/m/01g317", 1]

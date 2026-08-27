@@ -1,4 +1,4 @@
-﻿"""Adaptive multilingual CLIP text and compatible CLIP image encoding."""
+"""Adaptive multilingual CLIP text and compatible CLIP image encoding."""
 
 from __future__ import annotations
 
@@ -123,7 +123,7 @@ class CLIPSearcher:
                 self.model_id,
                 revision=self.revision,
                 device=self.device,
-                model_kwargs={"dtype": self.dtype},
+                model_kwargs={"torch_dtype": self.dtype},
             ),
         )
         if self.dtype == torch.float16:
@@ -190,7 +190,7 @@ class CLIPSearcher:
                 model_cls.from_pretrained(
                     self.image_model_id,
                     revision=self.image_model_revision,
-                    dtype=self.dtype,
+                    torch_dtype=self.dtype,
                 ),
             )
             model.to(self.device)

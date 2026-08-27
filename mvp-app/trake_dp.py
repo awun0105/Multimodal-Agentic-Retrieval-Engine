@@ -87,3 +87,83 @@ def dp_best_path_min(s: np.ndarray) -> tuple[float, list[int]] | None:
         indices[j] = idx
         idx = int(backtrack[idx, j]) if j > 0 else idx
     return score, indices
+
+
+def dp_best_path_dante(s: np.ndarray, penalty_weight: float) -> tuple[float, list[int]] | None:
+    """Maximise the sum of similarities along the path while penalising temporal distance.
+
+    Formula: DP[j][i] = S[j][i] + max_{i' < i} (DP[j-1][i'] - penalty_weight * (i - i'))
+    """
+    length, events = s.shape
+    if length < events:
+        return None
+    dp = np.full((length, events), -np.inf, dtype=np.float64)
+    backtrack = np.full((length, events), -1, dtype=np.int64)
+    dp[:, 0] = s[:, 0]
+    for j in range(1, events):
+        best_prefix_term = -np.inf
+        best_prefix_idx = -1
+        for i in range(length):
+            if i >= j and best_prefix_idx >= 0:
+                dp[i, j] = s[i, j] + best_prefix_term - penalty_weight * i
+                backtrack[i, j] = best_prefix_idx
+            # running max over dp[i, j-1] + penalty_weight * i
+            val = dp[i, j - 1] + penalty_weight * i
+            if val > best_prefix_term:
+                best_prefix_term = val
+                best_prefix_idx = i
+    last_col = dp[:, events - 1]
+    i_last = int(np.argmax(last_col))
+    score = float(last_col[i_last])
+    if not np.isfinite(score):
+        return None
+    indices = [0] * events
+    idx = i_last
+    for j in range(events - 1, -1, -1):
+        indices[j] = idx
+        idx = int(backtrack[idx, j]) if j > 0 else idx
+    return score, indices
+
+
+def dp_best_path_min_dante(s: np.ndarray, penalty_weight: float) -> tuple[float, list[int]] | None:
+    """Maximise the weakest event on the path (with penalty) instead of the sum.
+
+    Ensures that every event is matched while penalising temporal distance.
+    """
+    length, events = s.shape
+    if length < events:
+        return None
+    dp_min = np.full((length, events), -np.inf, dtype=np.float64)
+    dp_sum = np.full((length, events), -np.inf, dtype=np.float64)
+    backtrack = np.full((length, events), -1, dtype=np.int64)
+    dp_min[:, 0] = s[:, 0]
+    dp_sum[:, 0] = s[:, 0]
+    for j in range(1, events):
+        best_min_term = -np.inf
+        best_sum_term = -np.inf
+        best_idx = -1
+        for i in range(length):
+            if i >= j and best_idx >= 0:
+                dp_min[i, j] = min(best_min_term - penalty_weight * i, s[i, j])
+                dp_sum[i, j] = best_sum_term - penalty_weight * i + s[i, j]
+                backtrack[i, j] = best_idx
+            # Updating running max over: (dp_min + penalty * i, dp_sum + penalty * i)
+            val_min = dp_min[i, j - 1] + penalty_weight * i
+            val_sum = dp_sum[i, j - 1] + penalty_weight * i
+            if (val_min, val_sum) > (best_min_term, best_sum_term):
+                best_min_term = val_min
+                best_sum_term = val_sum
+                best_idx = i
+    last_min = dp_min[:, events - 1]
+    last_sum = dp_sum[:, events - 1]
+    i_last = max(range(length), key=lambda i: (last_min[i], last_sum[i]))
+    score = float(last_min[i_last])
+    if not np.isfinite(score):
+        return None
+    indices = [0] * events
+    idx = i_last
+    for j in range(events - 1, -1, -1):
+        indices[j] = idx
+        idx = int(backtrack[idx, j]) if j > 0 else idx
+    return score, indices
+

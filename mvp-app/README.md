@@ -76,6 +76,12 @@ says so. Submission CSVs contain plain integers — accuracy labels are display
 metadata only. FPS always comes from the selected keyframe row, never from
 video-level metadata.
 
+Both Query Text and TRAKE players also accept a non-negative frame number for
+direct navigation. Press **Đi tới Frame** or Enter to seek the local or YouTube
+source to that frame and leave playback paused. The displayed Current frame is
+still published from the time reported by the player after the seek completes;
+the requested number is never treated as if it had already been presented.
+
 At startup, only `sentence-transformers/clip-ViT-B-32-multilingual-v1` is
 loaded. With `CLIP_DEVICE=auto`, it uses CUDA FP16 when available and falls back
 to CPU FP32 if CUDA runs out of memory. `facebook/nllb-200-distilled-600M` is
