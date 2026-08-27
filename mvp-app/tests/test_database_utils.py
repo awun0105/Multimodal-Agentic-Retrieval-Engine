@@ -71,9 +71,9 @@ def test_default_runtime_models_are_pinned_to_multilingual_clip_and_nllb():
     assert database_utils.DEFAULTS["TRANSLATION_DEVICE"] == "auto"
 
 
-def test_default_page_size_matches_the_four_by_five_gallery():
+def test_default_page_size_matches_the_five_by_two_gallery():
     """A machine without .env must page identically to one with it."""
-    assert database_utils.DEFAULTS["RESULTS_PER_PAGE"] == "20"
+    assert database_utils.DEFAULTS["RESULTS_PER_PAGE"] == "10"
 
 
 def test_prepare_runtime_repairs_corrupt_cached_file(tmp_path, monkeypatch):

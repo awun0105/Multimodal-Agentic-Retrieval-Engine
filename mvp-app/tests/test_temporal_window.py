@@ -148,3 +148,24 @@ def test_zero_window_returns_only_target(tmp_path):
     store = _make_long_video_store(tmp_path)
     rows = store.get_temporal_window("V01_006", before=0, after=0)
     assert [row["keyframe_id"] for row in rows] == ["V01_006"]
+
+
+def test_filmstrip_click_reuses_the_selection_handler(tmp_path):
+    """The filmstrip was rendered but never bound, so clicking a neighbour did nothing."""
+    from app import build_app
+    from tests.test_search import _make_store
+
+    demo = build_app(_make_store(tmp_path))
+    galleries = [
+        block
+        for block in demo.blocks.values()
+        if getattr(block, "elem_id", None) == "neighbour-gallery"
+    ]
+    assert galleries, "filmstrip gallery missing"
+    gallery_id = galleries[0]._id
+    selects = [
+        dep
+        for dep in demo.config["dependencies"]
+        if dep["targets"] and any(t[0] == gallery_id and t[1] == "select" for t in dep["targets"])
+    ]
+    assert selects, "filmstrip has no select handler"

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import squareform
 
 from clip import CLIPSearcher
 from clusterer import ImageIndexer
@@ -16,8 +18,16 @@ from schemas import KeyframeDetails, PreparedQuery, SearchFilters, SearchOutcome
 from translation import QueryTranslator
 
 
-MMR_SIMILARITY_THRESHOLD = 0.92
-MMR_PENALTY_BASE = 0.5
+MMR_SIMILARITY_THRESHOLD = 0.94
+MMR_PENALTY_BASE = 0.4
+# same-studio frames with different anchors top out at 0.939 cosine, so
+# grouping starts just above them; the pool is widened because a raw top_k
+# often holds far fewer distinct scenes than slots (13 across 100 measured)
+MMR_OVERFETCH = 2
+
+# Two readings of the same frames, neither strictly better.
+GROUPING_ANCHOR = "anchor"
+GROUPING_LINKAGE = "linkage"
 
 
 def _apply_mmr(
@@ -55,6 +65,51 @@ def _apply_mmr(
 
     reranked = np.argsort(-adjusted, kind="stable")
     ranked = (adjusted[reranked], np.asarray(vector_ids)[reranked])
+    return (*ranked, details) if return_details else ranked
+
+
+def _apply_linkage(
+    vectors: np.ndarray,
+    scores: np.ndarray,
+    vector_ids: np.ndarray,
+    threshold: float = MMR_SIMILARITY_THRESHOLD,
+    return_details: bool = False,
+):
+    """Keep the best frame of each complete-linkage cluster, demote the rest.
+
+    Resemblance is not transitive here: three views of one pitch measured
+    A-B 0.944, A-C 0.946, B-C 0.853. Penalising against whichever frame ranked
+    higher lets a cluster chain off one close pair until unrelated scenes sit
+    together; requiring every pair inside a cluster to clear the threshold
+    cannot chain.
+    """
+    if len(vector_ids) < 2:
+        return (scores, vector_ids, {}) if return_details else (scores, vector_ids)
+
+    distances = np.clip(1.0 - vectors @ vectors.T, 0.0, None)
+    np.fill_diagonal(distances, 0.0)
+    labels = fcluster(
+        linkage(squareform(distances, checks=False), method="complete"),
+        t=1.0 - threshold,
+        criterion="distance",
+    )
+
+    adjusted = np.array(scores, dtype=np.float64)
+    details: dict[int, dict] = {}
+    for label in np.unique(labels):
+        members = np.where(labels == label)[0]
+        ranked = members[np.argsort(-adjusted[members], kind="stable")]
+        keeper = int(ranked[0])
+        details[int(vector_ids[keeper])] = {"duplicates": 0, "similar_to": None}
+        for position, index in enumerate(ranked[1:], start=1):
+            adjusted[index] = float(scores[index]) * MMR_PENALTY_BASE**position
+            details[int(vector_ids[index])] = {
+                "duplicates": position,
+                "similar_to": int(vector_ids[keeper]),
+            }
+
+    order = np.argsort(-adjusted, kind="stable")
+    ranked = (adjusted[order], np.asarray(vector_ids)[order])
     return (*ranked, details) if return_details else ranked
 
 
@@ -109,7 +164,9 @@ class SearchMechanism:
                 f"({self.image_indexer.count}, {self.image_indexer.dimension})"
             )
         self._validate_database_count()
-        self.mmr_enabled: bool = True
+        # first search stays raw; grouping is applied from the refine panel
+        self.mmr_enabled: bool = False
+        self.grouping_mode: str = GROUPING_ANCHOR
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(f"file:{self.sqlite_file}?mode=ro", uri=True)
@@ -221,18 +278,30 @@ class SearchMechanism:
         # per-call override; the shared flag stays untouched so a concurrent search
         # keeps whatever the user picked on the checkbox
         group_duplicates = self.mmr_enabled if use_mmr is None else bool(use_mmr)
+        # Always widen, so grouping filters the pool the searcher is already
+        # looking at. Fetching only when grouping is on made Apply a second
+        # search over a different set — a frame at rank 150 could vanish
+        # without having been grouped away.
+        fetch_k = top_k * MMR_OVERFETCH
         if filters.active:
             eligible_ids = self._eligible_vector_ids(filters)
-            scores, vector_ids = self._search_filtered(query_vector, eligible_ids, top_k)
+            scores, vector_ids = self._search_filtered(query_vector, eligible_ids, fetch_k)
         else:
-            scores, vector_ids = self.image_indexer.search(query_vector, top_k)
+            scores, vector_ids = self.image_indexer.search(query_vector, fetch_k)
         details: dict[int, dict] = {}
         if group_duplicates and len(vector_ids) > 1:
             # embeddings are stored float16; matmul needs float32 to stay accurate
             vectors = np.asarray(self.embeddings[vector_ids], dtype=np.float32)
-            scores, vector_ids, details = _apply_mmr(
+            group = (
+                _apply_linkage
+                if self.grouping_mode == GROUPING_LINKAGE
+                else _apply_mmr
+            )
+            scores, vector_ids, details = group(
                 vectors, scores, vector_ids, return_details=True
             )
+        scores, vector_ids = scores[:top_k], vector_ids[:top_k]
+        details = {int(v): details[int(v)] for v in vector_ids if int(v) in details}
         results = self._results_for_ids(vector_ids, scores)
         return SearchOutcome(tuple(results), prepared, details)
 
