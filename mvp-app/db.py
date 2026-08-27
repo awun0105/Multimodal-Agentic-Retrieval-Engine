@@ -16,8 +16,12 @@ from schemas import KeyframeDetails, PreparedQuery, SearchFilters, SearchOutcome
 from translation import QueryTranslator
 
 
-MMR_SIMILARITY_THRESHOLD = 0.92
+MMR_SIMILARITY_THRESHOLD = 0.95
 MMR_PENALTY_BASE = 0.5
+# same-studio frames with different anchors sit at 0.90-0.94, so grouping only
+# starts above them; the pool is widened because a raw top_k often holds far
+# fewer distinct scenes than slots (measured: 13 scenes across 100 frames)
+MMR_OVERFETCH = 2
 
 
 def _apply_mmr(
@@ -221,11 +225,12 @@ class SearchMechanism:
         # per-call override; the shared flag stays untouched so a concurrent search
         # keeps whatever the user picked on the checkbox
         group_duplicates = self.mmr_enabled if use_mmr is None else bool(use_mmr)
+        fetch_k = top_k * MMR_OVERFETCH if group_duplicates else top_k
         if filters.active:
             eligible_ids = self._eligible_vector_ids(filters)
-            scores, vector_ids = self._search_filtered(query_vector, eligible_ids, top_k)
+            scores, vector_ids = self._search_filtered(query_vector, eligible_ids, fetch_k)
         else:
-            scores, vector_ids = self.image_indexer.search(query_vector, top_k)
+            scores, vector_ids = self.image_indexer.search(query_vector, fetch_k)
         details: dict[int, dict] = {}
         if group_duplicates and len(vector_ids) > 1:
             # embeddings are stored float16; matmul needs float32 to stay accurate
@@ -233,6 +238,8 @@ class SearchMechanism:
             scores, vector_ids, details = _apply_mmr(
                 vectors, scores, vector_ids, return_details=True
             )
+            scores, vector_ids = scores[:top_k], vector_ids[:top_k]
+            details = {int(v): details[int(v)] for v in vector_ids if int(v) in details}
         results = self._results_for_ids(vector_ids, scores)
         return SearchOutcome(tuple(results), prepared, details)
 

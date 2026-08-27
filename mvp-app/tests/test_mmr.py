@@ -8,7 +8,14 @@ import math
 import numpy as np
 import pytest
 
-from db import MMR_PENALTY_BASE, MMR_SIMILARITY_THRESHOLD, SearchMechanism, _apply_mmr
+from db import (
+    MMR_OVERFETCH,
+    MMR_PENALTY_BASE,
+    MMR_SIMILARITY_THRESHOLD,
+    SearchMechanism,
+    _apply_mmr,
+)
+from tests.test_search import _make_store
 
 
 def _unit(*components: float) -> list[float]:
@@ -165,3 +172,78 @@ def test_search_by_text_signature_unchanged():
         "filters",
         "translate_vietnamese",
     ]
+
+
+def test_same_studio_frames_survive_the_threshold():
+    """Anchors change but the studio fills the frame: measured 0.90-0.94 cosine.
+    Those are distinct scenes and must not be grouped."""
+    for cosine in (0.900, 0.922, 0.931, 0.939):
+        vectors = _pair_at_cosine(cosine)
+        _, _, details = _apply_mmr(
+            vectors,
+            np.asarray([0.9, 0.8], dtype=np.float32),
+            np.asarray([0, 1]),
+            return_details=True,
+        )
+        assert details[1]["duplicates"] == 0, f"cosine {cosine} was grouped"
+
+
+def test_near_identical_frames_are_still_grouped():
+    vectors = _pair_at_cosine(0.97)
+    _, _, details = _apply_mmr(
+        vectors,
+        np.asarray([0.9, 0.8], dtype=np.float32),
+        np.asarray([0, 1]),
+        return_details=True,
+    )
+    assert details[1]["duplicates"] == 1
+
+
+def test_grouping_widens_the_candidate_pool(tmp_path, monkeypatch):
+    """A raw top_k can hold far fewer distinct scenes than slots, so the pool is
+    widened before grouping and trimmed back afterwards."""
+    store = _make_store(tmp_path)
+    asked = []
+    original = store.image_indexer.search
+
+    def record(query, k):
+        asked.append(k)
+        return original(query, k)
+
+    monkeypatch.setattr(store.image_indexer, "search", record)
+
+    store.mmr_enabled = True
+    store.search_by_text("red car", top_k=2)
+    assert asked == [2 * MMR_OVERFETCH]
+
+    asked.clear()
+    store.mmr_enabled = False
+    store.search_by_text("red car", top_k=2)
+    assert asked == [2], "grouping off must not widen the pool"
+
+
+def test_result_count_is_capped_at_top_k(tmp_path):
+    store = _make_store(tmp_path)
+    store.mmr_enabled = True
+
+    outcome = store.search_by_text("red car", top_k=2)
+
+    assert len(outcome.results) <= 2
+    assert set(outcome.duplicate_details) <= {r.vector_id for r in outcome.results}
+
+
+def test_pool_scales_with_the_slider_maximum(tmp_path, monkeypatch):
+    """top_k maxes out at 200; the widened pool follows it rather than capping."""
+    store = _make_store(tmp_path)
+    asked = []
+    original = store.image_indexer.search
+    monkeypatch.setattr(
+        store.image_indexer,
+        "search",
+        lambda query, k: (asked.append(k), original(query, k))[1],
+    )
+    store.mmr_enabled = True
+
+    store.search_by_text("red car", top_k=200)
+
+    assert asked == [200 * MMR_OVERFETCH]
