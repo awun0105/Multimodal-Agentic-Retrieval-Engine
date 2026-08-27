@@ -1402,6 +1402,34 @@ def build_app(
                         "Next", interactive=False, elem_id="next-page-btn"
                     )
 
+                gr.Markdown("---")
+                gr.Markdown("### Ảnh bị gộp trùng")
+                cluster_summary = gr.Markdown(
+                    "Lượt tìm này không có ảnh trùng nào bị gộp."
+                )
+                with gr.Row():
+                    cluster_dropdown = gr.Dropdown(
+                        label="Chọn cụm",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        elem_id="cluster-dropdown",
+                    )
+                    grouped_button = gr.Button(
+                        "Xem ảnh bị gộp trùng", elem_id="grouped-btn"
+                    )
+                    all_frames_button = gr.Button("Bỏ lọc, xem hết")
+                cluster_gallery = gr.Gallery(
+                    label="Ảnh trong cụm",
+                    columns=5,
+                    rows=1,
+                    height="auto",
+                    allow_preview=False,
+                    object_fit="contain",
+                    elem_id="cluster-gallery",
+                )
+                cluster_rows_state = gr.State([])
+
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=3):
                         with gr.Tabs():
@@ -1437,33 +1465,6 @@ def build_app(
                     interactive=False,
                 )
 
-                gr.Markdown("---")
-                gr.Markdown("### Ảnh bị gộp trùng")
-                cluster_summary = gr.Markdown(
-                    "Lượt tìm này không có ảnh trùng nào bị gộp."
-                )
-                with gr.Row():
-                    cluster_dropdown = gr.Dropdown(
-                        label="Chọn cụm",
-                        choices=[],
-                        value=None,
-                        interactive=True,
-                        elem_id="cluster-dropdown",
-                    )
-                    grouped_button = gr.Button(
-                        "Xem ảnh bị gộp trùng", elem_id="grouped-btn"
-                    )
-                    all_frames_button = gr.Button("Bỏ lọc, xem hết")
-                cluster_gallery = gr.Gallery(
-                    label="Ảnh trong cụm",
-                    columns=5,
-                    rows=1,
-                    height="auto",
-                    allow_preview=False,
-                    object_fit="contain",
-                    elem_id="cluster-gallery",
-                )
-                cluster_rows_state = gr.State([])
 
                 gr.Markdown("---")
                 gr.Markdown("### Làm việc với ảnh đang chọn")
