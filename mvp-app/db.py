@@ -278,7 +278,11 @@ class SearchMechanism:
         # per-call override; the shared flag stays untouched so a concurrent search
         # keeps whatever the user picked on the checkbox
         group_duplicates = self.mmr_enabled if use_mmr is None else bool(use_mmr)
-        fetch_k = top_k * MMR_OVERFETCH if group_duplicates else top_k
+        # Always widen, so grouping filters the pool the searcher is already
+        # looking at. Fetching only when grouping is on made Apply a second
+        # search over a different set — a frame at rank 150 could vanish
+        # without having been grouped away.
+        fetch_k = top_k * MMR_OVERFETCH
         if filters.active:
             eligible_ids = self._eligible_vector_ids(filters)
             scores, vector_ids = self._search_filtered(query_vector, eligible_ids, fetch_k)
@@ -296,8 +300,8 @@ class SearchMechanism:
             scores, vector_ids, details = group(
                 vectors, scores, vector_ids, return_details=True
             )
-            scores, vector_ids = scores[:top_k], vector_ids[:top_k]
-            details = {int(v): details[int(v)] for v in vector_ids if int(v) in details}
+        scores, vector_ids = scores[:top_k], vector_ids[:top_k]
+        details = {int(v): details[int(v)] for v in vector_ids if int(v) in details}
         results = self._results_for_ids(vector_ids, scores)
         return SearchOutcome(tuple(results), prepared, details)
 

@@ -199,9 +199,10 @@ def test_near_identical_frames_are_still_grouped():
     assert details[1]["duplicates"] == 1
 
 
-def test_grouping_widens_the_candidate_pool(tmp_path, monkeypatch):
-    """A raw top_k can hold far fewer distinct scenes than slots, so the pool is
-    widened before grouping and trimmed back afterwards."""
+def test_the_pool_is_widened_whether_or_not_grouping_runs(tmp_path, monkeypatch):
+    """Grouping is a filter over the results already on screen. Widening only
+    when it is on would make Apply a second search over a different set, and a
+    frame the searcher was looking at could vanish without being grouped away."""
     store = _make_store(tmp_path)
     asked = []
     original = store.image_indexer.search
@@ -212,14 +213,12 @@ def test_grouping_widens_the_candidate_pool(tmp_path, monkeypatch):
 
     monkeypatch.setattr(store.image_indexer, "search", record)
 
-    store.mmr_enabled = True
-    store.search_by_text("red car", top_k=2)
-    assert asked == [2 * MMR_OVERFETCH]
-
-    asked.clear()
-    store.mmr_enabled = False
-    store.search_by_text("red car", top_k=2)
-    assert asked == [2], "grouping off must not widen the pool"
+    for enabled in (True, False):
+        asked.clear()
+        store.mmr_enabled = enabled
+        outcome = store.search_by_text("red car", top_k=2)
+        assert asked == [2 * MMR_OVERFETCH]
+        assert len(outcome.results) <= 2, "the searcher still sees top_k"
 
 
 def test_result_count_is_capped_at_top_k(tmp_path):
