@@ -694,14 +694,9 @@ class SearchController:
                 raise ValueError("Chọn một keyframe trước khi tìm ảnh giống.")
             vector_id = int(source["vector_id"])
             mechanism = self.search_mechanism
-            was_enabled = getattr(mechanism, "mmr_enabled", False)
-            mechanism.mmr_enabled = False
-            try:
-                outcome = mechanism.search_by_vector(
-                    mechanism.embeddings[vector_id], top_k=int(top_k)
-                )
-            finally:
-                mechanism.mmr_enabled = was_enabled
+            outcome = mechanism.search_by_vector(
+                mechanism.embeddings[vector_id], top_k=int(top_k), use_mmr=False
+            )
             rows = [
                 result.to_dict()
                 for result in outcome.results

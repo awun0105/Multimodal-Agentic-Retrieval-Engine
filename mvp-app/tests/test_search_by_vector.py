@@ -89,6 +89,42 @@ def test_search_by_text_signature_unchanged():
     ]
 
 
+def test_use_mmr_override_leaves_the_shared_flag_untouched(tmp_path):
+    """Two teammates share one process: a per-call override must not leak to the other."""
+    store = _make_store(tmp_path)
+    store.mmr_enabled = True
+
+    store.search_by_vector(np.asarray([1.0, 0.0], dtype=np.float32), top_k=3, use_mmr=False)
+
+    assert store.mmr_enabled is True
+
+
+def test_use_mmr_none_follows_the_shared_flag(tmp_path):
+    store = _make_store(tmp_path)
+    vector = np.asarray([1.0, 0.0], dtype=np.float32)
+
+    store.mmr_enabled = False
+    ungrouped = store.search_by_vector(vector, top_k=3)
+    store.mmr_enabled = True
+    grouped = store.search_by_vector(vector, top_k=3)
+
+    assert ungrouped.duplicate_details == {}
+    assert grouped.duplicate_details != {}
+
+
+def test_bad_top_k_fails_before_translation(tmp_path, monkeypatch):
+    """Validating after translation would burn NLLB + CLIP on an input we already reject."""
+    store = _make_store(tmp_path)
+
+    def explode(*_args, **_kwargs):
+        raise AssertionError("top_k must be rejected before the translator runs")
+
+    monkeypatch.setattr(store.translator, "prepare", explode)
+
+    with pytest.raises(ValueError, match="top_k"):
+        store.search_by_text("red car", top_k=201)
+
+
 def test_no_image_model_is_loaded_during_vector_search(tmp_path, monkeypatch):
     """Loading the second CLIP model mid-contest would stall the app for minutes."""
     store = _make_store(tmp_path)

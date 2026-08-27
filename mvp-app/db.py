@@ -164,6 +164,10 @@ class SearchMechanism:
         *,
         translate_vietnamese: bool | None = None,
     ) -> SearchOutcome:
+        # checked before translation + CLIP so a bad top_k fails in microseconds
+        top_k = int(top_k)
+        if top_k < 1 or top_k > 200:
+            raise ValueError("top_k must be in [1, 200]")
         if translate_vietnamese is None:
             prepared = self.translator.prepare(query, query_language)
         else:
@@ -183,11 +187,14 @@ class SearchMechanism:
         vector: np.ndarray,
         top_k: int = 100,
         filters: SearchFilters | None = None,
+        use_mmr: bool | None = None,
     ) -> SearchOutcome:
         """Rank against a raw embedding — for 'more like this frame' on a result.
 
         Frames already in the corpus carry their own embedding, so the caller passes
         `self.embeddings[vector_id]` and no image encoder is ever loaded.
+        Pass `use_mmr=False` for this call alone: duplicate grouping penalises exactly
+        the near-identical frames this search exists to surface.
         """
         query_vector = _normalize_query_vector(vector, self.embeddings.shape[1])
         # no text to translate here, so bypass the translator rather than feed it ""
@@ -198,7 +205,7 @@ class SearchMechanism:
             detected_language="auto",
             translation_enabled=False,
         )
-        return self._rank(query_vector, top_k, filters or SearchFilters(), prepared)
+        return self._rank(query_vector, top_k, filters or SearchFilters(), prepared, use_mmr)
 
     def _rank(
         self,
@@ -206,17 +213,21 @@ class SearchMechanism:
         top_k: int,
         filters: SearchFilters,
         prepared: PreparedQuery,
+        use_mmr: bool | None = None,
     ) -> SearchOutcome:
         top_k = int(top_k)
         if top_k < 1 or top_k > 200:
             raise ValueError("top_k must be in [1, 200]")
+        # per-call override; the shared flag stays untouched so a concurrent search
+        # keeps whatever the user picked on the checkbox
+        group_duplicates = self.mmr_enabled if use_mmr is None else bool(use_mmr)
         if filters.active:
             eligible_ids = self._eligible_vector_ids(filters)
             scores, vector_ids = self._search_filtered(query_vector, eligible_ids, top_k)
         else:
             scores, vector_ids = self.image_indexer.search(query_vector, top_k)
         details: dict[int, dict] = {}
-        if self.mmr_enabled and len(vector_ids) > 1:
+        if group_duplicates and len(vector_ids) > 1:
             # embeddings are stored float16; matmul needs float32 to stay accurate
             vectors = np.asarray(self.embeddings[vector_ids], dtype=np.float32)
             scores, vector_ids, details = _apply_mmr(
