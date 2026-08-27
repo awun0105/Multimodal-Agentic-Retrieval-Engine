@@ -96,7 +96,13 @@ class TrakeController:
             return 2
         return 1
 
-    def search_events(self, translate_vietnamese: bool, *event_texts: str):
+    def search_events(
+        self,
+        translate_vietnamese: bool,
+        ranking_objective: str,
+        penalty_weight: float,
+        *event_texts: str,
+    ):
         events = [e for e in event_texts if e and e.strip()]
         if not events:
             # Friendly guard instead of a ValueError escaping into the UI.
@@ -113,7 +119,10 @@ class TrakeController:
         try:
             started = time.perf_counter()
             outcome = self.trake_searcher.search(
-                events, translate_vietnamese=bool(translate_vietnamese)
+                events,
+                translate_vietnamese=bool(translate_vietnamese),
+                penalty_weight=float(penalty_weight),
+                ranking_objective=str(ranking_objective),
             )
             elapsed = time.perf_counter() - started
             status_markdown = build_status_markdown(outcome, elapsed)
@@ -429,11 +438,11 @@ def reset_selected_keyframe():
 
 
 @spaces.GPU(duration=120)
-def search_trake_gpu(translate_vietnamese, *event_texts):
+def search_trake_gpu(translate_vietnamese, ranking_objective, penalty_weight, *event_texts):
     """Run TRAKE event-chain retrieval without passing unpicklable state to ZeroGPU."""
     if _trake_controller is None:
         raise RuntimeError("TRAKE controller has not been initialized")
-    return _trake_controller.search_events(translate_vietnamese, *event_texts)
+    return _trake_controller.search_events(translate_vietnamese, ranking_objective, penalty_weight, *event_texts)
 
 
 def build_trake_tab(
@@ -467,6 +476,26 @@ def build_trake_tab(
                 label="Translate Vietnamese query to English",
                 value=True,
                 info="Off: direct multilingual search. On: NLLB translation before search.",
+            )
+        with gr.Row():
+            ranking_objective = gr.Dropdown(
+                label="Ranking Objective",
+                choices=[
+                    ("Min (No penalty)", "min"),
+                    ("Sum (No penalty)", "sum"),
+                    ("DANTE Sum (With penalty)", "dante"),
+                    ("DANTE Min (With penalty)", "dante_min"),
+                ],
+                value="dante_min",
+                info="Objective function for temporal alignment dynamic programming.",
+            )
+            penalty_weight = gr.Slider(
+                label="Penalty Weight (λ)",
+                minimum=0.0,
+                maximum=0.05,
+                step=0.001,
+                value=0.005,
+                info="Temporal distance penalty. Active only for DANTE objectives.",
             )
 
     search_button = gr.Button("Search event chain", variant="primary")
@@ -559,7 +588,18 @@ def build_trake_tab(
         api_name=False,
     )
 
-    search_inputs = [translate_vietnamese, *event_boxes]
+    def update_penalty_slider(objective):
+        is_dante = objective in {"dante", "dante_min"}
+        return gr.update(interactive=is_dante)
+
+    ranking_objective.change(
+        update_penalty_slider,
+        inputs=[ranking_objective],
+        outputs=[penalty_weight],
+        api_name=False,
+    )
+
+    search_inputs = [translate_vietnamese, ranking_objective, penalty_weight, *event_boxes]
     search_outputs = [gallery, results, status, outcome_state, current_page_idx, page_label, prev_btn_pg, next_btn_pg]
     # Pins name a video and an event slot, not a query — carrying them into the next
     # search would silently rewrite the new answer's frames.
