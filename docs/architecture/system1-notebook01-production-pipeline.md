@@ -278,10 +278,9 @@ gate counts and failures stay in diagnostics. Thresholds are versioned in
 `phase01.yaml` and participate in the OCR stage fingerprint.
 
 Each shot has exactly one caption row generated from its selected
-representative keyframe. Qwen2.5-VL-7B-Instruct is primary and must return
-strict `shot_caption_response_v3` JSON including bilingual captions,
-objects/actions, visible-text summary, and scene type. The caption rows retain
-the canonical `shot_captions_v3` contract.
+representative keyframe. Qwen2.5-VL-7B-Instruct is primary and generates each
+caption field as plain text using the prompt-version mapping in `models.yaml`.
+The caption rows use the canonical `shot_captions_v4` contract.
 
 ```json
 {

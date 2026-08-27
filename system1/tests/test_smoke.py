@@ -595,6 +595,10 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "worker_id" in joined
             assert "batch_id" in joined
         if path.name == "01_worker_structure_pipeline.ipynb":
+            assert notebook["cells"][0]["cell_type"] == "markdown"
+            assert "REAL-PROVIDER SMOKE TEST" not in joined
+            assert "YOUR_DATASET" not in joined
+            assert 'github_branch = "fix-qwen"' in joined
             assert "providers" not in joined
             assert "--providers" not in joined
             assert "AIOU26_release" in joined

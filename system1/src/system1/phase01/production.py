@@ -47,7 +47,6 @@ from system1.shots import (
     scenes_to_shot_rows,
 )
 from system1.vlm import (
-    TEXT_BUNDLE_VERSIONS,
     TEXT_RESPONSE_SCHEMA,
     BatchRequestError,
     ExclusiveLocalFallbackClient,
@@ -1811,6 +1810,27 @@ def _string_list(payload: Mapping[str, Any], key: str) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _configured_prompt_versions(
+    model_config: Mapping[str, Any],
+    *,
+    expected_fields: set[str],
+    bundle_version: str,
+) -> dict[str, str]:
+    configured = model_config.get("prompt_versions")
+    if not isinstance(configured, Mapping):
+        raise TypeError(
+            f"Invalid prompt_versions for {bundle_version}: expected a mapping"
+        )
+    bundle = {str(field): str(version) for field, version in configured.items()}
+    if set(bundle) != expected_fields or any(
+        not version.strip() for version in bundle.values()
+    ):
+        raise ValueError(
+            f"Invalid prompt bundle {bundle_version}: expected {sorted(expected_fields)}"
+        )
+    return bundle
+
+
 def _build_captions(
     *,
     video_id: str,
@@ -1827,12 +1847,11 @@ def _build_captions(
         if row["is_representative"]
     }
     bundle_version = str(model_config["prompt_bundle_version"])
-    bundle = TEXT_BUNDLE_VERSIONS[bundle_version]
-    if set(bundle) != set(SHOT_CAPTION_FIELDS):
-        raise ValueError(
-            f"Invalid shot caption prompt bundle {bundle_version}: "
-            f"expected {sorted(SHOT_CAPTION_FIELDS)}"
-        )
+    bundle = _configured_prompt_versions(
+        model_config,
+        expected_fields=set(SHOT_CAPTION_FIELDS),
+        bundle_version=bundle_version,
+    )
 
     ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
     ordered_shots = sorted(shots, key=lambda row: str(row["shot_id"]))
@@ -2098,9 +2117,11 @@ def _build_scene_summaries(
     summary_config,
 ):
     bundle_version = str(model_config["prompt_bundle_version"])
-    bundle = TEXT_BUNDLE_VERSIONS[bundle_version]
-    if set(bundle) != {"summary_vi", "summary_en"}:
-        raise ValueError(f"Invalid scene summary prompt bundle: {bundle_version}")
+    bundle = _configured_prompt_versions(
+        model_config,
+        expected_fields={"summary_vi", "summary_en"},
+        bundle_version=bundle_version,
+    )
 
     captions_by_shot = {str(row["shot_id"]): row for row in captions}
     ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)

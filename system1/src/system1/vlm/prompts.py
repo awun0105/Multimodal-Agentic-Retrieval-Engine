@@ -13,23 +13,6 @@ from typing import Any
 
 _PROMPT_ROOT = Path(__file__).resolve().parents[3] / "prompts"
 
-TEXT_BUNDLE_VERSIONS: dict[str, dict[str, str]] = {
-    "shot_caption_plain_text_fields_v1": {
-        "caption_vi": "shot_caption_vi_v1",
-        "caption_en": "shot_caption_en_v1",
-        "objects_vi": "shot_objects_vi_v1",
-        "objects_en": "shot_objects_en_v1",
-        "actions_vi": "shot_actions_vi_v1",
-        "actions_en": "shot_actions_en_v1",
-        "visible_text_summary_vi": "shot_visible_text_summary_vi_v1",
-        "visible_text_summary_en": "shot_visible_text_summary_en_v1",
-    },
-    "scene_summary_plain_text_v2": {
-        "summary_vi": "scene_summary_vi_v2",
-        "summary_en": "scene_summary_en_v2",
-    },
-}
-
 _TEMPLATE_CACHE: dict[str, str] = {}
 
 

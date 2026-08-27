@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "scene_summaries_v2",
+  "title": "scene_summaries_v3",
   "type": "object",
   "required": ["scene_id", "video_id", "summary_vi", "summary_en", "provider", "model_name", "model_version", "prompt_version", "schema_version", "confidence", "status"],
   "properties": {

@@ -119,7 +119,11 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
 
     assert (
         phase01["schemas"]["shot_captions"]
-        == "shot_captions_v3"
+        == "shot_captions_v4"
+    )
+    assert (
+        phase01["schemas"]["scene_summaries"]
+        == "scene_summaries_v3"
     )
 
     assert (
@@ -376,7 +380,10 @@ def test_build_captions_submits_all_shots_through_request_many(
         }
         for index, shot in enumerate(shots)
     ]
-    model_config = load_configs(CONFIG_DIR)["models"]["phase01"]["shot_caption"]
+    model_config = copy.deepcopy(
+        load_configs(CONFIG_DIR)["models"]["phase01"]["shot_caption"]
+    )
+    model_config["prompt_versions"]["caption_vi"] = "shot_caption_en_v1"
 
     rows = _build_captions(
         video_id="L21_V001",
@@ -400,6 +407,7 @@ def test_build_captions_submits_all_shots_through_request_many(
         "visible_text_summary_vi",
         "visible_text_summary_en",
     ]
+    assert client.batches[0][0].prompt_version == "shot_caption_en_v1"
     assert [row["caption_en"] for row in rows] == ["Scene 0", "Scene 1"]
     assert rows[0]["objects_vi"] == ["người"]
     assert rows[0]["actions_vi"] == []
@@ -493,6 +501,8 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
         environment="local",
     )
     client = RecordingClient()
+    model_config = copy.deepcopy(resolved.payload["models"]["scene_summary"])
+    model_config["prompt_versions"]["summary_vi"] = "scene_summary_en_v2"
 
     rows = _build_scene_summaries(
         video_id="L21_V001",
@@ -505,7 +515,7 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
         scene_links=[],
         stage_dir=stage_dir,
         client=client,
-        model_config=resolved.payload["models"]["scene_summary"],
+        model_config=model_config,
         summary_config=resolved.payload["phase01"]["scene_summary"],
     )
 
@@ -513,6 +523,7 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
         ["scene_summary_vi"],
         ["scene_summary_en"],
     ]
+    assert client.batches[0][0].prompt_version == "scene_summary_en_v2"
     assert rows[0]["summary_vi"] == "Một người đang phát biểu."
     assert rows[0]["summary_en"] == "A person is speaking."
     assert rows[0]["provider"] == "mixed"
@@ -525,7 +536,7 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
 @pytest.mark.parametrize(
     "provider", ["qwen_local", "vintern_reasoning_local", "mixed"]
 )
-def test_scene_summaries_v2_accepts_local_and_fallback_provenance(
+def test_scene_summaries_v3_accepts_local_and_fallback_provenance(
     provider: str,
 ) -> None:
     validate_rows(

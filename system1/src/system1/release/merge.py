@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import shutil
 import unicodedata
 from pathlib import Path
@@ -28,6 +28,10 @@ FEATURE_TABLES = [
     "objects",
     "text_sources",
 ]
+
+
+def _is_complete_status(value: object) -> bool:
+    return str(value) in {"pass", "complete", "complete_local"}
 
 
 def merge_worker_outputs(release_dir: Path | str) -> Path:
@@ -89,11 +93,18 @@ def merge_worker_outputs(release_dir: Path | str) -> Path:
         feature_manifest = json.loads((feature_dir / "feature_manifest.json").read_text(encoding="utf-8"))
         feature_manifests.append(feature_manifest)
         _materialize_runtime_media(release_path, video_id, structure_dir)
+        structure_status = structure_manifest.get("status", "unknown")
+        feature_status = feature_manifest.get("status", "unknown")
         video_status_rows.append({
             "video_id": video_id,
-            "structure_status": structure_manifest.get("status", "unknown"),
-            "feature_status": feature_manifest.get("status", "unknown"),
-            "status": "complete" if structure_manifest.get("status") == "pass" and feature_manifest.get("status") == "pass" else "partial",
+            "structure_status": structure_status,
+            "feature_status": feature_status,
+            "status": (
+                "complete"
+                if _is_complete_status(structure_status)
+                and _is_complete_status(feature_status)
+                else "partial"
+            ),
         })
         quality_rows.append({
             "video_id": video_id,

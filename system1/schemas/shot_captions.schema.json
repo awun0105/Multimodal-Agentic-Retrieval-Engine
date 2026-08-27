@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "shot_captions_v3",
+  "title": "shot_captions_v4",
   "type": "object",
   "required": [
     "shot_caption_id",

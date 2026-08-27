@@ -6,30 +6,24 @@ from .client import (
     StructuredClient,
     SystemicProviderError,
 )
-
-from .prompts import (
-    TEXT_BUNDLE_VERSIONS,
-    build_text_prompt,
-)
-
 from .contracts import (
-    ModelRequest,
     TEXT_RESPONSE_SCHEMA,
+    ModelRequest,
     build_request_hash,
     normalize_text_response,
 )
+from .prompts import build_text_prompt
 
 __all__ = [
+    "TEXT_RESPONSE_SCHEMA",
     "BatchRequestError",
     "ExclusiveLocalFallbackClient",
     "LocalVisionStructuredClient",
     "MetadataStructuredClient",
     "ModelRequest",
-    "TEXT_RESPONSE_SCHEMA",
-    "build_request_hash",
-    "normalize_text_response",
-    "TEXT_BUNDLE_VERSIONS",
-    "build_text_prompt",
     "StructuredClient",
     "SystemicProviderError",
+    "build_request_hash",
+    "build_text_prompt",
+    "normalize_text_response",
 ]
