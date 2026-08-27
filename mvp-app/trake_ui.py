@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -28,11 +29,15 @@ except ImportError:
 
 import gradio as gr
 
-from schemas import TrakeOutcome
+from frame_math import validate_frame
+from keyframe_details import detail_markdown, detection_rows
+from player import build_player, resolve_player_source
+from schemas import KeyframeDetails, TrakeOutcome
 from trake import (
     MAX_EVENTS,
     MIN_EVENTS,
     SPREAD_RADIUS,
+    SUBMISSION_MAX_ROWS,
     build_submission,
     format_submission,
 )
@@ -40,9 +45,10 @@ from trake_submission import build_submission as build_submission_rows
 from trake_submission import export_csv_file, parse_pin_key, pin_key
 from trake_ui_render import (
     build_status_markdown,
-    render_video_player,
 )
 from video_locator import get_video_path
+
+logger = logging.getLogger(__name__)
 
 _trake_controller: TrakeController | None = None
 
@@ -50,8 +56,9 @@ _trake_controller: TrakeController | None = None
 class TrakeController:
     """UI callbacks bound to one TrakeSearcher instance."""
 
-    def __init__(self, trake_searcher: Any) -> None:
+    def __init__(self, trake_searcher: Any, keyframe_details_provider: Any = None) -> None:
         self.trake_searcher = trake_searcher
+        self.keyframe_details_provider = keyframe_details_provider
 
     @staticmethod
     def _resize(new_count: int, *, clear_hidden: bool) -> tuple[Any, ...]:
@@ -79,17 +86,51 @@ class TrakeController:
             max(MIN_EVENTS, int(visible_count) - 1), clear_hidden=True
         )
 
+    @staticmethod
+    def _videos_per_page(event_count: int) -> int:
+        if event_count == 1:
+            return 10
+        if event_count == 2:
+            return 4
+        if event_count <= 4:
+            return 2
+        return 1
+
     def search_events(self, translate_vietnamese: bool, *event_texts: str):
         events = [e for e in event_texts if e and e.strip()]
-        started = time.perf_counter()
-        outcome = self.trake_searcher.search(
-            events, translate_vietnamese=bool(translate_vietnamese)
-        )
-        elapsed = time.perf_counter() - started
-        status_markdown = build_status_markdown(outcome, elapsed)
-
-        gal_up, blocks_md, label, prev_up, next_up = self._render_video_page(outcome, 0)
-        return gal_up, blocks_md, status_markdown, outcome, 0, label, prev_up, next_up
+        if not events:
+            # Friendly guard instead of a ValueError escaping into the UI.
+            return (
+                gr.update(value=[]),
+                "",
+                "Hãy nhập mô tả cho ít nhất một sự kiện.",
+                None,
+                0,
+                "Page 1 / 1 | 0 results",
+                gr.update(interactive=False),
+                gr.update(interactive=False),
+            )
+        try:
+            started = time.perf_counter()
+            outcome = self.trake_searcher.search(
+                events, translate_vietnamese=bool(translate_vietnamese)
+            )
+            elapsed = time.perf_counter() - started
+            status_markdown = build_status_markdown(outcome, elapsed)
+            gal_up, blocks_md, label, prev_up, next_up = self._render_video_page(outcome, 0)
+            return gal_up, blocks_md, status_markdown, outcome, 0, label, prev_up, next_up
+        except Exception as exc:
+            logger.exception("TRAKE search failed")
+            return (
+                gr.update(value=[]),
+                "",
+                f"Error: {exc}",
+                None,
+                0,
+                "Page 1 / 1 | 0 results",
+                gr.update(interactive=False),
+                gr.update(interactive=False),
+            )
 
 
     def _render_video_page(self, outcome, page_idx: int):
@@ -104,20 +145,16 @@ class TrakeController:
         total_videos = len(outcome.videos)
         num_events = len(outcome.videos[0].events)
 
+        per_page = self._videos_per_page(num_events)
         if num_events == 1:
-            per_page = 10
             columns = 5
         elif num_events == 2:
-            per_page = 4
             columns = 4
         elif num_events == 3:
-            per_page = 2
             columns = 3
         elif num_events == 4:
-            per_page = 2
             columns = 4
         else:
-            per_page = 1
             columns = num_events
 
         total_pages = max(1, math.ceil(total_videos / per_page))
@@ -140,13 +177,96 @@ class TrakeController:
 
         total_videos = len(outcome.videos)
         num_events = len(outcome.videos[0].events)
-        per_page = 10 if num_events == 1 else (4 if num_events == 2 else (2 if num_events <= 4 else 1))
+        per_page = self._videos_per_page(num_events)
 
         import math
         total_pages = max(1, math.ceil(total_videos / per_page))
         new_idx = page_idx + delta
         new_idx = max(0, min(new_idx, total_pages - 1))
         return new_idx, *self._render_video_page(outcome, new_idx)
+
+    def select_gallery_event(self, outcome, page_idx: int, gallery_index: int):
+        unchanged = (gr.update(),) * 11
+        if not outcome or not outcome.videos:
+            return unchanged
+
+        total_videos = len(outcome.videos)
+        num_events = len(outcome.videos[0].events) if total_videos > 0 else 1
+        per_page = self._videos_per_page(num_events)
+        start_idx = int(page_idx) * per_page
+        page_videos = outcome.videos[start_idx : start_idx + per_page]
+        local_index = int(
+            gallery_index[0] if isinstance(gallery_index, tuple) else gallery_index
+        )
+        found = _selected_event(page_videos, local_index)
+        if found is None:
+            return unchanged
+        video, event = found
+
+        details = self._keyframe_details(video, event)
+        keyframe = details.keyframe
+        video_metadata = details.video
+        video_id = str(keyframe["video_id"])
+        fps = float(keyframe["fps"])
+        frame_idx = int(keyframe["frame_idx"])
+        pts_time_sec = float(keyframe["pts_time_sec"])
+        image_path = str(keyframe.get("image_path") or event.image_path)
+        watch_url = str(video_metadata.get("watch_url") or "")
+        video_path = get_video_path(video_id)
+        player = build_player(
+            video_id,
+            local_path=video_path,
+            watch_url=watch_url,
+            pts_time_sec=pts_time_sec,
+            fps=fps,
+            player_id="trake-player",
+            pin_button_id="trake-pin-btn",
+        )
+        source_kind, _source = resolve_player_source(
+            local_path=video_path,
+            watch_url=watch_url,
+        )
+        step_enabled = gr.update(interactive=source_kind != "none")
+
+        return (
+            image_path,
+            gr.update(value=player),
+            detail_markdown(details),
+            detection_rows(details),
+            step_enabled,
+            step_enabled,
+            gr.update(interactive=True),
+            fps,
+            video_id,
+            event.event_index,
+            frame_idx,
+        )
+
+    def _keyframe_details(self, video, event) -> KeyframeDetails:
+        provider = self.keyframe_details_provider
+        if provider is not None and hasattr(provider, "get_keyframe_details"):
+            try:
+                return provider.get_keyframe_details(event.keyframe_id)
+            except Exception:
+                logger.exception("Unable to load TRAKE keyframe details: %s", event.keyframe_id)
+
+        return KeyframeDetails(
+            keyframe={
+                "keyframe_id": event.keyframe_id,
+                "video_id": event.video_id,
+                "collection_id": video.collection_id,
+                "keyframe_no": event.keyframe_no,
+                "frame_idx": event.frame_idx,
+                "pts_time_sec": event.pts_time_sec,
+                "fps": event.fps,
+                "image_path": event.image_path,
+            },
+            video={
+                "title": video.title,
+                "author": video.author,
+                "watch_url": getattr(video, "watch_url", "") or "",
+            },
+        )
 
     @staticmethod
     def _build_rows(
@@ -171,7 +291,10 @@ class TrakeController:
             for row in build_submission(outcome, pinned_frames=pinned_frames)
             if row not in primary and row[0] in answered
         ]
-        return primary + spread, len(primary)
+        # The 100-row contest budget counts the answers too — jitter only fills
+        # whatever room is left after one row per ranked video.
+        rows = (primary + spread)[:SUBMISSION_MAX_ROWS]
+        return rows, len(primary)
 
     def preview_submission(
         self, outcome: TrakeOutcome | None, pinned_frames: dict
@@ -179,13 +302,6 @@ class TrakeController:
         if not outcome:
             return gr.update(value="No search results to preview.")
         rows, _ = self._build_rows(outcome, pinned_frames)
-        pinned_counts: dict[str, int] = {}
-        for key in pinned_frames or {}:
-            parsed = parse_pin_key(key)
-            if parsed is None:
-                continue
-            video_id, _event_index = parsed
-            pinned_counts[video_id] = pinned_counts.get(video_id, 0) + 1
         content = format_submission(rows)
         return gr.update(value=content)
 
@@ -194,28 +310,39 @@ class TrakeController:
 
 PINNED_HEADING = "**Danh sách các Frame đã chốt (Pinned):**"
 PINNED_EMPTY_MARKDOWN = f"{PINNED_HEADING}\n*Chưa có frame nào.*"
+EMPTY_PLAYER_HTML = (
+    "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>"
+)
 
 
-def render_pinned_frames(pinned_frames: dict) -> str:
+def render_pinned_frames(pinned_frames: dict, accuracies: dict | None = None) -> str:
     if not pinned_frames:
         return PINNED_EMPTY_MARKDOWN
+    accuracies = accuracies or {}
     lines = [PINNED_HEADING]
     for key, frame_id in pinned_frames.items():
         parsed = parse_pin_key(key)
         if parsed is None:
             continue
         video_id, event_index = parsed
+        suffix = ""
+        accuracy = accuracies.get(key)
+        if accuracy == "calculated":
+            suffix = " *(Calculated)*"
+        elif accuracy == "estimated":
+            suffix = " *(Estimated)*"
         lines.append(
-            f"- **{html.escape(video_id)}**: Event {event_index + 1} -> Frame {frame_id}"
+            f"- **{html.escape(video_id)}**: Event {event_index + 1} -> Frame {frame_id}{suffix}"
         )
     return "\n".join(lines) if len(lines) > 1 else PINNED_EMPTY_MARKDOWN
 
 
-def _selected_event(outcome, gallery_index: int):
-    """Map a gallery position back to its event. build_gallery_items drops events
-    whose image is missing, so the same filter has to run here or the indices skew."""
+def _selected_event(videos, gallery_index: int):
+    """Map a gallery position back to its event within `videos`. The gallery
+    builders drop events whose image is missing, so the same filter has to run
+    here or the indices skew."""
     position = 0
-    for video in outcome.videos:
+    for video in videos:
         for event in video.events:
             if not Path(event.image_path).is_file():
                 continue
@@ -225,42 +352,54 @@ def _selected_event(outcome, gallery_index: int):
     return None
 
 
-def _pinned_frame_id(c_time, fps, kf_frame) -> int | None:
-    """Player time wins when it is readable; otherwise the keyframe's own frame_idx
-    already is the answer."""
+def process_pin(v_id, e_idx, kf_frame, pinned_frames, current_accuracies, calc_frame, accuracy):
+    """Pin the frame the browser reported. Parameter order matches the click
+    handler's `inputs` list — Gradio binds arguments positionally. The video
+    player is optional: when its state is missing or malformed the keyframe's
+    own frame_idx is stored, so pinning works with or without a playable
+    source."""
+    if not v_id:
+        return (
+            dict(pinned_frames or {}),
+            dict(current_accuracies or {}),
+            gr.update(value="Chưa chốt được — hãy chọn một ảnh trong kết quả trước."),
+            gr.update(value=render_pinned_frames(pinned_frames or {})),
+        )
+
+    fallback = validate_frame(kf_frame, 0)
+    parsed_candidate: int | None
     try:
-        return round(float(c_time) * float(fps))
+        candidate = int(str(calc_frame).strip())
+        parsed_candidate = candidate if candidate >= 0 else None
     except (TypeError, ValueError):
-        pass
-    try:
-        return int(kf_frame)
-    except (TypeError, ValueError):
-        return None
-
-
-def process_pin(c_time, pinned_frames, v_id, e_idx, fps, kf_frame):
-    """Pin the frame under review. The video player is optional: pinning falls back
-    to the keyframe, so it works with or without a proxy video on disk."""
-    pinned_frames = dict(pinned_frames or {})
-    frame_id = _pinned_frame_id(c_time, fps, kf_frame) if v_id else None
-    if frame_id is not None:
-        pinned_frames[pin_key(v_id, int(e_idx))] = frame_id
-
-    # Report this click's outcome, not whether the dict happens to be non-empty.
-    status = (
-        f"**Đã chốt frame {frame_id}.**"
-        if frame_id is not None
-        else "Chưa chốt được — hãy chọn một ảnh trong kết quả trước."
+        parsed_candidate = None
+    frame_id = parsed_candidate if parsed_candidate is not None else fallback
+    trusted = parsed_candidate is not None and accuracy in {"calculated", "estimated"}
+    label = (
+        accuracy.capitalize() if trusted else f"Keyframe {fallback}"
     )
+
+    try:
+        event_index = int(float(e_idx))
+    except (TypeError, ValueError):
+        event_index = 0
+    key = pin_key(str(v_id), event_index)
+    new_frames = dict(pinned_frames or {})
+    new_frames[key] = frame_id
+    new_accuracies = dict(current_accuracies or {})
+    new_accuracies[key] = accuracy if trusted else "keyframe"
+
     return (
-        pinned_frames,
-        gr.update(value=status),
-        gr.update(value=render_pinned_frames(pinned_frames)),
+        new_frames,
+        new_accuracies,
+        gr.update(value=f"**Đã chốt frame {frame_id} ({label}).**"),
+        gr.update(value=render_pinned_frames(new_frames, new_accuracies)),
     )
 
 
 def clear_pins():
     return (
+        {},
         {},
         gr.update(value="Đã gỡ hết frame đã chốt."),
         gr.update(value=PINNED_EMPTY_MARKDOWN),
@@ -270,7 +409,23 @@ def clear_pins():
 def reset_pins_for_new_search():
     """Same reset as clear_pins, minus the status line — the search result just
     wrote there and must stay visible."""
-    return {}, gr.update(value=PINNED_EMPTY_MARKDOWN)
+    return {}, {}, gr.update(value=PINNED_EMPTY_MARKDOWN)
+
+
+def reset_selected_keyframe():
+    return (
+        None,
+        EMPTY_PLAYER_HTML,
+        "Select a keyframe to view metadata",
+        [],
+        gr.update(interactive=False),
+        gr.update(interactive=False),
+        gr.update(interactive=False),
+        25.0,
+        "",
+        0,
+        0,
+    )
 
 
 @spaces.GPU(duration=120)
@@ -281,15 +436,20 @@ def search_trake_gpu(translate_vietnamese, *event_texts):
     return _trake_controller.search_events(translate_vietnamese, *event_texts)
 
 
-def build_trake_tab(trake_searcher: Any) -> dict:
+def build_trake_tab(
+    trake_searcher: Any,
+    *,
+    keyframe_details_provider: Any = None,
+) -> dict:
     global _trake_controller
-    controller = TrakeController(trake_searcher)
+    controller = TrakeController(trake_searcher, keyframe_details_provider)
     _trake_controller = controller
 
     outcome_state = gr.State(None)
     current_page_idx = gr.State(0)
     visible_count_state = gr.State(1)
     pinned_frames_state = gr.State({})
+    pinned_accuracies_state = gr.State({})
 
     event_boxes: list[gr.Textbox] = []
     with gr.Column():
@@ -330,23 +490,48 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         )
         next_btn_pg = gr.Button("Next", interactive=False)
 
-    # --- PHASE 3: Alignment Video Player ---
-    video_player_html = gr.HTML("")
-    with gr.Row():
-        prev_btn = gr.Button("Prev Frame", interactive=False)
-        next_btn = gr.Button("Next Frame", interactive=False)
-        pin_btn = gr.Button("Chốt Frame (Đẩy lên Top)", interactive=False, variant="primary")
-        clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
+    with gr.Row(equal_height=False):
+        with gr.Column(scale=3), gr.Tabs():
+            with gr.Tab("Image Details"):
+                detail_image = gr.Image(
+                    label="Selected keyframe",
+                    interactive=False,
+                    height=420,
+                    elem_id="trake-selected-keyframe",
+                )
+            with gr.Tab("Video Player"):
+                video_player_html = gr.HTML(EMPTY_PLAYER_HTML)
+                with gr.Row():
+                    prev_btn = gr.Button("Prev Frame", interactive=False)
+                    next_btn = gr.Button("Next Frame", interactive=False)
+                    pin_btn = gr.Button(
+                        "Chốt Frame (Đẩy lên Top)",
+                        interactive=False,
+                        variant="primary",
+                        elem_id="trake-pin-btn",
+                    )
+                    clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
+        with gr.Column(scale=2):
+            detail_metadata = gr.Markdown("Select a keyframe to view metadata")
+
+    detections = gr.Dataframe(
+        headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
+        datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
+        label="Detected objects",
+        interactive=False,
+    )
 
     pinned_frames_markdown = gr.Markdown(PINNED_EMPTY_MARKDOWN)
 
     # Hidden elements for JS to Python communication
-    current_time_box = gr.Textbox(visible=False, elem_id="trake-current-time")
     current_fps_box = gr.Number(visible=False, elem_id="trake-current-fps", value=25.0)
     current_video_id_box = gr.Textbox(visible=False, elem_id="trake-current-video-id")
     current_event_idx_box = gr.Number(visible=False, elem_id="trake-current-event-idx", value=0)
     # Keyframe's own frame_idx — the fallback answer when no video is available.
     current_kf_frame_box = gr.Number(visible=False, elem_id="trake-current-kf-frame", value=0)
+    # Browser-reported calculated frame + its accuracy label (read at pin time).
+    pin_calc_frame_box = gr.Number(visible=False, elem_id="trake-pin-calc-frame", value=None)
+    pin_accuracy_box = gr.Textbox(visible=False, elem_id="trake-pin-accuracy", value="")
     # sync_btn removed
 
     with gr.Accordion("Log thông tin kết quả (Chi tiết)", open=False):
@@ -378,20 +563,33 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     search_outputs = [gallery, results, status, outcome_state, current_page_idx, page_label, prev_btn_pg, next_btn_pg]
     # Pins name a video and an event slot, not a query — carrying them into the next
     # search would silently rewrite the new answer's frames.
-    pin_reset_outputs = [pinned_frames_state, pinned_frames_markdown]
+    pin_reset_outputs = [pinned_frames_state, pinned_accuracies_state, pinned_frames_markdown]
+    selection_outputs = [
+        detail_image,
+        video_player_html,
+        detail_metadata,
+        detections,
+        prev_btn,
+        next_btn,
+        pin_btn,
+        current_fps_box,
+        current_video_id_box,
+        current_event_idx_box,
+        current_kf_frame_box,
+    ]
 
     prev_btn_pg.click(
         lambda o, i: controller.change_video_page(o, i, -1),
         inputs=[outcome_state, current_page_idx],
         outputs=[current_page_idx, gallery, results, page_label, prev_btn_pg, next_btn_pg],
         api_name=False
-    )
+    ).then(reset_selected_keyframe, inputs=[], outputs=selection_outputs, api_name=False)
     next_btn_pg.click(
         lambda o, i: controller.change_video_page(o, i, 1),
         inputs=[outcome_state, current_page_idx],
         outputs=[current_page_idx, gallery, results, page_label, prev_btn_pg, next_btn_pg],
         api_name=False
-    )
+    ).then(reset_selected_keyframe, inputs=[], outputs=selection_outputs, api_name=False)
 
     search_button.click(
         search_trake_gpu,
@@ -403,6 +601,11 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         inputs=[],
         outputs=pin_reset_outputs,
         api_name=False,
+    ).then(
+        reset_selected_keyframe,
+        inputs=[],
+        outputs=selection_outputs,
+        api_name=False,
     )
     event_boxes[-1].submit(
         search_trake_gpu,
@@ -413,6 +616,11 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         reset_pins_for_new_search,
         inputs=[],
         outputs=pin_reset_outputs,
+        api_name=False,
+    ).then(
+        reset_selected_keyframe,
+        inputs=[],
+        outputs=selection_outputs,
         api_name=False,
     )
 
@@ -438,29 +646,22 @@ def build_trake_tab(trake_searcher: Any) -> dict:
 
     # Custom JS for frame stepping
     frame_step_js = """(fps) => {
-        const video = document.getElementById('trake-player');
-        if (video) {
-            video.pause();
-            video.currentTime += (1.0 / fps);
-        }
+        if (window.__aiouStep) { window.__aiouStep('trake-player', 1); }
         return fps;
     }"""
 
     frame_prev_js = """(fps) => {
-        const video = document.getElementById('trake-player');
-        if (video) {
-            video.pause();
-            video.currentTime -= (1.0 / fps);
-        }
+        if (window.__aiouStep) { window.__aiouStep('trake-player', -1); }
         return fps;
     }"""
 
     # Order must match process_pin's signature exactly — Gradio validates the count
     # of `inputs` against the handler, and the JS return replaces those values.
-    pin_js = """(c_time, pinned, vid, eidx, fps, kf_frame) => {
-        const video = document.getElementById('trake-player');
-        const t = video ? video.currentTime.toString() : "";
-        return [t, pinned, vid, eidx, fps, kf_frame];
+    pin_js = """(vid, eidx, kf_frame, pinned, accs, calc, acc) => {
+        const snap = window.__aiouFrameSnapshot
+            ? window.__aiouFrameSnapshot('trake-player')
+            : {frame: null, accuracy: 'none'};
+        return [vid, eidx, kf_frame, pinned, accs, snap.frame, snap.accuracy];
     }"""
 
     next_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_step_js)
@@ -469,14 +670,15 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     pin_btn.click(
         process_pin,
         inputs=[
-            current_time_box,
-            pinned_frames_state,
             current_video_id_box,
             current_event_idx_box,
-            current_fps_box,
             current_kf_frame_box,
+            pinned_frames_state,
+            pinned_accuracies_state,
+            pin_calc_frame_box,
+            pin_accuracy_box,
         ],
-        outputs=[pinned_frames_state, status, pinned_frames_markdown],
+        outputs=[pinned_frames_state, pinned_accuracies_state, status, pinned_frames_markdown],
         js=pin_js,
         api_name=False,
     ).then(
@@ -489,7 +691,7 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     clear_pins_btn.click(
         clear_pins,
         inputs=[],
-        outputs=[pinned_frames_state, status, pinned_frames_markdown],
+        outputs=[pinned_frames_state, pinned_accuracies_state, status, pinned_frames_markdown],
         api_name=False,
     ).then(
         controller.preview_submission,
@@ -499,78 +701,12 @@ def build_trake_tab(trake_searcher: Any) -> dict:
     )
 
     def on_gallery_select(evt: gr.SelectData, outcome, page_idx: int):
-        import html
-        from pathlib import Path
-        unchanged = (gr.update(),) * 8
-        if not outcome or not outcome.videos:
-            return unchanged
-
-        total_videos = len(outcome.videos)
-        num_events = len(outcome.videos[0].events) if total_videos > 0 else 1
-        per_page = 1 if num_events >= 5 else 2 if num_events >= 3 else 4 if num_events == 2 else 10
-
-        start_idx = page_idx * per_page
-        page_videos = outcome.videos[start_idx : start_idx + per_page]
-
-        target_video = None
-        target_event = None
-        c = 0
-        for video in page_videos:
-            for event in video.events:
-                if not Path(event.image_path).is_file():
-                    continue
-                if c == evt.index:
-                    target_video = video
-                    target_event = event
-                    break
-                c += 1
-            if target_video:
-                break
-
-        if not target_video or not target_event:
-            return unchanged
-
-        video = target_video
-        event = target_event
-
-        video_path = get_video_path(video.video_id)
-        if video_path:
-            player = render_video_player(
-                video.video_id, video_path, event.pts_time_sec, event.fps
-            )
-            step_enabled = gr.update(interactive=True)
-        else:
-            player = (
-                f"<p>Chưa có video cho {html.escape(video.video_id)} — "
-                "vẫn chốt được frame từ ảnh keyframe.</p>"
-            )
-            step_enabled = gr.update(interactive=False)
-
-        # Pinning never depends on the player: the keyframe already carries frame_idx.
-        return (
-            gr.update(value=player),
-            step_enabled,
-            step_enabled,
-            gr.update(interactive=True),
-            event.fps,
-            video.video_id,
-            event.event_index,
-            event.frame_idx,
-        )
+        return controller.select_gallery_event(outcome, page_idx, evt.index)
 
     gallery.select(
         on_gallery_select,
         inputs=[outcome_state, current_page_idx],
-        outputs=[
-            video_player_html,
-            prev_btn,
-            next_btn,
-            pin_btn,
-            current_fps_box,
-            current_video_id_box,
-            current_event_idx_box,
-            current_kf_frame_box,
-        ],
+        outputs=selection_outputs,
         api_name=False,
     )
 
@@ -582,10 +718,15 @@ def build_trake_tab(trake_searcher: Any) -> dict:
         "search_button": search_button,
         "status": status,
         "gallery": gallery,
+        "detail_image": detail_image,
+        "video_player_html": video_player_html,
+        "detail_metadata": detail_metadata,
+        "detections": detections,
         "results": results,
         "export_button": export_button,
         "submission_file": submission_file,
         "outcome_state": outcome_state,
         "visible_count_state": visible_count_state,
         "pinned_frames_state": pinned_frames_state,
+        "pinned_accuracies_state": pinned_accuracies_state,
     }

@@ -23,9 +23,65 @@ NLLB translates Vietnamese to English, then multilingual CLIP embeds the English
 query. Clear it for the faster path, where multilingual CLIP embeds the original
 Vietnamese or English query directly without loading NLLB.
 
+### Inline Metadata Shortcuts
+
+The Query box also accepts metadata tokens (comma-separated, order-free):
+
+| Input | Meaning |
+|---|---|
+| `L26` | every keyframe in collection L26, in canonical order |
+| `L26_V306` | every keyframe of that video, in canonical order |
+| `L26_V306_049` or `L26_V306, 49` | exactly that keyframe |
+| `con cá, L26_V306` | semantic search scoped to that video |
+| `con cá, L26` | semantic search scoped to that collection |
+
+Pure metadata input never loads CLIP. The Status line always echoes how the
+input was interpreted.
+
+## Video Player & Frame Accuracy
+
+Clicking a result opens one shared player used by both tabs. Sources resolve in
+this order: local proxy MP4 from `VIDEO_ROOT`, then the YouTube `watch_url`
+stored in video metadata, then keyframe-only (still pinnable).
+
+For YouTube, the player loads the actual media at the selected fractional
+timestamp while muted, pauses immediately, and only then publishes Current
+frame from the time reported by the player. It does not report a frame from a
+cued thumbnail.
+
+The player shows exactly one live number, **Current frame**, computed as:
+
+```text
+frame = floor(Number(presentationTime.toPrecision(6)) * fps)
+```
+
+This matches `keyframes.frame_idx` on all 177,321 release rows; `round()`
+disagrees on 22,922 of them and is not used anywhere. Field testing on the
+L-series batch confirmed the YouTube readout ran exactly +1 with `round()`,
+so the floor mapping is applied uniformly to local and YouTube sources —
+YouTube values simply remain labelled Estimated because `getCurrentTime()`
+has no ground-truth guarantee.
+
+Labels you will see next to the number:
+
+- **Calculated** — local MP4 via `requestVideoFrameCallback` (exact presentation time).
+- **Estimated** — YouTube embed, or browsers without `requestVideoFrameCallback`.
+- **Keyframe only** — no playable source; pinning still works and stores the
+  keyframe's own `frame_idx`.
+
+Pinning always takes the latest presented frame from the player; while a seek is
+in flight the button is temporarily disabled. If the reported frame cannot be
+parsed, the pin falls back to the keyframe's `frame_idx` and the status line
+says so. Submission CSVs contain plain integers — accuracy labels are display
+metadata only. FPS always comes from the selected keyframe row, never from
+video-level metadata.
+
 At startup, only `sentence-transformers/clip-ViT-B-32-multilingual-v1` is
-loaded. `facebook/nllb-200-distilled-600M` is loaded lazily on the first search
-with translation enabled. CUDA uses FP16; CPU uses FP32. NLLB is released under
+loaded. With `CLIP_DEVICE=auto`, it uses CUDA FP16 when available and falls back
+to CPU FP32 if CUDA runs out of memory. `facebook/nllb-200-distilled-600M` is
+loaded lazily on the first search with translation enabled. With
+`TRANSLATION_DEVICE=auto`, NLLB tries CUDA FP16 first and automatically reloads
+on CPU FP32 if the GPU does not have enough memory. NLLB is released under
 CC-BY-NC-4.0 and its model card describes it as a research model rather than a
 production-deployment model.
 
@@ -368,10 +424,21 @@ so the existing image index remains in use:
 ```env
 MODEL_ID=sentence-transformers/clip-ViT-B-32-multilingual-v1
 MODEL_REVISION=58edf8cada9e398793dca955574a48cbb7f18be2
+CLIP_DEVICE=auto
 TRANSLATION_MODEL_ID=facebook/nllb-200-distilled-600M
 TRANSLATION_MODEL_REVISION=f8d333a098d19b4fd9a8b18f94170487ad3f821d
+TRANSLATION_DEVICE=auto
 RESULTS_PER_PAGE=10
 ```
+
+`CLIP_DEVICE` and `TRANSLATION_DEVICE` accept `auto`, `cpu`, or `cuda`. `auto`
+uses CUDA when available and falls back to CPU after a CUDA out-of-memory error.
+Set either value to `cpu` to skip the CUDA attempt, or to `cuda` to require CUDA
+and surface an error instead of falling back.
+
+`make dev` keeps the loaded runtime models when Gradio rebuilds the UI after a
+source change, so hot reload does not allocate another CLIP/NLLB copy. Restart
+`make dev` after changing release paths or model/device settings in `.env`.
 
 ## 7. Run the App
 
@@ -458,8 +525,8 @@ Example: `athlete runs up` -> `athlete takes off` -> `athlete clears the bar` ->
 
 1. Open the **TRAKE** tab.
 2. Fill in the event boxes top to bottom, in the order the events happen.
-   Three boxes show by default; **Add event** / **Remove event** adjust between
-   2 and 6.
+   One box shows by default; **Add event** / **Remove event** adjust between
+   1 and 6.
 3. Press **Search event chain**.
 4. Results are ranked by video. Each row of the gallery is one video's event
    chain, left to right. The text below lists keyframe number, frame index,

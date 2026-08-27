@@ -11,6 +11,7 @@ class SearchFilters:
 
     collections: tuple[str, ...] = ()
     video_id: str | None = None
+    video_ids: tuple[str, ...] = ()
     object_entities: tuple[str, ...] = ()
     object_match_mode: str = "any"
     minimum_object_confidence: float = 0.3
@@ -23,6 +24,7 @@ class SearchFilters:
         return bool(
             self.collections
             or self.video_id
+            or self.video_ids
             or self.object_entities
             or self.author
             or self.publish_date_from
@@ -111,6 +113,7 @@ class TrakeVideoMatch:
     total_score: float
     events: tuple[TrakeEventMatch, ...]
     max_frame_idx: int = 0
+    watch_url: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

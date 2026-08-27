@@ -83,56 +83,80 @@ def test_render_pinned_frames_skips_malformed_keys():
 # --- process_pin ---
 
 
-def _process_pin():
+def _pin(calc_frame, accuracy, pins=None, accs=None, v_id="L21_V001", e_idx=0, kf=290):
     from trake_ui import process_pin
 
-    return process_pin
+    # Runtime argument order follows the click handler's inputs list:
+    # (v_id, e_idx, kf_frame, pinned_frames, accuracies, calc_frame, accuracy)
+    return process_pin(v_id, e_idx, kf, pins or {}, accs or {}, calc_frame, accuracy)
 
 
-def test_process_pin_uses_video_time_when_available():
-    pinned, _status, _md = _process_pin()("12.0", {}, "L21_V001", 0, 25.0, 290)
-    assert pinned == {"L21_V001|0": 300}
+def test_process_pin_uses_browser_reported_frame():
+    pinned, accs, status, _md = _pin(300, "calculated")
+    assert pinned == {pin_key("L21_V001", 0): 300}
+    assert accs == {pin_key("L21_V001", 0): "calculated"}
+    assert "Calculated" in status["value"]
 
 
-def test_process_pin_falls_back_to_keyframe_when_no_video():
-    pinned, _status, _md = _process_pin()("", {}, "L21_V001", 0, 25.0, 290)
-    assert pinned == {"L21_V001|0": 290}
+def test_process_pin_falls_back_to_keyframe_when_player_silent():
+    pinned, accs, status, _md = _pin(None, "none")
+    assert pinned == {pin_key("L21_V001", 0): 290}
+    assert accs == {pin_key("L21_V001", 0): "keyframe"}
+    assert "(Keyframe 290)" in status["value"]
 
 
 def test_process_pin_overwrites_same_event():
-    pinned, _s, _m = _process_pin()("12.0", {}, "L21_V001", 0, 25.0, 290)
-    pinned, _s, _m = _process_pin()("20.0", pinned, "L21_V001", 0, 25.0, 290)
-    assert pinned == {"L21_V001|0": 500}
+    pinned, accs, _s, _m = _pin(300, "calculated")
+    pinned, accs, _s, _m = _pin(500, "estimated", pinned, accs)
+    assert pinned == {pin_key("L21_V001", 0): 500}
+    assert accs == {pin_key("L21_V001", 0): "estimated"}
 
 
 def test_process_pin_keeps_different_events_separate():
-    pinned, _s, _m = _process_pin()("12.0", {}, "L21_V001", 0, 25.0, 290)
-    pinned, _s, _m = _process_pin()("20.0", pinned, "L21_V001", 1, 25.0, 400)
-    assert pinned == {"L21_V001|0": 300, "L21_V001|1": 500}
+    pinned, accs, _s, _m = _pin(300, "calculated")
+    pinned, accs, _s, _m = _pin(500, "calculated", pinned, accs, e_idx=1, kf=400)
+    key_a, key_b = pin_key("L21_V001", 0), pin_key("L21_V001", 1)
+    assert pinned == {key_a: 300, key_b: 500}
+    assert accs == {key_a: "calculated", key_b: "calculated"}
 
 
 def test_process_pin_ignores_empty_video_id():
-    pinned, _s, _m = _process_pin()("12.0", {}, "", 0, 25.0, 290)
+    pinned, _accs, status, _md = _pin(300, "calculated", v_id="")
     assert pinned == {}
+    assert "Chưa chốt được" in status["value"]
 
 
-def test_process_pin_ignores_malformed_time():
-    pinned, _s, _m = _process_pin()("abc", {}, "L21_V001", 0, 25.0, 290)
-    assert pinned == {"L21_V001|0": 290}
+def test_process_pin_malformed_browser_value_falls_back():
+    pinned, accs, _status, _md = _pin("not-a-number", "estimated", kf=290)
+    assert pinned == {pin_key("L21_V001", 0): 290}
+    # The accuracy label must not claim a calculated value we could not parse.
+    assert accs == {pin_key("L21_V001", 0): "keyframe"}
 
 
-def test_process_pin_renders_one_line_per_pin():
-    pinned, _s, _m = _process_pin()("12.0", {}, "L21_V001", 0, 25.0, 290)
-    _p, _s, markdown = _process_pin()("20.0", pinned, "L30_V011", 1, 25.0, 400)
+def test_process_pin_copies_input_dictionaries():
+    """Mutating the Gradio State object in place would skip .change handlers."""
+    pins = {"existing": 1}
+    accs = {"existing": "estimated"}
+    out_pins, out_accs, _s, _m = _pin(300, "calculated", pins, accs)
+    assert out_pins is not pins and out_accs is not accs
+    assert pins == {"existing": 1} and accs == {"existing": "estimated"}
+    assert out_pins["existing"] == 1
+
+
+def test_process_pin_renders_one_line_per_pin_with_labels():
+    pinned, accs, _s, _m = _pin(300, "calculated")
+    _p, _a, _s, markdown = _pin(
+        500, "estimated", pinned, accs, v_id="L30_V011", e_idx=1, kf=400
+    )
     body = markdown["value"] if isinstance(markdown, dict) else markdown
     lines = [line for line in body.splitlines() if line.strip().startswith("-")]
     assert len(lines) == 2
-    assert any("L21_V001" in line and "300" in line for line in lines)
-    assert any("L30_V011" in line and "500" in line for line in lines)
+    assert any("L21_V001" in line and "300" in line and "(Calculated)" in line for line in lines)
+    assert any("L30_V011" in line and "500" in line and "(Estimated)" in line for line in lines)
 
 
 def test_process_pin_shows_placeholder_when_empty():
-    _p, _s, markdown = _process_pin()("", {}, "", 0, 25.0, 0)
+    _p, _a, _s, markdown = _pin(None, "none", v_id="", kf=0)
     body = markdown["value"] if isinstance(markdown, dict) else markdown
     assert "Chưa có" in body
 
@@ -147,6 +171,42 @@ def test_build_submission_uses_pinned_frame_over_algorithm_frame():
         _outcome(), max_rows=1, pinned_frames={"L21_V001|1": 2500}
     )
     assert rows[0][1] == (1000, 2500, 3000)
+
+
+def test_build_submission_promotes_pinned_video_to_top():
+    """A pin must lift its whole video above the untouched ranking — this
+    regressed when the video id was split on ':' instead of the pin separator."""
+    import trake
+
+    ranked_first, ranked_second = _outcome("L21_V001"), _outcome("L21_V002")
+    outcome = TrakeOutcome(
+        videos=(ranked_first.videos[0], ranked_second.videos[0]), queries=()
+    )
+
+    rows = trake.build_submission(
+        outcome,
+        max_rows=trake.SUBMISSION_MAX_ROWS,
+        pinned_frames={pin_key("L21_V002", 2): 4321},
+    )
+    assert rows[0] == ("L21_V002", (1000, 2000, 4321))
+
+
+def test_build_submission_ignores_malformed_pin_keys_for_promotion(monkeypatch):
+    import trake
+
+    ranked_first, ranked_second = _outcome("L21_V001"), _outcome("L21_V002")
+    outcome = TrakeOutcome(
+        videos=(ranked_first.videos[0], ranked_second.videos[0]), queries=()
+    )
+
+    # One row per video so both videos fit under max_rows.
+    monkeypatch.setattr(trake, "SPREAD_ROWS_PER_VIDEO", 1)
+    rows = trake.build_submission(
+        outcome,
+        max_rows=2,
+        pinned_frames={"junk-without-separator": 1},
+    )
+    assert [row[0] for row in rows] == ["L21_V001", "L21_V002"]
 
 
 def test_build_submission_ignores_pins_for_other_videos():

@@ -4,18 +4,22 @@ from unittest.mock import patch
 
 import pytest
 
+import trake
 from app import (
     SearchController,
+    _configured_model_device,
     _detail_markdown,
+    _generate_preview_text,
     _keyframe_directory,
     _timestamp,
     build_app,
+    create_app,
     create_search_mechanism,
     create_trake_searcher,
     search_keyframes_gpu,
     search_keyframes_gpu_v2,
 )
-from schemas import KeyframeDetails, SearchResult
+from schemas import KeyframeDetails, PreparedQuery, SearchOutcome, SearchResult
 
 
 class FakeSearchMechanism:
@@ -148,8 +152,10 @@ def test_runtime_preloads_only_multilingual_text_model():
         environment={
             "MODEL_ID": "text-model",
             "MODEL_REVISION": "text-revision",
+            "CLIP_DEVICE": "auto",
             "TRANSLATION_MODEL_ID": "translation-model",
             "TRANSLATION_MODEL_REVISION": "translation-revision",
+            "TRANSLATION_DEVICE": "auto",
             "FAISS_NPROBE": "16",
         },
         index_file="index.faiss",
@@ -165,31 +171,98 @@ def test_runtime_preloads_only_multilingual_text_model():
     ):
         result = create_search_mechanism(runtime)
 
-    clip_class.assert_called_once_with(model_id="text-model", revision="text-revision")
+    clip_class.assert_called_once_with(
+        model_id="text-model",
+        revision="text-revision",
+        device=None,
+    )
     clip_class.return_value.load.assert_called_once_with()
     translator_class.assert_called_once_with(
         model_id="translation-model",
         revision="translation-revision",
+        device=None,
     )
     translator_class.return_value._ensure_loaded.assert_not_called()
     indexer_class.assert_called_once_with("index.faiss", nprobe=16)
     assert result is mechanism_class.return_value
 
 
+@pytest.mark.parametrize("value", ["gpu", "cuda:0"])
+def test_runtime_rejects_invalid_model_device(value):
+    with pytest.raises(ValueError, match="MODEL_DEVICE must be one of"):
+        _configured_model_device(value, "MODEL_DEVICE")
+
+
+@pytest.mark.parametrize(("value", "expected"), [("auto", None), ("", None), ("cpu", "cpu")])
+def test_runtime_normalizes_model_device(value, expected):
+    assert _configured_model_device(value, "MODEL_DEVICE") == expected
+
+
+def test_create_app_reuses_runtime_models_during_gradio_reload():
+    runtime = SimpleNamespace(
+        data_root=SimpleNamespace(),
+        environment={"RESULTS_PER_PAGE": "10"},
+    )
+    search_mechanism = FakeSearchMechanism()
+    trake_searcher = FakeTrakeSearcher()
+    first_app = object()
+    second_app = object()
+
+    with (
+        patch("app._runtime", None),
+        patch("app._search_mechanism", None),
+        patch("app._trake_searcher", None),
+        patch("app._keyframes_root", None),
+        patch("app.prepare_runtime", return_value=runtime) as prepare_runtime,
+        patch("app.create_search_mechanism", return_value=search_mechanism) as create_search,
+        patch("app.create_trake_searcher", return_value=trake_searcher) as create_trake,
+        patch("app._keyframe_directory", return_value=SimpleNamespace()),
+        patch("app.build_app", side_effect=[first_app, second_app]) as build,
+    ):
+        assert create_app() is first_app
+        assert create_app() is second_app
+
+    prepare_runtime.assert_called_once_with()
+    create_search.assert_called_once_with(runtime)
+    create_trake.assert_called_once_with(runtime, search_mechanism)
+    assert build.call_count == 2
+
+
 def test_build_app_without_trake_searcher_keeps_single_tab():
     app = build_app(FakeSearchMechanism())
     config = app.get_config_file()
-    tabs = [component for component in config["components"] if component["type"] == "tabitem"]
-    assert len(tabs) == 1
+    # gradio 5.x also reports the nested Image/Player tabs as tabitem components,
+    # so count only the top-level query tabs by label.
+    top_tabs = {
+        component["props"].get("label")
+        for component in config["components"]
+        if component["type"] == "tabitem"
+        and component["props"].get("label") in {"Query Text", "Query TRAKE"}
+    }
+    assert top_tabs == {"Query Text"}
 
 
 def test_build_app_with_trake_searcher_adds_second_tab():
     app = build_app(FakeSearchMechanism(), trake_searcher=FakeTrakeSearcher())
     config = app.get_config_file()
-    tabs = [component for component in config["components"] if component["type"] == "tabitem"]
-    assert len(tabs) == 2
-    tab_labels = {tab["props"].get("label") for tab in tabs}
-    assert "TRAKE" in tab_labels
+    top_tabs = {
+        component["props"].get("label")
+        for component in config["components"]
+        if component["type"] == "tabitem"
+        and component["props"].get("label") in {"Query Text", "Query TRAKE"}
+    }
+    assert top_tabs == {"Query Text", "Query TRAKE"}
+    nested_tab_labels = [
+        component["props"].get("label")
+        for component in config["components"]
+        if component["type"] == "tabitem"
+    ]
+    assert nested_tab_labels.count("Image Details") == 2
+    assert nested_tab_labels.count("Video Player") == 2
+    assert any(
+        component["props"].get("elem_id") == "trake-selected-keyframe"
+        for component in config["components"]
+    )
 
 
 def test_trake_tab_does_not_change_kis_endpoints():
@@ -337,3 +410,399 @@ def test_page_payload_uses_ten_result_pages_and_rendered_row_mapping(tmp_path):
     assert label == "Page 3 / 3 | 21 results"
     assert previous["interactive"] is True
     assert next_["interactive"] is False
+
+
+def test_select_keyframe_allows_pinning_without_local_video(tmp_path):
+    class DetailSearchMechanism(FakeSearchMechanism):
+        def get_keyframe_details(self, _keyframe_id):
+            return KeyframeDetails(
+                keyframe={
+                    "keyframe_id": "V01_001",
+                    "video_id": "V01",
+                    "collection_id": "C01",
+                    "keyframe_no": 1,
+                    "frame_idx": 90,
+                    "pts_time_sec": 3.0,
+                    "fps": 30.0,
+                    "width": 1280,
+                    "height": 720,
+                },
+                video={},
+                detections=(),
+            )
+
+    controller = SearchController(DetailSearchMechanism(), page_size=10)
+    row = _result_row(tmp_path, "V01_001", "V01", "C01", "Alice", 1.0, 1, 90)
+
+    with patch("app.get_video_path", return_value=None):
+        result = controller.select_keyframe([row], SimpleNamespace(index=0))
+
+    previous_frame_update, next_frame_update, pin_update = result[4:7]
+    assert previous_frame_update["interactive"] is False
+    assert next_frame_update["interactive"] is False
+    assert pin_update["interactive"] is True
+    assert result[-1] == 90
+
+
+def test_generate_preview_text_caps_at_submission_max(tmp_path):
+    """Top K up to 200 is allowed; the contest file accepts at most 100 rows."""
+    rows = [
+        _result_row(tmp_path, f"KF_{index:03d}", f"V{index:03d}", "C01", "Alice", 0.9, index, index)
+        for index in range(120)
+    ]
+
+    preview = _generate_preview_text(rows)
+    lines = preview.splitlines()
+    assert len(lines) == trake.SUBMISSION_MAX_ROWS
+
+
+def test_generate_preview_text_promotes_pinned_frames_to_top(tmp_path):
+    rows = [
+        _result_row(tmp_path, "KF_001", "V01", "C01", "Alice", 0.9, 1, 30),
+        _result_row(tmp_path, "KF_002", "V02", "C01", "Alice", 0.8, 2, 60),
+        _result_row(tmp_path, "KF_003", "V02", "C01", "Alice", 0.7, 3, 90),
+    ]
+    preview = _generate_preview_text(rows, pinned=[["V02", 999]])
+
+    assert preview.splitlines() == ["V02,999", "V01,30", "V02,60", "V02,90"]
+
+
+def test_generate_preview_text_accepts_pin_for_video_outside_results(tmp_path):
+    rows = [_result_row(tmp_path, "KF_001", "V01", "C01", "Alice", 0.9, 1, 30)]
+    preview = _generate_preview_text(rows, pinned=[["L26_V306", 4321]])
+
+    assert preview.splitlines() == ["L26_V306,4321", "V01,30"]
+
+
+def test_generate_preview_text_moves_existing_candidate_to_top(tmp_path):
+    rows = [
+        _result_row(tmp_path, "KF_001", "V01", "C01", "Alice", 0.9, 1, 30),
+        _result_row(tmp_path, "KF_002", "V02", "C01", "Alice", 0.8, 2, 60),
+    ]
+
+    preview = _generate_preview_text(rows, pinned=[["V02", 60]])
+
+    assert preview.splitlines() == ["V02,60", "V01,30"]
+
+
+def test_generate_preview_text_keeps_newest_pins_first_and_caps_rows(tmp_path):
+    rows = [
+        _result_row(tmp_path, f"KF_{index:03d}", f"V{index:03d}", "C01", "Alice", 0.9, index, index)
+        for index in range(120)
+    ]
+    pins = [["PIN_NEW", 2], ["PIN_OLD", 1]]
+
+    lines = _generate_preview_text(rows, pinned=pins).splitlines()
+
+    assert lines[:3] == ["PIN_NEW,2", "PIN_OLD,1", "V000,0"]
+    assert len(lines) == trake.SUBMISSION_MAX_ROWS
+    assert "V098,98" not in lines
+
+
+# --- Inline metadata parsing in _run_search ---
+
+
+class RecordingMechanism(FakeSearchMechanism):
+    """Records what the controller passes down and serves canned rows."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen_query = None
+        self.seen_filters = None
+        self.listed_videos = []
+        self.listed_collections = []
+        self.exact_lookups = []
+
+    @staticmethod
+    def _canned_result(video_id="V01", number=1, vector_id=0):
+        return SearchResult(
+            vector_id,
+            f"{video_id}_{number:03d}",
+            video_id,
+            "C01",
+            number,
+            "/tmp/x.jpg",
+            "keyframes/C01/x.jpg",
+            1.0,
+            1.0,
+            30,
+            30.0,
+            640,
+            360,
+            "Title",
+            "Alice",
+        )
+
+    def search_by_text(self, query, top_k, language, filters, *, translate_vietnamese=None):
+        self.seen_query = query
+        self.seen_filters = filters
+        prepared = PreparedQuery(query, query, "auto", "english", translation_enabled=False)
+        return SearchOutcome((self._canned_result(),), prepared)
+
+    def get_video_keyframes(self, video_id):
+        self.listed_videos.append(video_id)
+        return [self._canned_result()]
+
+    def get_collection_keyframes(self, collection_id):
+        self.listed_collections.append(collection_id)
+        return [self._canned_result(video_id="V02", number=1, vector_id=1)]
+
+    def find_exact_keyframe(self, video_id, keyframe_no):
+        self.exact_lookups.append((video_id, keyframe_no))
+        if keyframe_no == 999:
+            return None
+        return self._canned_result(number=keyframe_no)
+
+
+def _run(mechanism, query, **overrides):
+    controller = SearchController(mechanism, page_size=10)
+    arguments = {
+        "collections": (),
+        "video_id": "",
+        "object_entities": (),
+        "object_match_mode": "any",
+        "minimum_object_confidence": 0.3,
+        "author": None,
+        "publish_date_from": None,
+        "publish_date_to": None,
+    }
+    arguments.update(overrides)
+    return controller._run_search(query, 100, "auto", **arguments)
+
+
+def test_run_search_scopes_semantic_query_to_inline_video():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "con ca, L26_V306", translate_vietnamese=False)
+
+    assert mechanism.seen_query == "con ca"
+    assert mechanism.seen_filters.video_ids == ("L26_V306",)
+    assert len(rows) == 1
+    assert "Scope: video L26_V306" in status
+
+
+def test_run_search_merges_inline_scope_with_dropdown_selections():
+    mechanism = RecordingMechanism()
+    _run(
+        mechanism,
+        "con ca, L26",
+        collections=("C02",),
+        video_id="L28_V009",
+        translate_vietnamese=False,
+    )
+
+    assert mechanism.seen_filters.collections == ("C02", "L26")
+    assert mechanism.seen_filters.video_ids == ("L28_V009",)
+
+
+def test_run_search_lists_whole_video_without_clip():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306")
+
+    assert mechanism.listed_videos == ["L26_V306"]
+    assert mechanism.seen_query is None  # embedding path never invoked
+    assert len(rows) == 1 and rows[0]["score"] == 1.0
+    assert status.startswith("Metadata: video L26_V306")
+
+
+def test_run_search_resolves_exact_keyframe_pair():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306, 49")
+
+    assert mechanism.exact_lookups == [("L26_V306", 49)]
+    assert rows[0]["keyframe_id"] == "V01_049"
+    assert status.startswith("Metadata: đúng keyframe")
+
+
+def test_run_search_resolves_multiple_exact_keyframes_in_order():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306_049, L27_V001_007")
+
+    assert mechanism.exact_lookups == [
+        ("L26_V306", 49),
+        ("L27_V001", 7),
+    ]
+    assert [row["keyframe_id"] for row in rows] == ["V01_049", "V01_007"]
+    assert "V01_049, V01_007" in status
+
+
+def test_run_search_reports_missing_exact_keyframes():
+    mechanism = RecordingMechanism()
+    rows, status = _run(mechanism, "L26_V306_049, L27_V001_999")
+
+    assert [row["keyframe_id"] for row in rows] == ["V01_049"]
+    assert "Không tìm thấy: L27_V001_999" in status
+
+
+def test_run_search_dedupes_video_inside_typed_collection():
+    """Typing a video plus its own collection must not duplicate its frames."""
+    mechanism = RecordingMechanism()
+
+    def video_rows(video_id):
+        return [mechanism._canned_result(video_id="L26_V306", number=3, vector_id=10)]
+
+    def collection_rows(collection_id):
+        return [
+            mechanism._canned_result(video_id="L26_V306", number=3, vector_id=10),
+            mechanism._canned_result(video_id="L26_V307", number=1, vector_id=11),
+            mechanism._canned_result(video_id="L26_V308", number=1, vector_id=12),
+        ]
+
+    mechanism.get_video_keyframes = video_rows
+    mechanism.get_collection_keyframes = collection_rows
+
+    rows, status = _run(mechanism, "L26_V306, L26")
+
+    assert [row["vector_id"] for row in rows] == [10, 11, 12]
+    assert status.endswith("— 3 keyframes")
+
+
+# --- KIS pin callback and player source resolution ---
+
+
+def test_process_pin_kis_uses_browser_frame_and_keeps_ordered_pins():
+    from app import process_pin_kis
+
+    pins = [["V01", 10]]
+    # Runtime argument order: (video_id, kf_frame, pins, calc_frame, accuracy)
+    out, status = process_pin_kis("V01", 55, pins, 777, "calculated")
+    assert out == [["V01", 777], ["V01", 10]]
+    assert out is not pins
+    assert "Calculated" in status
+
+    out2, status2 = process_pin_kis("V02", 42, pins, None, "")
+    assert out2 == [["V02", 42], ["V01", 10]]
+    assert "Keyframe 42" in status2
+
+    out3, _s = process_pin_kis("V03", 9, [], "-4", "estimated")
+    assert out3 == [["V03", 9]]
+
+    unchanged, message = process_pin_kis("", 5, pins, 1, "calculated")
+    assert unchanged is pins
+    assert "Không có video" in message
+
+
+def test_process_pin_kis_moves_existing_pin_to_front():
+    from app import process_pin_kis
+
+    pins = [["V01", 10], ["V02", 20], ["V01", 30]]
+
+    out, _status = process_pin_kis("V02", 20, pins, 20, "calculated")
+
+    assert out == [["V02", 20], ["V01", 10], ["V01", 30]]
+
+
+def test_process_pin_kis_accepts_legacy_dict_state():
+    from app import process_pin_kis
+
+    out, _status = process_pin_kis("V02", 20, {"V01": 10}, 20, "calculated")
+
+    assert out == [["V02", 20], ["V01", 10]]
+
+
+def test_process_pin_kis_drops_oldest_pin_above_submission_limit():
+    from app import process_pin_kis
+
+    pins = [[f"V{index:03d}", index] for index in range(trake.SUBMISSION_MAX_ROWS)]
+
+    out, _status = process_pin_kis("PIN_NEW", 999, pins, 999, "calculated")
+
+    assert len(out) == trake.SUBMISSION_MAX_ROWS
+    assert out[0] == ["PIN_NEW", 999]
+    assert pins[-1] not in out
+
+
+class _DetailFake(FakeSearchMechanism):
+    def __init__(self, details):
+        super().__init__()
+        self._details = details
+
+    def get_keyframe_details(self, _keyframe_id):
+        return self._details
+
+
+def test_select_keyframe_reads_fps_from_keyframe_row(tmp_path):
+    """The videos row carries no per-frame fps; the silent 25 FPS fallback is gone."""
+    from player import resolve_player_source
+
+    image = tmp_path / "kf.jpg"
+    image.write_bytes(b"jpeg")
+    details = KeyframeDetails(
+        keyframe={
+            "keyframe_id": "L26_V306_049",
+            "video_id": "L26_V306",
+            "collection_id": "L26",
+            "keyframe_no": 49,
+            "pts_time_sec": 3.0,
+            "fps": 30.0,
+            "frame_idx": 90,
+            "width": 640,
+            "height": 360,
+        },
+        video={"watch_url": f"https://youtu.be/{'dQw4w9WgXcQ'}"},
+        detections=(),
+    )
+    controller = SearchController(_DetailFake(details), page_size=10)
+    row = {"keyframe_id": details.keyframe["keyframe_id"], "image_path": str(image)}
+    event = SimpleNamespace(index=0)
+
+    result = controller.select_keyframe([row], event)
+
+    fps, video_id, kf_frame = result[-3], result[-2], result[-1]
+    assert fps == 30.0
+    assert video_id == "L26_V306"
+    assert kf_frame == 90
+
+    player_html = result[1]
+    assert 'data-player=' in player_html
+    assert "dQw4w9WgXcQ" in player_html
+    kind, source = resolve_player_source(local_path=None, watch_url=details.video["watch_url"])
+    assert (kind, source) == ("youtube", "dQw4w9WgXcQ")
+
+
+def test_select_keyframe_without_any_source_keeps_pin_available(tmp_path, monkeypatch):
+    from player import resolve_player_source
+
+    monkeypatch.setattr("app.get_video_path", lambda _video_id: None)
+    image = tmp_path / "kf.jpg"
+    image.write_bytes(b"jpeg")
+    details = KeyframeDetails(
+        keyframe={
+            "keyframe_id": "L26_V306_049",
+            "video_id": "L26_V306",
+            "collection_id": "L26",
+            "keyframe_no": 49,
+            "pts_time_sec": 3.0,
+            "fps": 25.0,
+            "frame_idx": 75,
+            "width": 640,
+            "height": 360,
+        },
+        video={},
+        detections=(),
+    )
+    controller = SearchController(_DetailFake(details), page_size=10)
+    row = {"keyframe_id": details.keyframe["keyframe_id"], "image_path": str(image)}
+    event = SimpleNamespace(index=0)
+
+    result = controller.select_keyframe([row], event)
+
+    pin_update = result[6]
+    prev_update, next_update = result[4], result[5]
+    assert pin_update["interactive"] is True
+    assert prev_update["interactive"] is False
+    assert next_update["interactive"] is False
+    assert resolve_player_source(local_path=None, watch_url="") == ("none", None)
+
+
+def test_player_head_ships_shared_runtime_once():
+    from player import player_head_html
+
+    head = player_head_html()
+    for marker in (
+        "__aiouPlayerBoot",
+        "__aiouFrameSnapshot",
+        "__aiouStep",
+        "onYouTubeIframeAPIReady",
+        "requestVideoFrameCallback",
+    ):
+        assert marker in head

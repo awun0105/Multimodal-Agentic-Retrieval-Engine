@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import html
 import logging
 import os
+from dataclasses import replace
 from pathlib import Path
 
 try:
@@ -30,10 +30,16 @@ from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
 from db import SearchMechanism
+from frame_math import validate_frame
+from keyframe_details import detail_markdown as _detail_markdown
+from keyframe_details import detection_rows as _detection_rows
+from keyframe_details import timestamp as _timestamp
+from player import build_player, player_head_html
+from query_parser import parse_search_query
 from schemas import SearchFilters
-from trake import TrakeSearcher
+from trake import SUBMISSION_MAX_ROWS, TrakeSearcher, format_submission
+from trake_submission import export_csv_file
 from trake_ui import build_trake_tab
-from trake_ui_render import render_video_player
 from translation import QueryTranslator
 from video_locator import get_video_path
 
@@ -68,11 +74,13 @@ body {
     align-content: start !important;
 }
 
-#selected-keyframe {
+#selected-keyframe,
+#trake-selected-keyframe {
     min-height: 400px;
 }
 
-#selected-keyframe img {
+#selected-keyframe img,
+#trake-selected-keyframe img {
     object-fit: contain !important;
 }
 
@@ -81,7 +89,8 @@ body {
         margin-top: 3.5rem;
     }
 
-    #selected-keyframe {
+    #selected-keyframe,
+    #trake-selected-keyframe {
         min-height: 260px;
     }
 }
@@ -99,97 +108,50 @@ RESULT_FIELD_CHOICES = [
 ]
 
 
-def _timestamp(seconds: float) -> str:
-    total_milliseconds = max(0, round(float(seconds) * 1000))
-    hours, remainder = divmod(total_milliseconds, 3_600_000)
-    minutes, remainder = divmod(remainder, 60_000)
-    secs, milliseconds = divmod(remainder, 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
-
-
-def _watch_at(url: str, seconds: float) -> str:
-    if not url:
-        return ""
-    separator = "&" if "?" in url else "?"
-    return f"{url}{separator}t={max(0, int(seconds))}s"
-
-
 def _keyframe_directory(data_root: Path) -> Path:
     return (data_root / "keyframes").resolve()
 
 
 
-def _generate_preview_text(rows: list[dict], pinned: dict = None):
-    pinned = pinned or {}
-    if not rows:
-        return "Chưa có kết quả để xem trước."
-    from trake_submission import format_submission
-
-    submission_rows = []
-
-    # 1. Promote pinned frames to the top
-    for vid_id, frame_idx in pinned.items():
-        submission_rows.append((vid_id, (frame_idx,)))
-
-    # 2. Append remaining AI predictions
-    for r in rows:
-        video_id = r["video_id"]
-        frame_idx = r["frame_idx"]
-
-        # If this EXACT frame was pinned, skip it (we already put it at the top)
-        if pinned.get(video_id) == frame_idx:
+def _normalize_kis_pins(pinned: object) -> list[tuple[str, int]]:
+    """Return ordered, unique KIS pins while accepting the legacy dict state."""
+    items = pinned.items() if isinstance(pinned, dict) else pinned or []
+    normalized: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for item in items:
+        try:
+            video_id, frame = item
+            pair = (str(video_id), int(frame))
+        except (TypeError, ValueError):
             continue
-
-        submission_rows.append((video_id, (frame_idx,)))
-
-    # Ensure we don't exceed the original result count if capped
-    submission_rows = submission_rows[:max(100, len(rows))]
-
-    return format_submission(submission_rows, delimiter=",", include_header=False, frame_index_base=0)
+        if not pair[0] or pair[1] < 0 or pair in seen:
+            continue
+        normalized.append(pair)
+        seen.add(pair)
+    return normalized
 
 
-def _detail_markdown(details) -> str:
-    keyframe = details.keyframe
-    video = details.video
-    watch_url = _watch_at(str(video.get("watch_url") or ""), keyframe["pts_time_sec"])
-    watch_link = (
-        f'<a href="{html.escape(watch_url, quote=True)}" target="_blank" '
-        'rel="noopener noreferrer">Open video</a>'
-        if watch_url
-        else "N/A"
-    )
-    values = {
-        "Keyframe ID": keyframe["keyframe_id"],
-        "Video ID": keyframe["video_id"],
-        "Collection": keyframe["collection_id"],
-        "Keyframe no.": keyframe["keyframe_no"],
-        "Frame index": keyframe["frame_idx"],
-        "Timestamp": _timestamp(keyframe["pts_time_sec"]),
-        "FPS": f"{float(keyframe['fps']):.4g}",
-        "Resolution": f"{keyframe['width']} x {keyframe['height']}",
-        "Title": video.get("title") or "N/A",
-        "Author": video.get("author") or "N/A",
-        "Channel": video.get("channel_id") or "N/A",
-        "Published": video.get("publish_date_iso") or video.get("publish_date_raw") or "N/A",
-    }
-    rows = [f"| {label} | {html.escape(str(value))} |" for label, value in values.items()]
-    return "\n".join(["| Field | Value |", "|---|---|", *rows, f"| Source | {watch_link} |"])
+def _generate_preview_text(rows: list[dict], pinned: object = None):
+    """Put ordered pins first, then preserve ranked keyframe candidates."""
+    pinned_rows = _normalize_kis_pins(pinned)
+    if not rows and not pinned_rows:
+        return "Chưa có kết quả để xem trước."
 
-
-def _detection_rows(details) -> list[list]:
-    return [
-        [
-            row["entity"],
-            round(float(row["score"]), 4),
-            row["class_mid"],
-            row["class_label"],
-            round(float(row["ymin"]), 4),
-            round(float(row["xmin"]), 4),
-            round(float(row["ymax"]), 4),
-            round(float(row["xmax"]), 4),
-        ]
-        for row in details.detections
+    ordered_rows: list[tuple[str, int]] = []
+    seen = set()
+    candidates = [
+        (str(row["video_id"]), int(row["frame_idx"]))
+        for row in rows
     ]
+    for pair in [*pinned_rows, *candidates]:
+        if pair in seen:
+            continue
+        ordered_rows.append(pair)
+        seen.add(pair)
+
+    # The contest accepts at most SUBMISSION_MAX_ROWS lines per file.
+    submission_rows = [(video_id, (frame,)) for video_id, frame in ordered_rows]
+    return format_submission(submission_rows[:SUBMISSION_MAX_ROWS])
 
 
 class SearchController:
@@ -270,9 +232,60 @@ class SearchController:
         *,
         translate_vietnamese: bool | None = None,
     ) -> tuple[list[dict], str]:
+        parsed = parse_search_query(query)
+        mechanism = self.search_mechanism
+
+        # Fast paths: pure metadata input never touches CLIP or translation.
+        if parsed.is_exact_keyframe:
+            rows = []
+            missing = []
+            for exact_video, exact_no in parsed.exact_keyframes:
+                row = mechanism.find_exact_keyframe(exact_video, exact_no)
+                if row is None:
+                    missing.append(f"{exact_video}_{exact_no:03d}")
+                else:
+                    rows.append(row.to_dict())
+            parts = []
+            if rows:
+                parts.append(
+                    "đúng keyframe " + ", ".join(row["keyframe_id"] for row in rows)
+                )
+            if missing:
+                parts.append("Không tìm thấy: " + ", ".join(missing))
+            return rows, "Metadata: " + " | ".join(parts)
+
+        scope_collections = tuple(
+            dict.fromkeys([*(collections or ()), *parsed.collections])
+        )
+        dropdown_video = video_id or None
+        scope_videos = tuple(
+            dict.fromkeys([*parsed.video_ids, *([dropdown_video] if dropdown_video else [])])
+        )
+
+        if parsed.has_scope and not parsed.semantic_text:
+            # A typed video may also sit inside a typed collection — keep the
+            # first occurrence so nothing shows up twice in the gallery.
+            rows = []
+            seen_vector_ids: set[int] = set()
+
+            def _extend(results):
+                for result in results:
+                    if result.vector_id not in seen_vector_ids:
+                        seen_vector_ids.add(result.vector_id)
+                        rows.append(result)
+
+            for video_id_item in parsed.video_ids:
+                _extend(mechanism.get_video_keyframes(video_id_item))
+            for collection_id in parsed.collections:
+                _extend(mechanism.get_collection_keyframes(collection_id))
+            return (
+                [result.to_dict() for result in rows],
+                f"Metadata: {parsed.scope_label} — {len(rows)} keyframes",
+            )
+
         filters = self._search_filters(
-            collections,
-            video_id,
+            scope_collections,
+            None,
             object_entities,
             object_match_mode,
             minimum_object_confidence,
@@ -280,8 +293,9 @@ class SearchController:
             publish_date_from,
             publish_date_to,
         )
+        filters = replace(filters, video_ids=scope_videos)
         outcome = self.search_mechanism.search_by_text(
-            query,
+            parsed.semantic_text or query,
             int(top_k),
             str(query_language).lower(),
             filters,
@@ -299,6 +313,8 @@ class SearchController:
             f"Original query: {outcome.query.original_query} | "
             f"CLIP query: {outcome.query.clip_query}"
         )
+        if parsed.has_scope:
+            status = f"{status} | Scope: {parsed.scope_label}"
         if outcome.query.warning:
             status = f"{status} | {outcome.query.warning}"
         return rows, status
@@ -459,7 +475,8 @@ class SearchController:
             return (
                 gallery,
                 rows,
-                rows,
+                # Separate list objects: the two states are refined independently.
+                list(rows),
                 page_rows,
                 page,
                 status,
@@ -628,18 +645,28 @@ class SearchController:
         row = page_rows[local_index]
         details = self.search_mechanism.get_keyframe_details(row["keyframe_id"])
 
-        video_html = "<p style='color: #666; font-style: italic;'>Video file not found in VIDEO_ROOT.</p>"
+        video_html = "<p style='color: #666; font-style: italic;'>Select a keyframe to view its player.</p>"
         video_id = details.keyframe["video_id"]
         pts = float(details.keyframe["pts_time_sec"])
-        fps = float(details.video.get("fps", 25.0))
+        # The keyframe row is authoritative; the videos row has no per-frame fps.
+        fps = float(details.keyframe["fps"])
+        frame_idx = int(details.keyframe["frame_idx"])
+        watch_url = str(details.video.get("watch_url") or "")
         video_path = get_video_path(video_id)
-        if video_path:
-            video_html = render_video_player(video_id, video_path, pts, fps, player_id="query-text-player")
+        video_html = build_player(
+            video_id,
+            local_path=video_path,
+            watch_url=watch_url,
+            pts_time_sec=pts,
+            fps=fps,
+            player_id="query-text-player",
+            pin_button_id="query-text-pin-btn",
+        )
 
-        import gradio as gr
+        can_step_video = bool(video_path) or bool(watch_url)
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
-                gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)), gr.update(interactive=bool(video_path)),
-                fps, video_id, int(details.keyframe["frame_idx"]))
+                gr.update(interactive=can_step_video), gr.update(interactive=can_step_video), gr.update(interactive=True),
+                fps, video_id, frame_idx)
 
     def details_api(self, keyframe_id: str):
         details = self.search_mechanism.get_keyframe_details(keyframe_id)
@@ -651,7 +678,11 @@ class SearchController:
 
 
 _search_controller: SearchController | None = None
-_keyframes_root: Path | None = None
+if gr.NO_RELOAD:
+    _keyframes_root: Path | None = None
+    _runtime: RuntimePaths | None = None
+    _search_mechanism: SearchMechanism | None = None
+    _trake_searcher: TrakeSearcher | None = None
 
 
 @spaces.GPU(duration=120)
@@ -731,7 +762,7 @@ def build_app(
     controller = SearchController(search_mechanism, page_size)
     _search_controller = controller
 
-    with gr.Blocks(css=APP_CSS) as webui:
+    with gr.Blocks(css=APP_CSS, head=player_head_html()) as webui:
         gr.Markdown("## AIOU", elem_id="app-title")
         with gr.Tabs():
             with gr.Tab("Query Text"):
@@ -740,28 +771,38 @@ def build_app(
                 page_rows_state = gr.State([])
                 page_state = gr.State(0)
 
-                with gr.Row(equal_height=True):
-                    query = gr.Textbox(
-                        label="Query",
-                        placeholder="Describe the keyframe you want to find",
-                        scale=5,
-                    )
-                    translate_vietnamese = gr.Checkbox(
-                        label="Translate Vietnamese query to English",
-                        value=True,
-                        info="Off: direct multilingual search. On: NLLB translation before search.",
-                        scale=2,
-                    )
-                    top_k = gr.Slider(
-                        label="Top K",
-                        minimum=1,
-                        maximum=200,
-                        step=1,
-                        value=100,
-                        scale=2,
+                # One visual search panel: query, pre-search filters, and the
+                # Search button share a bordered Group so the filters cannot
+                # be overlooked behind a collapsed accordion.
+                with gr.Group():
+                    with gr.Row(equal_height=True):
+                        query = gr.Textbox(
+                            label="Query",
+                            placeholder=(
+                                "Describe the keyframe you want to find — hoặc nhập "
+                                "L26 · L26_V306 · L26_V306_049 · 'con cá, L26'"
+                            ),
+                            scale=5,
+                        )
+                        translate_vietnamese = gr.Checkbox(
+                            label="Translate Vietnamese query to English",
+                            value=True,
+                            info="Off: direct multilingual search. On: NLLB translation before search.",
+                            scale=2,
+                        )
+                        top_k = gr.Slider(
+                            label="Top K",
+                            minimum=1,
+                            maximum=200,
+                            step=1,
+                            value=100,
+                            scale=2,
+                        )
+
+                    gr.Markdown(
+                        "*Bộ lọc (tuỳ chọn) — được áp dụng ngay khi bấm Search*"
                     )
 
-                with gr.Accordion("Filters", open=False):
                     with gr.Row():
                         collections = gr.Dropdown(
                             label="Collections",
@@ -806,7 +847,7 @@ def build_app(
                         publish_date_from = gr.Textbox(label="Published from", placeholder="YYYY-MM-DD")
                         publish_date_to = gr.Textbox(label="Published to", placeholder="YYYY-MM-DD")
 
-                search_button = gr.Button("Search", variant="primary")
+                    search_button = gr.Button("Search", variant="primary")
                 status = gr.Textbox(label="Status", value="Ready", interactive=False)
 
                 with gr.Accordion("Refine current Top K results", open=False):
@@ -893,9 +934,14 @@ def build_app(
                                 with gr.Row():
                                     prev_btn = gr.Button("Prev Frame", interactive=False)
                                     next_btn = gr.Button("Next Frame", interactive=False)
-                                    pin_btn = gr.Button("Chốt Frame (Đẩy lên Top)", interactive=False, variant="primary")
+                                    pin_btn = gr.Button(
+                                        "Chốt Frame (Đẩy lên Top)",
+                                        interactive=False,
+                                        variant="primary",
+                                        elem_id="query-text-pin-btn",
+                                    )
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
-                                pinned_frames_state = gr.State({})
+                                pinned_frames_state = gr.State([])
 
                     with gr.Column(scale=2):
                         detail_metadata = gr.Markdown("Select a keyframe to view metadata")
@@ -917,10 +963,11 @@ def build_app(
                     api_details = gr.JSON()
                     api_details_button = gr.Button("Metadata API")
 
-                    current_time_box = gr.Textbox(visible=False, elem_id="qt-current-time")
                     current_fps_box = gr.Number(visible=False, elem_id="qt-current-fps", value=25.0)
                     current_video_id_box = gr.Textbox(visible=False, elem_id="qt-current-video-id")
                     current_kf_frame_box = gr.Number(visible=False, elem_id="qt-current-kf-frame", value=0)
+                    pin_calc_frame_box = gr.Number(visible=False, elem_id="qt-pin-calc-frame", value=None)
+                    pin_accuracy_box = gr.Textbox(visible=False, elem_id="qt-pin-accuracy", value="")
 
 
                 gr.Markdown("---")
@@ -1021,7 +1068,6 @@ def build_app(
                     outputs=[preview_textbox],
                     api_name=False,
                 )
-                from trake_submission import export_csv_file
                 export_button.click(
                     fn=export_csv_file,
                     inputs=[preview_textbox, export_filename],
@@ -1164,25 +1210,20 @@ def build_app(
                 )
 
                 frame_step_js = """(fps) => {
-                    const video = document.getElementById('query-text-player');
-                    if (video) {
-                        video.pause();
-                        video.currentTime += (1.0 / fps);
-                    }
+                    if (window.__aiouStep) { window.__aiouStep('query-text-player', 1); }
                     return fps;
                 }"""
                 frame_prev_js = """(fps) => {
-                    const video = document.getElementById('query-text-player');
-                    if (video) {
-                        video.pause();
-                        video.currentTime -= (1.0 / fps);
-                    }
+                    if (window.__aiouStep) { window.__aiouStep('query-text-player', -1); }
                     return fps;
                 }"""
-                pin_js = """(c_time, pinned, vid, fps, kf_frame) => {
-                    const video = document.getElementById('query-text-player');
-                    const t = video ? video.currentTime.toString() : "";
-                    return [t, pinned, vid, fps, kf_frame];
+                # The browser sends the latest presented frame plus its accuracy
+                # label; the server never recomputes a frame from wall-clock time.
+                pin_js = """(vid, kf_frame, pinned, calc, acc) => {
+                    const snap = window.__aiouFrameSnapshot
+                        ? window.__aiouFrameSnapshot('query-text-player')
+                        : {frame: null, accuracy: 'none'};
+                    return [vid, kf_frame, pinned, snap.frame, snap.accuracy];
                 }"""
 
                 next_btn.click(None, inputs=[current_fps_box], outputs=[current_fps_box], js=frame_step_js)
@@ -1190,7 +1231,13 @@ def build_app(
 
                 pin_btn.click(
                     process_pin_kis,
-                    inputs=[current_time_box, pinned_frames_state, current_video_id_box, current_fps_box, current_kf_frame_box],
+                    inputs=[
+                        current_video_id_box,
+                        current_kf_frame_box,
+                        pinned_frames_state,
+                        pin_calc_frame_box,
+                        pin_accuracy_box,
+                    ],
                     outputs=[pinned_frames_state, status],
                     js=pin_js,
                     api_name=False
@@ -1211,28 +1258,54 @@ def build_app(
 
             if trake_searcher is not None:
                 with gr.Tab("Query TRAKE"):
-                    build_trake_tab(trake_searcher)
+                    build_trake_tab(
+                        trake_searcher,
+                        keyframe_details_provider=search_mechanism,
+                    )
 
     return webui
 
 
 
-def process_pin_kis(current_time, current_pins, video_id, fps, kf_frame):
+def process_pin_kis(video_id, kf_frame, current_pins, calc_frame, accuracy):
+    """Store the browser-reported frame; fall back to the keyframe's own
+    frame_idx whenever the player state is missing or malformed. Parameter
+    order matches the click handler's `inputs` list."""
     if not video_id:
         return current_pins, "Không có video nào được chọn."
 
+    fallback = validate_frame(kf_frame, 0)
     try:
-        current_time = float(current_time)
-        new_frame = round(current_time * fps)
-    except (ValueError, TypeError):
-        new_frame = kf_frame
+        candidate = int(str(calc_frame).strip())
+        parsed_candidate = candidate if candidate >= 0 else None
+    except (TypeError, ValueError):
+        parsed_candidate = None
+    new_frame = parsed_candidate if parsed_candidate is not None else fallback
+    trusted = parsed_candidate is not None and accuracy in {"calculated", "estimated"}
+    if accuracy == "calculated" and trusted:
+        label = "Calculated"
+    elif accuracy == "estimated" and trusted:
+        label = "Estimated"
+    else:
+        label = f"Keyframe {fallback}"
 
-    current_pins = current_pins or {}
-    current_pins[video_id] = new_frame
-    return current_pins, f"Đã chốt frame {new_frame} cho video {video_id}."
+    pair = (str(video_id), new_frame)
+    previous_pins = _normalize_kis_pins(current_pins)
+    ordered_pins = [pair, *(existing for existing in previous_pins if existing != pair)]
+    new_pins = [list(existing) for existing in ordered_pins[:SUBMISSION_MAX_ROWS]]
+    return new_pins, f"Đã chốt frame {new_frame} cho video {video_id} ({label})."
 
 def clear_pins_kis():
-    return {}, "Đã gỡ bỏ toàn bộ frame chốt tay."
+    return [], "Đã gỡ bỏ toàn bộ frame chốt tay."
+
+
+def _configured_model_device(value: str, setting_name: str) -> str | None:
+    device = str(value or "auto").strip().lower()
+    if device == "auto":
+        return None
+    if device not in {"cpu", "cuda"}:
+        raise ValueError(f"{setting_name} must be one of: auto, cpu, cuda")
+    return device
 
 
 def create_search_mechanism(runtime: RuntimePaths) -> SearchMechanism:
@@ -1240,6 +1313,7 @@ def create_search_mechanism(runtime: RuntimePaths) -> SearchMechanism:
     clip_searcher = CLIPSearcher(
         model_id=environment["MODEL_ID"],
         revision=environment["MODEL_REVISION"],
+        device=_configured_model_device(environment["CLIP_DEVICE"], "CLIP_DEVICE"),
     )
     clip_searcher.load()
     return SearchMechanism(
@@ -1247,6 +1321,10 @@ def create_search_mechanism(runtime: RuntimePaths) -> SearchMechanism:
         translator=QueryTranslator(
             model_id=environment["TRANSLATION_MODEL_ID"],
             revision=environment["TRANSLATION_MODEL_REVISION"],
+            device=_configured_model_device(
+                environment["TRANSLATION_DEVICE"],
+                "TRANSLATION_DEVICE",
+            ),
         ),
         image_indexer=ImageIndexer(
             runtime.index_file,
@@ -1270,20 +1348,29 @@ def create_trake_searcher(runtime: RuntimePaths, search_mechanism: SearchMechani
 
 
 def create_app() -> gr.Blocks:
-    global _keyframes_root
+    global _keyframes_root, _runtime, _search_mechanism, _trake_searcher
 
-    runtime = prepare_runtime()
-    _keyframes_root = _keyframe_directory(runtime.data_root)
-    search_mechanism = create_search_mechanism(runtime)
-    try:
-        trake_searcher = create_trake_searcher(runtime, search_mechanism)
-    except Exception:
-        logger.warning("Failed to initialize TRAKE searcher; TRAKE tab disabled", exc_info=True)
-        trake_searcher = None
+    if _runtime is None:
+        runtime = prepare_runtime()
+        search_mechanism = create_search_mechanism(runtime)
+        try:
+            trake_searcher = create_trake_searcher(runtime, search_mechanism)
+        except Exception:
+            logger.warning(
+                "Failed to initialize TRAKE searcher; TRAKE tab disabled",
+                exc_info=True,
+            )
+            trake_searcher = None
+        _runtime = runtime
+        _search_mechanism = search_mechanism
+        _trake_searcher = trake_searcher
+
+    assert _search_mechanism is not None
+    _keyframes_root = _keyframe_directory(_runtime.data_root)
     return build_app(
-        search_mechanism,
-        page_size=int(runtime.environment["RESULTS_PER_PAGE"]),
-        trake_searcher=trake_searcher,
+        _search_mechanism,
+        page_size=int(_runtime.environment["RESULTS_PER_PAGE"]),
+        trake_searcher=_trake_searcher,
     )
 
 demo = create_app()

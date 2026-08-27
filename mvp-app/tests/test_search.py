@@ -238,3 +238,38 @@ def test_invalid_date_filter_is_rejected(tmp_path):
             "query",
             filters=SearchFilters(publish_date_from="01/01/2024"),
         )
+
+
+def test_video_keyframes_returned_in_canonical_order(tmp_path):
+    store = _make_store(tmp_path)
+    results = store.get_video_keyframes("V01")
+    assert [result.keyframe_id for result in results] == ["V01_001", "V01_002"]
+    assert all(result.score == 1.0 for result in results)
+    for result in results:
+        assert Path(result.image_path).is_file()
+
+
+def test_collection_keyframes_span_videos_in_order(tmp_path):
+    store = _make_store(tmp_path)
+    results = store.get_collection_keyframes("C01")
+    assert [result.keyframe_id for result in results] == ["V01_001", "V01_002"]
+
+
+def test_exact_keyframe_lookup_by_video_and_number(tmp_path):
+    store = _make_store(tmp_path)
+    hit = store.find_exact_keyframe("V01", 2)
+    assert hit is not None
+    assert hit.keyframe_id == "V01_002"
+    assert hit.frame_idx == 60
+    assert store.find_exact_keyframe("V01", 99) is None
+
+
+def test_multi_video_scope_filter_matches_all_scoped_videos(tmp_path):
+    store = _make_store(tmp_path)
+    outcome = store.search_by_text(
+        "query",
+        top_k=10,
+        filters=SearchFilters(video_ids=("V01", "V02")),
+        translate_vietnamese=False,
+    )
+    assert {result.video_id for result in outcome.results} == {"V01", "V02"}
