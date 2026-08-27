@@ -215,3 +215,33 @@ def test_both_grouping_modes_are_offered(tmp_path):
     assert controller.LINKAGE_MODE in controller.CLUSTER_MODES
     assert controller._clusters_for([], controller.LINKAGE_MODE) == []
     assert controller._clusters_for([], controller.ANCHOR_MODE) == []
+
+
+def test_neither_mode_is_a_special_case(tmp_path):
+    """Both readings are first-class: a lookup, not an if-else where one mode is
+    the exception."""
+    from tests.test_search import _make_store
+
+    controller = SearchController(_make_store(tmp_path), page_size=10)
+
+    assert len(controller.CLUSTER_MODES) == 2
+    for label in controller.CLUSTER_MODES:
+        assert "complete" not in label.lower(), "labels stay free of algorithm names"
+        assert controller._clusters_for([], label) == []
+
+
+def test_summary_reports_both_modes(tmp_path):
+    """The counts disagree between modes — showing one alone hides the choice."""
+    import numpy as np
+
+    vectors = np.eye(3, dtype=np.float32)
+    controller = SearchController(_store_with_vectors(tmp_path, vectors), page_size=10)
+    rows = [
+        {**_row(0), "vector_id": 0},
+        {**_row(1, similar_to=0, duplicates=1), "vector_id": 1},
+    ]
+
+    text = controller.compare_modes_text(rows)
+
+    for label in controller.CLUSTER_MODES:
+        assert label in text

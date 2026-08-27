@@ -738,20 +738,36 @@ class SearchController:
             f"**{len(clusters)} cụm**. Ảnh đầu mỗi cụm là ảnh được giữ."
         )
 
-    LINKAGE_MODE = "Nhóm chặt (complete-link)"
-    ANCHOR_MODE = "Theo ảnh đại diện"
+    # Two readings of the same frames, neither strictly better: the anchor mode
+    # yields fewer near-identical clusters, complete linkage yields cleaner ones.
+    ANCHOR_MODE = "Gom quanh ảnh mạnh nhất"
+    LINKAGE_MODE = "Gom khi mọi ảnh đều giống nhau"
     CLUSTER_MODES = [ANCHOR_MODE, LINKAGE_MODE]
 
     def _clusters_for(self, original_rows, mode):
-        if mode == self.LINKAGE_MODE:
-            return self.linkage_clusters(original_rows)
-        return self.duplicate_clusters(original_rows)
+        builders = {
+            self.ANCHOR_MODE: self.duplicate_clusters,
+            self.LINKAGE_MODE: self.linkage_clusters,
+        }
+        return builders.get(mode, self.duplicate_clusters)(original_rows)
+
+    def compare_modes_text(self, original_rows) -> str:
+        """Both counts at once — the modes disagree, and the gap is the point."""
+        parts = []
+        for label in self.CLUSTER_MODES:
+            clusters = self._clusters_for(original_rows, label)
+            grouped = sum(len(c) - 1 for c in clusters)
+            parts.append(f"{label}: **{len(clusters)} cụm** ({grouped} ảnh)")
+        return " · ".join(parts)
 
     def refresh_clusters(self, original_rows, mode=None):
         clusters = self._clusters_for(original_rows, mode)
         choices = self.cluster_choices(clusters)
+        summary = self.cluster_summary_text(clusters, len(original_rows or []))
+        if clusters:
+            summary += "  \n" + self.compare_modes_text(original_rows)
         return (
-            self.cluster_summary_text(clusters, len(original_rows or [])),
+            summary,
             gr.update(choices=choices, value=choices[0] if choices else None),
             self._cluster_items(clusters[0]) if clusters else [],
         )
@@ -1422,7 +1438,10 @@ def build_app(
                         choices=SearchController.CLUSTER_MODES,
                         value=SearchController.ANCHOR_MODE,
                         label="Cách gom cụm",
-                        info="Nhóm chặt: mọi ảnh trong cụm phải giống nhau đôi một.",
+                        info=(
+                            "Gom quanh ảnh mạnh nhất: ít cụm na ná nhau hơn. "
+                            "Gom khi mọi ảnh đều giống nhau: trong cụm sạch hơn."
+                        ),
                         elem_id="cluster-mode",
                     )
                     cluster_dropdown = gr.Dropdown(
