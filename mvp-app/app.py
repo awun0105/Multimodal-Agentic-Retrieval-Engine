@@ -34,6 +34,7 @@ from frame_math import validate_frame
 from keyframe_details import detail_markdown as _detail_markdown
 from keyframe_details import detection_rows as _detection_rows
 from keyframe_details import timestamp as _timestamp
+from keyframe_details import watch_at as _watch_at
 from player import build_player, player_head_html
 from query_parser import parse_search_query
 from schemas import SearchFilters
@@ -66,7 +67,7 @@ body {
     overflow-x: visible !important;
 }
 
-/* Grid tự lấy chiều cao của 2 hàng */
+/* Grid tự lấy chiều cao theo số hàng đang cấu hình */
 #keyframe-gallery .grid-container {
     height: auto !important;
     max-height: none !important;
@@ -131,6 +132,73 @@ def _normalize_kis_pins(pinned: object) -> list[tuple[str, int]]:
     return normalized
 
 
+SHORTCUTS_HEAD = """
+<script>
+(function () {
+  // Typing in a box must stay typing: only fire when focus is outside an input.
+  function isTyping(target) {
+    if (!target) return false;
+    var tag = (target.tagName || '').toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+  }
+  function press(id) {
+    var el = document.getElementById(id);
+    var button = el && (el.tagName === 'BUTTON' ? el : el.querySelector('button'));
+    if (button && !button.disabled) { button.click(); return true; }
+    return false;
+  }
+  document.addEventListener('keydown', function (event) {
+    if (event.ctrlKey || event.altKey || event.metaKey) return;
+    if (isTyping(event.target)) return;
+    var handled = false;
+    switch (event.key) {
+      case 'ArrowLeft':  handled = press('prev-page-btn'); break;
+      case 'ArrowRight': handled = press('next-page-btn'); break;
+      case 's': case 'S': handled = press('similar-search-btn'); break;
+      case 'x': case 'X': handled = press('exclude-btn'); break;
+      case 'g': case 'G': handled = press('grouped-btn'); break;
+      case '/':
+        var box = document.querySelector('#component-0 textarea, textarea');
+        if (box) { box.focus(); handled = true; }
+        break;
+    }
+    if (handled) event.preventDefault();
+  });
+})();
+</script>
+"""
+
+HISTORY_LIMIT = 10
+
+# len(restore_outputs): original_results_state + refine_outputs (12) + six refinement controls
+HISTORY_RESTORE_OUTPUTS = 19
+
+
+def _push_history(history: list, label: str, rows: list, limit: int = HISTORY_LIMIT) -> list:
+    """Prepend a search snapshot, newest first, replacing a repeat of the same query.
+
+    Returns a new list: gr.State only re-renders when the object identity changes.
+    """
+    label = (label or "").strip()
+    if not rows or not label:
+        return list(history or [])
+    kept = [entry for entry in (history or []) if entry.get("label") != label]
+    return [{"label": label, "rows": list(rows)}, *kept][:limit]
+
+
+def _handoff_text(details) -> str:
+    """One selectable line the searcher hands to the teammate verifying the answer."""
+    keyframe = details.keyframe
+    seconds = float(keyframe["pts_time_sec"])
+    parts = [
+        str(keyframe["video_id"]),
+        _timestamp(seconds),
+        f"frame {int(keyframe['frame_idx'])}",
+        _watch_at(str(details.video.get("watch_url") or ""), seconds),
+    ]
+    return " | ".join(part for part in parts if part)
+
+
 def _generate_preview_text(rows: list[dict], pinned: object = None):
     """Put ordered pins first, then preserve ranked keyframe candidates."""
     pinned_rows = _normalize_kis_pins(pinned)
@@ -161,13 +229,22 @@ class SearchController:
         self.search_mechanism = search_mechanism
         self.page_size = page_size
 
+    def set_mmr(self, enabled: bool) -> None:
+        setattr(self.search_mechanism, "mmr_enabled", bool(enabled))
+
     def page_payload(
         self,
         rows: list[dict],
         page: int,
         original_count: int | None = None,
+        excluded: set | None = None,
+        hide_excluded: bool = False,
     ):
         rows = rows or []
+        excluded = excluded or set()
+        if hide_excluded:
+            # drop before slicing, so pages stay full and the count label stays truthful
+            rows = [row for row in rows if row["keyframe_id"] not in excluded]
         total_pages = max(1, (len(rows) + self.page_size - 1) // self.page_size)
         page = max(0, min(int(page), total_pages - 1))
         start = page * self.page_size
@@ -176,7 +253,9 @@ class SearchController:
         gallery = [
             (
                 row["image_path"],
-                f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])} | {row['score']:.4f}",
+                ("[ĐÃ LOẠI] " if row["keyframe_id"] in excluded else "")
+                + (f"[gộp x{row['duplicates']}] " if row.get("duplicates") else "")
+                + f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])} | {row['score']:.4f}",
             )
             for row in rendered_rows
         ]
@@ -302,6 +381,9 @@ class SearchController:
             translate_vietnamese=translate_vietnamese,
         )
         rows = [result.to_dict() for result in outcome.results]
+        for row in rows:
+            entry = outcome.duplicate_details.get(row["vector_id"]) or {}
+            row["duplicates"] = int(entry.get("duplicates", 0))
         if not outcome.query.translation_enabled:
             translation_status = "Off"
         elif outcome.query.warning:
@@ -521,6 +603,135 @@ class SearchController:
                 "Refine current Top K results | 0 results",
             )
 
+    def _repaint(self, rows, page, excluded, mode):
+        """Redraw one page with the current exclusion set and display mode."""
+        return self.page_payload(rows, page, None, excluded or set(), mode == "Ẩn hẳn")
+
+    def show_grouped_frames(self, original_rows, excluded, mode):
+        """List exactly the frames duplicate-grouping penalised, so a mis-group is visible.
+
+        Selected by the penalty flag, not by rank: a frame can sit last simply because it
+        scored low, which says nothing about grouping.
+        """
+        rows = [row for row in (original_rows or []) if row.get("duplicates")]
+        status = (
+            f"Đang xem {len(rows)} ảnh bị gán trọng số (gộp trùng). "
+            "Bấm 'Bỏ lọc trọng số' để xem lại toàn bộ."
+            if rows
+            else "Không có ảnh nào bị gán trọng số trong lượt tìm này."
+        )
+        return (*self._repaint(rows, 0, excluded, mode), status)
+
+    def show_all_frames(self, original_rows, excluded, mode):
+        rows = original_rows or []
+        return (
+            *self._repaint(rows, 0, excluded, mode),
+            f"Refine current Top K results | {len(rows)} results",
+        )
+
+    def toggle_excluded(self, excluded, selected_keyframe_id, rows, page, mode):
+        """Mark or unmark the selected frame so a rejected shot is not re-read on the next pass.
+
+        Keyed by keyframe id, not grid position: every repaint reshuffles the grid, so a
+        remembered index would toggle whichever frame later landed in that slot.
+        """
+        updated = set(excluded or set())
+        if selected_keyframe_id:
+            updated.symmetric_difference_update({str(selected_keyframe_id)})
+        return (updated, *self._repaint(rows, page, updated, mode))
+
+    def clear_excluded(self, rows, page, mode):
+        return (set(), *self._repaint(rows, page, set(), mode))
+
+    def restyle_excluded(self, excluded, rows, page, mode):
+        """Re-render when the user switches between marking and hiding."""
+        return self._repaint(rows, page, excluded, mode)
+
+    def record_history(self, query, rows, history):
+        """Snapshot a completed search so a worse follow-up query can be undone."""
+        updated = _push_history(history, query, rows)
+        labels = [entry["label"] for entry in updated]
+        return updated, gr.update(choices=labels, value=None)
+
+    def restore_history(self, history, label):
+        """Re-render a stored result set without re-running the search.
+
+        Refreshing the dropdown's choices after a search also fires `change` with an
+        empty value; restoring nothing there would wipe the results just found.
+        """
+        if not label:
+            return tuple(gr.update() for _ in range(HISTORY_RESTORE_OUTPUTS))
+        for entry in history or []:
+            if entry.get("label") == label:
+                return self.clear_all_refinements(entry["rows"])
+        return tuple(gr.update() for _ in range(HISTORY_RESTORE_OUTPUTS))
+
+    def _neighbour_items(self, keyframe_id: str) -> list[tuple[str, str]]:
+        """Filmstrip around the selection: confirms a scene without opening the video."""
+        try:
+            rows = self.search_mechanism.get_temporal_window(keyframe_id)
+        except (KeyError, AttributeError):
+            return []
+        return [
+            (row["image_path"], f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])}")
+            for row in rows
+            if Path(row["image_path"]).is_file()
+        ]
+
+    def search_similar_images(self, page_rows, selected_keyframe_id, top_k):
+        """Re-rank around the selected frame's own embedding.
+
+        Duplicate grouping is suppressed for this one call: it penalises exactly the
+        near-identical frames this search exists to surface. Looked up by keyframe id
+        because every repaint reshuffles the grid a remembered index pointed into.
+        """
+        try:
+            source = next(
+                (row for row in page_rows or [] if row["keyframe_id"] == selected_keyframe_id),
+                None,
+            )
+            if source is None:
+                raise ValueError("Chọn một keyframe trước khi tìm ảnh giống.")
+            vector_id = int(source["vector_id"])
+            mechanism = self.search_mechanism
+            outcome = mechanism.search_by_vector(
+                mechanism.embeddings[vector_id], top_k=int(top_k), use_mmr=False
+            )
+            rows = [
+                result.to_dict()
+                for result in outcome.results
+                if int(result.vector_id) != vector_id
+            ]
+            gallery, page_rows_out, page, label, previous_update, next_update = (
+                self.page_payload(rows, 0)
+            )
+            collection_update, video_update, author_update = self._refinement_updates(rows)
+            status = (
+                f"Ảnh giống {source['keyframe_id']} | {len(rows)} kết quả | "
+                "Gộp ảnh trùng tạm tắt cho lượt này"
+            )
+            return (
+                gallery, rows, list(rows), page_rows_out, page, status, label,
+                previous_update, next_update, None,
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                "Select a keyframe to view metadata", [],
+                collection_update, video_update, author_update,
+                -1.0, "", "all",
+                f"Refine current Top K results | {len(rows)} results",
+            )
+        except Exception as exc:
+            logger.exception("Similar-image search failed")
+            empty_update = gr.update(choices=[], value=[])
+            return (
+                [], [], [], [], 0, f"Error: {exc}", "Page 1 / 1 | 0 results",
+                gr.update(interactive=False), gr.update(interactive=False), None,
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                "Select a keyframe to view metadata", [],
+                empty_update, empty_update, empty_update,
+                -1.0, "", "all",
+                "Refine current Top K results | 0 results",
+            )
+
     def refine_results(
         self,
         original_rows,
@@ -600,6 +811,9 @@ class SearchController:
             0,
         )
         return (
+            # first slot feeds original_results_state: restoring history must move the
+            # baseline too, or refine/clear/paging keep working on the previous search
+            rows,
             gallery,
             rows,
             page_rows,
@@ -636,12 +850,20 @@ class SearchController:
                 [],
         )
 
+    @staticmethod
+    def _no_selection(metadata_message: str):
+        """Same shape as a successful selection, so all three branches stay aligned."""
+        return (None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                metadata_message, [],
+                gr.update(), gr.update(), gr.update(), "", "", [],
+                gr.update(), gr.update(), gr.update())
+
     def select_keyframe(self, page_rows, evt: gr.SelectData):
         if not page_rows or evt.index is None:
-            return None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>", "Select a keyframe to view metadata", []
+            return self._no_selection("Select a keyframe to view metadata")
         local_index = int(evt.index[0] if isinstance(evt.index, tuple) else evt.index)
         if local_index < 0 or local_index >= len(page_rows):
-            return None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>", "Selected result is no longer available", []
+            return self._no_selection("Selected result is no longer available")
         row = page_rows[local_index]
         details = self.search_mechanism.get_keyframe_details(row["keyframe_id"])
 
@@ -666,6 +888,7 @@ class SearchController:
         can_step_video = bool(video_path) or bool(watch_url)
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
                 gr.update(interactive=can_step_video), gr.update(interactive=can_step_video), gr.update(interactive=True),
+                _handoff_text(details), row["keyframe_id"], self._neighbour_items(row["keyframe_id"]),
                 fps, video_id, frame_idx)
 
     def details_api(self, keyframe_id: str):
@@ -762,12 +985,15 @@ def build_app(
     controller = SearchController(search_mechanism, page_size)
     _search_controller = controller
 
-    with gr.Blocks(css=APP_CSS, head=player_head_html()) as webui:
+    with gr.Blocks(css=APP_CSS, head=player_head_html() + SHORTCUTS_HEAD) as webui:
         gr.Markdown("## AIOU", elem_id="app-title")
         with gr.Tabs():
             with gr.Tab("Query Text"):
                 original_results_state = gr.State([])
                 visible_results_state = gr.State([])
+                selected_keyframe_state = gr.State("")
+                history_state = gr.State([])
+                excluded_state = gr.State(set())
                 page_rows_state = gr.State([])
                 page_state = gr.State(0)
 
@@ -790,6 +1016,12 @@ def build_app(
                             info="Off: direct multilingual search. On: NLLB translation before search.",
                             scale=2,
                         )
+                        mmr_checkbox = gr.Checkbox(
+                            label="Gộp ảnh trùng lặp",
+                            value=True,
+                            info="Tắt nếu thấy gộp nhầm cảnh khác nhau.",
+                            scale=2,
+                        )
                         top_k = gr.Slider(
                             label="Top K",
                             minimum=1,
@@ -799,8 +1031,18 @@ def build_app(
                             scale=2,
                         )
 
+                    history_dropdown = gr.Dropdown(
+                        label="Lịch sử truy vấn (10 gần nhất)",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        elem_id="history-dropdown",
+                    )
+
                     gr.Markdown(
-                        "*Bộ lọc (tuỳ chọn) — được áp dụng ngay khi bấm Search*"
+                        "*Bộ lọc (tuỳ chọn) — được áp dụng ngay khi bấm Search*  \n"
+                        "*Phím tắt (khi con trỏ không ở ô nhập): `←` `→` chuyển trang · "
+                        "`S` tìm ảnh giống · `X` loại ảnh · `G` xem ảnh bị gán trọng số · `/` về ô tìm*"
                     )
 
                     with gr.Row():
@@ -847,7 +1089,9 @@ def build_app(
                         publish_date_from = gr.Textbox(label="Published from", placeholder="YYYY-MM-DD")
                         publish_date_to = gr.Textbox(label="Published to", placeholder="YYYY-MM-DD")
 
-                    search_button = gr.Button("Search", variant="primary")
+                    search_button = gr.Button(
+                        "Search", variant="primary", elem_id="search-btn"
+                    )
                 status = gr.Textbox(label="Status", value="Ready", interactive=False)
 
                 with gr.Accordion("Refine current Top K results", open=False):
@@ -899,8 +1143,8 @@ def build_app(
                 gallery = gr.Gallery(
                     label="Keyframes",
                     show_label=True,
-                    columns=5,
-                    rows=2,
+                    columns=4,
+                    rows=5,
                     height="auto",
                     object_fit="contain",
                     allow_preview=False,
@@ -908,13 +1152,17 @@ def build_app(
                     elem_id="keyframe-gallery",
                 )
                 with gr.Row():
-                    previous_button = gr.Button("Previous", interactive=False)
+                    previous_button = gr.Button(
+                        "Previous", interactive=False, elem_id="prev-page-btn"
+                    )
                     page_label = gr.Textbox(
                         value="Page 1 / 1 | 0 results",
                         show_label=False,
                         interactive=False,
                     )
-                    next_button = gr.Button("Next", interactive=False)
+                    next_button = gr.Button(
+                        "Next", interactive=False, elem_id="next-page-btn"
+                    )
 
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=3):
@@ -942,6 +1190,43 @@ def build_app(
                                     )
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
                                 pinned_frames_state = gr.State([])
+                        handoff_box = gr.Textbox(
+                            label="Bàn giao (copy cho người kiểm tra)",
+                            value="",
+                            lines=3,
+                            interactive=False,
+                            show_copy_button=True,
+                            elem_id="handoff-box",
+                        )
+                        similar_button = gr.Button(
+                            "Tìm ảnh giống thế này",
+                            elem_id="similar-search-btn",
+                        )
+                        with gr.Row():
+                            grouped_button = gr.Button(
+                                "Xem ảnh bị gán trọng số", elem_id="grouped-btn"
+                            )
+                            all_frames_button = gr.Button("Bỏ lọc trọng số")
+                        with gr.Row():
+                            exclude_button = gr.Button(
+                                "Loại ảnh này", elem_id="exclude-btn"
+                            )
+                            clear_excluded_button = gr.Button("Bỏ đánh dấu tất cả")
+                            exclude_mode = gr.Radio(
+                                choices=["Chỉ đánh dấu", "Ẩn hẳn"],
+                                value="Chỉ đánh dấu",
+                                label="Ảnh đã loại",
+                                elem_id="exclude-mode",
+                            )
+                        neighbour_gallery = gr.Gallery(
+                            label="Khung hình lân cận (cùng video)",
+                            columns=11,
+                            rows=1,
+                            height="auto",
+                            allow_preview=False,
+                            object_fit="contain",
+                            elem_id="neighbour-gallery",
+                        )
 
                     with gr.Column(scale=2):
                         detail_metadata = gr.Markdown("Select a keyframe to view metadata")
@@ -1040,15 +1325,39 @@ def build_app(
                     within_results_field,
                     refine_status,
                 ]
+                # history rides on .then() so search_inputs_v2 keeps its asserted arity
                 search_button.click(
                     fn=search_keyframes_gpu_v2,
                     inputs=search_inputs_v2,
                     outputs=search_outputs_v2,
                     api_name="search_keyframes_v2",
+                ).then(
+                    fn=controller.record_history,
+                    inputs=[query, original_results_state, history_state],
+                    outputs=[history_state, history_dropdown],
+                    api_name=False,
                 )
                 query.submit(
                     fn=search_keyframes_gpu_v2,
                     inputs=search_inputs_v2,
+                    outputs=search_outputs_v2,
+                    api_name=False,
+                ).then(
+                    fn=controller.record_history,
+                    inputs=[query, original_results_state, history_state],
+                    outputs=[history_state, history_dropdown],
+                    api_name=False,
+                )
+                # kept out of search_inputs_v2 on purpose: the endpoint parameter count is asserted
+                mmr_checkbox.change(
+                    fn=controller.set_mmr,
+                    inputs=[mmr_checkbox],
+                    outputs=[],
+                    api_name=False,
+                )
+                similar_button.click(
+                    fn=controller.search_similar_images,
+                    inputs=[page_rows_state, selected_keyframe_state, top_k],
                     outputs=search_outputs_v2,
                     api_name=False,
                 )
@@ -1156,18 +1465,27 @@ def build_app(
                     queue=False,
                     api_name=False,
                 )
+                restore_outputs = [
+                    original_results_state,
+                    *refine_outputs,
+                    within_results_query,
+                    within_results_field,
+                    refine_collections,
+                    refine_videos,
+                    refine_authors,
+                    minimum_result_score,
+                ]
                 clear_refinements_button.click(
                     controller.clear_all_refinements,
                     inputs=[original_results_state],
-                    outputs=[
-                        *refine_outputs,
-                        within_results_query,
-                        within_results_field,
-                        refine_collections,
-                        refine_videos,
-                        refine_authors,
-                        minimum_result_score,
-                    ],
+                    outputs=restore_outputs,
+                    queue=False,
+                    api_name=False,
+                )
+                history_dropdown.change(
+                    fn=controller.restore_history,
+                    inputs=[history_state, history_dropdown],
+                    outputs=restore_outputs,
                     queue=False,
                     api_name=False,
                 )
@@ -1184,6 +1502,53 @@ def build_app(
                     detail_metadata,
                     detections,
                 ]
+                # page_payload's own six outputs, without the detail panes _change_page resets
+                repaint_outputs = [
+                    gallery,
+                    page_rows_state,
+                    page_state,
+                    page_label,
+                    previous_button,
+                    next_button,
+                ]
+                exclude_button.click(
+                    fn=controller.toggle_excluded,
+                    inputs=[
+                        excluded_state, selected_keyframe_state,
+                        visible_results_state, page_state, exclude_mode,
+                    ],
+                    outputs=[excluded_state, *repaint_outputs],
+                    queue=False,
+                    api_name=False,
+                )
+                clear_excluded_button.click(
+                    fn=controller.clear_excluded,
+                    inputs=[visible_results_state, page_state, exclude_mode],
+                    outputs=[excluded_state, *repaint_outputs],
+                    queue=False,
+                    api_name=False,
+                )
+                exclude_mode.change(
+                    fn=controller.restyle_excluded,
+                    inputs=[excluded_state, visible_results_state, page_state, exclude_mode],
+                    outputs=repaint_outputs,
+                    queue=False,
+                    api_name=False,
+                )
+                grouped_button.click(
+                    fn=controller.show_grouped_frames,
+                    inputs=[original_results_state, excluded_state, exclude_mode],
+                    outputs=[*repaint_outputs, refine_status],
+                    queue=False,
+                    api_name=False,
+                )
+                all_frames_button.click(
+                    fn=controller.show_all_frames,
+                    inputs=[original_results_state, excluded_state, exclude_mode],
+                    outputs=[*repaint_outputs, refine_status],
+                    queue=False,
+                    api_name=False,
+                )
                 previous_button.click(
                     controller.previous_page,
                     inputs=[visible_results_state, original_results_state, page_state],
@@ -1203,7 +1568,8 @@ def build_app(
                     inputs=[page_rows_state],
                     outputs=[
                         detail_image, detail_video, detail_metadata, detections,
-                        prev_btn, next_btn, pin_btn,
+                        prev_btn, next_btn, pin_btn, handoff_box, selected_keyframe_state,
+                        neighbour_gallery,
                         current_fps_box, current_video_id_box, current_kf_frame_box
                     ],
                     api_name=False,
