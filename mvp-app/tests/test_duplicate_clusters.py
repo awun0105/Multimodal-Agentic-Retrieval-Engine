@@ -104,3 +104,27 @@ def test_representative_is_labelled_in_the_main_gallery(tmp_path):
     assert "[đại diện]" in gallery[0][1]
     assert "[gộp x1]" in gallery[1][1]
     assert "[đại diện]" not in gallery[1][1]
+
+
+def test_marker_rule_covers_both_galleries():
+    """The outline is derived from caption text at render time, so the cluster
+    strip has to use the same wording as the main gallery."""
+    from app import APP_CSS, SHORTCUTS_HEAD
+
+    assert "aiou-anchor" in APP_CSS
+    assert "#cluster-gallery button.aiou-anchor" in APP_CSS
+    assert "[đại diện]" in SHORTCUTS_HEAD
+
+
+def test_cluster_strip_labels_match_the_main_gallery(tmp_path):
+    image = tmp_path / "frame.jpg"
+    image.write_bytes(b"")
+    cluster = [
+        {**_row(1), "image_path": str(image)},
+        {**_row(2, similar_to=1, duplicates=1), "image_path": str(image)},
+    ]
+
+    items = SearchController._cluster_items(cluster)
+
+    assert items[0][1].startswith("[đại diện]")
+    assert items[1][1].startswith("[gộp x1]")

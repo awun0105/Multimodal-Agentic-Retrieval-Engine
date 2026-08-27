@@ -75,6 +75,21 @@ body {
     align-content: start !important;
 }
 
+/* the frame others were folded into — outlined so the kept side is visible too */
+#keyframe-gallery button.aiou-anchor,
+#cluster-gallery button.aiou-anchor {
+    outline: 3px solid #a855f7 !important;
+    outline-offset: -3px;
+    border-radius: 4px;
+}
+
+#keyframe-gallery button.aiou-grouped,
+#cluster-gallery button.aiou-grouped {
+    outline: 2px dashed #c4b5fd !important;
+    outline-offset: -2px;
+    border-radius: 4px;
+}
+
 #selected-keyframe,
 #trake-selected-keyframe {
     min-height: 400px;
@@ -164,6 +179,31 @@ SHORTCUTS_HEAD = """
     }
     if (handled) event.preventDefault();
   });
+})();
+</script>
+<script>
+(function () {
+  // Gradio owns the gallery DOM and rebuilds it on every render, so the marker
+  // is re-derived from the caption text rather than set once.
+  var GALLERIES = ['#keyframe-gallery', '#cluster-gallery'];
+  function mark() {
+    GALLERIES.forEach(function (selector) {
+      var root = document.querySelector(selector);
+      if (!root) return;
+      root.querySelectorAll('button.thumbnail-item, .grid-container > button').forEach(function (cell) {
+        var caption = cell.textContent || '';
+        cell.classList.toggle('aiou-anchor', caption.indexOf('[đại diện]') !== -1);
+        cell.classList.toggle('aiou-grouped', caption.indexOf('[gộp x') !== -1);
+      });
+    });
+  }
+  var pending = null;
+  new MutationObserver(function () {
+    if (pending) return;
+    pending = requestAnimationFrame(function () { pending = null; mark(); });
+  }).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('DOMContentLoaded', mark);
+  mark();
 })();
 </script>
 """
@@ -670,8 +710,9 @@ class SearchController:
         for position, row in enumerate(cluster):
             if not Path(row["image_path"]).is_file():
                 continue
-            tag = "giữ lại" if position == 0 else "bị đẩy xuống"
-            items.append((row["image_path"], f"{row['keyframe_id']} | {tag}"))
+            # same wording as the main gallery, so one marker rule covers both
+            tag = "[đại diện] " if position == 0 else f"[gộp x{row.get('duplicates', 1)}] "
+            items.append((row["image_path"], f"{tag}{row['keyframe_id']}"))
         return items
 
     def show_grouped_frames(self, original_rows, excluded, mode):
