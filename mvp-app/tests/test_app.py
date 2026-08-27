@@ -88,13 +88,49 @@ def test_build_app_exposes_keyframe_endpoints_and_filters():
     assert components_by_label["Keyframes"]["allow_preview"] is False
     assert components_by_label["Keyframes"]["object_fit"] == "contain"
     assert components_by_label["Selected keyframe"]["height"] == 420
+    assert components_by_label["Khung lân cận cùng video"]["columns"] == 11
+    assert components_by_label["Khung lân cận cùng video"]["rows"] == 1
+    assert components_by_label["Khung lân cận cùng video"]["height"] == 190
     assert build_app.__kwdefaults__["page_size"] == 10
     assert any(
         component["props"].get("elem_id") == "app-title" for component in config["components"]
     )
     assert "#keyframe-gallery .grid-wrap" in config["css"]
     assert "overflow-y: visible !important" in config["css"]
+    assert "#neighbour-gallery .grid-container" in config["css"]
+    assert "grid-auto-flow: column !important" in config["css"]
+    assert "overflow-x: auto !important" in config["css"]
     assert "@media (max-width: 600px)" in config["css"]
+
+    components_by_elem_id = {
+        component["props"].get("elem_id"): component["props"]
+        for component in config["components"]
+        if component.get("props", {}).get("elem_id")
+    }
+    assert components_by_elem_id["query-text-pin-btn"]["value"] == "Pin Frame"
+
+    elem_order = [
+        component["props"].get("elem_id")
+        for component in config["components"]
+        if component.get("props", {}).get("elem_id")
+    ]
+    assert elem_order.index("prev-page-btn") < elem_order.index(
+        "selected-image-tools-heading"
+    )
+    assert elem_order.index("query-text-player-container") < elem_order.index(
+        "neighbour-gallery"
+    ) < elem_order.index("detections-table")
+
+    metadata_column_id = next(
+        component["id"]
+        for component in config["components"]
+        if component["props"].get("elem_id") == "query-text-metadata-column"
+    )
+    detections_id = next(
+        component["id"]
+        for component in config["components"]
+        if component["props"].get("elem_id") == "detections-table"
+    )
 
     component_ids = {
         component["props"].get("label"): component["id"]
@@ -127,6 +163,9 @@ def test_build_app_exposes_keyframe_endpoints_and_filters():
     refine_layout = find_layout_node(config["layout"], refine_accordion_id)
     assert refine_layout is not None
     assert component_ids["Search within results"] in descendant_ids(refine_layout)
+    metadata_layout = find_layout_node(config["layout"], metadata_column_id)
+    assert metadata_layout is not None
+    assert detections_id in descendant_ids(metadata_layout)
 
 
 def test_zerogpu_entrypoint_does_not_serialize_controller_instance():
@@ -262,6 +301,16 @@ def test_build_app_with_trake_searcher_adds_second_tab():
     assert nested_tab_labels.count("Video Player") == 2
     assert any(
         component["props"].get("elem_id") == "trake-selected-keyframe"
+        for component in config["components"]
+    )
+    trake_pin = next(
+        component
+        for component in config["components"]
+        if component["props"].get("elem_id") == "trake-pin-btn"
+    )
+    assert trake_pin["props"]["value"] == "Pin Frame"
+    assert any(
+        component["props"].get("elem_id") == "trake-metadata-column"
         for component in config["components"]
     )
 
@@ -756,6 +805,8 @@ def test_select_keyframe_reads_fps_from_keyframe_row(tmp_path):
     player_html = result[1]
     assert 'data-player=' in player_html
     assert "dQw4w9WgXcQ" in player_html
+    assert 'id="query-text-player-jump-frame"' in player_html
+    assert 'id="query-text-player-jump-btn"' in player_html
     kind, source = resolve_player_source(local_path=None, watch_url=details.video["watch_url"])
     assert (kind, source) == ("youtube", "dQw4w9WgXcQ")
 
@@ -803,6 +854,7 @@ def test_player_head_ships_shared_runtime_once():
         "__aiouPlayerBoot",
         "__aiouFrameSnapshot",
         "__aiouStep",
+        "__aiouSeekFrame",
         "onYouTubeIframeAPIReady",
         "requestVideoFrameCallback",
     ):

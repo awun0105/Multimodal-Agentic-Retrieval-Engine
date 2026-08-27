@@ -217,6 +217,8 @@ def test_select_gallery_event_populates_image_player_metadata_and_detections(
 
     assert result[0] == str(image)
     assert "data-player=" in result[1]["value"]
+    assert 'id="trake-player-jump-frame"' in result[1]["value"]
+    assert 'id="trake-player-jump-btn"' in result[1]["value"]
     assert "L21_V001" in result[2]
     assert "1280 x 720" in result[2]
     assert result[3][0][:4] == ["Person", 0.9877, "/m/01g317", 1]

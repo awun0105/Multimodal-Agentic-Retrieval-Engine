@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html
 import logging
 import time
 from pathlib import Path
@@ -42,7 +41,7 @@ from trake import (
     format_submission,
 )
 from trake_submission import build_submission as build_submission_rows
-from trake_submission import export_csv_file, parse_pin_key, pin_key
+from trake_submission import export_csv_file, pin_key
 from trake_ui_render import (
     build_status_markdown,
 )
@@ -317,33 +316,9 @@ class TrakeController:
 
 
 
-PINNED_HEADING = "**Danh sách các Frame đã chốt (Pinned):**"
-PINNED_EMPTY_MARKDOWN = f"{PINNED_HEADING}\n*Chưa có frame nào.*"
 EMPTY_PLAYER_HTML = (
     "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>"
 )
-
-
-def render_pinned_frames(pinned_frames: dict, accuracies: dict | None = None) -> str:
-    if not pinned_frames:
-        return PINNED_EMPTY_MARKDOWN
-    accuracies = accuracies or {}
-    lines = [PINNED_HEADING]
-    for key, frame_id in pinned_frames.items():
-        parsed = parse_pin_key(key)
-        if parsed is None:
-            continue
-        video_id, event_index = parsed
-        suffix = ""
-        accuracy = accuracies.get(key)
-        if accuracy == "calculated":
-            suffix = " *(Calculated)*"
-        elif accuracy == "estimated":
-            suffix = " *(Estimated)*"
-        lines.append(
-            f"- **{html.escape(video_id)}**: Event {event_index + 1} -> Frame {frame_id}{suffix}"
-        )
-    return "\n".join(lines) if len(lines) > 1 else PINNED_EMPTY_MARKDOWN
 
 
 def _selected_event(videos, gallery_index: int):
@@ -372,7 +347,6 @@ def process_pin(v_id, e_idx, kf_frame, pinned_frames, current_accuracies, calc_f
             dict(pinned_frames or {}),
             dict(current_accuracies or {}),
             gr.update(value="Chưa chốt được — hãy chọn một ảnh trong kết quả trước."),
-            gr.update(value=render_pinned_frames(pinned_frames or {})),
         )
 
     fallback = validate_frame(kf_frame, 0)
@@ -402,7 +376,6 @@ def process_pin(v_id, e_idx, kf_frame, pinned_frames, current_accuracies, calc_f
         new_frames,
         new_accuracies,
         gr.update(value=f"**Đã chốt frame {frame_id} ({label}).**"),
-        gr.update(value=render_pinned_frames(new_frames, new_accuracies)),
     )
 
 
@@ -411,14 +384,13 @@ def clear_pins():
         {},
         {},
         gr.update(value="Đã gỡ hết frame đã chốt."),
-        gr.update(value=PINNED_EMPTY_MARKDOWN),
     )
 
 
 def reset_pins_for_new_search():
     """Same reset as clear_pins, minus the status line — the search result just
     wrote there and must stay visible."""
-    return {}, {}, gr.update(value=PINNED_EMPTY_MARKDOWN)
+    return {}, {}
 
 
 def reset_selected_keyframe():
@@ -519,38 +491,48 @@ def build_trake_tab(
         )
         next_btn_pg = gr.Button("Next", interactive=False)
 
-    with gr.Row(equal_height=False):
-        with gr.Column(scale=3), gr.Tabs():
-            with gr.Tab("Image Details"):
-                detail_image = gr.Image(
-                    label="Selected keyframe",
-                    interactive=False,
-                    height=420,
-                    elem_id="trake-selected-keyframe",
-                )
-            with gr.Tab("Video Player"):
-                video_player_html = gr.HTML(EMPTY_PLAYER_HTML)
-                with gr.Row():
-                    prev_btn = gr.Button("Prev Frame", interactive=False)
-                    next_btn = gr.Button("Next Frame", interactive=False)
-                    pin_btn = gr.Button(
-                        "Chốt Frame (Đẩy lên Top)",
+    with gr.Row(equal_height=False, elem_classes=["keyframe-detail-layout"]):
+        with gr.Column(scale=3, elem_classes=["keyframe-media-column"]):
+            with gr.Tabs():
+                with gr.Tab("Image Details"):
+                    detail_image = gr.Image(
+                        label="Selected keyframe",
                         interactive=False,
-                        variant="primary",
-                        elem_id="trake-pin-btn",
+                        height=420,
+                        elem_id="trake-selected-keyframe",
                     )
-                    clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
-        with gr.Column(scale=2):
-            detail_metadata = gr.Markdown("Select a keyframe to view metadata")
-
-    detections = gr.Dataframe(
-        headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
-        datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
-        label="Detected objects",
-        interactive=False,
-    )
-
-    pinned_frames_markdown = gr.Markdown(PINNED_EMPTY_MARKDOWN)
+                with gr.Tab("Video Player"):
+                    video_player_html = gr.HTML(EMPTY_PLAYER_HTML)
+                    with gr.Row():
+                        prev_btn = gr.Button("Prev Frame", interactive=False)
+                        next_btn = gr.Button("Next Frame", interactive=False)
+                        pin_btn = gr.Button(
+                            "Pin Frame",
+                            interactive=False,
+                            variant="primary",
+                            elem_id="trake-pin-btn",
+                        )
+                        clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
+        with gr.Column(
+            scale=2,
+            elem_id="trake-metadata-column",
+            elem_classes=["keyframe-metadata-column"],
+        ):
+            gr.Markdown(
+                "### Metadata & Object Detection",
+                elem_classes=["keyframe-metadata-heading"],
+            )
+            detail_metadata = gr.Markdown(
+                "Select a keyframe to view metadata",
+                elem_classes=["keyframe-metadata"],
+            )
+            detections = gr.Dataframe(
+                headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
+                datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
+                label="Detected objects",
+                interactive=False,
+                elem_classes=["keyframe-detections"],
+            )
 
     # Hidden elements for JS to Python communication
     current_fps_box = gr.Number(visible=False, elem_id="trake-current-fps", value=25.0)
@@ -563,8 +545,9 @@ def build_trake_tab(
     pin_accuracy_box = gr.Textbox(visible=False, elem_id="trake-pin-accuracy", value="")
     # sync_btn removed
 
-    with gr.Accordion("Log thông tin kết quả (Chi tiết)", open=False):
-        results = gr.Markdown("")
+    # Search and pagination still exchange the formatted detail payload, but it
+    # is internal state rather than a duplicate block in the visible UI.
+    results_state = gr.State("")
 
     gr.Markdown("---")
     gr.Markdown("### Xem trước file nộp bài (Query TRAKE)")
@@ -600,10 +583,10 @@ def build_trake_tab(
     )
 
     search_inputs = [translate_vietnamese, ranking_objective, penalty_weight, *event_boxes]
-    search_outputs = [gallery, results, status, outcome_state, current_page_idx, page_label, prev_btn_pg, next_btn_pg]
+    search_outputs = [gallery, results_state, status, outcome_state, current_page_idx, page_label, prev_btn_pg, next_btn_pg]
     # Pins name a video and an event slot, not a query — carrying them into the next
     # search would silently rewrite the new answer's frames.
-    pin_reset_outputs = [pinned_frames_state, pinned_accuracies_state, pinned_frames_markdown]
+    pin_reset_outputs = [pinned_frames_state, pinned_accuracies_state]
     selection_outputs = [
         detail_image,
         video_player_html,
@@ -621,13 +604,13 @@ def build_trake_tab(
     prev_btn_pg.click(
         lambda o, i: controller.change_video_page(o, i, -1),
         inputs=[outcome_state, current_page_idx],
-        outputs=[current_page_idx, gallery, results, page_label, prev_btn_pg, next_btn_pg],
+        outputs=[current_page_idx, gallery, results_state, page_label, prev_btn_pg, next_btn_pg],
         api_name=False
     ).then(reset_selected_keyframe, inputs=[], outputs=selection_outputs, api_name=False)
     next_btn_pg.click(
         lambda o, i: controller.change_video_page(o, i, 1),
         inputs=[outcome_state, current_page_idx],
-        outputs=[current_page_idx, gallery, results, page_label, prev_btn_pg, next_btn_pg],
+        outputs=[current_page_idx, gallery, results_state, page_label, prev_btn_pg, next_btn_pg],
         api_name=False
     ).then(reset_selected_keyframe, inputs=[], outputs=selection_outputs, api_name=False)
 
@@ -718,7 +701,7 @@ def build_trake_tab(
             pin_calc_frame_box,
             pin_accuracy_box,
         ],
-        outputs=[pinned_frames_state, pinned_accuracies_state, status, pinned_frames_markdown],
+        outputs=[pinned_frames_state, pinned_accuracies_state, status],
         js=pin_js,
         api_name=False,
     ).then(
@@ -731,7 +714,7 @@ def build_trake_tab(
     clear_pins_btn.click(
         clear_pins,
         inputs=[],
-        outputs=[pinned_frames_state, pinned_accuracies_state, status, pinned_frames_markdown],
+        outputs=[pinned_frames_state, pinned_accuracies_state, status],
         api_name=False,
     ).then(
         controller.preview_submission,
@@ -762,7 +745,7 @@ def build_trake_tab(
         "video_player_html": video_player_html,
         "detail_metadata": detail_metadata,
         "detections": detections,
-        "results": results,
+        "results_state": results_state,
         "export_button": export_button,
         "submission_file": submission_file,
         "outcome_state": outcome_state,

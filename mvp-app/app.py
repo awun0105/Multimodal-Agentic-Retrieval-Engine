@@ -104,6 +104,71 @@ body {
     object-fit: contain !important;
 }
 
+#selected-image-tools-heading {
+    margin-top: 0.75rem;
+}
+
+#neighbour-gallery {
+    margin-top: 0.5rem;
+    height: 190px !important;
+    max-height: 190px !important;
+}
+
+#neighbour-gallery .grid-wrap {
+    height: 150px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: thin;
+}
+
+#neighbour-gallery .grid-container {
+    display: grid !important;
+    grid-auto-flow: column !important;
+    grid-auto-columns: clamp(110px, 18vw, 150px) !important;
+    grid-template-columns: none !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    width: max-content !important;
+    min-width: 100% !important;
+    height: 140px !important;
+    max-height: 140px !important;
+}
+
+.keyframe-detail-layout {
+    align-items: flex-start !important;
+}
+
+.keyframe-media-column,
+.keyframe-metadata-column {
+    min-width: 0 !important;
+}
+
+.keyframe-metadata-column {
+    align-self: stretch !important;
+}
+
+.keyframe-metadata {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+}
+
+.keyframe-metadata-heading {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.keyframe-detections {
+    margin-top: 0.5rem !important;
+    height: 260px !important;
+    max-height: 260px !important;
+    overflow: auto !important;
+}
+
 @media (max-width: 600px) {
     #app-title {
         margin-top: 3.5rem;
@@ -1402,6 +1467,32 @@ def build_app(
                         "Next", interactive=False, elem_id="next-page-btn"
                     )
 
+                gr.Markdown(
+                    "### Làm việc với ảnh đang chọn",
+                    elem_id="selected-image-tools-heading",
+                )
+                handoff_box = gr.Textbox(
+                    label="Bàn giao (copy cho người kiểm tra)",
+                    value="",
+                    lines=1,
+                    interactive=False,
+                    show_copy_button=True,
+                    elem_id="handoff-box",
+                )
+                with gr.Row():
+                    similar_button = gr.Button(
+                        "Tìm ảnh giống thế này",
+                        elem_id="similar-search-btn",
+                    )
+                    exclude_button = gr.Button("Loại ảnh này", elem_id="exclude-btn")
+                    clear_excluded_button = gr.Button("Bỏ đánh dấu tất cả")
+                    exclude_mode = gr.Radio(
+                        choices=["Chỉ đánh dấu", "Ẩn hẳn"],
+                        value="Chỉ đánh dấu",
+                        label="Ảnh đã loại",
+                        elem_id="exclude-mode",
+                    )
+
                 gr.Markdown("---")
                 gr.Markdown("### Ảnh bị gộp trùng")
                 cluster_summary = gr.Markdown(
@@ -1430,8 +1521,14 @@ def build_app(
                 )
                 cluster_rows_state = gr.State([])
 
-                with gr.Row(equal_height=False):
-                    with gr.Column(scale=3):
+                with gr.Row(
+                    equal_height=False,
+                    elem_classes=["keyframe-detail-layout"],
+                ):
+                    with gr.Column(
+                        scale=3,
+                        elem_classes=["keyframe-media-column"],
+                    ):
                         with gr.Tabs():
                             with gr.Tab("Image Details"):
                                 detail_image = gr.Image(
@@ -1449,56 +1546,44 @@ def build_app(
                                     prev_btn = gr.Button("Prev Frame", interactive=False)
                                     next_btn = gr.Button("Next Frame", interactive=False)
                                     pin_btn = gr.Button(
-                                        "Chốt Frame (Đẩy lên Top)",
+                                        "Pin Frame",
                                         interactive=False,
                                         variant="primary",
                                         elem_id="query-text-pin-btn",
                                     )
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
+                                neighbour_gallery = gr.Gallery(
+                                    label="Khung lân cận cùng video",
+                                    columns=11,
+                                    rows=1,
+                                    height=190,
+                                    allow_preview=False,
+                                    object_fit="contain",
+                                    elem_id="neighbour-gallery",
+                                )
+                                neighbour_rows_state = gr.State([])
                                 pinned_frames_state = gr.State([])
-                    with gr.Column(scale=2):
-                        detail_metadata = gr.Markdown("Select a keyframe to view metadata")
-                detections = gr.Dataframe(
-                    headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
-                    datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
-                    label="Detected objects",
-                    interactive=False,
-                )
-
-
-                gr.Markdown("---")
-                gr.Markdown("### Làm việc với ảnh đang chọn")
-                handoff_box = gr.Textbox(
-                    label="Bàn giao (copy cho người kiểm tra)",
-                    value="",
-                    lines=1,
-                    interactive=False,
-                    show_copy_button=True,
-                    elem_id="handoff-box",
-                )
-                with gr.Row():
-                    similar_button = gr.Button(
-                        "Tìm ảnh giống thế này",
-                        elem_id="similar-search-btn",
-                    )
-                    exclude_button = gr.Button("Loại ảnh này", elem_id="exclude-btn")
-                    clear_excluded_button = gr.Button("Bỏ đánh dấu tất cả")
-                    exclude_mode = gr.Radio(
-                        choices=["Chỉ đánh dấu", "Ẩn hẳn"],
-                        value="Chỉ đánh dấu",
-                        label="Ảnh đã loại",
-                        elem_id="exclude-mode",
-                    )
-                neighbour_gallery = gr.Gallery(
-                    label="Khung hình lân cận (cùng video)",
-                    columns=11,
-                    rows=1,
-                    height="auto",
-                    allow_preview=False,
-                    object_fit="contain",
-                    elem_id="neighbour-gallery",
-                )
-                neighbour_rows_state = gr.State([])
+                    with gr.Column(
+                        scale=2,
+                        elem_id="query-text-metadata-column",
+                        elem_classes=["keyframe-metadata-column"],
+                    ):
+                        gr.Markdown(
+                            "### Metadata & Object Detection",
+                            elem_classes=["keyframe-metadata-heading"],
+                        )
+                        detail_metadata = gr.Markdown(
+                            "Select a keyframe to view metadata",
+                            elem_classes=["keyframe-metadata"],
+                        )
+                        detections = gr.Dataframe(
+                            headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
+                            datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
+                            label="Detected objects",
+                            interactive=False,
+                            elem_id="detections-table",
+                            elem_classes=["keyframe-detections"],
+                        )
 
                 with gr.Column(visible=False):
                     legacy_query_language = gr.Dropdown(
