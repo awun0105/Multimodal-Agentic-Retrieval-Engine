@@ -777,6 +777,27 @@ class SearchController:
             self._cluster_items(clusters[0]) if clusters else [],
         )
 
+    def reveal_cluster_of(self, original_rows, keyframe_id, mode=None):
+        """Jump the cluster view to whichever cluster holds the selected frame.
+
+        Answers the question a searcher actually has after clicking a result:
+        what else got folded in with this one. Leaves the view alone when the
+        frame was not grouped — there is nothing to show.
+        """
+        if not keyframe_id:
+            return gr.update(), gr.update(), gr.update()
+        clusters = self._clusters_for(original_rows, mode)
+        choices = self.cluster_choices(clusters)
+        for index, cluster in enumerate(clusters):
+            if any(row["keyframe_id"] == keyframe_id for row in cluster):
+                shown = self._rendered(cluster)
+                return (
+                    gr.update(value=choices[index]),
+                    self._cluster_items(shown),
+                    shown,
+                )
+        return gr.update(), gr.update(), gr.update()
+
     def show_cluster(self, original_rows, choice, mode=None):
         clusters = self._clusters_for(original_rows, mode)
         if not choice or not clusters:
@@ -1844,6 +1865,13 @@ def build_app(
                         neighbour_gallery, neighbour_rows_state,
                         current_fps_box, current_video_id_box, current_kf_frame_box
                     ],
+                    api_name=False,
+                ).then(
+                    # chained, not a second .select(): the selection id it reads
+                    # is written by the handler above
+                    fn=controller.reveal_cluster_of,
+                    inputs=[original_results_state, selected_keyframe_state, cluster_mode],
+                    outputs=[cluster_dropdown, cluster_gallery, cluster_rows_state],
                     api_name=False,
                 )
                 # a cluster thumbnail promotes to the selection like any other frame

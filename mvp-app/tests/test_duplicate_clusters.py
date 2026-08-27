@@ -288,3 +288,63 @@ def test_cluster_rows_track_what_the_gallery_shows(tmp_path):
 
     assert len(shown) == len(items) == 2
     assert [row["vector_id"] for row in shown] == [0, 2]
+
+
+def test_selecting_a_frame_reveals_its_cluster(tmp_path):
+    """After clicking a result, the question is what else got folded in with it —
+    so the cluster view follows the selection instead of waiting to be told."""
+    import numpy as np
+
+    vectors = np.eye(4, dtype=np.float32)
+    controller = SearchController(_store_with_vectors(tmp_path, vectors), page_size=10)
+    image = tmp_path / "frame.jpg"
+    image.write_bytes(b"")
+    rows = [
+        {**_row(0), "image_path": str(image)},
+        {**_row(1, similar_to=0, duplicates=1), "image_path": str(image)},
+        {**_row(2), "image_path": str(image)},
+        {**_row(3, similar_to=2, duplicates=1), "image_path": str(image)},
+    ]
+
+    choice, items, shown = controller.reveal_cluster_of(
+        rows, rows[3]["keyframe_id"], SearchController.ANCHOR_MODE
+    )
+
+    assert [row["vector_id"] for row in shown] == [2, 3]
+    assert len(items) == 2
+    assert choice["value"] in controller.cluster_choices(
+        controller.duplicate_clusters(rows)
+    )
+
+
+def test_an_ungrouped_frame_leaves_the_cluster_view_alone(tmp_path):
+    """Clearing the view would hide a cluster the searcher was reading, so a
+    frame that was never grouped changes nothing."""
+    import numpy as np
+
+    vectors = np.eye(3, dtype=np.float32)
+    controller = SearchController(_store_with_vectors(tmp_path, vectors), page_size=10)
+    image = tmp_path / "frame.jpg"
+    image.write_bytes(b"")
+    rows = [
+        {**_row(0), "image_path": str(image)},
+        {**_row(1, similar_to=0, duplicates=1), "image_path": str(image)},
+        {**_row(2), "image_path": str(image)},
+    ]
+
+    updates = controller.reveal_cluster_of(
+        rows, rows[2]["keyframe_id"], SearchController.ANCHOR_MODE
+    )
+
+    assert all(isinstance(update, dict) for update in updates), "all three are no-ops"
+    assert all(update.get("value") is None for update in updates)
+
+
+def test_no_selection_is_a_no_op(tmp_path):
+    from tests.test_search import _make_store
+
+    controller = SearchController(_make_store(tmp_path), page_size=10)
+
+    updates = controller.reveal_cluster_of([], "", SearchController.ANCHOR_MODE)
+
+    assert len(updates) == 3
