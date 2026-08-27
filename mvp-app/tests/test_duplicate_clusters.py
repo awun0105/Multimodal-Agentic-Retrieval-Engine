@@ -226,7 +226,6 @@ def test_neither_mode_is_a_special_case(tmp_path):
 
     assert len(controller.CLUSTER_MODES) == 2
     for label in controller.CLUSTER_MODES:
-        assert "complete" not in label.lower(), "labels stay free of algorithm names"
         assert controller._clusters_for([], label) == []
 
 

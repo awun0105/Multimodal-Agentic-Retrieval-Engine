@@ -745,8 +745,8 @@ class SearchController:
 
     # Two readings of the same frames, neither strictly better: the anchor mode
     # yields fewer near-identical clusters, complete linkage yields cleaner ones.
-    ANCHOR_MODE = "Gom quanh ảnh mạnh nhất"
-    LINKAGE_MODE = "Gom khi mọi ảnh đều giống nhau"
+    ANCHOR_MODE = "MMR"
+    LINKAGE_MODE = "Complete Linkage"
     CLUSTER_MODES = [ANCHOR_MODE, LINKAGE_MODE]
 
     def _clusters_for(self, original_rows, mode):
@@ -1341,8 +1341,8 @@ def build_app(
                                 value=SearchController.ANCHOR_MODE,
                                 label="Cách gộp",
                                 info=(
-                                    "Gom quanh ảnh mạnh nhất: ít cụm na ná nhau hơn. "
-                                    "Gom khi mọi ảnh đều giống nhau: trong cụm sạch hơn."
+                                    "MMR: gom quanh ảnh mạnh nhất, ít cụm na ná nhau. "
+                                    "Complete Linkage: chỉ gom khi mọi ảnh đều giống nhau."
                                 ),
                                 elem_id="cluster-mode",
                             )
