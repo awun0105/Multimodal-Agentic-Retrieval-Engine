@@ -178,7 +178,7 @@ class QueryTranslator:
         model = AutoModelForSeq2SeqLM.from_pretrained(
             self.model_id,
             revision=self.revision,
-            dtype=self.dtype,
+            torch_dtype=self.dtype,
         ).to(self.device)
         model.eval()
         return model
