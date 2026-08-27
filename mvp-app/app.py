@@ -384,6 +384,7 @@ class SearchController:
         for row in rows:
             entry = outcome.duplicate_details.get(row["vector_id"]) or {}
             row["duplicates"] = int(entry.get("duplicates", 0))
+            row["similar_to"] = entry.get("similar_to")
         if not outcome.query.translation_enabled:
             translation_status = "Off"
         elif outcome.query.warning:
@@ -606,6 +607,67 @@ class SearchController:
     def _repaint(self, rows, page, excluded, mode):
         """Redraw one page with the current exclusion set and display mode."""
         return self.page_payload(rows, page, None, excluded or set(), mode == "Ẩn hẳn")
+
+    @staticmethod
+    def duplicate_clusters(original_rows) -> list[list[dict]]:
+        """Group penalised frames under the representative that outranked them.
+
+        `similar_to` points at the frame kept at full score. A representative can
+        fall outside top_k once the widened pool is trimmed, so its cluster is
+        dropped rather than shown headless.
+        """
+        by_vector = {row["vector_id"]: row for row in (original_rows or [])}
+        clusters: dict[int, list[dict]] = {}
+        for row in original_rows or []:
+            anchor = row.get("similar_to")
+            if anchor is None or anchor not in by_vector:
+                continue
+            clusters.setdefault(int(anchor), []).append(row)
+        ordered = sorted(clusters.items(), key=lambda item: (-len(item[1]), item[0]))
+        return [[by_vector[anchor], *members] for anchor, members in ordered]
+
+    @staticmethod
+    def cluster_choices(clusters) -> list[str]:
+        return [f"Cụm {i + 1} ({len(c)} ảnh)" for i, c in enumerate(clusters)]
+
+    @staticmethod
+    def cluster_summary_text(clusters, total_rows: int) -> str:
+        if not clusters:
+            return "Lượt tìm này không có ảnh trùng nào bị gộp."
+        grouped = sum(len(c) - 1 for c in clusters)
+        return (
+            f"Trong {total_rows} kết quả: **{grouped} ảnh** bị gộp thành "
+            f"**{len(clusters)} cụm**. Ảnh đầu mỗi cụm là ảnh được giữ."
+        )
+
+    def refresh_clusters(self, original_rows):
+        clusters = self.duplicate_clusters(original_rows)
+        choices = self.cluster_choices(clusters)
+        return (
+            self.cluster_summary_text(clusters, len(original_rows or [])),
+            gr.update(choices=choices, value=choices[0] if choices else None),
+            self._cluster_items(clusters[0]) if clusters else [],
+        )
+
+    def show_cluster(self, original_rows, choice):
+        clusters = self.duplicate_clusters(original_rows)
+        if not choice or not clusters:
+            return []
+        try:
+            index = self.cluster_choices(clusters).index(choice)
+        except ValueError:
+            return []
+        return self._cluster_items(clusters[index])
+
+    @staticmethod
+    def _cluster_items(cluster) -> list[tuple[str, str]]:
+        items = []
+        for position, row in enumerate(cluster):
+            if not Path(row["image_path"]).is_file():
+                continue
+            tag = "giữ lại" if position == 0 else "bị đẩy xuống"
+            items.append((row["image_path"], f"{row['keyframe_id']} | {tag}"))
+        return items
 
     def show_grouped_frames(self, original_rows, excluded, mode):
         """List exactly the frames duplicate-grouping penalised, so a mis-group is visible.
@@ -1238,11 +1300,32 @@ def build_app(
                 )
                 neighbour_rows_state = gr.State([])
 
+                gr.Markdown("---")
+                gr.Markdown("### Ảnh bị gộp trùng")
+                cluster_summary = gr.Markdown(
+                    "Lượt tìm này không có ảnh trùng nào bị gộp."
+                )
                 with gr.Row():
-                    grouped_button = gr.Button(
-                        "Xem ảnh bị gán trọng số", elem_id="grouped-btn"
+                    cluster_dropdown = gr.Dropdown(
+                        label="Chọn cụm",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        elem_id="cluster-dropdown",
                     )
-                    all_frames_button = gr.Button("Bỏ lọc trọng số")
+                    grouped_button = gr.Button(
+                        "Xem ảnh bị gộp trùng", elem_id="grouped-btn"
+                    )
+                    all_frames_button = gr.Button("Bỏ lọc, xem hết")
+                cluster_gallery = gr.Gallery(
+                    label="Ảnh trong cụm",
+                    columns=5,
+                    rows=1,
+                    height="auto",
+                    allow_preview=False,
+                    object_fit="contain",
+                    elem_id="cluster-gallery",
+                )
 
                 with gr.Column(visible=False):
                     legacy_query_language = gr.Dropdown(
@@ -1343,6 +1426,11 @@ def build_app(
                     inputs=[query, original_results_state, history_state],
                     outputs=[history_state, history_dropdown],
                     api_name=False,
+                ).then(
+                    fn=controller.refresh_clusters,
+                    inputs=[original_results_state],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery],
+                    api_name=False,
                 )
                 query.submit(
                     fn=search_keyframes_gpu_v2,
@@ -1354,12 +1442,23 @@ def build_app(
                     inputs=[query, original_results_state, history_state],
                     outputs=[history_state, history_dropdown],
                     api_name=False,
+                ).then(
+                    fn=controller.refresh_clusters,
+                    inputs=[original_results_state],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery],
+                    api_name=False,
                 )
                 # kept out of search_inputs_v2 on purpose: the endpoint parameter count is asserted
                 mmr_checkbox.change(
                     fn=controller.set_mmr,
                     inputs=[mmr_checkbox],
                     outputs=[],
+                    api_name=False,
+                )
+                cluster_dropdown.change(
+                    fn=controller.show_cluster,
+                    inputs=[original_results_state, cluster_dropdown],
+                    outputs=[cluster_gallery],
                     api_name=False,
                 )
                 similar_button.click(
