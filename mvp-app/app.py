@@ -666,16 +666,19 @@ class SearchController:
                 return self.clear_all_refinements(entry["rows"])
         return tuple(gr.update() for _ in range(HISTORY_RESTORE_OUTPUTS))
 
-    def _neighbour_items(self, keyframe_id: str) -> list[tuple[str, str]]:
+    def _neighbour_rows(self, keyframe_id: str) -> list[dict]:
         """Filmstrip around the selection: confirms a scene without opening the video."""
         try:
             rows = self.search_mechanism.get_temporal_window(keyframe_id)
         except (KeyError, AttributeError):
             return []
+        return [row for row in rows if Path(row["image_path"]).is_file()]
+
+    @staticmethod
+    def _neighbour_items(rows: list[dict]) -> list[tuple[str, str]]:
         return [
             (row["image_path"], f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])}")
             for row in rows
-            if Path(row["image_path"]).is_file()
         ]
 
     def search_similar_images(self, page_rows, selected_keyframe_id, top_k):
@@ -855,7 +858,7 @@ class SearchController:
         """Same shape as a successful selection, so all three branches stay aligned."""
         return (None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
                 metadata_message, [],
-                gr.update(), gr.update(), gr.update(), "", "", [],
+                gr.update(), gr.update(), gr.update(), "", "", [], [],
                 gr.update(), gr.update(), gr.update())
 
     def select_keyframe(self, page_rows, evt: gr.SelectData):
@@ -886,9 +889,11 @@ class SearchController:
         )
 
         can_step_video = bool(video_path) or bool(watch_url)
+        neighbour_rows = self._neighbour_rows(row["keyframe_id"])
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
                 gr.update(interactive=can_step_video), gr.update(interactive=can_step_video), gr.update(interactive=True),
-                _handoff_text(details), row["keyframe_id"], self._neighbour_items(row["keyframe_id"]),
+                _handoff_text(details), row["keyframe_id"], self._neighbour_items(neighbour_rows),
+                neighbour_rows,
                 fps, video_id, frame_idx)
 
     def details_api(self, keyframe_id: str):
@@ -1190,44 +1195,6 @@ def build_app(
                                     )
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
                                 pinned_frames_state = gr.State([])
-                        handoff_box = gr.Textbox(
-                            label="Bàn giao (copy cho người kiểm tra)",
-                            value="",
-                            lines=3,
-                            interactive=False,
-                            show_copy_button=True,
-                            elem_id="handoff-box",
-                        )
-                        similar_button = gr.Button(
-                            "Tìm ảnh giống thế này",
-                            elem_id="similar-search-btn",
-                        )
-                        with gr.Row():
-                            grouped_button = gr.Button(
-                                "Xem ảnh bị gán trọng số", elem_id="grouped-btn"
-                            )
-                            all_frames_button = gr.Button("Bỏ lọc trọng số")
-                        with gr.Row():
-                            exclude_button = gr.Button(
-                                "Loại ảnh này", elem_id="exclude-btn"
-                            )
-                            clear_excluded_button = gr.Button("Bỏ đánh dấu tất cả")
-                            exclude_mode = gr.Radio(
-                                choices=["Chỉ đánh dấu", "Ẩn hẳn"],
-                                value="Chỉ đánh dấu",
-                                label="Ảnh đã loại",
-                                elem_id="exclude-mode",
-                            )
-                        neighbour_gallery = gr.Gallery(
-                            label="Khung hình lân cận (cùng video)",
-                            columns=11,
-                            rows=1,
-                            height="auto",
-                            allow_preview=False,
-                            object_fit="contain",
-                            elem_id="neighbour-gallery",
-                        )
-
                     with gr.Column(scale=2):
                         detail_metadata = gr.Markdown("Select a keyframe to view metadata")
                 detections = gr.Dataframe(
@@ -1236,6 +1203,46 @@ def build_app(
                     label="Detected objects",
                     interactive=False,
                 )
+
+                gr.Markdown("---")
+                gr.Markdown("### Làm việc với ảnh đang chọn")
+                handoff_box = gr.Textbox(
+                    label="Bàn giao (copy cho người kiểm tra)",
+                    value="",
+                    lines=1,
+                    interactive=False,
+                    show_copy_button=True,
+                    elem_id="handoff-box",
+                )
+                with gr.Row():
+                    similar_button = gr.Button(
+                        "Tìm ảnh giống thế này",
+                        elem_id="similar-search-btn",
+                    )
+                    exclude_button = gr.Button("Loại ảnh này", elem_id="exclude-btn")
+                    clear_excluded_button = gr.Button("Bỏ đánh dấu tất cả")
+                    exclude_mode = gr.Radio(
+                        choices=["Chỉ đánh dấu", "Ẩn hẳn"],
+                        value="Chỉ đánh dấu",
+                        label="Ảnh đã loại",
+                        elem_id="exclude-mode",
+                    )
+                neighbour_gallery = gr.Gallery(
+                    label="Khung hình lân cận (cùng video)",
+                    columns=11,
+                    rows=1,
+                    height="auto",
+                    allow_preview=False,
+                    object_fit="contain",
+                    elem_id="neighbour-gallery",
+                )
+                neighbour_rows_state = gr.State([])
+
+                with gr.Row():
+                    grouped_button = gr.Button(
+                        "Xem ảnh bị gán trọng số", elem_id="grouped-btn"
+                    )
+                    all_frames_button = gr.Button("Bỏ lọc trọng số")
 
                 with gr.Column(visible=False):
                     legacy_query_language = gr.Dropdown(
@@ -1569,7 +1576,19 @@ def build_app(
                     outputs=[
                         detail_image, detail_video, detail_metadata, detections,
                         prev_btn, next_btn, pin_btn, handoff_box, selected_keyframe_state,
-                        neighbour_gallery,
+                        neighbour_gallery, neighbour_rows_state,
+                        current_fps_box, current_video_id_box, current_kf_frame_box
+                    ],
+                    api_name=False,
+                )
+                # the filmstrip feeds the same handler, driven by its own row list
+                neighbour_gallery.select(
+                    controller.select_keyframe,
+                    inputs=[neighbour_rows_state],
+                    outputs=[
+                        detail_image, detail_video, detail_metadata, detections,
+                        prev_btn, next_btn, pin_btn, handoff_box, selected_keyframe_state,
+                        neighbour_gallery, neighbour_rows_state,
                         current_fps_box, current_video_id_box, current_kf_frame_box
                     ],
                     api_name=False,
