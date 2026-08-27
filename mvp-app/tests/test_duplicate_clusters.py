@@ -348,3 +348,32 @@ def test_no_selection_is_a_no_op(tmp_path):
     updates = controller.reveal_cluster_of([], "", SearchController.ANCHOR_MODE)
 
     assert len(updates) == 3
+
+
+def test_cluster_handlers_return_one_value_per_wired_output(tmp_path):
+    """Calling the handlers directly cannot catch an arity mismatch — Gradio
+    only complains at request time. Check each handler against the outputs it
+    is actually bound to."""
+    from app import build_app
+    from tests.test_search import _make_store as make
+
+    demo = build_app(make(tmp_path))
+    controller_calls = {
+        "refresh_clusters": ([], None),
+        "show_cluster": ([], None, None),
+        "reveal_cluster_of": ([], "", None),
+    }
+
+    checked = 0
+    for dep in demo.config["dependencies"]:
+        name = getattr(demo.fns[dep["id"]].fn, "__name__", "")
+        if name not in controller_calls:
+            continue
+        result = demo.fns[dep["id"]].fn(*controller_calls[name])
+        returned = len(result) if isinstance(result, tuple) else 1
+        assert returned == len(dep["outputs"]), (
+            f"{name} returns {returned} values for {len(dep['outputs'])} outputs"
+        )
+        checked += 1
+
+    assert checked >= 3, "cluster handlers are no longer wired"

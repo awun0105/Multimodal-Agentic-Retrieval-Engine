@@ -771,10 +771,12 @@ class SearchController:
         summary = self.cluster_summary_text(clusters, len(original_rows or []))
         if clusters:
             summary += "  \n" + self.compare_modes_text(original_rows)
+        shown = self._rendered(clusters[0]) if clusters else []
         return (
             summary,
             gr.update(choices=choices, value=choices[0] if choices else None),
-            self._cluster_items(clusters[0]) if clusters else [],
+            self._cluster_items(shown),
+            shown,
         )
 
     def reveal_cluster_of(self, original_rows, keyframe_id, mode=None):
@@ -801,12 +803,13 @@ class SearchController:
     def show_cluster(self, original_rows, choice, mode=None):
         clusters = self._clusters_for(original_rows, mode)
         if not choice or not clusters:
-            return []
+            return [], []
         try:
             index = self.cluster_choices(clusters).index(choice)
         except ValueError:
-            return []
-        return self._cluster_items(clusters[index])
+            return [], []
+        shown = self._rendered(clusters[index])
+        return self._cluster_items(shown), shown
 
     @staticmethod
     def _rendered(cluster) -> list[dict]:
