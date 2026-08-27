@@ -788,11 +788,15 @@ class SearchController:
         return self._cluster_items(clusters[index])
 
     @staticmethod
+    def _rendered(cluster) -> list[dict]:
+        """Only the rows with a file on disk — the gallery and the row list that
+        drives selection have to agree on index."""
+        return [row for row in cluster if Path(row["image_path"]).is_file()]
+
+    @staticmethod
     def _cluster_items(cluster) -> list[tuple[str, str]]:
         items = []
         for position, row in enumerate(cluster):
-            if not Path(row["image_path"]).is_file():
-                continue
             # same wording as the main gallery, so one marker rule covers both
             tag = "[đại diện] " if position == 0 else f"[gộp x{row.get('duplicates', 1)}] "
             items.append((row["image_path"], f"{tag}{row['keyframe_id']}"))
@@ -1410,6 +1414,34 @@ def build_app(
                 )
 
                 gr.Markdown("---")
+                gr.Markdown("### Ảnh bị gộp trùng")
+                cluster_summary = gr.Markdown(
+                    "Lượt tìm này không có ảnh trùng nào bị gộp."
+                )
+                with gr.Row():
+                    cluster_dropdown = gr.Dropdown(
+                        label="Chọn cụm",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        elem_id="cluster-dropdown",
+                    )
+                    grouped_button = gr.Button(
+                        "Xem ảnh bị gộp trùng", elem_id="grouped-btn"
+                    )
+                    all_frames_button = gr.Button("Bỏ lọc, xem hết")
+                cluster_gallery = gr.Gallery(
+                    label="Ảnh trong cụm",
+                    columns=5,
+                    rows=1,
+                    height="auto",
+                    allow_preview=False,
+                    object_fit="contain",
+                    elem_id="cluster-gallery",
+                )
+                cluster_rows_state = gr.State([])
+
+                gr.Markdown("---")
                 gr.Markdown("### Làm việc với ảnh đang chọn")
                 handoff_box = gr.Textbox(
                     label="Bàn giao (copy cho người kiểm tra)",
@@ -1442,33 +1474,6 @@ def build_app(
                     elem_id="neighbour-gallery",
                 )
                 neighbour_rows_state = gr.State([])
-
-                gr.Markdown("---")
-                gr.Markdown("### Ảnh bị gộp trùng")
-                cluster_summary = gr.Markdown(
-                    "Lượt tìm này không có ảnh trùng nào bị gộp."
-                )
-                with gr.Row():
-                    cluster_dropdown = gr.Dropdown(
-                        label="Chọn cụm",
-                        choices=[],
-                        value=None,
-                        interactive=True,
-                        elem_id="cluster-dropdown",
-                    )
-                    grouped_button = gr.Button(
-                        "Xem ảnh bị gộp trùng", elem_id="grouped-btn"
-                    )
-                    all_frames_button = gr.Button("Bỏ lọc, xem hết")
-                cluster_gallery = gr.Gallery(
-                    label="Ảnh trong cụm",
-                    columns=5,
-                    rows=1,
-                    height="auto",
-                    allow_preview=False,
-                    object_fit="contain",
-                    elem_id="cluster-gallery",
-                )
 
                 with gr.Column(visible=False):
                     legacy_query_language = gr.Dropdown(
@@ -1572,7 +1577,7 @@ def build_app(
                 ).then(
                     fn=controller.refresh_clusters,
                     inputs=[original_results_state, cluster_mode],
-                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery, cluster_rows_state],
                     api_name=False,
                 )
                 query.submit(
@@ -1588,7 +1593,7 @@ def build_app(
                 ).then(
                     fn=controller.refresh_clusters,
                     inputs=[original_results_state, cluster_mode],
-                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery, cluster_rows_state],
                     api_name=False,
                 )
                 # kept out of search_inputs_v2 on purpose: the endpoint parameter count is asserted.
@@ -1607,19 +1612,19 @@ def build_app(
                 ).then(
                     fn=controller.refresh_clusters,
                     inputs=[original_results_state, cluster_mode],
-                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery, cluster_rows_state],
                     api_name=False,
                 )
                 cluster_mode.change(
                     fn=controller.refresh_clusters,
                     inputs=[original_results_state, cluster_mode],
-                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery, cluster_rows_state],
                     api_name=False,
                 )
                 cluster_dropdown.change(
                     fn=controller.show_cluster,
                     inputs=[original_results_state, cluster_dropdown, cluster_mode],
-                    outputs=[cluster_gallery],
+                    outputs=[cluster_gallery, cluster_rows_state],
                     api_name=False,
                 )
                 similar_button.click(
@@ -1833,6 +1838,18 @@ def build_app(
                 gallery.select(
                     controller.select_keyframe,
                     inputs=[page_rows_state],
+                    outputs=[
+                        detail_image, detail_video, detail_metadata, detections,
+                        prev_btn, next_btn, pin_btn, handoff_box, selected_keyframe_state,
+                        neighbour_gallery, neighbour_rows_state,
+                        current_fps_box, current_video_id_box, current_kf_frame_box
+                    ],
+                    api_name=False,
+                )
+                # a cluster thumbnail promotes to the selection like any other frame
+                cluster_gallery.select(
+                    controller.select_keyframe,
+                    inputs=[cluster_rows_state],
                     outputs=[
                         detail_image, detail_video, detail_metadata, detections,
                         prev_btn, next_btn, pin_btn, handoff_box, selected_keyframe_state,

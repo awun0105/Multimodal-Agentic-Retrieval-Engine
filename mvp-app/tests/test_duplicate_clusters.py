@@ -244,3 +244,47 @@ def test_summary_reports_both_modes(tmp_path):
 
     for label in controller.CLUSTER_MODES:
         assert label in text
+
+
+def test_cluster_thumbnails_promote_to_the_selection(tmp_path):
+    """Clicking a grouped frame has to open it the same way the main grid does —
+    otherwise the cluster view can only be looked at, not acted on."""
+    from app import build_app
+    from tests.test_search import _make_store as make
+
+    demo = build_app(make(tmp_path))
+    galleries = [
+        block
+        for block in demo.blocks.values()
+        if getattr(block, "elem_id", None) == "cluster-gallery"
+    ]
+    assert galleries, "cluster gallery missing"
+    gallery_id = galleries[0]._id
+    selects = [
+        dep
+        for dep in demo.config["dependencies"]
+        if dep["targets"] and any(t[0] == gallery_id and t[1] == "select" for t in dep["targets"])
+    ]
+    assert selects, "cluster gallery has no select handler"
+
+
+def test_cluster_rows_track_what_the_gallery_shows(tmp_path):
+    """The row list drives selection by index, so a frame missing from disk must
+    drop out of both or a click lands on the wrong frame."""
+    import numpy as np
+
+    vectors = np.eye(3, dtype=np.float32)
+    controller = SearchController(_store_with_vectors(tmp_path, vectors), page_size=10)
+    present = tmp_path / "there.jpg"
+    present.write_bytes(b"")
+    cluster = [
+        {**_row(0), "image_path": str(present)},
+        {**_row(1, similar_to=0, duplicates=1), "image_path": str(tmp_path / "gone.jpg")},
+        {**_row(2, similar_to=0, duplicates=2), "image_path": str(present)},
+    ]
+
+    shown = SearchController._rendered(cluster)
+    items = SearchController._cluster_items(shown)
+
+    assert len(shown) == len(items) == 2
+    assert [row["vector_id"] for row in shown] == [0, 2]
