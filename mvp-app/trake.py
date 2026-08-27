@@ -12,6 +12,8 @@ from schemas import TrakeEventMatch, TrakeOutcome, TrakeVideoMatch
 from trake_dp import VideoSlice
 from trake_dp import dp_best_path as _dp_best_path
 from trake_dp import dp_best_path_min as _dp_best_path_min
+from trake_dp import dp_best_path_dante as _dp_best_path_dante
+from trake_dp import dp_best_path_min_dante as _dp_best_path_min_dante
 from trake_submission import build_submission as _build_submission
 from trake_submission import format_submission as _format_submission
 from trake_submission import spread_frames as _spread_frames
@@ -36,7 +38,8 @@ SPREAD_ROWS_PER_VIDEO = 34
 # "min" ranks by the weakest event, stopping a video that is missing one event
 # from winning on the strength of the others. Set to "sum" to A/B the old
 # behaviour. Measured over 60 cases: distractor accuracy 13.3% -> 93.3%.
-RANKING_OBJECTIVE = "min"
+RANKING_OBJECTIVE = "dante_min"
+PENALTY_WEIGHT = 0.005
 
 MIN_EVENTS = 1
 MAX_EVENTS = 6
@@ -88,13 +91,16 @@ def build_submission(
     )
 
 
-def _select_dp():
-    # Read at call time so monkeypatching RANKING_OBJECTIVE takes effect.
-    if RANKING_OBJECTIVE == "min":
+def _select_dp(objective: str):
+    if objective == "min":
         return _dp_best_path_min
-    if RANKING_OBJECTIVE == "sum":
+    if objective == "sum":
         return _dp_best_path
-    raise ValueError(f"Unknown RANKING_OBJECTIVE: {RANKING_OBJECTIVE!r}")
+    if objective == "dante":
+        return _dp_best_path_dante
+    if objective == "dante_min":
+        return _dp_best_path_min_dante
+    raise ValueError(f"Unknown RANKING_OBJECTIVE: {objective!r}")
 
 
 def format_submission(rows: list[tuple[str, tuple[int, ...]]]) -> str:
@@ -149,6 +155,8 @@ class TrakeSearcher:
         top_videos: int = 20,
         *,
         translate_vietnamese: bool | None = None,
+        penalty_weight: float | None = None,
+        ranking_objective: str | None = None,
     ) -> TrakeOutcome:
         query_matrix, queries = encode_events(
             events,
@@ -161,11 +169,16 @@ class TrakeSearcher:
             np.float32
         )
 
-        dp = _select_dp()
+        obj = ranking_objective or RANKING_OBJECTIVE
+        pw = penalty_weight if penalty_weight is not None else PENALTY_WEIGHT
+        dp = _select_dp(obj)
         candidates = []
         for video_slice in self.slices:
             slice_scores = scores[video_slice.start : video_slice.end]
-            result = dp(slice_scores)
+            if obj in {"dante", "dante_min"}:
+                result = dp(slice_scores, pw)
+            else:
+                result = dp(slice_scores)
             if result is None:
                 continue
             score, local_indices = result
