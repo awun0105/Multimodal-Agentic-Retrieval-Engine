@@ -107,6 +107,54 @@ def test_penalty_counts_only_kept_items():
     assert by_id[3] == pytest.approx(0.75 * MMR_PENALTY_BASE)
 
 
+def test_return_details_false_keeps_two_value_contract():
+    """Existing callers unpack two values; the details flag must stay opt-in."""
+    vectors = np.asarray([[1.0, 0.0], [1.0, 0.0]], dtype=np.float32)
+    scores = np.asarray([0.9, 0.8], dtype=np.float32)
+
+    result = _apply_mmr(vectors, scores, np.asarray([0, 1]))
+
+    assert len(result) == 2
+
+
+def test_return_details_reports_duplicate_count():
+    vectors = np.asarray([[1.0, 0.0]] * 3, dtype=np.float32)
+    scores = np.asarray([0.9, 0.8, 0.7], dtype=np.float32)
+
+    _, _, details = _apply_mmr(
+        vectors, scores, np.asarray([10, 11, 12]), return_details=True
+    )
+
+    assert details[10]["duplicates"] == 0
+    assert details[11]["duplicates"] == 1
+    assert details[12]["duplicates"] == 2
+
+
+def test_return_details_names_the_representative():
+    vectors = np.asarray([[1.0, 0.0]] * 3, dtype=np.float32)
+    scores = np.asarray([0.9, 0.8, 0.7], dtype=np.float32)
+
+    _, _, details = _apply_mmr(
+        vectors, scores, np.asarray([10, 11, 12]), return_details=True
+    )
+
+    assert details[10]["similar_to"] is None
+    assert details[11]["similar_to"] == 10
+    assert details[12]["similar_to"] == 10
+
+
+def test_distinct_scenes_report_zero_duplicates():
+    vectors = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    scores = np.asarray([0.9, 0.8], dtype=np.float32)
+
+    _, _, details = _apply_mmr(
+        vectors, scores, np.asarray([0, 1]), return_details=True
+    )
+
+    assert all(entry["duplicates"] == 0 for entry in details.values())
+    assert all(entry["similar_to"] is None for entry in details.values())
+
+
 def test_search_by_text_signature_unchanged():
     parameters = inspect.signature(SearchMechanism.search_by_text).parameters
     assert list(parameters) == [

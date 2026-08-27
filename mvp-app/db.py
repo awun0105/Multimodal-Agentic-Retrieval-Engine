@@ -12,7 +12,7 @@ import numpy as np
 
 from clip import CLIPSearcher
 from clusterer import ImageIndexer
-from schemas import KeyframeDetails, SearchFilters, SearchOutcome, SearchResult
+from schemas import KeyframeDetails, PreparedQuery, SearchFilters, SearchOutcome, SearchResult
 from translation import QueryTranslator
 
 
@@ -26,7 +26,8 @@ def _apply_mmr(
     vector_ids: np.ndarray,
     threshold: float = MMR_SIMILARITY_THRESHOLD,
     penalty_base: float = MMR_PENALTY_BASE,
-) -> tuple[np.ndarray, np.ndarray]:
+    return_details: bool = False,
+):
     """Demote near-duplicate frames so one screen shows distinct scenes.
 
     Walking best-first, each frame is scaled by penalty_base ** (number of already-kept
@@ -34,20 +35,27 @@ def _apply_mmr(
     `vectors` must already be float32 and L2-normalized.
     """
     if len(vector_ids) < 2:
-        return scores, vector_ids
+        return (scores, vector_ids, {}) if return_details else (scores, vector_ids)
 
     similarity = vectors @ vectors.T
     order = np.argsort(-scores, kind="stable")
 
     kept: list[int] = []
     adjusted = np.empty(len(order), dtype=np.float64)
+    details: dict[int, dict] = {}
     for position in order:
-        duplicates = sum(1 for other in kept if similarity[position, other] >= threshold)
-        adjusted[position] = float(scores[position]) * penalty_base**duplicates
+        resembles = [other for other in kept if similarity[position, other] >= threshold]
+        adjusted[position] = float(scores[position]) * penalty_base ** len(resembles)
+        details[int(vector_ids[position])] = {
+            "duplicates": len(resembles),
+            # first kept match is the one that survived at full score
+            "similar_to": int(vector_ids[resembles[0]]) if resembles else None,
+        }
         kept.append(int(position))
 
     reranked = np.argsort(-adjusted, kind="stable")
-    return adjusted[reranked], np.asarray(vector_ids)[reranked]
+    ranked = (adjusted[reranked], np.asarray(vector_ids)[reranked])
+    return (*ranked, details) if return_details else ranked
 
 
 def _normalize_query_vector(vector: np.ndarray, expected_dimension: int) -> np.ndarray:
@@ -156,9 +164,6 @@ class SearchMechanism:
         *,
         translate_vietnamese: bool | None = None,
     ) -> SearchOutcome:
-        top_k = int(top_k)
-        if top_k < 1 or top_k > 200:
-            raise ValueError("top_k must be in [1, 200]")
         if translate_vietnamese is None:
             prepared = self.translator.prepare(query, query_language)
         else:
@@ -171,18 +176,54 @@ class SearchMechanism:
             self.clip_searcher.get_text_features(prepared.clip_query),
             self.embeddings.shape[1],
         )
-        filters = filters or SearchFilters()
+        return self._rank(query_vector, top_k, filters or SearchFilters(), prepared)
+
+    def search_by_vector(
+        self,
+        vector: np.ndarray,
+        top_k: int = 100,
+        filters: SearchFilters | None = None,
+    ) -> SearchOutcome:
+        """Rank against a raw embedding — for 'more like this frame' on a result.
+
+        Frames already in the corpus carry their own embedding, so the caller passes
+        `self.embeddings[vector_id]` and no image encoder is ever loaded.
+        """
+        query_vector = _normalize_query_vector(vector, self.embeddings.shape[1])
+        # no text to translate here, so bypass the translator rather than feed it ""
+        prepared = PreparedQuery(
+            original_query="",
+            clip_query="",
+            requested_language="auto",
+            detected_language="auto",
+            translation_enabled=False,
+        )
+        return self._rank(query_vector, top_k, filters or SearchFilters(), prepared)
+
+    def _rank(
+        self,
+        query_vector: np.ndarray,
+        top_k: int,
+        filters: SearchFilters,
+        prepared: PreparedQuery,
+    ) -> SearchOutcome:
+        top_k = int(top_k)
+        if top_k < 1 or top_k > 200:
+            raise ValueError("top_k must be in [1, 200]")
         if filters.active:
             eligible_ids = self._eligible_vector_ids(filters)
             scores, vector_ids = self._search_filtered(query_vector, eligible_ids, top_k)
         else:
             scores, vector_ids = self.image_indexer.search(query_vector, top_k)
+        details: dict[int, dict] = {}
         if self.mmr_enabled and len(vector_ids) > 1:
             # embeddings are stored float16; matmul needs float32 to stay accurate
             vectors = np.asarray(self.embeddings[vector_ids], dtype=np.float32)
-            scores, vector_ids = _apply_mmr(vectors, scores, vector_ids)
+            scores, vector_ids, details = _apply_mmr(
+                vectors, scores, vector_ids, return_details=True
+            )
         results = self._results_for_ids(vector_ids, scores)
-        return SearchOutcome(tuple(results), prepared)
+        return SearchOutcome(tuple(results), prepared, details)
 
     def _eligible_vector_ids(self, filters: SearchFilters) -> np.ndarray:
         mode = filters.object_match_mode.strip().lower()
@@ -308,6 +349,40 @@ class SearchMechanism:
         for vector_id, score in zip(ordered_ids, ordered_scores, strict=True):
             results.append(self._row_to_result(by_id[vector_id], score))
         return results
+
+    def get_temporal_window(
+        self,
+        keyframe_id: str,
+        before: int = 5,
+        after: int = 5,
+    ) -> list[dict]:
+        """Keyframes surrounding one selection, in time order, from the same video.
+
+        Scores are 0.0 — these are neighbours, not ranked matches — so the caller can
+        feed them straight into the same gallery renderer as a search result page.
+        """
+        with self._connect() as connection:
+            target = connection.execute(
+                "SELECT video_id, keyframe_no FROM keyframes WHERE keyframe_id = ?",
+                (keyframe_id,),
+            ).fetchone()
+            if target is None:
+                raise KeyError(f"Unknown keyframe: {keyframe_id}")
+            rows = connection.execute(
+                """
+                SELECT k.*, v.title, v.author
+                FROM keyframes k
+                JOIN videos v ON v.video_id = k.video_id
+                WHERE k.video_id = ? AND k.keyframe_no BETWEEN ? AND ?
+                ORDER BY k.keyframe_no
+                """,
+                (
+                    target["video_id"],
+                    int(target["keyframe_no"]) - max(0, int(before)),
+                    int(target["keyframe_no"]) + max(0, int(after)),
+                ),
+            ).fetchall()
+        return [self._row_to_result(dict(row), 0.0).to_dict() for row in rows]
 
     def _row_to_result(self, row: dict, score: float) -> SearchResult:
         image_relpath = str(row["image_relpath"])
