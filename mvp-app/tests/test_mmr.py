@@ -277,3 +277,88 @@ def test_apply_button_drives_grouping_not_the_checkbox(tmp_path):
         if dep["targets"] and any(t[0] == checkbox_id and t[1] == "change" for t in dep["targets"])
     ]
     assert not changes, "checkbox should not re-rank on toggle"
+
+
+def test_linkage_grouping_refuses_to_chain():
+    """A frame can resemble two others that do not resemble each other — measured
+    A-B 0.944, A-C 0.946, B-C 0.853 on three views of one pitch. Demoting against
+    whichever frame ranked higher would treat all three as one scene."""
+    from db import _apply_linkage
+
+    angle = np.arccos(0.944)
+    vectors = np.asarray(
+        [
+            [1.0, 0.0],
+            [np.cos(angle), np.sin(angle)],
+            [np.cos(angle), -np.sin(angle)],
+        ],
+        dtype=np.float32,
+    )
+    vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+    assert vectors[1] @ vectors[2] < MMR_SIMILARITY_THRESHOLD
+
+    _, _, details = _apply_linkage(
+        vectors,
+        np.asarray([0.9, 0.8, 0.7], dtype=np.float32),
+        np.asarray([10, 11, 12]),
+        return_details=True,
+    )
+
+    anchors = {entry["similar_to"] for entry in details.values()} - {None}
+    assert len(anchors) <= 1, "B and C must not be folded into one another"
+
+
+def test_linkage_keeps_the_strongest_frame_of_each_cluster():
+    from db import _apply_linkage
+
+    vectors = _pair_at_cosine(0.99)
+    scores, ids, details = _apply_linkage(
+        vectors,
+        np.asarray([0.5, 0.9], dtype=np.float32),
+        np.asarray([10, 11]),
+        return_details=True,
+    )
+
+    assert ids[0] == 11, "the higher-scoring frame leads its cluster"
+    assert details[11]["duplicates"] == 0
+    assert details[10]["duplicates"] == 1
+    assert details[10]["similar_to"] == 11
+
+
+def test_grouping_mode_selects_the_ranking_function(tmp_path):
+    """The picker sits beside the grouping checkbox because it changes results,
+    not just how they are displayed."""
+    from app import SearchController
+    from db import GROUPING_ANCHOR, GROUPING_LINKAGE
+
+    store = _make_store(tmp_path)
+    controller = SearchController(store, page_size=10)
+
+    controller.set_mmr(True, SearchController.LINKAGE_MODE)
+    assert store.grouping_mode == GROUPING_LINKAGE
+
+    controller.set_mmr(True, SearchController.ANCHOR_MODE)
+    assert store.grouping_mode == GROUPING_ANCHOR
+
+
+def test_grouping_mode_is_a_single_choice(tmp_path):
+    """The two modes read the same frames differently — running both at once has
+    no meaning, so the control must not allow it."""
+    import gradio as gr
+    from app import SearchController, build_app
+    from tests.test_search import _make_store as make
+
+    demo = build_app(make(tmp_path))
+    pickers = [
+        block
+        for block in demo.blocks.values()
+        if getattr(block, "elem_id", None) == "cluster-mode"
+    ]
+
+    assert pickers, "grouping mode picker missing"
+    picker = pickers[0]
+    assert isinstance(picker, gr.Radio), "a checkbox group would allow both at once"
+    assert list(picker.choices) == [
+        (label, label) for label in SearchController.CLUSTER_MODES
+    ]
+    assert picker.value in SearchController.CLUSTER_MODES

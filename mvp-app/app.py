@@ -32,7 +32,7 @@ from scipy.spatial.distance import squareform
 from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
-from db import SearchMechanism
+from db import GROUPING_ANCHOR, GROUPING_LINKAGE, SearchMechanism
 from frame_math import validate_frame
 from keyframe_details import detail_markdown as _detail_markdown
 from keyframe_details import detection_rows as _detection_rows
@@ -287,8 +287,13 @@ class SearchController:
         self.search_mechanism = search_mechanism
         self.page_size = page_size
 
-    def set_mmr(self, enabled: bool) -> None:
+    def set_mmr(self, enabled: bool, mode: str | None = None) -> None:
         setattr(self.search_mechanism, "mmr_enabled", bool(enabled))
+        setattr(
+            self.search_mechanism,
+            "grouping_mode",
+            GROUPING_LINKAGE if mode == self.LINKAGE_MODE else GROUPING_ANCHOR,
+        )
 
     def page_payload(
         self,
@@ -1325,12 +1330,22 @@ def build_app(
                         )
                         clear_refinements_button = gr.Button("Clear all refinements", scale=1)
                     with gr.Row(equal_height=True):
-                        mmr_checkbox = gr.Checkbox(
-                            label="Gộp ảnh trùng lặp",
-                            value=False,
-                            info="Tìm lại trên gấp đôi số ảnh rồi đẩy ảnh trùng xuống.",
-                            scale=4,
-                        )
+                        with gr.Column(scale=4):
+                            mmr_checkbox = gr.Checkbox(
+                                label="Gộp ảnh trùng lặp",
+                                value=False,
+                                info="Tìm lại trên gấp đôi số ảnh rồi đẩy ảnh trùng xuống.",
+                            )
+                            cluster_mode = gr.Radio(
+                                choices=SearchController.CLUSTER_MODES,
+                                value=SearchController.ANCHOR_MODE,
+                                label="Cách gộp",
+                                info=(
+                                    "Gom quanh ảnh mạnh nhất: ít cụm na ná nhau hơn. "
+                                    "Gom khi mọi ảnh đều giống nhau: trong cụm sạch hơn."
+                                ),
+                                elem_id="cluster-mode",
+                            )
                         apply_mmr_button = gr.Button(
                             "Áp dụng", variant="primary", scale=1, elem_id="apply-mmr-btn"
                         )
@@ -1434,16 +1449,6 @@ def build_app(
                     "Lượt tìm này không có ảnh trùng nào bị gộp."
                 )
                 with gr.Row():
-                    cluster_mode = gr.Radio(
-                        choices=SearchController.CLUSTER_MODES,
-                        value=SearchController.ANCHOR_MODE,
-                        label="Cách gom cụm",
-                        info=(
-                            "Gom quanh ảnh mạnh nhất: ít cụm na ná nhau hơn. "
-                            "Gom khi mọi ảnh đều giống nhau: trong cụm sạch hơn."
-                        ),
-                        elem_id="cluster-mode",
-                    )
                     cluster_dropdown = gr.Dropdown(
                         label="Chọn cụm",
                         choices=[],
@@ -1591,7 +1596,7 @@ def build_app(
                 # grouped result can be compared against it.
                 apply_mmr_button.click(
                     fn=controller.set_mmr,
-                    inputs=[mmr_checkbox],
+                    inputs=[mmr_checkbox, cluster_mode],
                     outputs=[],
                     api_name=False,
                 ).then(
