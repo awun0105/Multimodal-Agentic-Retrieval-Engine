@@ -358,8 +358,10 @@ completed stage.
   - [x] Implement runtime-only preflight, checkpoint decision provenance,
     isolated HF smoke runner, cleanup/reporting, smoke-only CLI, and thin
     optional Notebook orchestration block.
-  - [ ] Run Gate 1 and Gate 2 on a fresh Colab Python 3.13 GPU; only then pin
-    the qualified production dependency tuple and regenerate the complete lock.
+  - [x] Run Gate 1 on a fresh Colab Python 3.13 GPU, pin the qualified
+    production dependency tuple, and regenerate the complete lock.
+  - [ ] Run Gate 2 one-video full-pipeline smoke from the pinned production
+    commit before the heterogeneous batch proof.
 
 ## Decisions
 
@@ -431,12 +433,14 @@ completed stage.
   `run_phase01_smoke()`, and `phase01-smoke`. Notebook 01 invokes production
   `process-batch` directly; the smoke-only CLI appears in Markdown for a
   developer to copy into a new code cell when one-time implementation proof is
-  wanted. Production NumPy/NeMo/Transformers versions remain unchanged pending
-  live Colab qualification evidence.
+  wanted.
 - 2026-08-30: The isolated `py313-nemo273` candidate pins Transformers
   `4.57.6`, the latest patch in the `~=4.57.0` minor required by NeMo 2.7.3
-  ASR. This changes only Gate 1 candidate composition; production remains on
-  the locally validated NeMo 2.6.0 and Transformers 4.53.3 tuple.
+  ASR.
+- 2026-08-30: Gate 1 run `20260830T061502Z_d6a7d17c` passed all checks on
+  Colab Python `3.13.15` with a Tesla T4 and set `ready_to_pin_production=true`.
+  Production now pins NumPy `2.1.3`, NeMo `2.7.3`, and Transformers `4.57.6`;
+  Torch `2.8.0`, TorchVision `0.23.0`, and TorchAudio `2.8.0` remain unchanged.
 
 ## Still Required Before A Production Run
 
@@ -462,13 +466,13 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The current local suite passes 393 tests. Notebook 01 code cells compile,
+- The current local suite passes 394 tests. Notebook 01 code cells compile,
   both new YAML contracts parse, both CLI help surfaces load, and
   `git diff --check` and `uv lock --check` pass. The lock records the
   qualification helper's `packaging` dependency and no longer advertises the
-  removed `google-genai[aiohttp]` production extra. A complete dependency
-  re-resolution remains intentionally deferred until the fresh-Colab Gate 1
-  artifact selects the production tuple.
+  removed `google-genai[aiohttp]` production extra. Fresh-Colab Gate 1 run
+  `20260830T061502Z_d6a7d17c` subsequently passed the complete dependency,
+  CUDA, real-provider, and cleanup contract and selected the production tuple.
 - Runtime-hardening tests prove one Qwen load/close per chunk across captions,
   scenes, and summaries; Vintern-before-Qwen release ordering; request/systemic
   fallback separation; RAM-aware 4/2/1 scheduling; pre-load RAM blocking;

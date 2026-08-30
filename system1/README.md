@@ -245,6 +245,14 @@ Installation and model checks run in separate subprocesses. Only a PASS
 `phase01_runtime_qualification_v1.json` authorizes synchronizing the qualified
 versions into `pyproject.toml`, `configs/models.yaml`, and `uv.lock`.
 
+The production Python 3.13 tuple is qualified as NumPy `2.1.3`, NeMo `2.7.3`,
+and Transformers `4.57.6`. Gate 1 run `20260830T061502Z_d6a7d17c` passed on a
+Colab Tesla T4, including the complete PyTorch CUDA stack, Parquet ABI, real
+NeMo transcription, Vintern-1B/Vintern-3B inference, Qwen2.5-VL inference, and
+GPU cleanup. Its immutable report is stored under
+`_qualification/20260830T061502Z_d6a7d17c/` in the configured qualification
+dataset repository.
+
 The override is needed for legacy Phase00 manifests without `completed_at`;
 new manifests are auto-resolved when it is omitted. The checkpoint repository
 may be public or private, but the configured token must have write access and

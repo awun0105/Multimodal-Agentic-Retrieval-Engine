@@ -70,6 +70,10 @@ versions, ABI/Parquet checks, CUDA, owner-classified `pip check`, real NeMo
 restore/transcription, and real Vintern-1B, Vintern-3B, and Qwen inference.
 Production NumPy/NeMo/Transformers constraints may change only after that
 artifact passes. A fallback candidate must run in a different runtime identity.
+Gate 1 run `20260830T061502Z_d6a7d17c` satisfied this contract on Colab Python
+`3.13.15` and a Tesla T4. Production therefore pins NumPy `2.1.3`, NeMo `2.7.3`,
+and Transformers `4.57.6`; the PyTorch ABI tuple remains Torch `2.8.0`,
+TorchVision `0.23.0`, and TorchAudio `2.8.0`.
 
 Normal workers use `process-batch` directly and never repeat the real smoke as
 part of their assigned batch. The optional `phase01-smoke` developer command is

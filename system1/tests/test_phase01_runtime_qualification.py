@@ -237,3 +237,33 @@ def test_nemo_contract_is_synchronized_across_project_models_and_lock() -> None:
         if package["name"] == "nemo-toolkit"
     ]
     assert locked == [project_version]
+
+
+def test_qualified_python313_production_tuple_is_pinned_in_project_and_lock() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = [
+        Requirement(value)
+        for value in (
+            *pyproject["project"]["dependencies"],
+            *pyproject["project"]["optional-dependencies"]["phase01-production"],
+        )
+    ]
+    specifiers = {
+        canonicalize_name(requirement.name): str(requirement.specifier)
+        for requirement in requirements
+    }
+    assert specifiers["numpy"] == "==2.1.3"
+    assert specifiers["nemo-toolkit"] == "==2.7.3"
+    assert specifiers["transformers"] == "==4.57.6"
+
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked = {
+        package["name"]: str(package["version"])
+        for package in lock["package"]
+        if package["name"] in {"numpy", "nemo-toolkit", "transformers"}
+    }
+    assert locked == {
+        "numpy": "2.1.3",
+        "nemo-toolkit": "2.7.3",
+        "transformers": "4.57.6",
+    }

@@ -25,8 +25,8 @@ phase01:
 
   asr:
     provider: nemo
-    install_package: nemo_toolkit[asr]==2.6.0
-    package_version: 2.6.0
+    install_package: nemo_toolkit[asr]==2.7.3
+    package_version: 2.7.3
     model_id: nvidia/parakeet-ctc-0.6b-vi
     model_revision: b0493142b49458810324e3db8be9e8e07b4ebc17
     model_file: parakeet-ctc-0.6b-vi.nemo
@@ -61,8 +61,8 @@ phase01:
         cpu: int8
     nemo:
       provider: nemo
-      install_package: nemo_toolkit[asr]==2.6.0
-      package_version: 2.6.0
+      install_package: nemo_toolkit[asr]==2.7.3
+      package_version: 2.7.3
       model_id: nvidia/parakeet-ctc-0.6b-vi
       model_revision: b0493142b49458810324e3db8be9e8e07b4ebc17
       model_file: parakeet-ctc-0.6b-vi.nemo
