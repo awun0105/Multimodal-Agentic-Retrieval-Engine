@@ -36,11 +36,9 @@ from system1.phase01.preflight import (
 )
 from system1.phase01.production import process_production_batch
 from system1.phase01.runner import (
-    Phase01RunResult,
     _git_identity,
     _hf_store,
     _scratch_root,
-    run_phase01_pipeline,
 )
 from system1.phase01_qualification import new_run_id, sanitize_payload, write_json_atomic
 from system1.release.sync import phase00_ingestion_remote_prefix
@@ -61,7 +59,7 @@ _REQUIRED_STAGES = (
 
 
 class Phase01SmokeError(RuntimeError):
-    """The real-provider smoke gate failed and production must not start."""
+    """The optional real-provider smoke run failed."""
 
     def __init__(self, message: str, *, report_path: Path) -> None:
         super().__init__(message)
@@ -74,70 +72,6 @@ class Phase01SmokeResult:
     ready_for_full_run: bool
     report_path: Path
     remote_report_path: str | None
-
-
-@dataclass(frozen=True)
-class Phase01WorkerRunResult:
-    smoke: Phase01SmokeResult | None
-    production: Phase01RunResult
-
-
-def run_phase01_worker_pipeline(
-    *,
-    config_dir: Path,
-    output_root: Path,
-    user_settings: dict[str, Any],
-    run_real_smoke: bool = True,
-    keep_remote_smoke_artifacts: bool | None = None,
-    cleanup_local_smoke: bool | None = None,
-    restore_phase00: bool = True,
-    sync_release: bool = True,
-    validate_remote: bool = True,
-) -> Phase01WorkerRunResult:
-    """Run the per-runtime smoke gate, then the worker's assigned batch."""
-
-    smoke: Phase01SmokeResult | None = None
-    if run_real_smoke:
-        smoke = run_phase01_smoke(
-            config_dir=config_dir,
-            output_root=output_root,
-            user_settings=user_settings,
-            keep_remote_artifacts=keep_remote_smoke_artifacts,
-            cleanup_local=cleanup_local_smoke,
-        )
-    production = run_phase01_pipeline(
-        config_dir=config_dir,
-        output_root=output_root,
-        user_settings=user_settings,
-        restore_phase00=restore_phase00,
-        sync_release=sync_release,
-        validate_remote=validate_remote,
-    )
-    result = Phase01WorkerRunResult(smoke=smoke, production=production)
-    write_json_atomic(
-        output_root.resolve() / "phase01_worker_last_run.json",
-        {
-            "schema_version": "phase01_worker_last_run_v1",
-            "run_real_smoke": run_real_smoke,
-            "smoke": (
-                None
-                if smoke is None
-                else {
-                    "run_id": smoke.run_id,
-                    "ready_for_full_run": smoke.ready_for_full_run,
-                    "report_path": str(smoke.report_path),
-                    "remote_report_path": smoke.remote_report_path,
-                }
-            ),
-            "production": {
-                "release_id": production.release_id,
-                "release_dir": str(production.release_dir),
-                "resolved_config_path": str(production.resolved_config_path),
-                "worker_report_path": str(production.worker_report_path),
-            },
-        },
-    )
-    return result
 
 
 def run_phase01_smoke(

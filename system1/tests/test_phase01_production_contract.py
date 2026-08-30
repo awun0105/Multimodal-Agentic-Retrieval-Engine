@@ -831,47 +831,49 @@ def test_process_batch_does_not_override_versioned_storage_defaults(
     assert "hf_release_prefix" not in captured
 
 
-def test_phase01_worker_run_passes_same_settings_and_enables_smoke_by_default(
+def test_phase01_smoke_cli_runs_only_the_optional_smoke(
     monkeypatch, tmp_path: Path
 ) -> None:
     captured: dict = {}
 
-    def run_worker(**kwargs):
+    def run_smoke(**kwargs):
         captured.update(kwargs)
         return SimpleNamespace(
-            smoke=SimpleNamespace(report_path=tmp_path / "smoke.json"),
-            production=SimpleNamespace(
-                release_dir=tmp_path / "release",
-                worker_report_path=tmp_path / "report.json",
-            ),
+            report_path=tmp_path / "smoke.json",
         )
 
     monkeypatch.setattr(
-        "system1.commands.pipeline.run_phase01_worker_pipeline", run_worker
+        "system1.commands.pipeline.run_phase01_smoke", run_smoke
+    )
+    monkeypatch.setattr(
+        "system1.commands.pipeline.run_phase01_pipeline",
+        lambda **_kwargs: pytest.fail("optional smoke must not start production"),
     )
     result = CliRunner().invoke(
         app,
         [
-            "phase01-worker-run",
-            "--batch-id",
-            "batch_007",
-            "--worker-id",
-            "worker_007",
-            "--hf-release-repo",
-            "org/release",
+            "phase01-smoke",
             "--hf-checkpoint-repo",
             "org/checkpoint",
+            "--checkpoint-revision",
+            "model-artifacts-v2",
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+            "--delete-remote-artifacts",
+            "--keep-local",
             "--output",
             str(tmp_path),
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert captured["run_real_smoke"] is True
-    assert captured["user_settings"]["batch_id"] == "batch_007"
-    assert captured["user_settings"]["worker_id"] == "worker_007"
-    assert captured["user_settings"]["hf_release_repo"] == "org/release"
+    assert "Smoke PASS" in result.output
+    assert captured["user_settings"]["batch_id"] == "phase01_smoke"
+    assert captured["user_settings"]["worker_id"] == "phase01_smoke"
     assert captured["user_settings"]["hf_checkpoint_repo"] == "org/checkpoint"
+    assert captured["user_settings"]["checkpoint_revision"] == "model-artifacts-v2"
+    assert captured["keep_remote_artifacts"] is False
+    assert captured["cleanup_local"] is False
 
 
 @pytest.mark.parametrize("secret_key", ["HF_TOKEN", "AIC_HF_TOKEN"])

@@ -267,7 +267,7 @@ state update have all succeeded.
 5. Preserve the OCR gate, batching, model revision, and image preprocessing;
    validate locally before any one-video real-provider smoke.
 
-### Work Package 11: Python 3.13 Qualification And Real Smoke Gate
+### Work Package 11: Python 3.13 Qualification And Optional Real Smoke
 
 1. Add a lightweight `system1-phase01-qualify` entry point outside the eager
    `system1.phase01` import chain. Compose its candidate manifest from the
@@ -286,10 +286,12 @@ state update have all succeeded.
 5. Add explicit `computed`/`restored` execution provenance at each checkpoint
    reuse decision. Require all ten production stages through `sync` to be
    computed in the real one-video smoke.
-6. Replace the manual Notebook smoke cell with package-owned worker
-   orchestration. Use isolated `_smoke/<run_id>` release/checkpoint prefixes,
-   quantitative GPU cleanup, sanitized reports, exact-file remote retention,
-   and block the assigned batch unless the smoke is ready.
+6. Keep the smoke implementation package-owned, but expose it only through the
+   explicit `phase01-smoke` developer command and a Markdown block that can be
+   copied into a new Notebook code cell. Use isolated `_smoke/<run_id>`
+   release/checkpoint prefixes, quantitative GPU cleanup, sanitized reports,
+   and exact-file remote retention. Normal `process-batch` workers never run or
+   wait for smoke.
 
 ## Dependencies And Invalidation
 
@@ -350,11 +352,12 @@ completed stage.
 - [x] Complete Work Package 8 production audit hardening.
 - [x] Complete Work Package 9 semantic-event keyframe recall.
 - [x] Complete Work Package 10 local structured-output recovery.
-- [ ] Complete Work Package 11 Python 3.13 qualification and real smoke gate.
+- [ ] Complete Work Package 11 Python 3.13 qualification and optional real smoke.
   - [x] Implement reproducible candidate composition, installer/worker process
     split, sanitized qualification artifact, and fresh-runtime fallback guard.
   - [x] Implement runtime-only preflight, checkpoint decision provenance,
-    isolated HF smoke runner, cleanup/reporting, worker CLI, and thin Notebook.
+    isolated HF smoke runner, cleanup/reporting, smoke-only CLI, and thin
+    optional Notebook orchestration block.
   - [ ] Run Gate 1 and Gate 2 on a fresh Colab Python 3.13 GPU; only then pin
     the qualified production dependency tuple and regenerate the complete lock.
 
@@ -419,15 +422,21 @@ completed stage.
 - 2026-08-29: Production dependency pins may change only after an isolated
   fresh-Colab Python 3.13 qualification artifact passes. Candidate B may not
   reuse candidate A's runtime.
-- 2026-08-29: A fresh worker runs runtime-only preflight, restores a pinned
-  one-video fixture, then runs composite preflight and the unchanged production
-  batch core. All required stages must record `computed` at the actual reuse
-  decision before the assigned batch may start.
+- 2026-08-29: An explicit smoke run performs runtime-only preflight, restores a
+  pinned one-video fixture, then runs composite preflight and the unchanged
+  production batch core. All required stages must record `computed` at the
+  actual reuse decision for the smoke report to pass.
 - 2026-08-30: Package implementation now provides
   `system1-phase01-qualify`, `run_phase01_runtime_preflight()`,
-  `run_phase01_smoke()`, and `phase01-worker-run`. Notebook 01 invokes only the
-  worker CLI in a fresh subprocess. Production NumPy/NeMo/Transformers versions
-  remain unchanged pending live Colab qualification evidence.
+  `run_phase01_smoke()`, and `phase01-smoke`. Notebook 01 invokes production
+  `process-batch` directly; the smoke-only CLI appears in Markdown for a
+  developer to copy into a new code cell when one-time implementation proof is
+  wanted. Production NumPy/NeMo/Transformers versions remain unchanged pending
+  live Colab qualification evidence.
+- 2026-08-30: The isolated `py313-nemo273` candidate pins Transformers
+  `4.57.6`, the latest patch in the `~=4.57.0` minor required by NeMo 2.7.3
+  ASR. This changes only Gate 1 candidate composition; production remains on
+  the locally validated NeMo 2.6.0 and Transformers 4.53.3 tuple.
 
 ## Still Required Before A Production Run
 
@@ -453,12 +462,13 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The current local suite passes 394 tests. Notebook 01 code cells compile,
+- The current local suite passes 393 tests. Notebook 01 code cells compile,
   both new YAML contracts parse, both CLI help surfaces load, and
-  `git diff --check` passes. The lock records the qualification helper's
-  `packaging` dependency, but a complete dependency re-resolution is
-  intentionally deferred until the fresh-Colab Gate 1 artifact selects the
-  production tuple.
+  `git diff --check` and `uv lock --check` pass. The lock records the
+  qualification helper's `packaging` dependency and no longer advertises the
+  removed `google-genai[aiohttp]` production extra. A complete dependency
+  re-resolution remains intentionally deferred until the fresh-Colab Gate 1
+  artifact selects the production tuple.
 - Runtime-hardening tests prove one Qwen load/close per chunk across captions,
   scenes, and summaries; Vintern-before-Qwen release ordering; request/systemic
   fallback separation; RAM-aware 4/2/1 scheduling; pre-load RAM blocking;
@@ -469,7 +479,8 @@ the one-time official TransNet converter parity job. Before a production run:
   tests and 39 Phase01 production-contract tests. It proves that exact schemas
   reach both Vintern and Qwen, cache identity changes with the contract version,
   parse telemetry is bounded, and all-request Vintern failure cannot promote
-  the OCR checkpoint. Ruff F/E9/I and `uv lock --check` pass.
+  the OCR checkpoint. Ruff F/E9/I passed at that work-package checkpoint; Ruff
+  is not installed in the current local environment.
 - Real-provider one-video, heterogeneous-batch, disconnect-at-every-boundary,
   and Colab/Kaggle platform proof remain Work Package 6.
 
@@ -481,7 +492,7 @@ shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
-are covered by the 394-test local suite. OCR and the shared Qwen runtime now
+are covered by the 393-test local suite. OCR and the shared Qwen runtime now
 receive the exact versioned JSON Schema in their prompts; OCR records bounded
 parse diagnostics and fails before checkpoint promotion when every Vintern
 request fails. The intentionally deferred gate is

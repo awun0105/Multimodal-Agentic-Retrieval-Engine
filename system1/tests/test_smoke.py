@@ -566,7 +566,7 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             "sync-phase00-ingestion",
             "AIC_HF_REPO_ID",
         ],
-        "01_worker_structure_pipeline.ipynb": ["phase01-worker-run"],
+        "01_worker_structure_pipeline.ipynb": ["process-batch", "phase01-smoke"],
         "02_worker_feature_enrichment.ipynb": ["feature-batch"],
         "03_merge_validate_index_release.ipynb": ["merge", "build-db", "build-index", "validate", "smoke-test", "release"],
     }
@@ -605,17 +605,38 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
                 for index, source in enumerate(cell_sources)
                 if source.startswith("# BƯỚC 3:")
             )
-            smoke_launcher_index = next(
+            optional_smoke_index = next(
+                index
+                for index, source in enumerate(cell_sources)
+                if source.startswith("## OPTIONAL ONE-VIDEO FULL-PIPELINE SMOKE")
+            )
+            helper_index = next(
                 index
                 for index, source in enumerate(cell_sources)
                 if source.startswith("# BƯỚC 4:")
             )
-            assert smoke_launcher_index == step3_index + 1
-            assert "run_real_smoke = True" in joined
-            assert "phase01-worker-run" in joined
-            assert "--run-real-smoke" in joined
-            assert "OPTIONAL REAL-PROVIDER SMOKE TEST" not in joined
-            assert "RUN_REAL_PROVIDER_SMOKE" not in joined
+            production_index = next(
+                index
+                for index, source in enumerate(cell_sources)
+                if source.startswith("# BƯỚC 5:")
+            )
+            code_sources = [
+                source
+                for cell, source in zip(notebook["cells"], cell_sources, strict=True)
+                if cell["cell_type"] == "code"
+            ]
+            assert optional_smoke_index == step3_index + 1
+            assert helper_index == optional_smoke_index + 1
+            assert production_index == helper_index + 1
+            assert notebook["cells"][optional_smoke_index]["cell_type"] == "markdown"
+            assert "copy block" in cell_sources[optional_smoke_index]
+            assert "phase01-smoke" in cell_sources[optional_smoke_index]
+            assert "run_cli(smoke_command)" in cell_sources[optional_smoke_index]
+            assert "phase01-smoke" not in "\n".join(code_sources)
+            assert "process-batch" in cell_sources[production_index]
+            assert "phase01-worker-run" not in joined
+            assert "run_real_smoke" not in joined
+            assert "--run-real-smoke" not in joined
             assert "import system1" not in cell_sources[step3_index]
             assert "import torch" not in cell_sources[step3_index]
             assert "--upgrade" not in cell_sources[step3_index]
@@ -660,7 +681,7 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert 'run_cli([command, "--help"]' not in joined
 
 
-def test_notebook01_uses_package_smoke_in_fresh_subprocess() -> None:
+def test_notebook01_keeps_smoke_optional_and_production_separate() -> None:
     notebook = json.loads(
         Path("notebooks/01_worker_structure_pipeline.ipynb").read_text(
             encoding="utf-8"
@@ -668,13 +689,18 @@ def test_notebook01_uses_package_smoke_in_fresh_subprocess() -> None:
     )
     sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
     install = next(source for source in sources if source.startswith("# BƯỚC 3:"))
-    launcher = next(source for source in sources if "phase01-worker-run" in source)
+    optional_smoke = next(source for source in sources if "phase01-smoke" in source)
+    production = next(source for source in sources if '"process-batch"' in source)
     helper = next(source for source in sources if "def run_cli" in source)
 
     assert "pip\", \"install" in install
     assert "import system1" not in install
     assert "import torch" not in install
-    assert '"--run-real-smoke" if run_real_smoke' in launcher
+    assert "copy block" in optional_smoke
+    assert "run_cli(smoke_command)" in optional_smoke
+    assert '"process-batch"' in production
+    assert "phase01-smoke" not in production
+    assert "phase01-worker-run" not in "\n".join(sources)
     assert '[sys.executable, "-m", "system1.cli"' in helper
 
 

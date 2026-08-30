@@ -22,9 +22,7 @@ from .runner import Phase01RunResult, run_phase01_pipeline
 from .smoke import (
     Phase01SmokeError,
     Phase01SmokeResult,
-    Phase01WorkerRunResult,
     run_phase01_smoke,
-    run_phase01_worker_pipeline,
 )
 
 __all__ = [
@@ -34,7 +32,6 @@ __all__ = [
     "Phase01RunResult",
     "Phase01SmokeError",
     "Phase01SmokeResult",
-    "Phase01WorkerRunResult",
     "PreflightResult",
     "RuntimePreflightResult",
     "checkpoint_root",
@@ -46,5 +43,4 @@ __all__ = [
     "run_phase01_pipeline",
     "run_phase01_runtime_preflight",
     "run_phase01_smoke",
-    "run_phase01_worker_pipeline",
 ]

@@ -28,7 +28,7 @@ CONFIG = {
             "overrides": {
                 "numpy": "==2.1.3",
                 "nemo-toolkit": "==2.7.3",
-                "transformers": "==4.53.3",
+                "transformers": "==4.57.6",
             }
         },
         "candidate-b": {
@@ -56,7 +56,7 @@ def test_candidate_manifest_uses_base_and_production_extra() -> None:
     assert "pandas>=2.0.0" in requirements
     assert "pyarrow>=15.0.0" in requirements
     assert "torch==2.8.0" in requirements
-    assert "transformers==4.53.3" in requirements
+    assert "transformers==4.57.6" in requirements
     assert "nemo_toolkit[asr]==2.7.3" in requirements
     assert manifest.overrides["nemo-toolkit"]["preserved_extras"] == ["asr"]
 
@@ -91,6 +91,24 @@ phase01-production = [
         value.startswith("nemo_toolkit[asr]==2.7.3;") and "platform_system" in value
         for value in manifest.requirements
     )
+
+
+def test_repository_nemo273_candidate_uses_supported_transformers_minor() -> None:
+    qualification_config = yaml.safe_load(
+        (ROOT / "configs" / "runtime_qualification.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    manifest = compose_candidate_manifest(
+        pyproject_path=ROOT / "pyproject.toml",
+        qualification_config=qualification_config,
+        candidate="py313-nemo273",
+    )
+
+    requirements = set(manifest.requirements)
+    assert "nemo_toolkit[asr]==2.7.3" in requirements
+    assert "transformers==4.57.6" in requirements
 
 
 def test_candidate_manifest_rejects_missing_override_target(tmp_path: Path) -> None:

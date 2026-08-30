@@ -180,7 +180,7 @@ Notebook 00 outputs. Restore keeps the canonical
 `sync-structure-artifacts` and
 `restore-structure-artifacts` map local phase01 structure ZIPs and worker
 reports to and from the Hugging Face `phase01_structure` layout. Notebook 01 is
-the thin worker orchestration for the production `phase01-worker-run` path. Package
+the thin worker orchestration for the production `process-batch` path. Package
 code now owns release resolution/restore, persistent per-stage resume,
 TransNet V2, search-band keyframes, default faster-whisper ASR with optional
 pinned NeMo/Parakeet Vietnamese ASR, Vintern OCR, Qwen2.5-VL default shot
@@ -199,26 +199,37 @@ uv sync --extra phase01-production
 
 ## Main phase-based pipeline
 
-Notebook 01 uses one package launcher. In every fresh runtime it runs a real
-one-video smoke from pinned Hugging Face test data, then starts the assigned
-batch only after smoke passes. There is no mode or provider selector. A typical
-invocation after Phase00 is:
+Notebook 01 calls production `process-batch` directly and does not repeat a
+one-video smoke for every worker. There is no mode or provider selector. A
+typical invocation after Phase00 is:
 
 ```bash
-system1 phase01-worker-run \
+system1 process-batch \
   --batch-id batch_000 \
   --worker-id worker_000 \
   --release-id-override canonical_release_v001 \
-  --hf-release-repo your-org/AIOU26_release \
+  --hf-repo-id your-org/AIOU26_release \
   --hf-checkpoint-repo your-org/AIOU26_checkpoints \
   --output output \
   --sync
 ```
 
-The smoke uses the package-configured release/checkpoint test repositories and
-isolated `_smoke/<run_id>` prefixes; these are independent from the production
-repository options above. Set `--skip-real-smoke` only when the current runtime
-has already been verified and the operator intentionally accepts the skip.
+The real one-video smoke is an optional developer check, normally run once to
+validate the full Phase01 implementation before assigning production workers:
+
+```bash
+system1 phase01-smoke \
+  --output output \
+  --scratch-dir scratch
+```
+
+The smoke uses package-configured release/checkpoint test repositories and
+isolated `_smoke/<run_id>` prefixes. It calls the production batch core, requires
+all ten stages through `sync` to be computed, validates the package and remote
+checksum, prints a report, and cleans local intermediates while keeping the
+shared model cache. It never starts a production batch. Notebook 01 contains
+the same invocation in a Markdown cell for an operator to copy into a new code
+cell only when this one-time check is wanted.
 
 Before changing the production NumPy/NeMo/Transformers contract, qualify a full
 candidate stack in a fresh Colab Python 3.13 runtime:

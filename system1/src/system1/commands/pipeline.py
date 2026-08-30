@@ -29,7 +29,7 @@ from system1.ingest.pipeline import run_ingestion
 from system1.phase01 import (
     Phase01SmokeError,
     run_phase01_pipeline,
-    run_phase01_worker_pipeline,
+    run_phase01_smoke,
 )
 from system1.release.merge import merge_worker_outputs
 from system1.release.types import config_dir
@@ -37,50 +37,28 @@ from system1.structure.builder import process_structure_batch
 
 
 def register(app: typer.Typer) -> None:
-    @app.command("phase01-worker-run")
-    def phase01_worker_run(
-        batch_id: str = typer.Option(..., "--batch-id"),
-        worker_id: str = typer.Option("worker_000", "--worker-id"),
+    @app.command("phase01-smoke")
+    def phase01_smoke(
         asr_provider: str | None = typer.Option(None, "--asr-provider"),
-        release_id_override: str | None = typer.Option(None, "--release-id-override"),
-        hf_release_repo: str | None = typer.Option(None, "--hf-release-repo"),
-        hf_repo_type: str | None = typer.Option(None, "--hf-repo-type"),
-        hf_release_revision: str | None = typer.Option(None, "--hf-release-revision"),
-        hf_release_prefix: str | None = typer.Option(None, "--hf-release-prefix"),
         hf_checkpoint_repo: str | None = typer.Option(None, "--hf-checkpoint-repo"),
         checkpoint_revision: str | None = typer.Option(None, "--checkpoint-revision"),
         checkpoint_prefix: str | None = typer.Option(None, "--checkpoint-prefix"),
         scratch_dir: Path | None = typer.Option(None, "--scratch-dir"),
-        run_real_smoke: bool = typer.Option(
-            True, "--run-real-smoke/--skip-real-smoke"
-        ),
-        keep_remote_smoke_artifacts: bool | None = typer.Option(
+        keep_remote_artifacts: bool | None = typer.Option(
             None,
-            "--keep-remote-smoke-artifacts/--delete-remote-smoke-artifacts",
+            "--keep-remote-artifacts/--delete-remote-artifacts",
         ),
-        cleanup_local_smoke: bool | None = typer.Option(
-            None, "--cleanup-local-smoke/--keep-local-smoke"
+        cleanup_local: bool | None = typer.Option(
+            None, "--cleanup-local/--keep-local"
         ),
-        restore_phase00: bool = typer.Option(
-            True, "--restore-phase00/--no-restore-phase00"
-        ),
-        validate_remote: bool = typer.Option(
-            True, "--validate-remote/--no-validate-remote"
-        ),
-        sync: bool = typer.Option(True, "--sync/--no-sync"),
         output: Path = typer.Option(default_output(), "--output", "-o"),
     ) -> None:
-        """Run the real smoke gate and then one assigned Phase01 batch."""
+        """Run the optional one-video real-provider Phase01 smoke only."""
 
         user_settings = {
-            "batch_id": batch_id,
-            "worker_id": worker_id,
+            "batch_id": "phase01_smoke",
+            "worker_id": "phase01_smoke",
             "asr_provider": asr_provider,
-            "release_id_override": release_id_override,
-            "hf_release_repo": hf_release_repo,
-            "hf_repo_type": hf_repo_type,
-            "hf_release_revision": hf_release_revision,
-            "hf_release_prefix": hf_release_prefix,
             "hf_checkpoint_repo": hf_checkpoint_repo,
             "checkpoint_revision": checkpoint_revision,
             "checkpoint_prefix": checkpoint_prefix,
@@ -90,29 +68,18 @@ def register(app: typer.Typer) -> None:
             key: value for key, value in user_settings.items() if value is not None
         }
         try:
-            result = run_phase01_worker_pipeline(
+            result = run_phase01_smoke(
                 config_dir=config_dir(),
                 output_root=output,
                 user_settings=user_settings,
-                run_real_smoke=run_real_smoke,
-                keep_remote_smoke_artifacts=keep_remote_smoke_artifacts,
-                cleanup_local_smoke=cleanup_local_smoke,
-                restore_phase00=restore_phase00,
-                sync_release=sync,
-                validate_remote=validate_remote,
+                keep_remote_artifacts=keep_remote_artifacts,
+                cleanup_local=cleanup_local,
             )
         except Phase01SmokeError as exc:
-            raise typer.BadParameter(
-                f"{exc} Full assigned batch was not started."
-            ) from exc
+            raise typer.BadParameter(str(exc)) from exc
         except (FileNotFoundError, RuntimeError, ValueError) as exc:
             raise typer.BadParameter(str(exc)) from exc
-        if result.smoke is not None:
-            typer.echo(f"Smoke PASS: {result.smoke.report_path}")
-        typer.echo(
-            f"Processed {batch_id}: {result.production.release_dir} "
-            f"({result.production.worker_report_path})"
-        )
+        typer.echo(f"Smoke PASS: {result.report_path}")
 
     @app.command("ingest")
     def ingest(

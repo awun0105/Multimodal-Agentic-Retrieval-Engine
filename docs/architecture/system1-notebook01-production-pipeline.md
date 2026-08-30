@@ -71,12 +71,15 @@ restore/transcription, and real Vintern-1B, Vintern-3B, and Qwen inference.
 Production NumPy/NeMo/Transformers constraints may change only after that
 artifact passes. A fallback candidate must run in a different runtime identity.
 
-Every normal fresh worker uses `phase01-worker-run`. Runtime-only preflight runs
-before fixture restore. The package then downloads pinned `L30_V040` Phase00/raw
-evidence from Hugging Face, creates a one-row handoff, and calls the unchanged
-`process_production_batch()` core. Smoke release and checkpoint writes go only
-to configured test repositories under `_smoke/<run_id>`. A smoke pass requires
-all of these decision-point sources to be `computed`:
+Normal workers use `process-batch` directly and never repeat the real smoke as
+part of their assigned batch. The optional `phase01-smoke` developer command is
+run manually once when full-pipeline implementation evidence is needed.
+Runtime-only preflight runs before fixture restore. The package then downloads
+pinned `L30_V040` Phase00/raw evidence from Hugging Face, creates a one-row
+handoff, and calls the unchanged `process_production_batch()` core. Smoke
+release and checkpoint writes go only to configured test repositories under
+`_smoke/<run_id>`. A smoke pass requires all of these decision-point sources to
+be `computed`:
 
 ```text
 shots, keyframes, asr, ocr, shot_captions,
@@ -89,17 +92,22 @@ validation, and remote checksum proof. Local fixture, output, checkpoint cache,
 and run scratch are removable while the shared model cache remains. Optional
 remote cleanup enumerates and validates each exact object and refuses deletion
 unless the repository and `_smoke/<run_id>` prefix match configured test
-authority. The assigned production batch cannot start after smoke failure.
+authority. Smoke success or failure never starts or blocks an assigned
+production batch; production scheduling is a separate operator action.
 
 ## Notebook And Config Contract
 
 Notebook 01 contains one minimal `USER SETTINGS` cell. It exposes `batch_id`,
 `worker_id`, an optional Phase00 `release_id` override, optional
-storage/repository overrides, `run_real_smoke` (default true), optional smoke
-retention choices, and secret-store lookups. If no release override
+storage/repository overrides, and secret-store lookups. If no release override
 is set, package code resolves the Phase00 release. Secrets come from the
 environment, Colab Secrets, or Kaggle Secrets and are neither displayed nor
 persisted.
+
+The notebook also contains a Markdown-only `OPTIONAL ONE-VIDEO FULL-PIPELINE
+SMOKE` block. A developer may copy that thin `phase01-smoke` invocation into a
+new code cell after environment/package setup. Markdown is not executed by Run
+All, so ordinary workers pay no smoke cost.
 
 Auto-resolution selects the unique completed Phase00 release with the latest
 `completed_at`. Missing timestamps or a latest-time tie fail explicitly. A

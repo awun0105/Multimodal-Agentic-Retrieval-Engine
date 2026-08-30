@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -87,69 +85,3 @@ def test_smoke_mapping_accepts_source_branch_then_execution_pins_commit() -> Non
     }
 
     assert smoke._validate_mapping(mapping, raw) == "main"
-
-
-def test_worker_pipeline_never_starts_full_batch_after_smoke_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    production_started = False
-
-    def fail_smoke(**_kwargs):
-        raise smoke.Phase01SmokeError("failed", report_path=tmp_path / "smoke.json")
-
-    def production(**_kwargs):
-        nonlocal production_started
-        production_started = True
-
-    monkeypatch.setattr(smoke, "run_phase01_smoke", fail_smoke)
-    monkeypatch.setattr(smoke, "run_phase01_pipeline", production)
-
-    with pytest.raises(smoke.Phase01SmokeError):
-        smoke.run_phase01_worker_pipeline(
-            config_dir=CONFIG_DIR,
-            output_root=tmp_path,
-            user_settings=_settings(),
-        )
-    assert production_started is False
-
-
-def test_worker_pipeline_runs_full_batch_only_after_smoke_pass(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    order: list[str] = []
-    smoke_result = smoke.Phase01SmokeResult(
-        run_id="run_123",
-        ready_for_full_run=True,
-        report_path=tmp_path / "smoke.json",
-        remote_report_path=None,
-    )
-    production_result = SimpleNamespace(
-        release_id="canonical_release_v001",
-        release_dir=tmp_path / "release",
-        resolved_config_path=tmp_path / "resolved.json",
-        worker_report_path=tmp_path / "worker.json",
-    )
-
-    def pass_smoke(**_kwargs):
-        order.append("smoke")
-        return smoke_result
-
-    def production(**_kwargs):
-        order.append("production")
-        return production_result
-
-    monkeypatch.setattr(smoke, "run_phase01_smoke", pass_smoke)
-    monkeypatch.setattr(smoke, "run_phase01_pipeline", production)
-
-    result = smoke.run_phase01_worker_pipeline(
-        config_dir=CONFIG_DIR,
-        output_root=tmp_path,
-        user_settings=_settings(),
-    )
-
-    assert order == ["smoke", "production"]
-    assert result.smoke is smoke_result
-    assert result.production is production_result
-    last_run = json.loads((tmp_path / "phase01_worker_last_run.json").read_text())
-    assert last_run["smoke"]["run_id"] == "run_123"
-    assert last_run["production"]["release_id"] == "canonical_release_v001"
