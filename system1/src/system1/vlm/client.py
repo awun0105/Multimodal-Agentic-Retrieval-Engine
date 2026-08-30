@@ -164,7 +164,8 @@ class ExclusiveLocalFallbackClient:
             self._record_provider_requests("qwen", len(requests))
             try:
                 return _client_request_many(self.primary, requests)
-            except SystemicProviderError:
+            except SystemicProviderError as exc:
+                _clear_exception_references(exc)
                 self._activate_fallback()
                 fallback_reqs = [_for_local_fallback(r) for r in requests]
                 self._record_provider_requests("vintern", len(requests))
@@ -175,6 +176,10 @@ class ExclusiveLocalFallbackClient:
                 errors = dict(exc.errors)
                 failed_indices = sorted(errors)
 
+                # CUDA exceptions retain their inference traceback, including
+                # local model/tensor references.  Drop that chain before
+                # closing Qwen and loading the exclusive Vintern fallback.
+                _clear_exception_references(exc)
                 self._activate_fallback()
 
                 fallback_reqs = [_for_local_fallback(requests[i]) for i in failed_indices]
@@ -216,10 +221,11 @@ class ExclusiveLocalFallbackClient:
                     ) from exc
 
                 return _complete_batch_or_raise(results)
-            except Exception:  # noqa: BLE001 - request-only clients have no batch error contract
+            except Exception as exc:  # noqa: BLE001 - request-only clients have no batch error contract
                 # A client implementing only request() cannot expose partial
                 # results. Treat its unresolved batch as a local failover and
                 # keep the fallback sticky for the rest of the chunk.
+                _clear_exception_references(exc)
                 self._activate_fallback()
                 fallback_reqs = [_for_local_fallback(r) for r in requests]
                 self._record_provider_requests("vintern", len(requests))
@@ -1314,6 +1320,32 @@ def _close_client(client: Any) -> None:
     close = getattr(client, "close", None)
     if callable(close):
         close()
+
+
+def _clear_exception_references(exc: BaseException) -> None:
+    """Release traceback-held model/tensor references before local failover."""
+
+    pending = [exc]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in seen:
+            continue
+        seen.add(identity)
+
+        cause = current.__cause__
+        context = current.__context__
+        if cause is not None:
+            pending.append(cause)
+        if context is not None:
+            pending.append(context)
+        if isinstance(current, BatchRequestError):
+            pending.extend(current.errors.values())
+
+        current.__traceback__ = None
+        current.__cause__ = None
+        current.__context__ = None
 
 
 def _release_torch_memory() -> None:

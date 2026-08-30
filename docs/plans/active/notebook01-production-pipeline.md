@@ -362,6 +362,12 @@ completed stage.
     production dependency tuple, and regenerate the complete lock.
   - [ ] Run Gate 2 one-video full-pipeline smoke from the pinned production
     commit before the heterogeneous batch proof.
+    - 2026-08-30 attempt `smoke_20260830T111234Z_73799aaa` completed shots,
+      keyframes, ASR, OCR, captions, and transcript links, then exposed retained
+      Qwen CUDA exception references during the exclusive Vintern fallback in
+      `scenes`; the subprocess was killed with SIGKILL before a smoke report.
+      Runtime cleanup now clears traceback-held model/tensor references before
+      closing Qwen and loading Vintern. A fresh Colab rerun remains required.
 
 ## Decisions
 
@@ -466,7 +472,7 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The current local suite passes 394 tests. Notebook 01 code cells compile,
+- The current local suite passes 395 tests. Notebook 01 code cells compile,
   both new YAML contracts parse, both CLI help surfaces load, and
   `git diff --check` and `uv lock --check` pass. The lock records the
   qualification helper's `packaging` dependency and no longer advertises the
@@ -496,7 +502,7 @@ shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
-are covered by the 393-test local suite. OCR and the shared Qwen runtime now
+are covered by the 395-test local suite. OCR and the shared Qwen runtime now
 receive the exact versioned JSON Schema in their prompts; OCR records bounded
 parse diagnostics and fails before checkpoint promotion when every Vintern
 request fails. The intentionally deferred gate is

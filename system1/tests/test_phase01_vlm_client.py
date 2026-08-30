@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import weakref
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -224,6 +225,58 @@ def test_systemic_failure_closes_primary_and_circuits_chunk() -> None:
     client.close()
     assert resident == []
     assert primary_close_calls == 1
+
+
+def test_systemic_failure_clears_traceback_before_loading_fallback() -> None:
+    class RuntimePayload:
+        pass
+
+    def make_failure():
+        payload = RuntimePayload()
+        payload_ref = weakref.ref(payload)
+        try:
+            raise RuntimeError("CUDA out of memory")
+        except RuntimeError as cause:
+            failure = SystemicProviderError("qwen failed")
+            failure.__cause__ = cause
+            return failure, payload_ref
+
+    failure, payload_ref = make_failure()
+
+    class FailingPrimary:
+        def request(self, _request):
+            raise failure
+
+        def close(self) -> None:
+            pass
+
+    class MemoryCheckingFallback:
+        def request(self, _request):
+            assert payload_ref() is None
+            return {"value": "ok"}
+
+    request = ModelRequest(
+        request_kind="test",
+        video_id="L21_V001",
+        prompt="return json",
+        prompt_version="test_prompt",
+        response_schema_version="test_schema",
+        response_schema={
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    )
+
+    client = ExclusiveLocalFallbackClient(
+        FailingPrimary(),
+        MemoryCheckingFallback(),
+    )
+
+    assert client.request(request) == {"value": "ok"}
+    assert failure.__traceback__ is None
+    assert failure.__cause__ is None
 
 
 def test_local_vlm_client_close_releases_loaded_model_handles() -> None:
@@ -1096,7 +1149,11 @@ def test_multi_image_oom_reduces_evidence_evenly_before_circuit(
 
 
 def test_repeated_batch_one_oom_opens_circuit_and_uses_vintern(monkeypatch) -> None:
+    class RuntimePayload:
+        pass
+
     attempts = 0
+    payload_ref = None
     primary = LocalVisionStructuredClient(
         model_config={
             "provider": "qwen_local",
@@ -1108,8 +1165,10 @@ def test_repeated_batch_one_oom_opens_circuit_and_uses_vintern(monkeypatch) -> N
     )
 
     def oom(_requests):
-        nonlocal attempts
+        nonlocal attempts, payload_ref
         attempts += 1
+        payload = RuntimePayload()
+        payload_ref = weakref.ref(payload)
         raise RuntimeError("CUDA out of memory")
 
     monkeypatch.setattr(primary, "_call_models", oom)
@@ -1118,6 +1177,8 @@ def test_repeated_batch_one_oom_opens_circuit_and_uses_vintern(monkeypatch) -> N
         provider_name = "vintern_reasoning_local"
 
         def request(self, _request):
+            assert payload_ref is not None
+            assert payload_ref() is None
             return {"value": "fallback"}
 
     request = ModelRequest(
@@ -1140,6 +1201,7 @@ def test_repeated_batch_one_oom_opens_circuit_and_uses_vintern(monkeypatch) -> N
     assert response == {"value": "fallback"}
     assert attempts == 2
     assert client.circuit_open is True
+
 
 def test_qwen_loader_sets_left_padding(monkeypatch) -> None:
     _install_fake_torch(monkeypatch)
