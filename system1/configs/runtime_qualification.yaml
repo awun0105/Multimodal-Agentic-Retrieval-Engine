@@ -1,0 +1,59 @@
+schema_version: phase01_runtime_qualification_config_v1
+
+candidates:
+  py313-nemo273:
+    requires_python: ">=3.13,<3.14"
+    overrides:
+      numpy: "==2.1.3"
+      nemo-toolkit: "==2.7.3"
+      transformers: "==4.53.3"
+
+  py313-nemo300:
+    requires_python: ">=3.13,<3.14"
+    requires_previous_candidate: py313-nemo273
+    allowed_previous_failure_checks:
+      - nemo_restore
+      - nemo_transcribe
+      - nemo_normalize
+    overrides:
+      numpy: "==2.1.3"
+      nemo-toolkit: "==3.0.0"
+      transformers: "==4.53.3"
+
+fixture:
+  video_id: L30_V040
+  release:
+    repo_id: 1thesudden/AIOU26_release_test
+    repo_type: dataset
+    revision: 44b884df9ad1b88101ff9a5c751c6845e2fb9511
+    release_id: canonical_release_v001
+    timeline_path: canonical_release_v001/phase00_ingestion/frame_timeline/L30_V040.parquet
+    timeline_sha256: 8bf9120ad22b2d2b0a7bfc249af62525978b418a786aa115b38d3afb59a943ce
+  raw:
+    repo_id: 1thesudden/AIOU26_raw
+    repo_type: dataset
+    revision: 6003777f3d6a1b264284659ac744a5aa4297a1db
+    video_path: canonical_raw_v001/raw_videos/L30_V040.mp4
+    video_sha256: af453029f25f5169363bef87888b63389a589838f6d0d879af936801fa6ac632
+    metadata_path: canonical_raw_v001/metadata/L30_V040.json
+    metadata_sha256: be91e676ac612498fff658ed9bbea1af6264002dac98983f85b48b6633a14480
+  audio:
+    start_sec: 20.0
+    end_sec: 32.0
+    expected_speech: true
+  vlm_frame:
+    frame_id: 250
+    pts_time: 10.0
+    expected_visible_text: true
+
+cleanup:
+  # Provisional qualification limits. Replace with the measured, rounded
+  # Gate-1 residual plus the documented safety margin when production pins move.
+  allocated_tolerance_bytes: 536870912
+  reserved_tolerance_bytes: 1073741824
+
+report:
+  upload_repo_id: 1thesudden/AIOU26_release_test
+  upload_repo_type: dataset
+  upload_revision: main
+  upload_prefix: _qualification

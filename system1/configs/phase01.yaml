@@ -159,3 +159,56 @@ production_readiness:
     - phase01.scene_grouping.max_consistency_review_rounds
     - phase01.scene_grouping.scene_confidence_aggregation
     - storage.checkpoint.repo_id
+
+smoke:
+  schema_version: phase01_real_smoke_config_v1
+  video_id: L30_V040
+  required_stage_sources:
+    shots: computed
+    keyframes: computed
+    asr: computed
+    ocr: computed
+    shot_captions: computed
+    shot_transcript_links: computed
+    scenes: computed
+    scene_summaries: computed
+    package: computed
+    sync: computed
+  source_release:
+    repo_id: 1thesudden/AIOU26_release_test
+    repo_type: dataset
+    revision: 44b884df9ad1b88101ff9a5c751c6845e2fb9511
+    prefix: ""
+    release_id: canonical_release_v001
+  source_raw:
+    repo_id: 1thesudden/AIOU26_raw
+    repo_type: dataset
+    revision: 6003777f3d6a1b264284659ac744a5aa4297a1db
+    video_path: canonical_raw_v001/raw_videos/L30_V040.mp4
+    video_sha256: af453029f25f5169363bef87888b63389a589838f6d0d879af936801fa6ac632
+    metadata_path: canonical_raw_v001/metadata/L30_V040.json
+    metadata_sha256: be91e676ac612498fff658ed9bbea1af6264002dac98983f85b48b6633a14480
+  timeline:
+    relative_path: frame_timeline/L30_V040.parquet
+    sha256: 8bf9120ad22b2d2b0a7bfc249af62525978b418a786aa115b38d3afb59a943ce
+    vlm_frame_id: 250
+    vlm_pts_time: 10.0
+  speech:
+    start_sec: 20.0
+    end_sec: 32.0
+    require_non_empty_asr: true
+  output_release:
+    repo_id: 1thesudden/AIOU26_release_test
+    repo_type: dataset
+    revision: main
+  checkpoint:
+    repo_id: 1thesudden/AIOU26_checkpoints_test
+    repo_type: dataset
+    revision: main
+  namespace_root: _smoke
+  keep_remote_report: true
+  keep_remote_artifacts: true
+  cleanup_local: true
+  gpu_cleanup:
+    allocated_tolerance_bytes: 536870912
+    reserved_tolerance_bytes: 1073741824

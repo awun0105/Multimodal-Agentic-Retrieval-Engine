@@ -20,7 +20,11 @@ from system1.phase01.phase00 import (
     discover_phase00_candidates,
     resolve_phase00_release,
 )
-from system1.phase01.preflight import run_phase01_storage_preflight
+from system1.phase01.preflight import (
+    RuntimePreflightResult,
+    run_phase01_preflight,
+    run_phase01_storage_preflight,
+)
 from system1.phase01.runner import _restore_phase00_if_needed
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
@@ -134,6 +138,72 @@ def test_storage_preflight_accepts_writable_public_checkpoint(
     )
 
     assert len(objects) == 1
+
+
+def test_full_preflight_reuses_runtime_result_after_fixture_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    release = tmp_path / "canonical_release_v001"
+    (release / "tables").mkdir(parents=True)
+    (release / "raw_mapping").mkdir()
+    (release / "manifests").mkdir()
+    (release / "frame_timeline").mkdir()
+    (release / "manifests" / "batch_000.txt").write_text(
+        "L30_V040\n", encoding="utf-8"
+    )
+    pd.DataFrame(
+        [{"video_id": "L30_V040", "frame_timeline_ref": "frame_timeline/L30_V040.parquet"}]
+    ).to_parquet(release / "tables" / "videos.parquet", index=False)
+    pd.DataFrame(
+        [
+            {
+                "video_id": "L30_V040",
+                "canonical_repo_id": "org/raw",
+                "canonical_repo_type": "dataset",
+                "canonical_revision": "main",
+                "canonical_prefix": "canonical_raw_v001",
+                "canonical_video_path": "raw_videos/L30_V040.mp4",
+                "canonical_metadata_path": "metadata/L30_V040.json",
+            }
+        ]
+    ).to_parquet(
+        release / "raw_mapping" / "media_store_manifest.parquet", index=False
+    )
+    pd.DataFrame(
+        [{"video_id": "L30_V040", "frame_id": 0, "pts_time": 0.0}]
+    ).to_parquet(release / "frame_timeline" / "L30_V040.parquet", index=False)
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings={"batch_id": "batch_000", "worker_id": "worker_000"},
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    runtime = RuntimePreflightResult(
+        environment="local",
+        release_id="canonical_release_v001",
+        batch_id="batch_000",
+        cuda_available=True,
+        scratch_free_gb=100.0,
+        model_cache_free_gb=100.0,
+        versions={"python": "3.13.0"},
+    )
+    monkeypatch.setattr("system1.phase01.preflight._validate_prompt_files", lambda *_: None)
+    monkeypatch.setattr("system1.phase01.preflight.load_transnet_artifact", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        "system1.phase01.preflight.run_phase01_runtime_preflight",
+        lambda *_args, **_kwargs: pytest.fail("runtime preflight ran twice"),
+    )
+
+    result = run_phase01_preflight(
+        resolved,
+        release_dir=release,
+        transnet_artifact_dir=tmp_path / "transnet",
+        scratch_root=tmp_path / "scratch",
+        validate_remote=False,
+        runtime_result=runtime,
+    )
+
+    assert result.versions == {"python": "3.13.0"}
 
 
 def test_phase00_restore_downloads_only_the_selected_batch_timelines(

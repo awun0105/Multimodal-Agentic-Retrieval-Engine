@@ -180,7 +180,7 @@ Notebook 00 outputs. Restore keeps the canonical
 `sync-structure-artifacts` and
 `restore-structure-artifacts` map local phase01 structure ZIPs and worker
 reports to and from the Hugging Face `phase01_structure` layout. Notebook 01 is
-the thin worker orchestration for the production `process-batch` path. Package
+the thin worker orchestration for the production `phase01-worker-run` path. Package
 code now owns release resolution/restore, persistent per-stage resume,
 TransNet V2, search-band keyframes, default faster-whisper ASR with optional
 pinned NeMo/Parakeet Vietnamese ASR, Vintern OCR, Qwen2.5-VL default shot
@@ -199,19 +199,40 @@ uv sync --extra phase01-production
 
 ## Main phase-based pipeline
 
-Notebook 01 and public `process-batch` expose one production pipeline. There is
-no mode or provider selector. A typical invocation after Phase00 is:
+Notebook 01 uses one package launcher. In every fresh runtime it runs a real
+one-video smoke from pinned Hugging Face test data, then starts the assigned
+batch only after smoke passes. There is no mode or provider selector. A typical
+invocation after Phase00 is:
 
 ```bash
-system1 process-batch \
+system1 phase01-worker-run \
   --batch-id batch_000 \
   --worker-id worker_000 \
   --release-id-override canonical_release_v001 \
-  --hf-repo-id your-org/AIOU26_release \
+  --hf-release-repo your-org/AIOU26_release \
   --hf-checkpoint-repo your-org/AIOU26_checkpoints \
   --output output \
   --sync
 ```
+
+The smoke uses the package-configured release/checkpoint test repositories and
+isolated `_smoke/<run_id>` prefixes; these are independent from the production
+repository options above. Set `--skip-real-smoke` only when the current runtime
+has already been verified and the operator intentionally accepts the skip.
+
+Before changing the production NumPy/NeMo/Transformers contract, qualify a full
+candidate stack in a fresh Colab Python 3.13 runtime:
+
+```bash
+python -m pip install -e system1
+system1-phase01-qualify \
+  --workspace /content/aic_phase01 \
+  --candidate py313-nemo273
+```
+
+Installation and model checks run in separate subprocesses. Only a PASS
+`phase01_runtime_qualification_v1.json` authorizes synchronizing the qualified
+versions into `pyproject.toml`, `configs/models.yaml`, and `uv.lock`.
 
 The override is needed for legacy Phase00 manifests without `completed_at`;
 new manifests are auto-resolved when it is omitted. The checkpoint repository
@@ -331,6 +352,10 @@ Notebook 01 responsibility:
 
 ```text
 setup runtime + package
+  -> fresh subprocess runtime/import preflight
+  -> pinned one-video HF smoke in test release/checkpoint namespaces
+  -> require every Phase01 stage source=computed and validate remote checksum
+  -> cleanup local smoke artifacts while retaining shared model cache
   -> restore Phase00 core tables + selected batch manifest from AIOU26_release
   -> restore only frame_timeline files referenced by that batch
   -> read manifests/{batch_id}.txt

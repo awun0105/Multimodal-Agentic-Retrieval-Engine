@@ -5,6 +5,7 @@ import importlib.metadata
 import importlib.util
 import json
 import os
+import platform
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,17 @@ class PreflightResult:
     versions: dict[str, str]
 
 
+@dataclass(frozen=True)
+class RuntimePreflightResult:
+    environment: str
+    release_id: str
+    batch_id: str
+    cuda_available: bool
+    scratch_free_gb: float
+    model_cache_free_gb: float | None
+    versions: dict[str, str]
+
+
 def run_phase01_preflight(
     config: ResolvedPhase01Config,
     *,
@@ -42,11 +54,10 @@ def run_phase01_preflight(
     transnet_artifact_dir: Path,
     scratch_root: Path,
     validate_remote: bool = True,
+    runtime_result: RuntimePreflightResult | None = None,
 ) -> PreflightResult:
     require_phase01_production_ready(config)
     runtime = config.payload["runtime"]
-    if config.payload["phase01"]["api"].get("request_cache_backend") != "stage_local":
-        raise RuntimeError("Phase01 request cache backend must be stage_local")
     batch_path = release_dir / "manifests" / f"{runtime['batch_id']}.txt"
     required = [
         release_dir / "tables" / "videos.parquet",
@@ -56,24 +67,13 @@ def run_phase01_preflight(
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError("Phase00 local handoff is incomplete: " + ", ".join(missing))
-    for executable in ("ffmpeg", "ffprobe"):
-        if shutil.which(executable) is None:
-            raise RuntimeError(f"Required executable is unavailable: {executable}")
-    models = config.payload["models"]
-    if not os.environ.get("AIC_HF_TOKEN") and not os.environ.get("HF_TOKEN"):
-        raise RuntimeError("AIC_HF_TOKEN or HF_TOKEN is required")
     _validate_phase00_batch(release_dir, batch_path)
     _validate_prompt_files(config)
 
-    scratch_root.mkdir(parents=True, exist_ok=True)
-    scratch_free_gb = shutil.disk_usage(scratch_root).free / (1024**3)
-    required_free_gb = float(config.payload["phase01"]["execution"]["min_scratch_free_gb"])
-    if scratch_free_gb < required_free_gb:
-        raise RuntimeError(
-            f"Scratch free space is too low: {scratch_free_gb:.2f} GiB "
-            f"< {required_free_gb:.2f} GiB"
-        )
-    model_cache_free_gb = _validate_model_cache_free_space(config, models)
+    checked_runtime = runtime_result or run_phase01_runtime_preflight(
+        config,
+        scratch_root=scratch_root,
+    )
 
     shot_model = config.payload["models"]["shot_detection"]
     load_transnet_artifact(
@@ -90,18 +90,66 @@ def run_phase01_preflight(
         finally:
             shutil.rmtree(storage_cache, ignore_errors=True)
 
-    versions: dict[str, str] = {}
+    return PreflightResult(
+        environment=checked_runtime.environment,
+        release_id=checked_runtime.release_id,
+        batch_id=checked_runtime.batch_id,
+        cuda_available=checked_runtime.cuda_available,
+        scratch_free_gb=checked_runtime.scratch_free_gb,
+        model_cache_free_gb=checked_runtime.model_cache_free_gb,
+        versions=dict(checked_runtime.versions),
+    )
+
+
+def run_phase01_runtime_preflight(
+    config: ResolvedPhase01Config,
+    *,
+    scratch_root: Path,
+) -> RuntimePreflightResult:
+    """Validate the fresh runtime without requiring a Phase00 handoff."""
+
+    require_phase01_production_ready(config)
+    runtime = config.payload["runtime"]
+    if config.payload["phase01"]["api"].get("request_cache_backend") != "stage_local":
+        raise RuntimeError("Phase01 request cache backend must be stage_local")
+    for executable in ("ffmpeg", "ffprobe"):
+        if shutil.which(executable) is None:
+            raise RuntimeError(f"Required executable is unavailable: {executable}")
+    if not os.environ.get("AIC_HF_TOKEN") and not os.environ.get("HF_TOKEN"):
+        raise RuntimeError("AIC_HF_TOKEN or HF_TOKEN is required")
+
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    scratch_free_gb = shutil.disk_usage(scratch_root).free / (1024**3)
+    required_free_gb = float(config.payload["phase01"]["execution"]["min_scratch_free_gb"])
+    if scratch_free_gb < required_free_gb:
+        raise RuntimeError(
+            f"Scratch free space is too low: {scratch_free_gb:.2f} GiB "
+            f"< {required_free_gb:.2f} GiB"
+        )
+    models = config.payload["models"]
+    model_cache_free_gb = _validate_model_cache_free_space(config, models)
+
+    versions: dict[str, str] = {"python": platform.python_version()}
     for package in (
+        "accelerate",
         "bitsandbytes",
+        "einops",
         "faster-whisper",
         "huggingface-hub",
         "nemo-toolkit",
+        "numpy",
         "onnx",
         "opencv-python-headless",
+        "pandas",
         "pillow",
         "psutil",
+        "pyarrow",
+        "qwen-vl-utils",
+        "sentencepiece",
+        "timm",
         "torchaudio",
         "torchvision",
+        "transformers",
     ):
         try:
             versions[package] = importlib.metadata.version(package)
@@ -130,7 +178,7 @@ def run_phase01_preflight(
                 f"Installed {torch_package} version {actual_version} differs from "
                 f"required {expected_version}"
             )
-    expected = config.payload["models"]
+    expected = models
     asr_model = expected["asr"]
     asr_provider = str(asr_model.get("provider", "nemo"))
     if asr_provider == "faster_whisper":
@@ -147,10 +195,12 @@ def run_phase01_preflight(
             ) from exc
     else:
         raise RuntimeError(f"Unsupported Phase01 ASR provider: {asr_provider}")
+    _validate_dataframe_runtime_imports()
+    _validate_transformers_runtime_imports()
     _validate_local_vlm_dependencies(expected, versions=versions)
     if versions["torch"] == "missing":
         raise RuntimeError("PyTorch is required for TransNet V2")
-    return PreflightResult(
+    return RuntimePreflightResult(
         environment=str(runtime["environment"]),
         release_id=str(runtime["release_id"]),
         batch_id=str(runtime["batch_id"]),
@@ -320,6 +370,50 @@ LOCAL_VLM_PROVIDERS = {
     "vintern_local",
     "vintern_reasoning_local",
 }
+
+
+def _validate_dataframe_runtime_imports() -> None:
+    try:
+        import numpy as np
+        import pandas as pd
+        import pyarrow as pa
+    except (ImportError, RuntimeError, ValueError, OSError) as exc:
+        raise RuntimeError(
+            "NumPy/Pandas/PyArrow could not initialize; check the runtime ABI stack"
+        ) from exc
+    values = np.asarray([1, 2, 3], dtype=np.int64)
+    frame = pd.DataFrame({"value": values})
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    if int(values.sum()) != 6 or table.num_rows != 3:
+        raise RuntimeError("NumPy/Pandas/PyArrow runtime sanity check failed")
+
+
+def _validate_transformers_runtime_imports() -> None:
+    try:
+        from transformers import (
+            AutoModel,
+            AutoProcessor,
+            AutoTokenizer,
+            GenerationConfig,
+            LlamaForCausalLM,
+            Qwen2ForCausalLM,
+            Qwen2_5_VLForConditionalGeneration,
+        )
+    except (ImportError, RuntimeError, OSError) as exc:
+        raise RuntimeError(
+            "Transformers Phase01 model classes could not initialize"
+        ) from exc
+    required = (
+        AutoModel,
+        AutoProcessor,
+        AutoTokenizer,
+        GenerationConfig,
+        LlamaForCausalLM,
+        Qwen2ForCausalLM,
+        Qwen2_5_VLForConditionalGeneration,
+    )
+    if any(value is None for value in required):  # pragma: no cover - import contract guard
+        raise RuntimeError("Transformers Phase01 model class import returned None")
 
 
 def _local_vlm_models(models: dict[str, Any]) -> list[dict[str, Any]]:

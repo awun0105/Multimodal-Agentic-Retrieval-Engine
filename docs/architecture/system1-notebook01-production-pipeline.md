@@ -56,11 +56,47 @@ Business logic, prompts, schemas, caching, retries, rate limiting, validation,
 and artifact writing live in package/CLI code. Notebook 01 remains a thin
 operator-facing orchestration surface.
 
+## Runtime Qualification And Worker Smoke Gate
+
+Dependency changes and normal worker execution have separate gates.
+
+The one-time dependency gate starts from a fresh Python 3.13 Colab runtime and
+installs base System1 only. `system1-phase01-qualify` composes the union of
+`project.dependencies` and `phase01-production`, preserves requirement extras
+and markers, applies the named candidate specifiers, installs the full direct
+contract in one subprocess, and runs checks in another fresh subprocess. The
+result is `phase01_runtime_qualification_v1.json`, including exact installed
+versions, ABI/Parquet checks, CUDA, owner-classified `pip check`, real NeMo
+restore/transcription, and real Vintern-1B, Vintern-3B, and Qwen inference.
+Production NumPy/NeMo/Transformers constraints may change only after that
+artifact passes. A fallback candidate must run in a different runtime identity.
+
+Every normal fresh worker uses `phase01-worker-run`. Runtime-only preflight runs
+before fixture restore. The package then downloads pinned `L30_V040` Phase00/raw
+evidence from Hugging Face, creates a one-row handoff, and calls the unchanged
+`process_production_batch()` core. Smoke release and checkpoint writes go only
+to configured test repositories under `_smoke/<run_id>`. A smoke pass requires
+all of these decision-point sources to be `computed`:
+
+```text
+shots, keyframes, asr, ocr, shot_captions,
+shot_transcript_links, scenes, scene_summaries, package, sync
+```
+
+The smoke report records dependency/runtime identity, providers, timings,
+RAM/VRAM peaks, row counts, representative ASR/OCR/caption/summary rows, package
+validation, and remote checksum proof. Local fixture, output, checkpoint cache,
+and run scratch are removable while the shared model cache remains. Optional
+remote cleanup enumerates and validates each exact object and refuses deletion
+unless the repository and `_smoke/<run_id>` prefix match configured test
+authority. The assigned production batch cannot start after smoke failure.
+
 ## Notebook And Config Contract
 
 Notebook 01 contains one minimal `USER SETTINGS` cell. It exposes `batch_id`,
 `worker_id`, an optional Phase00 `release_id` override, optional
-storage/repository overrides, and secret-store lookups. If no release override
+storage/repository overrides, `run_real_smoke` (default true), optional smoke
+retention choices, and secret-store lookups. If no release override
 is set, package code resolves the Phase00 release. Secrets come from the
 environment, Colab Secrets, or Kaggle Secrets and are neither displayed nor
 persisted.

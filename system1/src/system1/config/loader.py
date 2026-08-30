@@ -278,6 +278,35 @@ def require_phase01_production_ready(config: ResolvedPhase01Config) -> None:
     _validate_phase01_runtime_invariants(config.payload)
 
 
+def rebuild_resolved_phase01_config(
+    payload: dict[str, Any],
+) -> ResolvedPhase01Config:
+    """Recompute deterministic identity after a controlled config clone.
+
+    Runtime launchers use this after applying isolated execution storage.  It
+    deliberately repeats the production-readiness calculation so no caller can
+    retain a stale config or stage hash after changing a store prefix.
+    """
+
+    cloned = copy.deepcopy(payload)
+    required_paths = cloned["phase01"].get("production_readiness", {}).get(
+        "required_non_null_paths", []
+    )
+    unresolved = tuple(
+        sorted(
+            path
+            for path in required_paths
+            if _value_at_path(cloned, str(path)) is None
+        )
+    )
+    return ResolvedPhase01Config(
+        payload=cloned,
+        config_hash=_sha256_json(cloned),
+        stage_config_hashes=_stage_config_hashes(cloned),
+        unresolved_required_fields=unresolved,
+    )
+
+
 def persist_resolved_phase01_config(config: ResolvedPhase01Config, path: Path | str) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

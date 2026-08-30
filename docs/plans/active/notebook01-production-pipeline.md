@@ -267,6 +267,30 @@ state update have all succeeded.
 5. Preserve the OCR gate, batching, model revision, and image preprocessing;
    validate locally before any one-video real-provider smoke.
 
+### Work Package 11: Python 3.13 Qualification And Real Smoke Gate
+
+1. Add a lightweight `system1-phase01-qualify` entry point outside the eager
+   `system1.phase01` import chain. Compose its candidate manifest from the
+   union of base dependencies and `phase01-production`, replacing only the
+   candidate specifiers while preserving extras and markers.
+2. Run candidate installation and qualification in separate subprocesses and
+   emit `phase01_runtime_qualification_v1.json` on both success and failure.
+   Candidate NeMo 2.7.3 and 3.0.0 runs require separate fresh runtimes.
+3. Keep the production dependency contract unchanged until a fresh Colab
+   Python 3.13 qualification proves Parquet/CUDA plus real NeMo, Vintern-1B,
+   Vintern-3B, and Qwen inference. Then synchronize exact runtime-critical
+   versions across `pyproject.toml`, `models.yaml`, and `uv.lock`.
+4. Split runtime-only checks from the composite Phase01 preflight so the smoke
+   flow can validate the fresh process before restoring its deterministic
+   Phase00 fixture.
+5. Add explicit `computed`/`restored` execution provenance at each checkpoint
+   reuse decision. Require all ten production stages through `sync` to be
+   computed in the real one-video smoke.
+6. Replace the manual Notebook smoke cell with package-owned worker
+   orchestration. Use isolated `_smoke/<run_id>` release/checkpoint prefixes,
+   quantitative GPU cleanup, sanitized reports, exact-file remote retention,
+   and block the assigned batch unless the smoke is ready.
+
 ## Dependencies And Invalidation
 
 The minimum invalidation rules are:
@@ -326,6 +350,13 @@ completed stage.
 - [x] Complete Work Package 8 production audit hardening.
 - [x] Complete Work Package 9 semantic-event keyframe recall.
 - [x] Complete Work Package 10 local structured-output recovery.
+- [ ] Complete Work Package 11 Python 3.13 qualification and real smoke gate.
+  - [x] Implement reproducible candidate composition, installer/worker process
+    split, sanitized qualification artifact, and fresh-runtime fallback guard.
+  - [x] Implement runtime-only preflight, checkpoint decision provenance,
+    isolated HF smoke runner, cleanup/reporting, worker CLI, and thin Notebook.
+  - [ ] Run Gate 1 and Gate 2 on a fresh Colab Python 3.13 GPU; only then pin
+    the qualified production dependency tuple and regenerate the complete lock.
 
 ## Decisions
 
@@ -381,6 +412,22 @@ completed stage.
 - 2026-08-25: Local Vintern/Qwen generation receives a versioned exact JSON
   Schema contract. OCR may degrade per request, but a video with zero
   successful Vintern responses must fail the OCR stage before promotion.
+- 2026-08-29: Runtime qualification is a separate lightweight console entry
+  point because the main CLI eagerly imports Phase01. Candidate manifests are
+  the union of base and production-extra direct dependencies and preserve
+  NeMo's `[asr]` extra and requirement markers.
+- 2026-08-29: Production dependency pins may change only after an isolated
+  fresh-Colab Python 3.13 qualification artifact passes. Candidate B may not
+  reuse candidate A's runtime.
+- 2026-08-29: A fresh worker runs runtime-only preflight, restores a pinned
+  one-video fixture, then runs composite preflight and the unchanged production
+  batch core. All required stages must record `computed` at the actual reuse
+  decision before the assigned batch may start.
+- 2026-08-30: Package implementation now provides
+  `system1-phase01-qualify`, `run_phase01_runtime_preflight()`,
+  `run_phase01_smoke()`, and `phase01-worker-run`. Notebook 01 invokes only the
+  worker CLI in a fresh subprocess. Production NumPy/NeMo/Transformers versions
+  remain unchanged pending live Colab qualification evidence.
 
 ## Still Required Before A Production Run
 
@@ -406,10 +453,12 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The complete local suite passes 356 tests. Scoped Ruff checks pass for all
-  undefined names and for import correctness across the new Phase01 surface.
-  Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
-  current; and `git diff --check` passes.
+- The current local suite passes 394 tests. Notebook 01 code cells compile,
+  both new YAML contracts parse, both CLI help surfaces load, and
+  `git diff --check` passes. The lock records the qualification helper's
+  `packaging` dependency, but a complete dependency re-resolution is
+  intentionally deferred until the fresh-Colab Gate 1 artifact selects the
+  production tuple.
 - Runtime-hardening tests prove one Qwen load/close per chunk across captions,
   scenes, and summaries; Vintern-before-Qwen release ordering; request/systemic
   fallback separation; RAM-aware 4/2/1 scheduling; pre-load RAM blocking;
@@ -432,11 +481,13 @@ shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
-are covered by the 356-test local suite. OCR and the shared Qwen runtime now
+are covered by the 394-test local suite. OCR and the shared Qwen runtime now
 receive the exact versioned JSON Schema in their prompts; OCR records bounded
 parse diagnostics and fails before checkpoint promotion when every Vintern
 request fails. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation
-must not be described as production-validated.
+must not be described as production-validated. Work Package 11 code and local
+contracts are implemented; its live Python 3.13 qualification and real HF/GPU
+smoke acceptance remain pending.

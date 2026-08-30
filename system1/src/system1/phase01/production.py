@@ -107,7 +107,7 @@ class InsufficientMemoryError(RuntimeError):
 
 
 _MANAGER_RUNTIME_CONTEXT: weakref.WeakKeyDictionary[
-    CheckpointManager, dict[str, int]
+    CheckpointManager, dict[str, Any]
 ] = weakref.WeakKeyDictionary()
 _STAGE_TIMERS: dict[tuple[int, str], float] = {}
 
@@ -244,6 +244,7 @@ def process_production_batch(
             _MANAGER_RUNTIME_CONTEXT[manager] = {
                 "chunk_index": chunk_index,
                 "chunk_size": chunk_size,
+                "stage_sources": {},
             }
             _emit_progress(
                 event="video",
@@ -701,9 +702,13 @@ def _finish_video(
     batch_id: str,
     video_count: int,
 ) -> None:
+    runtime_context = _MANAGER_RUNTIME_CONTEXT.get(flow.manager, {})
+    result.setdefault(
+        "stage_sources",
+        dict(runtime_context.get("stage_sources", {})),
+    )
     result_slots[flow.video_index - 1] = result
     shutil.rmtree(flow.scratch, ignore_errors=True)
-    runtime_context = _MANAGER_RUNTIME_CONTEXT.get(flow.manager, {})
     _emit_progress(
         event="video_cache_cleanup",
         status="complete",
@@ -1244,6 +1249,7 @@ def _process_video_flow(
         package_fingerprint, sha256_file(package_path), config.stage_config_hashes["sync"]
     )
     sync_reused = manager.is_reusable("sync", input_fingerprint=sync_fingerprint)
+    _record_stage_source(manager, "sync", reused=sync_reused)
     if not sync_reused:
         remote_root = str(package_config["root"]).format(
             release_id=config.payload["runtime"]["release_id"],
@@ -2521,17 +2527,21 @@ def _validate_package_invariants(artifact_dir: Path, counts: Mapping[str, int]):
 
 
 def _restore_if_reusable(manager, stage, fingerprint, target_dir):
-    return manager.is_reusable(
+    reused = manager.is_reusable(
         stage,
         input_fingerprint=fingerprint,
         restore_dir=target_dir,
     )
+    _record_stage_source(manager, stage, reused=reused)
+    return reused
 
 
 def _restore_keyframes_if_reusable(manager, fingerprint, target_dir):
-    if not manager.is_reusable(
+    reused = manager.is_reusable(
         "keyframes", input_fingerprint=fingerprint, restore_dir=target_dir
-    ):
+    )
+    _record_stage_source(manager, "keyframes", reused=reused)
+    if not reused:
         return False
     bundle = target_dir / "keyframes.zip"
     _safe_extract_zip(bundle, target_dir)
@@ -2593,7 +2603,11 @@ def _emit_stage_progress(
         "release_id": manager.release_id,
         "video_id": manager.video_id,
         "stage": stage,
-        **_MANAGER_RUNTIME_CONTEXT.get(manager, {}),
+        **{
+            key: value
+            for key, value in _MANAGER_RUNTIME_CONTEXT.get(manager, {}).items()
+            if key != "stage_sources"
+        },
     }
     if status == "start":
         _STAGE_TIMERS[timer_key] = time.monotonic()
@@ -2602,8 +2616,26 @@ def _emit_stage_progress(
         if started is not None:
             details["elapsed_seconds"] = round(time.monotonic() - started, 3)
     if reused is not None:
-        details["source"] = "checkpoint" if reused else "computed"
+        details["source"] = "restored" if reused else "computed"
     _emit_progress(event="stage", status=status, scratch=scratch, **details)
+
+
+def _record_stage_source(
+    manager: CheckpointManager,
+    stage: str,
+    *,
+    reused: bool,
+) -> None:
+    context = _MANAGER_RUNTIME_CONTEXT.setdefault(manager, {})
+    sources = context.setdefault("stage_sources", {})
+    source = "restored" if reused else "computed"
+    previous = sources.get(stage)
+    if previous is not None and previous != source:
+        raise RuntimeError(
+            "Phase01 stage source changed during one execution: "
+            f"stage={stage}, previous={previous}, current={source}"
+        )
+    sources[stage] = source
 
 
 def _model_lifecycle_callback(

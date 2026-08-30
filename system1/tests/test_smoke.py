@@ -566,7 +566,7 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             "sync-phase00-ingestion",
             "AIC_HF_REPO_ID",
         ],
-        "01_worker_structure_pipeline.ipynb": ["process-batch"],
+        "01_worker_structure_pipeline.ipynb": ["phase01-worker-run"],
         "02_worker_feature_enrichment.ipynb": ["feature-batch"],
         "03_merge_validate_index_release.ipynb": ["merge", "build-db", "build-index", "validate", "smoke-test", "release"],
     }
@@ -605,26 +605,20 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
                 for index, source in enumerate(cell_sources)
                 if source.startswith("# BƯỚC 3:")
             )
-            smoke_index = next(
+            smoke_launcher_index = next(
                 index
                 for index, source in enumerate(cell_sources)
-                if "OPTIONAL REAL-PROVIDER SMOKE TEST" in source
+                if source.startswith("# BƯỚC 4:")
             )
-            assert smoke_index == step3_index + 1
-            assert "RUN_REAL_PROVIDER_SMOKE = False" in cell_sources[smoke_index]
-            assert notebook["cells"][smoke_index]["metadata"]["tags"] == [
-                "manual-smoke"
-            ]
-            assert "shot_captions.parquet` schema v4" in joined
-            assert "shot_captions.parquet` schema v3" not in joined
-            assert "with isolated_model_cache(" in cell_sources[smoke_index]
-            for cache_variable in (
-                "HF_HOME",
-                "HF_HUB_CACHE",
-                "TORCH_HOME",
-                "XDG_CACHE_HOME",
-            ):
-                assert cache_variable in cell_sources[smoke_index]
+            assert smoke_launcher_index == step3_index + 1
+            assert "run_real_smoke = True" in joined
+            assert "phase01-worker-run" in joined
+            assert "--run-real-smoke" in joined
+            assert "OPTIONAL REAL-PROVIDER SMOKE TEST" not in joined
+            assert "RUN_REAL_PROVIDER_SMOKE" not in joined
+            assert "import system1" not in cell_sources[step3_index]
+            assert "import torch" not in cell_sources[step3_index]
+            assert "--upgrade" not in cell_sources[step3_index]
             assert "tail = deque(maxlen=120)" in joined
             assert "lines = []" not in joined
             assert "YOUR_DATASET" not in joined
@@ -659,65 +653,29 @@ def test_notebooks_are_operator_ready_thin_orchestration_shells():
             assert "monolith-mvp-app" in joined
         if path.name.startswith("00C"):
             assert "system1-notebook01" in joined
-        if path.name.startswith(("00A", "00B", "00C", "01_")):
+        if path.name.startswith(("00A", "00B", "00C")):
             assert "package source preflight: OK" in joined
             assert "help_result" not in joined
             assert "missing_options" not in joined
             assert 'run_cli([command, "--help"]' not in joined
 
 
-def test_notebook01_smoke_cache_context_restores_runtime_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_notebook01_uses_package_smoke_in_fresh_subprocess() -> None:
     notebook = json.loads(
         Path("notebooks/01_worker_structure_pipeline.ipynb").read_text(
             encoding="utf-8"
         )
     )
-    smoke_source = next(
-        "".join(cell.get("source", []))
-        for cell in notebook["cells"]
-        if "OPTIONAL REAL-PROVIDER SMOKE TEST" in "".join(cell.get("source", []))
-    )
-    namespace: dict[str, object] = {}
-    exec(  # noqa: S102 - execute repository-owned notebook source under test
-        compile(smoke_source, "notebook01-smoke-cell", "exec"),
-        namespace,
-    )
-    isolated_model_cache = namespace["isolated_model_cache"]
+    sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+    install = next(source for source in sources if source.startswith("# BƯỚC 3:"))
+    launcher = next(source for source in sources if "phase01-worker-run" in source)
+    helper = next(source for source in sources if "def run_cli" in source)
 
-    from huggingface_hub import constants as hf_constants
-    from transformers.utils import hub as transformers_hub
-
-    monkeypatch.setenv("HF_HOME", "original-hf-home")
-    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
-    original_hf_home = hf_constants.HF_HOME
-    original_hf_hub_cache = hf_constants.HF_HUB_CACHE
-    original_transformers_cache = transformers_hub.TRANSFORMERS_CACHE
-    cache_root = tmp_path / "model-cache"
-
-    with (
-        pytest.raises(RuntimeError, match="force restore"),
-        isolated_model_cache(cache_root),
-    ):
-        assert os.environ["HF_HOME"] == str(
-            (cache_root / "huggingface").resolve()
-        )
-        assert os.environ["HF_HUB_CACHE"] == str(
-            (cache_root / "huggingface" / "hub").resolve()
-        )
-        assert hf_constants.HF_HUB_CACHE == os.environ["HF_HUB_CACHE"]
-        assert transformers_hub.TRANSFORMERS_CACHE == os.environ[
-            "TRANSFORMERS_CACHE"
-        ]
-        raise RuntimeError("force restore")
-
-    assert os.environ["HF_HOME"] == "original-hf-home"
-    assert "HF_HUB_CACHE" not in os.environ
-    assert hf_constants.HF_HOME == original_hf_home
-    assert hf_constants.HF_HUB_CACHE == original_hf_hub_cache
-    assert transformers_hub.TRANSFORMERS_CACHE == original_transformers_cache
+    assert "pip\", \"install" in install
+    assert "import system1" not in install
+    assert "import torch" not in install
+    assert '"--run-real-smoke" if run_real_smoke' in launcher
+    assert '[sys.executable, "-m", "system1.cli"' in helper
 
 
 def test_canonical_inventory_match_rejects_metadata_drift():

@@ -831,6 +831,49 @@ def test_process_batch_does_not_override_versioned_storage_defaults(
     assert "hf_release_prefix" not in captured
 
 
+def test_phase01_worker_run_passes_same_settings_and_enables_smoke_by_default(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict = {}
+
+    def run_worker(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            smoke=SimpleNamespace(report_path=tmp_path / "smoke.json"),
+            production=SimpleNamespace(
+                release_dir=tmp_path / "release",
+                worker_report_path=tmp_path / "report.json",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "system1.commands.pipeline.run_phase01_worker_pipeline", run_worker
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "phase01-worker-run",
+            "--batch-id",
+            "batch_007",
+            "--worker-id",
+            "worker_007",
+            "--hf-release-repo",
+            "org/release",
+            "--hf-checkpoint-repo",
+            "org/checkpoint",
+            "--output",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["run_real_smoke"] is True
+    assert captured["user_settings"]["batch_id"] == "batch_007"
+    assert captured["user_settings"]["worker_id"] == "worker_007"
+    assert captured["user_settings"]["hf_release_repo"] == "org/release"
+    assert captured["user_settings"]["hf_checkpoint_repo"] == "org/checkpoint"
+
+
 @pytest.mark.parametrize("secret_key", ["HF_TOKEN", "AIC_HF_TOKEN"])
 def test_resolved_config_rejects_secret_values(secret_key: str) -> None:
     with pytest.raises(ValueError, match="secret values"):

@@ -386,6 +386,20 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     assert '"scratch_free_gb":' in progress
     assert payload["counts"]["complete_local"] == 1
     assert payload["videos_failed"] == 0
+    expected_local_stages = {
+        "shots",
+        "keyframes",
+        "asr",
+        "ocr",
+        "shot_captions",
+        "shot_transcript_links",
+        "scenes",
+        "scene_summaries",
+        "package",
+    }
+    assert payload["videos"][0]["stage_sources"] == {
+        stage: "computed" for stage in expected_local_stages
+    }
     assert (release / "artifacts" / "structure" / f"{video_id}_structure.zip").is_file()
     state = checkpoint_store.read_json(
         f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
@@ -410,6 +424,10 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         sync_release=False,
     )
     assert second_report == report
+    second_payload = json.loads(second_report.read_text(encoding="utf-8"))
+    assert second_payload["videos"][0]["stage_sources"] == {
+        stage: "restored" for stage in expected_local_stages
+    }
     assert FakeLocalStructuredClient.requests == [
         "keyframe_ocr",
         *SEMANTIC_REQUEST_KINDS,
