@@ -368,6 +368,15 @@ completed stage.
       `scenes`; the subprocess was killed with SIGKILL before a smoke report.
       Runtime cleanup now clears traceback-held model/tensor references before
       closing Qwen and loading Vintern. A fresh Colab rerun remains required.
+    - 2026-08-30 attempt `20260830T152429Z_b2c3c0f6` completed all ten stages
+      from real providers with `source=computed`, package/sync completion, and
+      passing GPU cleanup. Acceptance stopped only while serializing a package
+      sample because a multi-value Parquet field was returned as a NumPy array.
+      Smoke sample serialization now preserves array fields as JSON lists; a
+      fresh acceptance rerun remains required before marking Gate 2 complete.
+      The patched inspector was also run against the retained HF package from
+      this exact namespace: ZIP validation, checksum comparison, all required
+      non-empty row counts, and ASR/OCR/caption/summary sample extraction pass.
 
 ## Decisions
 
@@ -472,7 +481,7 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The current local suite passes 395 tests. Notebook 01 code cells compile,
+- The current local suite passes 396 tests. Notebook 01 code cells compile,
   both new YAML contracts parse, both CLI help surfaces load, and
   `git diff --check` and `uv lock --check` pass. The lock records the
   qualification helper's `packaging` dependency and no longer advertises the
@@ -502,7 +511,7 @@ shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
-are covered by the 395-test local suite. OCR and the shared Qwen runtime now
+are covered by the 396-test local suite. OCR and the shared Qwen runtime now
 receive the exact versioned JSON Schema in their prompts; OCR records bounded
 parse diagnostics and fails before checkpoint promotion when every Vintern
 request fails. The intentionally deferred gate is

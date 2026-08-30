@@ -869,6 +869,18 @@ class _ResourceSampler:
 def _json_scalar(value: Any) -> Any:
     if value is None:
         return None
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_scalar(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_scalar(item) for item in value]
+    to_list = getattr(value, "tolist", None)
+    if callable(to_list):
+        converted = to_list()
+        if converted is not value:
+            return _json_scalar(converted)
     item = getattr(value, "item", None)
     if callable(item):
         value = item()

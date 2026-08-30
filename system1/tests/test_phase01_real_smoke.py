@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from system1.config import load_configs
@@ -85,3 +89,36 @@ def test_smoke_mapping_accepts_source_branch_then_execution_pins_commit() -> Non
     }
 
     assert smoke._validate_mapping(mapping, raw) == "main"
+
+
+def test_parquet_sample_serializes_multivalue_array_fields() -> None:
+    parquet = io.BytesIO()
+    pd.DataFrame(
+        [
+            {
+                "caption_vi": "Một chú mèo đang nằm trên ghế.",
+                "objects_vi": np.array(["mèo", "ghế"], dtype=object),
+                "scores": np.array([0.9, 0.8]),
+            }
+        ]
+    ).to_parquet(parquet, index=False)
+
+    package = io.BytesIO()
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("L30_V040/shot_captions.parquet", parquet.getvalue())
+    package.seek(0)
+
+    with zipfile.ZipFile(package) as archive:
+        sample = smoke._parquet_sample(
+            archive,
+            "L30_V040",
+            "shot_captions.parquet",
+            preferred_text_fields=("caption_vi",),
+            require_text=True,
+        )
+
+    assert sample == {
+        "caption_vi": "Một chú mèo đang nằm trên ghế.",
+        "objects_vi": ["mèo", "ghế"],
+        "scores": [0.9, 0.8],
+    }
