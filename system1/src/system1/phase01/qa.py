@@ -137,6 +137,12 @@ def _collect_artifact_candidates(
                 "partition_status": quality.get("status"),
                 "final_boundary_density": final.get("boundary_density"),
                 "final_one_shot_scene_rate": final.get("one_shot_scene_rate"),
+                "final_mean_scene_duration_sec": final.get(
+                    "mean_scene_duration_sec"
+                ),
+                "final_median_scene_duration_sec": final.get(
+                    "median_scene_duration_sec"
+                ),
                 "partition_degenerate_review_triggered": quality.get(
                     "degenerate_review_triggered"
                 ),

@@ -27,6 +27,7 @@ from system1.phase01.production import (
     _checkpoint_error_payload,
     _keyframe_diagnostic_counts,
     _normalize_required_text,
+    _promote_scene_checkpoint,
     _require_scene_partition_quality,
     _required_text,
     _retryable_video_error,
@@ -69,6 +70,8 @@ def _quality_metrics(*, shot_count: int = 1, scene_count: int = 1) -> dict:
         "one_shot_scene_rate": 1.0 if shot_count == scene_count else 0.0,
         "mean_shots_per_scene": shot_count / scene_count,
         "median_shots_per_scene": shot_count / scene_count,
+        "mean_scene_duration_sec": 1.0,
+        "median_scene_duration_sec": 1.0,
         "longest_boundary_run": max(0, scene_count - 1),
         "suspicious": False,
         "flags": [],
@@ -112,6 +115,8 @@ def _scene_quality(*, suspicious: bool) -> ScenePartitionQuality:
         one_shot_scene_rate=1.0 if suspicious else 0.0,
         mean_shots_per_scene=1.0 if suspicious else 10 / 3,
         median_shots_per_scene=1.0 if suspicious else 3.0,
+        mean_scene_duration_sec=1.0 if suspicious else 10 / 3,
+        median_scene_duration_sec=1.0 if suspicious else 3.0,
         longest_boundary_run=9 if suspicious else 1,
         suspicious=suspicious,
         flags=("all_gaps_are_boundaries",) if suspicious else (),
@@ -340,6 +345,64 @@ def test_suspicious_scene_partition_fails_terminal_quality_gate() -> None:
     assert captured.value.details["manual_review_required"] is True
     assert captured.value.details["final"]["suspicious"] is True
     assert _retryable_video_error(captured.value) is False
+
+
+def test_suspicious_scene_partition_never_promotes_checkpoint(
+    tmp_path: Path,
+) -> None:
+    class RecordingManager:
+        def __init__(self) -> None:
+            self.promote_calls = []
+
+        def promote_stage(self, *args, **kwargs) -> None:
+            self.promote_calls.append((args, kwargs))
+
+    quality = _scene_quality(suspicious=True)
+    result = SceneGroupingResult(
+        scenes=[],
+        decisions=[],
+        initial_quality=quality,
+        final_quality=quality,
+        consistency_review_rounds_run=1,
+        degenerate_review_triggered=True,
+        degenerate_review_rounds_run=1,
+    )
+    payload = _scene_partition_quality_payload(
+        video_id="v",
+        result=result,
+        policy={
+            "enabled": True,
+            "min_shot_count": 8,
+            "suspicious_boundary_density": 0.9,
+            "suspicious_one_shot_scene_rate": 0.8,
+            "unresolved_action": "fail_terminal",
+        },
+    )
+    manager = RecordingManager()
+
+    with pytest.raises(ScenePartitionQualityError) as captured:
+        _promote_scene_checkpoint(
+            manager=manager,
+            video_id="v",
+            result=result,
+            payload=payload,
+            failure_diagnostics_ref="checkpoints/v/failures/scenes/fingerprint",
+            input_fingerprint="f" * 64,
+            scenes_path=tmp_path / "scenes.parquet",
+            scene_links_path=tmp_path / "scene_transcript_links.parquet",
+            scene_diagnostics_path=tmp_path / "scene_boundary_diagnostics.jsonl",
+            scene_quality_path=tmp_path / "scene_partition_quality.json",
+            asr_rows=[],
+            model={},
+            prompt_version="prompt",
+            schema_version="scenes_v2",
+        )
+
+    assert manager.promote_calls == []
+    assert not (tmp_path / "scenes.parquet").exists()
+    assert captured.value.details["diagnostics_ref"].endswith(
+        "/failures/scenes/fingerprint"
+    )
 
 
 def test_scene_quality_failure_persists_structured_checkpoint_details() -> None:

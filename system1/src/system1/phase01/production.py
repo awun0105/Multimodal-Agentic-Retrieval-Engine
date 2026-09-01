@@ -682,6 +682,12 @@ def _finish_failed_video(
         "error_details": error_payload.get("details"),
         "checkpoint_error": checkpoint_error,
     }
+    details = error_payload.get("details")
+    if isinstance(details, Mapping):
+        result["manual_review_required"] = bool(
+            details.get("manual_review_required", False)
+        )
+        result["diagnostics_ref"] = details.get("diagnostics_ref")
     flow.pipeline.close()
     _finish_video(
         flow,
@@ -1117,34 +1123,30 @@ def _process_video_flow(
             scratch=scratch,
             payload=quality_payload,
         )
-        _require_scene_partition_quality(
+        failure_diagnostics_ref = None
+        if grouping_result.final_quality.suspicious:
+            failure_diagnostics_ref = manager.persist_failure_diagnostics(
+                "scenes",
+                input_fingerprint=scenes_fingerprint,
+                outputs=[scene_quality_path, scene_diagnostics_path],
+            )
+        _promote_scene_checkpoint(
+            manager=manager,
             video_id=video_id,
             result=grouping_result,
             payload=quality_payload,
-        )
-        scenes = grouping_result.scenes
-        decisions = grouping_result.decisions
-        _write_parquet(scenes_path, scenes)
-        scene_links = _build_scene_transcript_links(scenes, asr_rows)
-        _write_parquet(
-            scene_links_path,
-            scene_links,
-            empty_columns=PARQUET_COLUMNS["scene_transcript_links"],
-        )
-        manager.promote_stage(
-            "scenes",
+            failure_diagnostics_ref=failure_diagnostics_ref,
             input_fingerprint=scenes_fingerprint,
-            outputs=[
-                scenes_path,
-                scene_links_path,
-                scene_diagnostics_path,
-                scene_quality_path,
-            ],
+            scenes_path=scenes_path,
+            scene_links_path=scene_links_path,
+            scene_diagnostics_path=scene_diagnostics_path,
+            scene_quality_path=scene_quality_path,
+            asr_rows=asr_rows,
             model=scene_boundary_model,
             prompt_version=scene_boundary_model["prompt_version"],
             schema_version=phase01["schemas"]["scenes"],
         )
-        del decisions, evidence, grouping_result, judge
+        del evidence, grouping_result, judge
     _emit_stage_progress(
         manager, "scenes", scratch, status="complete", reused=scenes_reused
     )
@@ -2405,18 +2407,68 @@ def _require_scene_partition_quality(
     video_id: str,
     result: SceneGroupingResult,
     payload: Mapping[str, Any],
+    diagnostics_ref: str | None = None,
 ) -> None:
     if not result.final_quality.suspicious:
         return
+    details = {
+        "quality_contract": "scene_partition_quality_v1",
+        "manual_review_required": True,
+        "initial": dict(payload["initial"]),
+        "final": dict(payload["final"]),
+        "degenerate_review_triggered": result.degenerate_review_triggered,
+    }
+    if diagnostics_ref is not None:
+        details["diagnostics_ref"] = diagnostics_ref
     raise ScenePartitionQualityError(
         video_id=video_id,
-        details={
-            "quality_contract": "scene_partition_quality_v1",
-            "manual_review_required": True,
-            "initial": dict(payload["initial"]),
-            "final": dict(payload["final"]),
-            "degenerate_review_triggered": result.degenerate_review_triggered,
-        },
+        details=details,
+    )
+
+
+def _promote_scene_checkpoint(
+    *,
+    manager: CheckpointManager,
+    video_id: str,
+    result: SceneGroupingResult,
+    payload: Mapping[str, Any],
+    failure_diagnostics_ref: str | None,
+    input_fingerprint: str,
+    scenes_path: Path,
+    scene_links_path: Path,
+    scene_diagnostics_path: Path,
+    scene_quality_path: Path,
+    asr_rows: list[dict[str, Any]],
+    model: Mapping[str, Any],
+    prompt_version: str,
+    schema_version: str,
+) -> None:
+    _require_scene_partition_quality(
+        video_id=video_id,
+        result=result,
+        payload=payload,
+        diagnostics_ref=failure_diagnostics_ref,
+    )
+    scenes = result.scenes
+    _write_parquet(scenes_path, scenes)
+    scene_links = _build_scene_transcript_links(scenes, asr_rows)
+    _write_parquet(
+        scene_links_path,
+        scene_links,
+        empty_columns=PARQUET_COLUMNS["scene_transcript_links"],
+    )
+    manager.promote_stage(
+        "scenes",
+        input_fingerprint=input_fingerprint,
+        outputs=[
+            scenes_path,
+            scene_links_path,
+            scene_diagnostics_path,
+            scene_quality_path,
+        ],
+        model=model,
+        prompt_version=prompt_version,
+        schema_version=schema_version,
     )
 
 
@@ -2442,6 +2494,8 @@ def _emit_scene_partition_quality(
         scene_count=int(final["scene_count"]),
         boundary_density=float(final["boundary_density"]),
         one_shot_scene_rate=float(final["one_shot_scene_rate"]),
+        mean_scene_duration_sec=float(final["mean_scene_duration_sec"]),
+        median_scene_duration_sec=float(final["median_scene_duration_sec"]),
         degenerate_review_triggered=bool(payload["degenerate_review_triggered"]),
         **runtime,
     )

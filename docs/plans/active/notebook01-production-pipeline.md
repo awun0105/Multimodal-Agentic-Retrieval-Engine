@@ -54,8 +54,8 @@ In scope:
   verification.
 - TransNet V2 shots, mandatory search-band anchors plus bounded semantic-event
   supplemental keyframes, NVIDIA Vietnamese FastConformer ASR, gated Vintern
-  OCR, shared 4-bit Qwen2.5-VL caption/grouping/summaries, scoped Gemini
-  fallback, package, sync, and scratch cleanup.
+  OCR, shared 4-bit Qwen2.5-VL caption/grouping/summaries, exclusive sticky
+  Vintern-3B-R local fallback, package, sync, and scratch cleanup.
 - Focused, integration, recovery, and real-provider acceptance tests.
 
 Out of scope:
@@ -177,14 +177,15 @@ state update have all succeeded.
    and detector-error frames still run Vintern, while confident no-text frames
    emit canonical empty OCR rows.
 3. Load Qwen2.5-VL-7B once per chunk in explicit bitsandbytes NF4 4-bit mode
-   after Vintern is released; reuse it for caption, boundary, and summary.
+   after OCR Vintern is released; reuse it for caption, boundary, and summary.
 4. Batch one-image local requests through `request_many`: OCR defaults to four
    requests and captions to two, with adaptive CUDA OOM reduction to one.
 5. Keep scene-boundary and scene-summary requests at one because each request
    contains larger multi-image/context evidence.
-6. Fall back only an isolated invalid/schema-failing request to Gemini. Open a
+6. Fall back only an isolated invalid response to Vintern-3B-R. Open a
    per-chunk Qwen circuit only for load failure, repeated batch-one OOM, or an
-   unusable local runtime; do not increase Gemini concurrency.
+   unusable local runtime; unload Qwen before activating the sticky local
+   fallback.
 7. Keep request-level cache in stage scratch; use the persistent completed
    stage itself as the cross-session cache to avoid per-request HF commits.
 
@@ -396,7 +397,7 @@ completed stage.
   parity-verified artifact is produced.
 - 2026-08-13: Keyframe candidate decoding uses one sequential video pass and
   retains only one shot's candidate group, bounding peak RAM on Colab/Kaggle.
-- 2026-08-16: Gemini request caching is stage-local. Persistent resume
+- 2026-08-16: Semantic request caching is stage-local. Persistent resume
   authority is one atomic backend commit containing the stage outputs and
   matching complete state marker; resume revalidates every recorded checksum.
 - 2026-08-16: Phase00 restore is batch-scoped and checksum-resumable; unrelated
@@ -410,8 +411,8 @@ completed stage.
   video/stage/disk progress and verifies the remote Phase01 layout after a run.
 - 2026-08-25: NeMo/FastConformer Vietnamese is the ASR default. One shared
   Qwen2.5-VL-7B NF4 runtime is primary for caption, scene boundaries, and scene
-  summaries; Gemini is a request-scoped fallback unless a systemic local
-  failure opens the remainder-of-chunk circuit breaker.
+  summaries. The 2026-09-01 runtime amendment replaces scoped Gemini fallback
+  with exclusive Vintern-3B-R, which becomes sticky after systemic Qwen failure.
 - 2026-08-25: OCR runs a conservative config-hashed OpenCV text-presence gate
   before Vintern and maps confident no-text results to canonical `ocr_v2`
   `status=empty` rows without inventing a new status.
@@ -545,7 +546,8 @@ the one-time official TransNet converter parity job. Before a production run:
 
 Active. Work Packages 0-5, 7, and 8 are implemented locally. On 2026-08-25 the
 production defaults moved to NeMo/FastConformer ASR, gated Vintern OCR, and a
-shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
+shared 4-bit Qwen semantic runtime with exclusive sticky Vintern-3B-R fallback.
+Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging

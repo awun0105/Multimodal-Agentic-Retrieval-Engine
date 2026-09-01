@@ -48,7 +48,7 @@ official video
   -> ASR-to-shot alignment
   -> shared Qwen multimodal context-focus scene grouping
   -> shared Qwen strict bilingual scene-summary JSON
-  -> scoped Gemini fallback for failed semantic requests/runtime
+  -> exclusive sticky Vintern-3B-R fallback for failed semantic requests/runtime
   -> validated per-video structure ZIP
 ```
 
@@ -410,9 +410,10 @@ fields belong in Parquet.
 Caption requests require per-request content-addressed caching, bounded retry,
 resumability, exact model/version, prompt version, response-schema version, and
 non-secret diagnostics. Local requests use true processor/model tensor
-batching, not thread concurrency. Invalid JSON/schema for one request falls
-back only that request to Gemini; systemic local-runtime failure opens the
-chunk circuit and sends the remaining semantic work to Gemini.
+batching, not thread concurrency. An invalid response for one request falls
+back only that request to Vintern-3B-R; systemic local-runtime failure unloads
+Qwen, opens the chunk circuit, and sends remaining semantic work to the sticky
+local fallback.
 
 ## Transcript-Shot Alignment
 
@@ -463,15 +464,10 @@ production does not turn an unresolved result into one fabricated scene.
 
 Only after scene boundaries are fixed, the same shared Qwen runtime receives
 the scene's sampled representative images, bilingual shot captions,
-objects/actions, OCR, ASR transcript evidence, and timeline. Gemini receives
-the same request only when fallback is required. Both return strict JSON:
-
-```json
-{
-  "summary_vi": "...",
-  "summary_en": "..."
-}
-```
+objects/actions, OCR, ASR transcript evidence, and timeline. Vintern-3B-R
+receives the same bounded evidence only when local fallback is required.
+Vietnamese and English summaries are separate required plain-text requests;
+Python assembles and validates the canonical row.
 
 Canonical `scene_summaries.parquet` is one row per scene:
 
@@ -618,13 +614,14 @@ to two and reduce on CUDA OOM until one. OCR batches default to four, but
 Vintern uses batches only when its model exposes a safe native API. Scene
 boundary and summary requests stay at one because they carry multi-image
 context. Repeated batch-one OOM or an unusable local runtime opens a per-chunk
-circuit breaker; isolated JSON/schema errors fall back per request without
-disabling Qwen. Gemini concurrency is unchanged.
+circuit breaker; isolated response-contract errors fall back per request
+without disabling Qwen. Systemic failure unloads Qwen before the exclusive
+Vintern-3B-R fallback becomes sticky for the remainder of the chunk.
 
 Structured request-level content-addressed cache entries live in the current
 video's stage scratch. The completed canonical stage is the persistent cache
 and is promoted to the configured writable checkpoint repository, which may be
-public or private. This avoids one Hugging Face commit per Gemini request while
+public or private. This avoids one Hugging Face commit per semantic request while
 preserving stage-level resume semantics.
 All output files belonging to one checkpoint stage and the matching
 `state.json` completion marker are uploaded in one atomic backend commit. A

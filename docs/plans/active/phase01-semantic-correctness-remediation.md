@@ -124,7 +124,7 @@ Out of scope:
 
 ### Task 1: Scene Grouping Correctness
 
-Status: Complete; awaiting review before Task 2
+Status: Closure patch complete; awaiting review before Task 2
 
 Objective: Prevent suspicious partitions such as every adjacent gap becoming a
 boundary from being silently promoted as canonical.
@@ -360,6 +360,17 @@ Focused acceptance cases:
   `scene_grouping_v2`; deterministic boundary diagnostics are
   `scene_boundary_diagnostics_v2`. The existing stage hash already scopes all
   policy, model, prompt, and schema changes to scenes and downstream stages.
+- 2026-09-02: Task 1 review found that consistency-trigger regions could merge
+  into whole-video requests, and terminal quality failures deleted their local
+  per-gap evidence. The closure patch bounds every consistency focus to eight
+  gaps and its context to at most seventeen shots with current defaults,
+  persists non-canonical failure diagnostics under the checkpoint failure
+  namespace, and synchronizes current provider authority before Task 2.
+- 2026-09-02: Failed quality evidence uses
+  `failures/scenes/{scene_fingerprint}/{diagnostic_fingerprint}` and contains
+  the partition-quality JSON plus per-gap boundary JSONL. It never changes the
+  scenes stage to complete; checkpoint `error.details` and the worker result
+  expose `diagnostics_ref` for operators.
 
 ## Validation
 
@@ -380,6 +391,15 @@ Real Qwen/Vintern semantic smoke was not run. Threshold calibration on normal
 edited videos and legitimate rapid montage remains an acceptance risk, not a
 local-contract failure.
 
+Task 1 closure proof on 2026-09-02:
+
+- focused grouping/production/checkpoint/QA tests: 92 passed;
+- `pytest -q tests/test_phase01*.py`: 222 passed;
+- full `pytest -q`: 428 passed, with the same one unrelated Notebook 00B smoke
+  assertion failure described above;
+- Ruff over every closure-changed Python file: passed;
+- `git diff --check`: passed.
+
 - Focused proof: each task must add and run behavior-specific tests described in
   its acceptance cases.
 - Integration proof: affected checkpoint invalidation, package assembly, schema
@@ -393,8 +413,8 @@ local-contract failure.
 
 ## Result
 
-Active. Task 1 is implemented and locally validated; Task 2 remains Not
-Started pending review.
+Active. Task 1 and its closure patch are implemented and locally validated;
+Task 2 remains Not Started pending review.
 
 Task 1 changed:
 
@@ -412,6 +432,10 @@ Task 1 changed:
 - current docs: `docs/architecture/system1-scene-grouping.md`,
   `docs/architecture/system1-notebook01-production-pipeline.md`, and the
   current-version example in `docs/onboarding/system1_spec.md`.
+
+The closure patch additionally changes `system1/src/system1/phase01/checkpoint.py`,
+adds long-sequence/no-promote/failure-persistence/duration proof, and syncs ADR
+0014, amended ADR 0018, the decisions index, and the active Notebook 01 plan.
 
 Checkpoint impact:
 

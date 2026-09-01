@@ -4,7 +4,7 @@ Date: 2026-08-25
 
 ## Status
 
-Accepted
+Accepted; fallback provider amended 2026-09-01.
 
 ## Context
 
@@ -28,7 +28,7 @@ NVIDIA Parakeet FastConformer CTC 0.6B Vietnamese -> ASR
 OpenCV conservative text gate -> Vintern-1B-v3_5 -> OCR
 Qwen2.5-VL-7B-Instruct, bitsandbytes NF4 4-bit
   -> shot captions -> scene-boundary judgements -> scene summaries
-Gemini -> request-level or chunk-level semantic fallback
+Vintern-3B-R -> exclusive request-level or sticky chunk-level local fallback
 ```
 
 The Qwen processor and weights are loaded once per runtime chunk and reused by
@@ -38,12 +38,18 @@ a configured default of two. OCR requests use a configured default of four,
 but Vintern batches only when its remote-code implementation exposes a safe
 native batch API; otherwise its effective batch size is one.
 
-CUDA OOM reduces a local batch geometrically to one. A malformed or
-schema-invalid response falls back to Gemini for only that request. A Qwen load
-failure, repeated CUDA OOM at batch size one, or unusable CUDA/model runtime
-opens a per-chunk circuit breaker and sends the remaining semantic requests to
-Gemini. Gemini remains optional when no fallback is needed and its concurrency
-is not increased.
+CUDA OOM reduces a local batch geometrically to one. A malformed or invalid
+response falls back for only that request. A Qwen load failure, repeated CUDA
+OOM at batch size one, or unusable CUDA/model runtime closes and unloads Qwen,
+then activates the exclusive Vintern-3B-R fallback for the rest of the chunk.
+The two semantic VLMs are never resident together.
+
+The 2026-09-01 amendment replaces the original scoped Gemini fallback with the
+pinned local Vintern-3B-R fallback. This preserves the local-first decision and
+one-heavy-model invariant while removing API credentials/quota from the
+fallback path. Current plain-text field/label contracts supersede the original
+strict-JSON implementation detail; canonical schemas and Python authority are
+unchanged.
 
 The OCR gate may skip Vintern only for high-confidence no-text images. It still
 emits a canonical `ocr_v2` row with empty text and `status=empty`; uncertain
@@ -73,7 +79,7 @@ not alter semantic checkpoint identity.
 
 Positive:
 
-- Notebook 01 can complete without Gemini when local providers succeed.
+- Notebook 01 has no paid-API dependency in the production semantic chain.
 - One Qwen load serves caption, scene grouping, and summary work in a chunk.
 - True batching improves shot-caption throughput while adaptive OOM recovery
   protects 16 GB GPU runtimes.
@@ -84,7 +90,7 @@ Tradeoffs:
 
 - NeMo, bitsandbytes, and local VLM dependencies increase environment setup
   size and require real Colab/Kaggle validation.
-- Qwen structured output still needs schema validation and Gemini fallback.
+- Qwen and Vintern outputs still require strict response-contract validation.
 - Thresholds and effective batch sizes require telemetry-guided tuning on real
   videos and GPUs.
 

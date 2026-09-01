@@ -19,7 +19,8 @@ documents here as real choices are accepted, then index them in this file.
   visually novel or text-changing non-representative supplemental keyframes.
 - `0018-phase01-local-first-semantic-runtime.md`: Notebook 01 defaults to
   NVIDIA Vietnamese FastConformer ASR, gated Vintern OCR, and one shared
-  4-bit Qwen2.5-VL runtime for all semantic stages, with scoped Gemini fallback.
+  4-bit Qwen2.5-VL runtime for all semantic stages, with an exclusive sticky
+  Vintern-3B-R local fallback.
 - `0017-raw-upload-decoded-frame-timelines.md`: Notebook 00B/00C build required
   decoded timelines while each video is already in bounded raw-upload scratch;
   canonical HF ingest validates the compact Parquet without re-downloading the

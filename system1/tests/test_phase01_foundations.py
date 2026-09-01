@@ -378,6 +378,38 @@ def test_checkpoint_groups_stage_outputs_into_one_backend_upload(tmp_path: Path)
     )
 
 
+def test_failure_diagnostics_persist_without_completing_stage(tmp_path: Path) -> None:
+    checkpoint = manager(tmp_path)
+    quality = tmp_path / "scene_partition_quality.json"
+    boundaries = tmp_path / "scene_boundary_diagnostics.jsonl"
+    quality.write_text('{"status":"failed_quality_gate"}\n', encoding="utf-8")
+    boundaries.write_text('{"gap_index":0}\n', encoding="utf-8")
+
+    diagnostics_ref = checkpoint.persist_failure_diagnostics(
+        "scenes",
+        input_fingerprint="f" * 64,
+        outputs=[quality, boundaries],
+    )
+
+    persistent = tmp_path / "persistent" / diagnostics_ref
+    assert (persistent / quality.name).read_bytes() == quality.read_bytes()
+    assert (persistent / boundaries.name).read_bytes() == boundaries.read_bytes()
+    assert "/failures/scenes/" in diagnostics_ref
+    checkpoint.mark_failed(
+        "scenes",
+        input_fingerprint="f" * 64,
+        retryable=False,
+        error={
+            "message": "manual review required",
+            "details": {"diagnostics_ref": diagnostics_ref},
+        },
+    )
+    scene_state = checkpoint.load_state()["stages"]["scenes"]
+    assert scene_state["status"] == "failed_terminal"
+    assert scene_state["output_checksums"] == {}
+    assert scene_state["error"]["details"]["diagnostics_ref"] == diagnostics_ref
+
+
 def test_corrupt_checkpoint_output_is_not_reusable(tmp_path: Path) -> None:
     checkpoint = manager(tmp_path)
     output = tmp_path / "shots.parquet"

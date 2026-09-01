@@ -95,6 +95,8 @@ def test_boundary_partition_has_deterministic_ids_and_ranges() -> None:
     rows = result.scenes
     assert [row["scene_id"] for row in rows] == ["v_SC00000", "v_SC00001"]
     assert [(row["start_frame"], row["end_frame"]) for row in rows] == [(0, 20), (20, 40)]
+    assert result.final_quality.mean_scene_duration_sec == pytest.approx(0.8)
+    assert result.final_quality.median_scene_duration_sec == pytest.approx(0.8)
 
 
 def test_ambiguous_overlap_triggers_focused_review() -> None:
@@ -269,6 +271,28 @@ def test_consistency_review_stops_early_when_labels_do_not_change() -> None:
 
     assert result.consistency_review_rounds_run == 1
     assert len([call for call in judge.calls if call[0] == "consistency_review"]) == 1
+
+
+def test_consistency_review_stays_bounded_for_long_all_boundary_sequence() -> None:
+    judge = Judge(lambda _kind, ids: {gap_id: True for gap_id in ids})
+    policy = config()
+    policy["quality_guard"]["degenerate_review"]["enabled"] = False
+
+    result = group_scenes(
+        video_id="v",
+        shots=shots(200),
+        evidence=shots(200),
+        judge=judge,
+        config=policy,
+    )
+
+    consistency_calls = [
+        call for call in judge.calls if call[0] == "consistency_review"
+    ]
+    assert consistency_calls
+    assert max(len(call[1]) for call in consistency_calls) <= 8
+    assert max(len(call[2]) for call in consistency_calls) <= 17
+    assert result.final_quality.suspicious
 
 
 def test_single_shot_quality_contract_is_not_suspicious() -> None:

@@ -99,6 +99,14 @@ round limit is reached, or a round changes no decision. A valid review replaces
 only the requested gaps. One-shot scenes remain legal; they merely contribute
 to review/quality evidence.
 
+Logical trigger regions may span much of a long video, but provider requests
+may not. Python splits every merged region into chunks no larger than the
+configured `focus_gap_count`; each chunk receives only its own focus shots plus
+`context_shots_each_side`. With the production defaults, a consistency request
+contains at most 8 focus gaps and 17 context shots, including the shot on each
+side of those gaps. Dense pathological output therefore cannot create a
+whole-video contact sheet or repeat whole-video text for every gap.
+
 ## Partition Quality Guard
 
 After ordinary review, Python constructs a candidate partition and computes the
@@ -114,6 +122,8 @@ boundary_density
 one_shot_scene_rate
 mean_shots_per_scene
 median_shots_per_scene
+mean_scene_duration_sec
+median_scene_duration_sec
 longest_boundary_run
 suspicious
 flags
@@ -152,8 +162,19 @@ Python rebuilds and reassesses the partition after recovery:
   summaries/package/sync.
 
 The failure stores compact structured policy/metrics under checkpoint
-`error.details`. Upstream shots, keyframes, ASR, OCR, captions, and shot links
-remain reusable.
+`error.details`. Before raising the terminal error, the pipeline persists
+`scene_partition_quality.json` and `scene_boundary_diagnostics.jsonl` under the
+non-canonical checkpoint namespace:
+
+```text
+phase01_checkpoints/{release_id}/{video_id}/
+  failures/scenes/{scene_fingerprint}/{diagnostic_fingerprint}/
+```
+
+The worker result exposes this location as `diagnostics_ref`. These files are
+inspectable evidence only: they do not complete the scenes stage, cannot be
+restored as canonical outputs, and are not included in a successful package.
+Upstream shots, keyframes, ASR, OCR, captions, and shot links remain reusable.
 
 ## Deterministic Scene Partition
 
@@ -263,10 +284,13 @@ Deterministic tests cover:
 - all-false one-scene behavior;
 - short videos below the safety threshold;
 - suspicious all-boundary recovery and unresolved failure;
+- bounded consistency focus/context for long all-boundary sequences;
 - legitimate isolated one-shot scenes;
 - single-shot videos;
 - scene-stage fingerprint invalidation;
 - terminal failure classification and structured error details;
+- non-canonical persistence of terminal failure diagnostics;
+- direct proof that suspicious output cannot call scenes promotion;
 - quality report packaging and package validation; and
 - deterministic manual-QA diagnostics.
 

@@ -54,6 +54,8 @@ class ScenePartitionQuality:
     one_shot_scene_rate: float
     mean_shots_per_scene: float
     median_shots_per_scene: float
+    mean_scene_duration_sec: float
+    median_scene_duration_sec: float
     longest_boundary_run: int
     suspicious: bool
     flags: tuple[str, ...]
@@ -325,6 +327,13 @@ def assess_partition_quality(
     )
     mean_shots_per_scene = shot_count / scene_count if scene_count else 0.0
     median_shots_per_scene = float(median(scene_sizes)) if scene_sizes else 0.0
+    scene_durations = [float(scene["duration_sec"]) for scene in scenes]
+    mean_scene_duration_sec = (
+        sum(scene_durations) / scene_count if scene_count else 0.0
+    )
+    median_scene_duration_sec = (
+        float(median(scene_durations)) if scene_durations else 0.0
+    )
     longest_boundary_run = _longest_true_run(boundary_labels)
 
     flags: list[str] = []
@@ -355,6 +364,8 @@ def assess_partition_quality(
         one_shot_scene_rate=one_shot_scene_rate,
         mean_shots_per_scene=mean_shots_per_scene,
         median_shots_per_scene=median_shots_per_scene,
+        mean_scene_duration_sec=mean_scene_duration_sec,
+        median_scene_duration_sec=median_scene_duration_sec,
         longest_boundary_run=longest_boundary_run,
         suspicious=suspicious,
         flags=tuple(flags),
@@ -509,11 +520,16 @@ def _run_consistency_reviews(
         if not triggered:
             break
         before = dict(provisional)
-        for region in _merge_review_regions(
+        merged_regions = _merge_review_regions(
             triggered,
             gap_count=len(gap_ids),
             padding=int(config["context_shots_each_side"]),
-        ):
+        )
+        review_regions = _split_review_regions(
+            merged_regions,
+            max_focus_gaps=int(config["focus_gap_count"]),
+        )
+        for region in review_regions:
             region_ids = tuple(gap_ids[index] for index in region)
             context_start = max(
                 0,
@@ -539,6 +555,23 @@ def _run_consistency_reviews(
         if provisional == before:
             break
     return rounds_run, reviewed_round
+
+
+def _split_review_regions(
+    regions: Sequence[Sequence[int]],
+    *,
+    max_focus_gaps: int,
+) -> list[tuple[int, ...]]:
+    if max_focus_gaps < 1:
+        raise ValueError("max_focus_gaps must be positive")
+    chunks: list[tuple[int, ...]] = []
+    for region in regions:
+        ordered = tuple(region)
+        chunks.extend(
+            ordered[start : start + max_focus_gaps]
+            for start in range(0, len(ordered), max_focus_gaps)
+        )
+    return chunks
 
 
 def _run_degenerate_reviews(

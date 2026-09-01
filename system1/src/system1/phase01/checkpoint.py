@@ -311,6 +311,62 @@ class CheckpointManager:
         self.store.write_json(self.state_path, state)
         self._state_cache = copy.deepcopy(state)
 
+    def persist_failure_diagnostics(
+        self,
+        stage: str,
+        *,
+        input_fingerprint: str,
+        outputs: Iterable[Path],
+    ) -> str:
+        """Persist inspectable evidence without completing a canonical stage."""
+
+        if stage not in STAGES:
+            raise ValueError(f"Unknown Phase01 stage: {stage}")
+        if not input_fingerprint or Path(input_fingerprint).name != input_fingerprint:
+            raise ValueError("Failure diagnostic fingerprint must be a safe basename")
+        files = [Path(path) for path in outputs]
+        if not files or any(not path.is_file() for path in files):
+            raise FileNotFoundError(
+                "Every failure diagnostic output must be an existing file"
+            )
+        if len({path.name for path in files}) != len(files):
+            raise ValueError("Failure diagnostic basenames must be unique")
+
+        source_checksums = {
+            source.name: sha256_file(source)
+            for source in files
+        }
+        diagnostic_fingerprint = compute_fingerprint(source_checksums)
+        failure_root = (
+            self.root
+            / "failures"
+            / stage
+            / input_fingerprint
+            / diagnostic_fingerprint
+        )
+        uploads = [(source, failure_root / source.name) for source in files]
+        self.store.upload_files(
+            uploads,
+            commit_message=(
+                f"Persist Phase01 {stage} failure diagnostics "
+                f"for {self.release_id}/{self.video_id}"
+            ),
+            num_threads=min(2, len(uploads)),
+        )
+        if self.verify_remote_checksum:
+            for source, remote_path in uploads:
+                with tempfile.TemporaryDirectory(
+                    prefix="phase01_failure_diagnostics_"
+                ) as tmp:
+                    downloaded = Path(tmp) / source.name
+                    self.store.download_file(remote_path, downloaded)
+                    actual = sha256_file(downloaded)
+                if actual != source_checksums[source.name]:
+                    raise ValueError(
+                        f"Remote failure diagnostic checksum mismatch: {remote_path}"
+                    )
+        return failure_root.as_posix()
+
     def _empty_state(self) -> dict[str, Any]:
         return {
             "schema_version": "phase01_checkpoint_state_v1",

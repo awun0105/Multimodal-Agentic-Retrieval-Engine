@@ -4,7 +4,7 @@ Date: 2026-08-05
 
 ## Status
 
-Accepted
+Accepted. Provider/runtime selection was amended by ADR 0018.
 
 ## Context
 
@@ -35,6 +35,13 @@ production video; it does not trigger a silent semantic fallback.
 
 The complete canonical design is
 `docs/architecture/system1-scene-grouping.md`.
+
+Provider amendment, 2026-09-01: the Gemini adapter above records the initial
+implementation choice, not the current production runtime. ADR 0018 governs
+provider lifecycle. Current production uses Qwen2.5-VL as semantic primary and
+the pinned Vintern-3B-R local model as its exclusive sticky fallback. The
+scene-grouping algorithm and Python partition authority in this ADR are
+unchanged.
 
 ## Alternatives Considered
 
@@ -70,6 +77,7 @@ Tradeoffs:
 ## Follow-Up
 
 - Implement the scene-grouping modules and fake-judge unit tests in Phase01.
-- Select the exact Gemini model and runtime limits in production config.
+- Keep provider/runtime selection synchronized with ADR 0018 and production
+  config.
 - Validate costs, latency, retry behavior, and grouping quality on a Batch 1
   slice before full-dataset processing.

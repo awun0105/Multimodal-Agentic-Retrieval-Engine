@@ -83,6 +83,8 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
                 "final": {
                     "boundary_density": 0.0,
                     "one_shot_scene_rate": 1.0,
+                    "mean_scene_duration_sec": 2.0,
+                    "median_scene_duration_sec": 2.0,
                 },
             }
         ),
@@ -123,4 +125,5 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
     )
     assert boundary["evidence"]["vote_count"] == 2
     assert boundary["evidence"]["partition_status"] == "pass"
+    assert boundary["evidence"]["final_mean_scene_duration_sec"] == 2.0
     assert "reason" not in boundary["evidence"]
