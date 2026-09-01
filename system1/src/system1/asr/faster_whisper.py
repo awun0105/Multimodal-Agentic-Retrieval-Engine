@@ -6,7 +6,7 @@ import json
 import math
 import subprocess
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,8 @@ class AsrResult:
     compute_type: str | None
     attempts: int
     detected_language: str | None
+    diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    status_details: dict[str, Any] = field(default_factory=dict)
 
 
 def has_audio_stream(video_path: Path | str) -> bool:

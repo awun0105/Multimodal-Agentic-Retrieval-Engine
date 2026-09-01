@@ -23,7 +23,7 @@ from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.artifacts.package import validate_artifact_zip, write_artifact_zip
 from system1.artifacts.reports import utc_now, write_worker_report
 from system1.artifacts.store import ArtifactStore
-from system1.asr import build_shot_transcript_links, transcribe_video
+from system1.asr import AsrResourceError, build_shot_transcript_links, transcribe_video
 from system1.config import ResolvedPhase01Config, persist_resolved_phase01_config
 from system1.ingest.discovery import read_metadata
 from system1.keyframes import (
@@ -868,6 +868,7 @@ def _process_video_flow(
     _emit_stage_progress(manager, "asr", scratch, status="start")
     asr_path = stage_dir / "asr_segments.parquet"
     asr_status_path = stage_dir / "asr_status.json"
+    asr_diagnostics_path = stage_dir / "asr_diagnostics.jsonl"
     asr_fingerprint = compute_fingerprint(
         video_timeline_fingerprint, config.stage_config_hashes["asr"]
     )
@@ -882,16 +883,18 @@ def _process_video_flow(
             pre_load_callback=asr_pre_load_callback,
         )
         _write_parquet(asr_path, result.rows, empty_columns=PARQUET_COLUMNS["asr_segments"])
+        _write_jsonl(asr_diagnostics_path, result.diagnostics)
         _write_json(asr_status_path, {
             "status": result.status,
             "compute_type": result.compute_type,
             "attempts": result.attempts,
             "detected_language": result.detected_language,
+            **result.status_details,
         })
         manager.promote_stage(
             "asr",
             input_fingerprint=asr_fingerprint,
-            outputs=[asr_path, asr_status_path],
+            outputs=[asr_path, asr_status_path, asr_diagnostics_path],
             model=models["asr"],
             schema_version=phase01["schemas"]["asr_segments"],
         )
@@ -2489,6 +2492,7 @@ def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path,
         "scene_summary_field_provenance.jsonl",
         "transnet_predictions.json",
         "asr_status.json",
+        "asr_diagnostics.jsonl",
         "ocr_status.json",
     ):
         source = stage_dir / name
@@ -2936,7 +2940,7 @@ def _required_text(payload: Mapping[str, Any], key: str) -> str:
 
 
 def _retryable_video_error(exc):
-    if isinstance(exc, InsufficientMemoryError):
+    if isinstance(exc, (AsrResourceError, InsufficientMemoryError)):
         return True
     message = str(exc).lower()
     return any(marker in message for marker in ("timeout", "timed out", "429", "500", "502", "503", "504", "out of memory", "insufficient ram", "temporarily unavailable", "connection reset", "decode", "i/o"))

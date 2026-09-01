@@ -456,6 +456,36 @@ completed stage.
   Colab Python `3.13.15` with a Tesla T4 and set `ready_to_pin_production=true`.
   Production now pins NumPy `2.1.3`, NeMo `2.7.3`, and Transformers `4.57.6`;
   Torch `2.8.0`, TorchVision `0.23.0`, and TorchAudio `2.8.0` remain unchanged.
+- 2026-08-31: ASR accuracy hardening is in progress. The authorized contract is
+  Silero speech VAD on bounded audio blocks, natural speech-range merging with
+  a 30-second hard cap and overlap only for forced splits, one-segment-at-a-time
+  NeMo inference, and the model-card Flashlight/KenLM 4-gram decoder at beam 64.
+  Low-quality hypotheses stay in a diagnostics sidecar but are excluded from
+  canonical ASR rows. Decoder or resource failure is retryable and must never
+  fall back to greedy decoding. The project-owned CPython 3.13 Linux wheel is a
+  checksummed model artifact prepared once before production workers start.
+
+### Work Package 12: Speech-Aware ASR And Pinned Beam Decoder
+
+- [x] Add bounded-block Silero VAD, speech-range packing, forced-split overlap,
+  alignment quality metrics, and diagnostics-only rejection helpers.
+- [x] Replace the legacy silence/fixed-12-second NeMo path with streaming
+  Flashlight decoding and coordinated checkpoint invalidation.
+- [x] Add the deterministic Flashlight runtime-artifact builder, download and
+  ABI/checksum preflight, and Notebook 01 preparation command.
+- [x] Extend package/config/runtime qualification contracts and focused tests.
+- [x] Build and portability-check the CPython 3.13 Linux wheel.
+- [ ] Upload the wheel and manifest, then run fresh-Colab qualification and
+  one-video real-provider smoke evidence.
+
+Local build evidence is complete for the final item: the official
+`manylinux2014_x86_64` image produced a CPython 3.13 wheel, `auditwheel repair`
+bundled KenLM and required shared libraries, and a clean virtual environment
+plus a separate `python:3.13-slim` Debian container imported
+`flashlight.lib.text.decoder.KenLM`. The emitted manifest SHA-256 is
+`e00041b237090a1ad5638f4b3667b7f7eee2803ff4858a2ce68ee779d0ad9a1b`.
+HF upload and fresh-Colab provider evidence remain open because the local HF
+CLI has no authenticated account.
 
 ## Still Required Before A Production Run
 
@@ -488,6 +518,14 @@ the one-time official TransNet converter parity job. Before a production run:
   removed `google-genai[aiohttp]` production extra. Fresh-Colab Gate 1 run
   `20260830T061502Z_d6a7d17c` subsequently passed the complete dependency,
   CUDA, real-provider, and cleanup contract and selected the production tuple.
+- 2026-09-01 ASR hardening validation: all 97 ASR/config/preflight/runtime-
+  qualification/production-contract tests pass; the full System 1 suite passes
+  406 tests. Its sole remaining failure is an existing Notebook 00B assertion
+  for the unrelated `monolith-mvp-app` text; Notebook 00B has no diff in this
+  work package. Notebook 01 JSON and all eight code cells compile, both CLI
+  help surfaces load, Ruff passes on every changed Python file except the
+  separately reported pre-existing one-line style debt in `production.py`,
+  `uv lock --check` passes, and `git diff --check` passes.
 - Runtime-hardening tests prove one Qwen load/close per chunk across captions,
   scenes, and summaries; Vintern-before-Qwen release ordering; request/systemic
   fallback separation; RAM-aware 4/2/1 scheduling; pre-load RAM blocking;

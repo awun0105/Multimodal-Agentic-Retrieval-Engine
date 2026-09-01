@@ -1,4 +1,4 @@
-schema_version: phase01_models_v1_2
+schema_version: phase01_models_v1_3
 
 # One fixed local-only production model graph. Qwen is the semantic primary;
 # Vintern-3B-R is the sticky fallback after Qwen has been unloaded.
@@ -30,14 +30,54 @@ phase01:
     model_id: nvidia/parakeet-ctc-0.6b-vi
     model_revision: b0493142b49458810324e3db8be9e8e07b4ebc17
     model_file: parakeet-ctc-0.6b-vi.nemo
+    model_sha256: b1df1b01d9e833ca15930e29d0f2834a1668701dd40b11b573b04c3cfcca3a42
     language: vi
-    segmentation: ffmpeg_silence
-    max_segment_seconds: 12
-    min_segment_seconds: 0.4
-    silence_db: -35
-    min_silence_duration: 0.6
-    speech_pad_seconds: 0.2
-    batch_size: 16
+    segmentation:
+      provider: silero_vad_onnx
+      implementation: faster_whisper_1_2_1
+      block_seconds: 120
+      block_overlap_seconds: 2
+      threshold: 0.5
+      neg_threshold: 0.35
+      min_speech_duration_ms: 250
+      min_silence_duration_ms: 700
+      speech_pad_ms: 350
+      merge_gap_ms: 700
+      max_speech_seconds: 30
+      forced_split_overlap_ms: 750
+    decoder:
+      strategy: flashlight
+      language_model_file: lm_4gram_wiki_traintext_4x_vi_en_dict_newStyleTone_PnC_vi_en_2.0.bin
+      language_model_sha256: f84f5f6c7da8600b92673df4e68f9771b6c0c6eaf7973f38b02641118068139d
+      lexicon_file: lm_4gram_wiki_traintext_4x_vi_en_dict_newStyleTone_PnC_vi_en_2.0_filtered.lexicon
+      lexicon_sha256: 397b3693ea39ab4b0172b5aee8e255214cd390ca8a960621ac9af68b22f29821
+      beam_size: 64
+      beam_alpha: 0.3
+      beam_beta: 0.5
+      beam_size_token: 32
+      beam_threshold: 20.0
+      runtime_artifact:
+        package_name: flashlight-text
+        package_version: 0.0.7
+        python_tag: cp313
+        platform: linux_x86_64
+        manifest_path: runtime_wheels/flashlight_text/0.0.7/cp313-linux-x86_64/manifest.json
+        manifest_sha256: e00041b237090a1ad5638f4b3667b7f7eee2803ff4858a2ce68ee779d0ad9a1b
+    quality_gate:
+      contract_version: nemo_ctc_quality_v1
+      require_acoustic_metrics: true
+      min_lexical_chars: 2
+      min_characters_per_second: 0.15
+      max_characters_per_second: 35.0
+      max_blank_argmax_ratio: 0.985
+      min_mean_nonblank_posterior: 0.02
+      max_normalized_entropy: 0.98
+      repeat_check_min_chars: 6
+      max_same_character_run_ratio: 0.75
+      max_adjacent_low_information_repeats: 2
+      low_information_max_chars: 12
+      low_information_max_tokens: 3
+    batch_size: 1
 
   asr_providers:
     faster_whisper:
@@ -66,14 +106,54 @@ phase01:
       model_id: nvidia/parakeet-ctc-0.6b-vi
       model_revision: b0493142b49458810324e3db8be9e8e07b4ebc17
       model_file: parakeet-ctc-0.6b-vi.nemo
+      model_sha256: b1df1b01d9e833ca15930e29d0f2834a1668701dd40b11b573b04c3cfcca3a42
       language: vi
-      segmentation: ffmpeg_silence
-      max_segment_seconds: 12
-      min_segment_seconds: 0.4
-      silence_db: -35
-      min_silence_duration: 0.6
-      speech_pad_seconds: 0.2
-      batch_size: 16
+      segmentation:
+        provider: silero_vad_onnx
+        implementation: faster_whisper_1_2_1
+        block_seconds: 120
+        block_overlap_seconds: 2
+        threshold: 0.5
+        neg_threshold: 0.35
+        min_speech_duration_ms: 250
+        min_silence_duration_ms: 700
+        speech_pad_ms: 350
+        merge_gap_ms: 700
+        max_speech_seconds: 30
+        forced_split_overlap_ms: 750
+      decoder:
+        strategy: flashlight
+        language_model_file: lm_4gram_wiki_traintext_4x_vi_en_dict_newStyleTone_PnC_vi_en_2.0.bin
+        language_model_sha256: f84f5f6c7da8600b92673df4e68f9771b6c0c6eaf7973f38b02641118068139d
+        lexicon_file: lm_4gram_wiki_traintext_4x_vi_en_dict_newStyleTone_PnC_vi_en_2.0_filtered.lexicon
+        lexicon_sha256: 397b3693ea39ab4b0172b5aee8e255214cd390ca8a960621ac9af68b22f29821
+        beam_size: 64
+        beam_alpha: 0.3
+        beam_beta: 0.5
+        beam_size_token: 32
+        beam_threshold: 20.0
+        runtime_artifact:
+          package_name: flashlight-text
+          package_version: 0.0.7
+          python_tag: cp313
+          platform: linux_x86_64
+          manifest_path: runtime_wheels/flashlight_text/0.0.7/cp313-linux-x86_64/manifest.json
+          manifest_sha256: e00041b237090a1ad5638f4b3667b7f7eee2803ff4858a2ce68ee779d0ad9a1b
+      quality_gate:
+        contract_version: nemo_ctc_quality_v1
+        require_acoustic_metrics: true
+        min_lexical_chars: 2
+        min_characters_per_second: 0.15
+        max_characters_per_second: 35.0
+        max_blank_argmax_ratio: 0.985
+        min_mean_nonblank_posterior: 0.02
+        max_normalized_entropy: 0.98
+        repeat_check_min_chars: 6
+        max_same_character_run_ratio: 0.75
+        max_adjacent_low_information_repeats: 2
+        low_information_max_chars: 12
+        low_information_max_tokens: 3
+      batch_size: 1
 
   ocr:
     provider: vintern_local

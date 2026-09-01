@@ -105,7 +105,12 @@ def main() -> None:
         run_check("cuda", lambda: _check_cuda(state))
         run_check("fixture", lambda: _prepare_fixture(config["fixture"], run_dir, state))
         if _passed(report, "fixture") and _passed(report, "cuda"):
-            run_check("nemo_restore", lambda: _check_nemo_restore(models["asr"], state))
+            run_check(
+                "flashlight_runtime",
+                lambda: _check_flashlight_runtime(models["asr"]),
+            )
+            if _passed(report, "flashlight_runtime"):
+                run_check("nemo_restore", lambda: _check_nemo_restore(models["asr"], state))
             if _passed(report, "nemo_restore"):
                 run_check("nemo_transcribe", lambda: _check_nemo_transcribe(models["asr"], state))
             if _passed(report, "nemo_transcribe"):
@@ -129,6 +134,7 @@ def main() -> None:
             "transformers_imports",
             "cuda",
             "fixture",
+            "flashlight_runtime",
             "nemo_restore",
             "nemo_transcribe",
             "nemo_normalize",
@@ -384,37 +390,61 @@ def _check_nemo_restore(config: Mapping[str, Any], state: dict[str, Any]) -> dic
     }
 
 
-def _check_nemo_transcribe(config: Mapping[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    model = state["nemo_model"]
-    output = model.transcribe([str(state["audio_path"])], batch_size=1)
-    items = list(output)
-    state["nemo_output"] = items
+def _check_flashlight_runtime(config: Mapping[str, Any]) -> dict[str, Any]:
+    from system1.asr.runtime_artifact import validate_installed_flashlight_runtime
+
+    receipt = validate_installed_flashlight_runtime(
+        artifact_config=config["decoder"]["runtime_artifact"]
+    )
     return {
-        "return_type": type(output).__name__,
-        "item_types": [type(value).__name__ for value in items[:3]],
-        "item_count": len(items),
+        "package_name": receipt["package_name"],
+        "package_version": receipt["package_version"],
+        "manifest_sha256": receipt["manifest_sha256"],
+        "wheel_sha256": receipt["wheel_sha256"],
+    }
+
+
+def _check_nemo_transcribe(config: Mapping[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    from system1.asr.nemo import _transcribe_one
+
+    model = state["nemo_model"]
+    hypothesis = _transcribe_one(model, Path(state["audio_path"]))
+    state["nemo_output"] = hypothesis
+    return {
+        "return_type": type(hypothesis).__name__,
+        "decoder_strategy": config["decoder"]["strategy"],
+        "beam_size": config["decoder"]["beam_size"],
     }
 
 
 def _check_nemo_normalize(config: Mapping[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    from system1.asr.nemo import _normalize_transcriptions
+    from system1.asr.nemo import _ctc_blank_index, _transcription_text
+    from system1.asr.quality import alignment_metrics, evaluate_transcript
 
     audio = state["fixture_policy"]["audio"]
-    rows = _normalize_transcriptions(
-        state["nemo_output"],
-        [(float(audio["start_sec"]), float(audio["end_sec"]), 0)],
-        video_id=str(state["fixture_policy"]["video_id"]),
-        frame_timeline=state["timeline"],
-        model_config=config,
+    hypothesis = state["nemo_output"]
+    text = _transcription_text(hypothesis)
+    metrics = alignment_metrics(
+        hypothesis,
+        blank_index=_ctc_blank_index(state["nemo_model"]),
     )
-    if not rows or not any(str(row.get("text", "")).strip() for row in rows):
-        raise RuntimeError("actual NeMo output normalized to no speech")
+    decision = evaluate_transcript(
+        text,
+        duration_seconds=float(audio["end_sec"]) - float(audio["start_sec"]),
+        acoustic_metrics=metrics,
+        config=config["quality_gate"],
+    )
+    if not decision.accepted:
+        raise RuntimeError(
+            "actual NeMo Flashlight output failed the quality gate: "
+            + ", ".join(decision.reason_codes)
+        )
     state.pop("nemo_output", None)
     state.pop("nemo_model", None)
     _release_gpu()
     return {
-        "row_count": len(rows),
-        "sample": str(rows[0]["text"])[:240],
+        "sample": text[:240],
+        "metrics": decision.metrics,
     }
 
 

@@ -182,8 +182,8 @@ Notebook 00 outputs. Restore keeps the canonical
 reports to and from the Hugging Face `phase01_structure` layout. Notebook 01 is
 the thin worker orchestration for the production `process-batch` path. Package
 code now owns release resolution/restore, persistent per-stage resume,
-TransNet V2, search-band keyframes, default faster-whisper ASR with optional
-pinned NeMo/Parakeet Vietnamese ASR, Vintern OCR, Qwen2.5-VL default shot
+TransNet V2, search-band keyframes, default pinned NeMo/Parakeet Vietnamese
+ASR with Silero VAD and Flashlight 4-gram decoding, Vintern OCR, Qwen2.5-VL default shot
 captions, and Gemini scene grouping/summaries, strict packaging, remote
 checksum verification, and reports.
 
@@ -196,6 +196,47 @@ uv sync
 # Required for the production Notebook 01 path.
 uv sync --extra phase01-production
 ```
+
+Python 3.13 production workers also require the project-owned Flashlight wheel.
+Notebook 01 installs it automatically in Step 3 from the configured checkpoint
+dataset and verifies its manifest, wheel checksum, Python ABI, platform, and
+import before preflight. A manual equivalent is:
+
+```bash
+system1 phase01-prepare-asr-runtime
+```
+
+Maintainers build the pinned wheel in a clean Python 3.13 Linux x86-64 image
+with `scripts/prepare_flashlight_text_artifact.py`, then upload the emitted
+wheel and `manifest.json` at the exact configured checkpoint prefix. Production
+never compiles Flashlight inside a worker notebook.
+
+From the repository root, the reproducible build and upload commands are:
+
+```bash
+mkdir -p /tmp/system1-flashlight-artifact
+docker run --rm \
+  -v "$PWD:/repo" \
+  -v /tmp/system1-flashlight-artifact:/out \
+  -w /repo \
+  quay.io/pypa/manylinux2014_x86_64 \
+  bash -lc 'yum install -y boost-devel && /opt/python/cp313-cp313/bin/python -m pip install cmake setuptools wheel auditwheel pybind11 && /opt/python/cp313-cp313/bin/python system1/scripts/prepare_flashlight_text_artifact.py --output /out --jobs 2'
+
+hf upload 1thesudden/AIOU26_checkpoints \
+  /tmp/system1-flashlight-artifact/manifest.json \
+  model_artifacts/runtime_wheels/flashlight_text/0.0.7/cp313-linux-x86_64/manifest.json \
+  --repo-type dataset
+
+hf upload 1thesudden/AIOU26_checkpoints \
+  /tmp/system1-flashlight-artifact/flashlight_text-0.0.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl \
+  model_artifacts/runtime_wheels/flashlight_text/0.0.7/cp313-linux-x86_64/flashlight_text-0.0.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl \
+  --repo-type dataset
+```
+
+The committed manifest SHA-256 is
+`e00041b237090a1ad5638f4b3667b7f7eee2803ff4858a2ce68ee779d0ad9a1b`.
+If the wheel is rebuilt, update both configured manifest hashes only after the
+new artifact has been verified and uploaded.
 
 ## Main phase-based pipeline
 
@@ -404,8 +445,10 @@ scene rows, bilingual Gemini scene summaries, package manifests, checksums, and
 errors.
 Production phase01 standardizes on TransNet V2 for shot boundaries and
 keyframes selected from bands centered at 20%/50%/80% of each shot. ASR defaults
-to faster-whisper large-v3; Notebook 01 can opt into the pinned NeMo/Parakeet
-Vietnamese provider through `asr_provider = "nemo"`. Legacy mock/fallback code
+to the pinned NeMo/Parakeet Vietnamese provider with speech-aware Silero VAD,
+a 30-second hard cap, checksum-pinned 4-gram KenLM/lexicon assets, and
+Flashlight beam search. Faster-Whisper remains an explicit provider override.
+Legacy mock/fallback code
 remains reachable only through guarded test injection and cannot be selected
 from Notebook 01 or the public CLI.
 

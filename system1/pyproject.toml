@@ -26,6 +26,7 @@ phase01-production = [
     "faster-whisper==1.2.1",
     "nemo_toolkit[asr]==2.7.3",
     "onnx==1.18.0",
+    "onnxruntime==1.28.0; python_version >= '3.11'",
     "accelerate>=0.33.0",
     "einops>=0.8.0",
     "qwen-vl-utils>=0.0.8",

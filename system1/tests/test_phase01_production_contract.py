@@ -52,8 +52,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_4"
-    assert phase01["pipeline_id"] == "phase01_production_v1_4"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_5"
+    assert phase01["pipeline_id"] == "phase01_production_v1_5"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -310,8 +310,8 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_4"
-    assert diagnostics["models_schema_version"] == "phase01_models_v1_2"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_5"
+    assert diagnostics["models_schema_version"] == "phase01_models_v1_3"
     assert diagnostics["asr"] == {
         "provider": "nemo",
         "model_id": "nvidia/parakeet-ctc-0.6b-vi",
@@ -720,8 +720,10 @@ def test_phase01_config_can_select_nemo_asr_provider() -> None:
     assert models["asr"]["model_id"] == "nvidia/parakeet-ctc-0.6b-vi"
     assert models["asr"]["model_revision"] == "b0493142b49458810324e3db8be9e8e07b4ebc17"
     assert models["asr"]["model_file"] == "parakeet-ctc-0.6b-vi.nemo"
-    assert models["asr"]["segmentation"] == "ffmpeg_silence"
-    assert models["asr"]["max_segment_seconds"] == 12
+    assert models["asr"]["segmentation"]["provider"] == "silero_vad_onnx"
+    assert models["asr"]["segmentation"]["max_speech_seconds"] == 30
+    assert models["asr"]["decoder"]["strategy"] == "flashlight"
+    assert models["asr"]["decoder"]["beam_size"] == 64
 
 
 def test_phase01_config_can_select_faster_whisper_asr_provider() -> None:

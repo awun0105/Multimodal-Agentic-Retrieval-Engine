@@ -15,6 +15,7 @@ from huggingface_hub import HfApi
 
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.artifacts.reports import utc_now
+from system1.asr.runtime_artifact import validate_installed_flashlight_runtime
 from system1.config import ResolvedPhase01Config, require_phase01_production_ready
 from system1.shots import load_transnet_artifact
 
@@ -139,6 +140,7 @@ def run_phase01_runtime_preflight(
         "nemo-toolkit",
         "numpy",
         "onnx",
+        "onnxruntime",
         "opencv-python-headless",
         "pandas",
         "pillow",
@@ -187,12 +189,20 @@ def run_phase01_runtime_preflight(
     elif asr_provider == "nemo":
         if versions["nemo-toolkit"] != str(asr_model["package_version"]):
             raise RuntimeError("Installed nemo-toolkit version differs from resolved config")
+        if versions["faster-whisper"] != "1.2.1":
+            raise RuntimeError(
+                "Installed faster-whisper version differs from the pinned Silero VAD runtime"
+            )
         try:
             importlib.import_module("nemo.collections.asr")
         except (ImportError, AttributeError, RuntimeError, OSError) as exc:
             raise RuntimeError(
                 "nemo_toolkit[asr] could not initialize for configured NeMo ASR"
             ) from exc
+        _validate_nemo_asr_contract(asr_model)
+        validate_installed_flashlight_runtime(
+            artifact_config=asr_model["decoder"]["runtime_artifact"]
+        )
     else:
         raise RuntimeError(f"Unsupported Phase01 ASR provider: {asr_provider}")
     _validate_dataframe_runtime_imports()
@@ -209,6 +219,46 @@ def run_phase01_runtime_preflight(
         model_cache_free_gb=model_cache_free_gb,
         versions=versions,
     )
+
+
+def _validate_nemo_asr_contract(asr_model: dict[str, Any]) -> None:
+    segmentation = asr_model.get("segmentation", {})
+    decoder = asr_model.get("decoder", {})
+    quality = asr_model.get("quality_gate", {})
+    if segmentation.get("provider") != "silero_vad_onnx":
+        raise RuntimeError("Production NeMo ASR requires Silero ONNX VAD")
+    if float(segmentation.get("max_speech_seconds", 0)) > 30:
+        raise RuntimeError("Production NeMo ASR speech segments may not exceed 30 seconds")
+    if decoder.get("strategy") != "flashlight" or int(
+        decoder.get("beam_size", 0)
+    ) != 64:
+        raise RuntimeError("Production NeMo ASR requires Flashlight beam size 64")
+    for field in (
+        "model_sha256",
+        "model_revision",
+        "model_file",
+    ):
+        _require_sha_or_value(asr_model, field)
+    for field in (
+        "language_model_sha256",
+        "lexicon_sha256",
+        "language_model_file",
+        "lexicon_file",
+    ):
+        _require_sha_or_value(decoder, field)
+    if not bool(quality.get("require_acoustic_metrics")):
+        raise RuntimeError("Production NeMo ASR quality gate requires alignments")
+
+
+def _require_sha_or_value(config: dict[str, Any], field: str) -> None:
+    value = str(config.get(field, "")).strip()
+    if not value:
+        raise RuntimeError(f"Production NeMo ASR field is missing: {field}")
+    if field.endswith("sha256") and (
+        len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise RuntimeError(f"Production NeMo ASR checksum is invalid: {field}")
 
 
 def run_phase01_storage_preflight(

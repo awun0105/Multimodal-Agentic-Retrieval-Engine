@@ -111,6 +111,31 @@ def qualify(
         typer.echo(str(report_path))
         raise typer.Exit(code=installer.returncode or 1)
 
+    runtime_installer = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "system1.cli",
+            "phase01-prepare-asr-runtime",
+        ],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    report["asr_runtime_installer"] = command_result_payload(runtime_installer)
+    if runtime_installer.returncode != 0:
+        report["failed_check"] = "asr_runtime_install"
+        report["error"] = {
+            "type": "AsrRuntimeInstallError",
+            "message": "pinned Flashlight runtime installation failed",
+        }
+        report["finished_at"] = utc_now()
+        write_json_atomic(report_path, report)
+        typer.echo(str(report_path))
+        raise typer.Exit(code=runtime_installer.returncode or 1)
+
     context_path = run_dir / "qualification_context.json"
     write_json_atomic(
         context_path,
@@ -126,6 +151,7 @@ def qualify(
             "qualification_config_path": str(config_path),
             "candidate_manifest": manifest.to_dict(),
             "installer": report["installer"],
+            "asr_runtime_installer": report["asr_runtime_installer"],
             "controller_pid": os.getpid(),
             "installer_pid": installer_process.pid,
         },

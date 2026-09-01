@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_4
-pipeline_id: phase01_production_v1_4
+schema_version: phase01_pipeline_v1_5
+pipeline_id: phase01_production_v1_5
 
 execution:
   video_order: batch_manifest
@@ -71,6 +71,9 @@ asr:
   no_speech_status: no_speech
   exhausted_oom_status: failed_retryable
   continue_next_video_after_exhausted_oom: true
+  decoder_failure_status: failed_retryable
+  allow_greedy_fallback: false
+  rejected_hypotheses_destination: diagnostics_only
 
 ocr:
   model_key: ocr
@@ -140,6 +143,10 @@ production_readiness:
     - models.shot_detection.source_sha256
     - models.shot_detection.weights_sha256
     - models.asr.model_revision
+    - models.asr.model_sha256
+    - models.asr.decoder.language_model_sha256
+    - models.asr.decoder.lexicon_sha256
+    - models.asr.decoder.runtime_artifact.manifest_sha256
     - models.ocr.model_id
     - models.ocr.model_revision
     - models.shot_caption.model_id

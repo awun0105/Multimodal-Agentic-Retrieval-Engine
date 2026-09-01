@@ -224,9 +224,10 @@ def resolve_phase01_config(
                 target[key] = value
     if normalized_settings.get("scratch_dir") is not None:
         storage["scratch"]["root_override"] = str(normalized_settings["scratch_dir"])
-    # The project-owned TransNet bundle lives in the checkpoint repository by
-    # default. A repository/revision override must therefore move both stores;
-    # their independent prefixes remain versioned in storage.yaml.
+    # Project-owned TransNet and Flashlight runtime artifacts live in the
+    # checkpoint repository by default. A repository/revision override must
+    # therefore move both stores; their independent prefixes remain versioned
+    # in storage.yaml.
     for key, setting in (
         ("repo_id", "hf_checkpoint_repo"),
         ("repo_type", "hf_repo_type"),

@@ -298,18 +298,47 @@ default provider = nemo
 default model = nvidia/parakeet-ctc-0.6b-vi
 default revision = b0493142b49458810324e3db8be9e8e07b4ebc17
 default model file = parakeet-ctc-0.6b-vi.nemo
-segmentation = FFmpeg silence detection with bounded max segment length
+segmentation = Silero VAD with a 30-second hard cap
+decoder = pinned 4-gram KenLM + lexicon through Flashlight beam search
 optional provider = faster_whisper
 optional model = Systran/faster-whisper-large-v3 at its configured revision
 ```
 
 ASR runs for every video.
 
+NeMo ASR first streams mono 16 kHz audio through the Silero ONNX VAD shipped by
+the pinned Faster-Whisper runtime. Detection is bounded to 120-second blocks
+with two seconds of overlap; only one decoded block is held in RAM. Speech
+ranges separated by at most 700 ms are merged and padded by 350 ms. Natural
+silence remains the primary boundary. A speech range longer than 30 seconds is
+split only as a hard resource cap, with 750 ms overlap so the forced cut does
+not discard a word. Fixed-duration chunks are not the normal segmentation
+path.
+
+Each speech range is extracted to one temporary WAV and transcribed with batch
+size one. The temporary file and hypothesis are released before the next range.
+The pinned 4-gram language model and lexicon are checksum-verified with the
+`.nemo` file and decoded using Flashlight beam search (`beam_size=64`). The
+project-owned CPython 3.13 Flashlight wheel is installed and verified before
+runtime preflight. Production does not fall back to greedy decoding. Missing or
+mismatched pinned artifacts fail preflight; transient decoder or resource
+failure receives the bounded video retry and then fails that video explicitly.
+
+CTC blank ratio, non-blank posterior, normalized entropy, text density,
+character rate, and repetition checks run after decoding. Rejected candidates
+remain in `asr_diagnostics.jsonl` with reason codes and acoustic metrics but do
+not enter canonical `asr_segments.parquet`. Conservative thresholds preserve
+short meaningful speech and lyrics; they are intended for calibration from
+real smoke evidence rather than semantic deletion by an LLM.
+
 - No audio stream: record video ASR status `no_audio`; emit an empty,
   schema-valid `asr_segments.parquet` and empty
   `shot_transcript_links.parquet`; continue the video.
-- Audio exists but contains no speech after successful inference: record
-  `no_speech`; emit empty schema-valid ASR/link tables; continue.
+- Audio exists but VAD finds no speech: record `no_speech`; emit empty
+  schema-valid ASR/link tables; continue.
+- VAD finds speech but every decoded candidate fails the quality gate: record
+  `low_confidence`, retain all diagnostics, emit empty schema-valid ASR/link
+  tables, and continue.
 - Audio exists but extraction/model/inference fails after bounded retry: fail
   the video.
 - Every non-empty ASR row stores `asr_segment_id`, `video_id`, time range,

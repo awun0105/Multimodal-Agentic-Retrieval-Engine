@@ -11,6 +11,9 @@ documents here as real choices are accepted, then index them in this file.
 
 ## Recent Accepted Decisions
 
+- `0020-phase01-speech-aware-asr-decoding.md`: Phase01 uses bounded Silero VAD,
+  a 30-second hard cap, pinned 4-gram Flashlight beam decoding, and auditable
+  acoustic/lexical gates without greedy fallback.
 - `0019-phase01-semantic-event-keyframes.md`: Phase01 preserves mandatory
   early/middle/late anchors and adds bounded timestamp probes that persist only
   visually novel or text-changing non-representative supplemental keyframes.

@@ -468,6 +468,7 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
             archive.read(f"{video_id}/metadata_normalized.json").decode("utf-8")
         )
     assert f"{video_id}/diagnostics/ocr_status.json" in names
+    assert f"{video_id}/diagnostics/asr_diagnostics.jsonl" in names
     assert f"{video_id}/ocr_status.json" not in names
     assert normalized["title"] == "updated"
 

@@ -26,6 +26,8 @@ from system1.commands.common import (
 )
 from system1.features.builder import process_feature_batch
 from system1.ingest.pipeline import run_ingestion
+from system1.asr.runtime_artifact import prepare_flashlight_runtime
+from system1.config.loader import load_configs
 from system1.phase01 import (
     Phase01SmokeError,
     run_phase01_pipeline,
@@ -37,6 +39,43 @@ from system1.structure.builder import process_structure_batch
 
 
 def register(app: typer.Typer) -> None:
+    @app.command("phase01-prepare-asr-runtime")
+    def phase01_prepare_asr_runtime(
+        hf_model_artifact_repo: str | None = typer.Option(
+            None, "--hf-model-artifact-repo"
+        ),
+        model_artifact_revision: str | None = typer.Option(
+            None, "--model-artifact-revision"
+        ),
+        model_artifact_prefix: str | None = typer.Option(
+            None, "--model-artifact-prefix"
+        ),
+        cache_dir: Path | None = typer.Option(None, "--cache-dir"),
+    ) -> None:
+        """Install the pinned Flashlight decoder wheel before workers start."""
+
+        configs = load_configs(config_dir())
+        asr = configs["models"]["phase01"]["asr"]
+        decoder = asr["decoder"]
+        storage = dict(configs["storage"]["model_artifacts"])
+        for key, value in (
+            ("repo_id", hf_model_artifact_repo),
+            ("revision", model_artifact_revision),
+            ("prefix", model_artifact_prefix),
+        ):
+            if value is not None:
+                storage[key] = value
+        try:
+            receipt = prepare_flashlight_runtime(
+                artifact_config=decoder["runtime_artifact"],
+                storage_config=storage,
+                cache_root=cache_dir,
+                token=os.environ.get("HF_TOKEN") or os.environ.get("AIC_HF_TOKEN"),
+            )
+        except (FileNotFoundError, KeyError, RuntimeError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(f"Flashlight runtime ready: {receipt}")
+
     @app.command("phase01-smoke")
     def phase01_smoke(
         asr_provider: str | None = typer.Option(None, "--asr-provider"),

@@ -23,6 +23,7 @@ checkpoint:
     asr:
       - asr_segments.parquet
       - asr_status.json
+      - asr_diagnostics.jsonl
     ocr:
       - ocr.parquet
       - ocr_status.json

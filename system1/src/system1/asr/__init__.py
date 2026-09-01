@@ -8,6 +8,7 @@ from .faster_whisper import (
     has_audio_stream,
 )
 from .faster_whisper import transcribe_video as _transcribe_faster_whisper
+from .nemo import AsrResourceError
 from .nemo import transcribe_video as _transcribe_nemo
 
 
@@ -20,6 +21,7 @@ def transcribe_video(
     model_factory: Callable[..., Any] | None = None,
     audio_present: bool | None = None,
     pre_load_callback: Callable[[str], None] | None = None,
+    speech_range_detector: Callable[..., Any] | None = None,
 ) -> AsrResult:
     provider = str(config.get("provider", "nemo"))
     if provider == "faster_whisper":
@@ -41,11 +43,13 @@ def transcribe_video(
             model_factory=model_factory,
             audio_present=audio_present,
             pre_load_callback=pre_load_callback,
+            speech_range_detector=speech_range_detector,
         )
     raise ValueError(f"Unsupported Phase01 ASR provider: {provider}")
 
 __all__ = [
     "AsrResult",
+    "AsrResourceError",
     "build_shot_transcript_links",
     "has_audio_stream",
     "transcribe_video",
