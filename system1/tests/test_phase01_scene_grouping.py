@@ -41,6 +41,19 @@ def config() -> dict:
         "strong_disagreement_requires_both_labels": True,
         "max_consistency_review_rounds": 1,
         "scene_confidence_aggregation": "null_v1",
+        "quality_guard": {
+            "enabled": True,
+            "min_shot_count": 8,
+            "suspicious_boundary_density": 0.9,
+            "suspicious_one_shot_scene_rate": 0.8,
+            "unresolved_action": "fail_terminal",
+            "degenerate_review": {
+                "enabled": True,
+                "focus_gap_count": 8,
+                "context_shots_each_side": 6,
+                "max_rounds": 1,
+            },
+        },
     }
 
 
@@ -65,19 +78,21 @@ def test_window_planning_covers_every_gap_and_overlaps() -> None:
 
 def test_all_false_result_is_valid_one_scene() -> None:
     judge = Judge(lambda _kind, ids: {gap_id: False for gap_id in ids})
-    rows, decisions = group_scenes(
+    result = group_scenes(
         video_id="v", shots=shots(5), evidence=shots(5), judge=judge, config=config()
     )
-    assert len(rows) == 1
-    assert rows[0]["confidence"] is None
-    assert all(not decision.is_boundary for decision in decisions)
+    assert len(result.scenes) == 1
+    assert result.scenes[0]["confidence"] is None
+    assert all(not decision.is_boundary for decision in result.decisions)
+    assert not result.final_quality.suspicious
 
 
 def test_boundary_partition_has_deterministic_ids_and_ranges() -> None:
     judge = Judge(lambda _kind, ids: {gap_id: gap_id == "v_SH00001" for gap_id in ids})
-    rows, _ = group_scenes(
+    result = group_scenes(
         video_id="v", shots=shots(4), evidence=shots(4), judge=judge, config=config()
     )
+    rows = result.scenes
     assert [row["scene_id"] for row in rows] == ["v_SC00000", "v_SC00001"]
     assert [(row["start_frame"], row["end_frame"]) for row in rows] == [(0, 20), (20, 40)]
 
@@ -90,9 +105,10 @@ def test_ambiguous_overlap_triggers_focused_review() -> None:
         return {gap_id: True for gap_id in ids}
 
     judge = Judge(handler)
-    _rows, decisions = group_scenes(
+    result = group_scenes(
         video_id="v", shots=shots(10), evidence=shots(10), judge=judge, config=config()
     )
+    decisions = result.decisions
     decision = next(item for item in decisions if item.after_shot_id == "v_SH00006")
     assert decision.review_route in {"focused_review", "consistency_review"}
     assert any(call[0] == "focused_review" for call in judge.calls)
@@ -105,12 +121,168 @@ def test_dense_boundaries_trigger_one_bounded_consistency_region() -> None:
         return {gap_id: False for gap_id in ids}
 
     judge = Judge(handler)
-    _rows, decisions = group_scenes(
+    result = group_scenes(
         video_id="v", shots=shots(7), evidence=shots(7), judge=judge, config=config()
     )
+    decisions = result.decisions
     consistency_calls = [call for call in judge.calls if call[0] == "consistency_review"]
     assert len(consistency_calls) == 1
     assert any(decision.consistency_review_triggered for decision in decisions)
+
+
+def test_normal_partition_does_not_trigger_degenerate_review() -> None:
+    judge = Judge(
+        lambda _kind, ids: {
+            gap_id: gap_id in {"v_SH00002", "v_SH00006"} for gap_id in ids
+        }
+    )
+
+    result = group_scenes(
+        video_id="v", shots=shots(10), evidence=shots(10), judge=judge, config=config()
+    )
+
+    assert not result.initial_quality.suspicious
+    assert not result.degenerate_review_triggered
+    assert not any(call[0] == "degenerate_review" for call in judge.calls)
+
+
+def test_short_all_boundary_video_is_below_quality_guard_scope() -> None:
+    judge = Judge(lambda _kind, ids: {gap_id: True for gap_id in ids})
+
+    result = group_scenes(
+        video_id="v", shots=shots(3), evidence=shots(3), judge=judge, config=config()
+    )
+
+    assert len(result.scenes) == 3
+    assert not result.final_quality.suspicious
+    assert not result.degenerate_review_triggered
+
+
+def test_all_boundary_partition_recovers_through_degenerate_review() -> None:
+    def handler(kind, ids):
+        if kind == "degenerate_review":
+            return {
+                gap_id: gap_id in {"v_SH00002", "v_SH00006"} for gap_id in ids
+            }
+        return {gap_id: True for gap_id in ids}
+
+    judge = Judge(handler)
+    result = group_scenes(
+        video_id="v", shots=shots(10), evidence=shots(10), judge=judge, config=config()
+    )
+
+    assert result.initial_quality.suspicious
+    assert result.initial_quality.flags == (
+        "all_gaps_are_boundaries",
+        "extreme_boundary_density",
+        "extreme_one_shot_scene_rate",
+    )
+    assert result.degenerate_review_triggered
+    assert not result.final_quality.suspicious
+    assert len(result.scenes) == 3
+    assert all(
+        decision.review_route == "degenerate_review"
+        for decision in result.decisions
+    )
+    assert all(
+        decision.diagnostics_schema_version == "scene_boundary_diagnostics_v2"
+        for decision in result.decisions
+    )
+    assert all(
+        decision.degenerate_review_triggered for decision in result.decisions
+    )
+
+
+def test_all_boundary_partition_remains_suspicious_after_recovery() -> None:
+    judge = Judge(lambda _kind, ids: {gap_id: True for gap_id in ids})
+
+    result = group_scenes(
+        video_id="v", shots=shots(10), evidence=shots(10), judge=judge, config=config()
+    )
+
+    assert result.initial_quality.suspicious
+    assert result.final_quality.suspicious
+    assert result.degenerate_review_triggered
+    assert result.degenerate_review_rounds_run == 1
+
+
+def test_genuine_isolated_one_shot_scene_does_not_fail_global_guard() -> None:
+    def handler(_kind, ids):
+        return {
+            gap_id: gap_id in {"v_SH00002", "v_SH00003"} for gap_id in ids
+        }
+
+    result = group_scenes(
+        video_id="v",
+        shots=shots(8),
+        evidence=shots(8),
+        judge=Judge(handler),
+        config=config(),
+    )
+
+    assert [scene["shot_count"] for scene in result.scenes] == [3, 1, 4]
+    assert not result.final_quality.suspicious
+
+
+def test_consistency_review_honors_two_round_limit() -> None:
+    consistency_calls = 0
+
+    def handler(kind, ids):
+        nonlocal consistency_calls
+        if kind == "primary":
+            return {
+                gap_id: gap_id in {"v_SH00001", "v_SH00002"}
+                for gap_id in ids
+            }
+        if kind == "consistency_review":
+            consistency_calls += 1
+            boundary_ids = (
+                {"v_SH00003", "v_SH00004"}
+                if consistency_calls == 1
+                else set()
+            )
+            return {gap_id: gap_id in boundary_ids for gap_id in ids}
+        return {gap_id: False for gap_id in ids}
+
+    policy = config()
+    policy["max_consistency_review_rounds"] = 2
+    result = group_scenes(
+        video_id="v", shots=shots(8), evidence=shots(8), judge=Judge(handler), config=policy
+    )
+
+    assert result.consistency_review_rounds_run == 2
+    assert consistency_calls == 2
+
+
+def test_consistency_review_stops_early_when_labels_do_not_change() -> None:
+    def handler(_kind, ids):
+        return {
+            gap_id: gap_id in {"v_SH00001", "v_SH00002"} for gap_id in ids
+        }
+
+    judge = Judge(handler)
+    policy = config()
+    policy["max_consistency_review_rounds"] = 3
+    result = group_scenes(
+        video_id="v", shots=shots(8), evidence=shots(8), judge=judge, config=policy
+    )
+
+    assert result.consistency_review_rounds_run == 1
+    assert len([call for call in judge.calls if call[0] == "consistency_review"]) == 1
+
+
+def test_single_shot_quality_contract_is_not_suspicious() -> None:
+    result = group_scenes(
+        video_id="v",
+        shots=shots(1),
+        evidence=shots(1),
+        judge=Judge(lambda _kind, ids: {gap_id: False for gap_id in ids}),
+        config=config(),
+    )
+
+    assert result.final_quality.gap_count == 0
+    assert result.final_quality.boundary_density == 0.0
+    assert not result.final_quality.suspicious
 
 
 def test_judge_must_return_exact_boolean_gap_set() -> None:
@@ -168,6 +340,7 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
             "prompt_version": "scene_boundary_primary_label_v2",
             "focused_prompt_version": "scene_boundary_focused_label_v2",
             "consistency_prompt_version": "scene_boundary_consistency_label_v2",
+            "degenerate_prompt_version": "scene_boundary_degenerate_label_v1",
             "decision_contract_version": "scene_boundary_label_v2",
         },
     )
@@ -188,6 +361,15 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
     assert "TARGET_LEFT_SHOT_ID: v_SH00000" in request.prompt
     assert "TARGET_RIGHT_SHOT_ID: v_SH00001" in request.prompt
     assert "BEGIN_EVIDENCE" in request.prompt
+
+    degenerate = judge.judge(
+        request_kind="degenerate_review",
+        focus_gap_ids=("v_SH00000",),
+        context=context,
+    )
+    assert degenerate == {"v_SH00000": True}
+    assert client.requests[-1].prompt_version == "scene_boundary_degenerate_label_v1"
+    assert client.requests[-1].request_kind == "scene_boundary_degenerate_review"
 
 
 def test_semantic_boundary_judge_creates_one_ordered_request_per_gap(
@@ -231,6 +413,7 @@ def test_semantic_boundary_judge_creates_one_ordered_request_per_gap(
             "prompt_version": "scene_boundary_primary_label_v2",
             "focused_prompt_version": "scene_boundary_focused_label_v2",
             "consistency_prompt_version": "scene_boundary_consistency_label_v2",
+            "degenerate_prompt_version": "scene_boundary_degenerate_label_v1",
             "decision_contract_version": "scene_boundary_label_v2",
         },
     )

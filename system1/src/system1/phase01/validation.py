@@ -58,6 +58,12 @@ def validate_phase01_package(artifact_dir: Path) -> None:
     if len(video_ids) != 1 or next(iter(video_ids)) != artifact_dir.name:
         raise ValueError("Every Phase01 table must match the artifact video_id")
     video_id = next(iter(video_ids))
+    _validate_scene_partition_quality_report(
+        artifact_dir,
+        video_id=video_id,
+        shot_count=len(shots),
+        scene_count=len(scenes),
+    )
     _validate_contiguous_ranges(shots, "shot")
     _validate_contiguous_ranges(scenes, "scene")
     if list(shots["shot_index"].astype(int)) != list(range(len(shots))):
@@ -231,6 +237,34 @@ def _validate_links(
         raise ValueError("Transcript link contains an unknown ASR segment")
     if ((frame["coverage"] < 0) | (frame["coverage"] > 1)).any():
         raise ValueError("Transcript link coverage must be in [0, 1]")
+
+
+def _validate_scene_partition_quality_report(
+    artifact_dir: Path,
+    *,
+    video_id: str,
+    shot_count: int,
+    scene_count: int,
+) -> None:
+    path = artifact_dir / "diagnostics" / "scene_partition_quality.json"
+    if not path.is_file():
+        raise FileNotFoundError("Missing scene partition quality report")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != "scene_partition_quality_v1":
+        raise ValueError("Unsupported scene partition quality report schema")
+    if str(payload.get("video_id")) != video_id:
+        raise ValueError("Scene partition quality report video_id mismatch")
+    if payload.get("status") not in {"pass", "pass_after_review"}:
+        raise ValueError("Scene partition quality report is not passing")
+    final = payload.get("final")
+    if not isinstance(final, Mapping):
+        raise TypeError("Scene partition quality report has no final metrics")
+    if bool(final.get("suspicious", True)):
+        raise ValueError("Scene partition quality report remains suspicious")
+    if int(final.get("shot_count", -1)) != shot_count:
+        raise ValueError("Scene partition quality shot_count mismatch")
+    if int(final.get("scene_count", -1)) != scene_count:
+        raise ValueError("Scene partition quality scene_count mismatch")
 
 
 def _load_schema(table_name: str) -> dict[str, Any]:

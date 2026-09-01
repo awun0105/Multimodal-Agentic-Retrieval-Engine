@@ -1,4 +1,4 @@
-schema_version: phase01_models_v1_3
+schema_version: phase01_models_v1_4
 
 # One fixed local-only production model graph. Qwen is the semantic primary;
 # Vintern-3B-R is the sticky fallback after Qwen has been unloaded.
@@ -222,6 +222,7 @@ phase01:
     prompt_version: scene_boundary_primary_label_v2
     focused_prompt_version: scene_boundary_focused_label_v2
     consistency_prompt_version: scene_boundary_consistency_label_v2
+    degenerate_prompt_version: scene_boundary_degenerate_label_v1
     decision_contract_version: scene_boundary_label_v2
 
   scene_summary:

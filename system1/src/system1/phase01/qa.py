@@ -128,6 +128,19 @@ def _collect_artifact_candidates(
                 )
             )
         diagnostics_name = f"{video_id}/diagnostics/scene_boundary_diagnostics.jsonl"
+        quality_name = f"{video_id}/diagnostics/scene_partition_quality.json"
+        quality_context: dict[str, Any] = {}
+        if quality_name in archive.namelist():
+            quality = json.loads(archive.read(quality_name).decode("utf-8"))
+            final = quality.get("final", {})
+            quality_context = {
+                "partition_status": quality.get("status"),
+                "final_boundary_density": final.get("boundary_density"),
+                "final_one_shot_scene_rate": final.get("one_shot_scene_rate"),
+                "partition_degenerate_review_triggered": quality.get(
+                    "degenerate_review_triggered"
+                ),
+            }
         if diagnostics_name in archive.namelist():
             diagnostics = [
                 json.loads(line)
@@ -146,10 +159,23 @@ def _collect_artifact_candidates(
                             "primary_boundary_score": float(
                                 row["primary_boundary_score"]
                             ),
+                            "vote_count": int(row["vote_count"]),
+                            "true_vote_weight": float(row["true_vote_weight"]),
+                            "false_vote_weight": float(row["false_vote_weight"]),
                             "review_route": row["review_route"],
-                            "reason": row.get("reason"),
-                            "confidence": row.get("confidence"),
-                            "evidence_used": row.get("evidence_used", []),
+                            "consistency_review_triggered": bool(
+                                row.get("consistency_review_triggered", False)
+                            ),
+                            "consistency_review_round": row.get(
+                                "consistency_review_round"
+                            ),
+                            "degenerate_review_triggered": bool(
+                                row.get("degenerate_review_triggered", False)
+                            ),
+                            "provider": row.get("provider"),
+                            "model_name": row.get("model_name"),
+                            "model_version": row.get("model_version"),
+                            **quality_context,
                         },
                     )
                 )

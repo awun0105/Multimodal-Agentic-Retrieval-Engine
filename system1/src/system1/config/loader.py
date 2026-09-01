@@ -451,6 +451,7 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
             )
 
     _validate_semantic_sampling_policy(payload)
+    _validate_scene_grouping_policy(payload)
 
     models = payload["models"]
     
@@ -594,6 +595,73 @@ def _validate_semantic_sampling_policy(payload: dict[str, Any]) -> None:
                 "Enabled semantic sampling requires early/late/supplemental "
                 "focused scene evidence"
             )
+
+
+def _validate_scene_grouping_policy(payload: dict[str, Any]) -> None:
+    grouping = payload["phase01"]["scene_grouping"]
+    non_boundary = float(grouping.get("non_boundary_threshold", -1))
+    boundary = float(grouping.get("boundary_threshold", -1))
+    if not 0 <= non_boundary < boundary <= 1:
+        raise ValueError(
+            "Phase01 scene_grouping thresholds must satisfy "
+            "0 <= non_boundary_threshold < boundary_threshold <= 1"
+        )
+    if int(grouping.get("max_consistency_review_rounds", -1)) < 0:
+        raise ValueError(
+            "Phase01 scene_grouping.max_consistency_review_rounds must be "
+            "non-negative"
+        )
+
+    quality = grouping.get("quality_guard")
+    if not isinstance(quality, dict):
+        raise TypeError("Phase01 scene_grouping.quality_guard must be a mapping")
+    if type(quality.get("enabled")) is not bool:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.enabled must be bool"
+        )
+    if int(quality.get("min_shot_count", 0)) < 2:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.min_shot_count must be >= 2"
+        )
+    for field in (
+        "suspicious_boundary_density",
+        "suspicious_one_shot_scene_rate",
+    ):
+        value = float(quality.get(field, 0))
+        if not 0 < value <= 1:
+            raise ValueError(
+                f"Phase01 scene_grouping.quality_guard.{field} must be in (0, 1]"
+            )
+    if str(quality.get("unresolved_action")) != "fail_terminal":
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.unresolved_action must be "
+            "fail_terminal"
+        )
+
+    review = quality.get("degenerate_review")
+    if not isinstance(review, dict):
+        raise TypeError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review must be a mapping"
+        )
+    if type(review.get("enabled")) is not bool:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review.enabled must be bool"
+        )
+    if int(review.get("focus_gap_count", 0)) < 1:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review."
+            "focus_gap_count must be positive"
+        )
+    if int(review.get("context_shots_each_side", -1)) < 0:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review."
+            "context_shots_each_side must be non-negative"
+        )
+    if int(review.get("max_rounds", -1)) < 0:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review.max_rounds "
+            "must be non-negative"
+        )
 
 
 def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:

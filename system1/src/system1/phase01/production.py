@@ -10,7 +10,7 @@ import time
 import weakref
 import zipfile
 from collections.abc import Callable, Generator, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +39,11 @@ from system1.phase01.checkpoint import CheckpointManager, compute_fingerprint
 from system1.phase01.qa import write_manual_review_report
 from system1.phase01.scheduler import plan_runtime_chunks
 from system1.phase01.validation import validate_phase01_package, validate_rows
-from system1.scenes import group_scenes
+from system1.scenes import (
+    SceneGroupingResult,
+    ScenePartitionQualityError,
+    group_scenes,
+)
 from system1.scenes.vlm_judge import SemanticSceneBoundaryJudge
 from system1.shots import (
     detect_shot_scenes,
@@ -652,6 +656,7 @@ def _finish_failed_video(
     retryable = _retryable_video_error(exc)
     checkpoint_error: str | None = None
     failed_stage = flow.manager.active_stage
+    error_payload = _checkpoint_error_payload(exc)
     _emit_stage_progress(
         flow.manager,
         failed_stage,
@@ -663,11 +668,7 @@ def _finish_failed_video(
             failed_stage,
             input_fingerprint=None,
             retryable=retryable,
-            error={
-                "error_type": type(exc).__name__,
-                "message": str(exc),
-                "failed_at": utc_now(),
-            },
+            error=error_payload,
         )
     except Exception as checkpoint_exc:  # noqa: BLE001 - retain original error
         failed_stage = "unknown"
@@ -678,6 +679,7 @@ def _finish_failed_video(
         "failed_stage": failed_stage,
         "error_type": type(exc).__name__,
         "error": str(exc),
+        "error_details": error_payload.get("details"),
         "checkpoint_error": checkpoint_error,
     }
     flow.pipeline.close()
@@ -1059,6 +1061,7 @@ def _process_video_flow(
     scenes_path = stage_dir / "scenes.parquet"
     scene_links_path = stage_dir / "scene_transcript_links.parquet"
     scene_diagnostics_path = stage_dir / "scene_boundary_diagnostics.jsonl"
+    scene_quality_path = stage_dir / "scene_partition_quality.json"
     scenes_fingerprint = compute_fingerprint(
         shots_output_fingerprint,
         keyframes_output_fingerprint,
@@ -1092,13 +1095,35 @@ def _process_video_flow(
                 phase01["scene_grouping"]["max_transcript_chars_per_shot"]
             ),
         )
-        scenes, decisions = group_scenes(
+        grouping_result = group_scenes(
             video_id=video_id,
             shots=shots,
             evidence=evidence,
             judge=judge,
             config=phase01["scene_grouping"],
         )
+        quality_payload = _scene_partition_quality_payload(
+            video_id=video_id,
+            result=grouping_result,
+            policy=phase01["scene_grouping"]["quality_guard"],
+        )
+        _write_json(scene_quality_path, quality_payload)
+        _write_jsonl(
+            scene_diagnostics_path,
+            [asdict(decision) for decision in grouping_result.decisions],
+        )
+        _emit_scene_partition_quality(
+            manager=manager,
+            scratch=scratch,
+            payload=quality_payload,
+        )
+        _require_scene_partition_quality(
+            video_id=video_id,
+            result=grouping_result,
+            payload=quality_payload,
+        )
+        scenes = grouping_result.scenes
+        decisions = grouping_result.decisions
         _write_parquet(scenes_path, scenes)
         scene_links = _build_scene_transcript_links(scenes, asr_rows)
         _write_parquet(
@@ -1106,16 +1131,20 @@ def _process_video_flow(
             scene_links,
             empty_columns=PARQUET_COLUMNS["scene_transcript_links"],
         )
-        _write_jsonl(scene_diagnostics_path, [decision.__dict__ for decision in decisions])
         manager.promote_stage(
             "scenes",
             input_fingerprint=scenes_fingerprint,
-            outputs=[scenes_path, scene_links_path, scene_diagnostics_path],
+            outputs=[
+                scenes_path,
+                scene_links_path,
+                scene_diagnostics_path,
+                scene_quality_path,
+            ],
             model=scene_boundary_model,
             prompt_version=scene_boundary_model["prompt_version"],
             schema_version=phase01["schemas"]["scenes"],
         )
-        del decisions, evidence, judge
+        del decisions, evidence, grouping_result, judge
     _emit_stage_progress(
         manager, "scenes", scratch, status="complete", reused=scenes_reused
     )
@@ -2336,6 +2365,88 @@ def _shots_for_scene(
     return shots[by_id[start_id] : by_id[end_id] + 1]
 
 
+def _scene_partition_quality_payload(
+    *,
+    video_id: str,
+    result: SceneGroupingResult,
+    policy: Mapping[str, Any],
+) -> dict[str, Any]:
+    if result.final_quality.suspicious:
+        status = "failed_quality_gate"
+    elif result.degenerate_review_triggered:
+        status = "pass_after_review"
+    else:
+        status = "pass"
+    return {
+        "schema_version": "scene_partition_quality_v1",
+        "video_id": video_id,
+        "status": status,
+        "guard_enabled": bool(policy["enabled"]),
+        "consistency_review_rounds_run": result.consistency_review_rounds_run,
+        "degenerate_review_triggered": result.degenerate_review_triggered,
+        "degenerate_review_rounds_run": result.degenerate_review_rounds_run,
+        "policy": {
+            "min_shot_count": int(policy["min_shot_count"]),
+            "suspicious_boundary_density": float(
+                policy["suspicious_boundary_density"]
+            ),
+            "suspicious_one_shot_scene_rate": float(
+                policy["suspicious_one_shot_scene_rate"]
+            ),
+            "unresolved_action": str(policy["unresolved_action"]),
+        },
+        "initial": asdict(result.initial_quality),
+        "final": asdict(result.final_quality),
+    }
+
+
+def _require_scene_partition_quality(
+    *,
+    video_id: str,
+    result: SceneGroupingResult,
+    payload: Mapping[str, Any],
+) -> None:
+    if not result.final_quality.suspicious:
+        return
+    raise ScenePartitionQualityError(
+        video_id=video_id,
+        details={
+            "quality_contract": "scene_partition_quality_v1",
+            "manual_review_required": True,
+            "initial": dict(payload["initial"]),
+            "final": dict(payload["final"]),
+            "degenerate_review_triggered": result.degenerate_review_triggered,
+        },
+    )
+
+
+def _emit_scene_partition_quality(
+    *,
+    manager: CheckpointManager,
+    scratch: Path,
+    payload: Mapping[str, Any],
+) -> None:
+    final = payload["final"]
+    runtime = {
+        key: value
+        for key, value in _MANAGER_RUNTIME_CONTEXT.get(manager, {}).items()
+        if key != "stage_sources"
+    }
+    _emit_progress(
+        event="scene_partition_quality",
+        status=str(payload["status"]),
+        scratch=scratch,
+        release_id=manager.release_id,
+        video_id=manager.video_id,
+        shot_count=int(final["shot_count"]),
+        scene_count=int(final["scene_count"]),
+        boundary_density=float(final["boundary_density"]),
+        one_shot_scene_rate=float(final["one_shot_scene_rate"]),
+        degenerate_review_triggered=bool(payload["degenerate_review_triggered"]),
+        **runtime,
+    )
+
+
 def _bounded_text(value: Any, *, max_chars: int) -> str:
     if max_chars < 1:
         raise ValueError("text evidence limit must be positive")
@@ -2488,6 +2599,7 @@ def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path,
     for name in (
         "keyframe_diagnostics.jsonl",
         "scene_boundary_diagnostics.jsonl",
+        "scene_partition_quality.json",
         "shot_caption_field_provenance.jsonl",
         "scene_summary_field_provenance.jsonl",
         "transnet_predictions.json",
@@ -2940,7 +3052,21 @@ def _required_text(payload: Mapping[str, Any], key: str) -> str:
 
 
 def _retryable_video_error(exc):
+    if isinstance(exc, ScenePartitionQualityError):
+        return False
     if isinstance(exc, (AsrResourceError, InsufficientMemoryError)):
         return True
     message = str(exc).lower()
     return any(marker in message for marker in ("timeout", "timed out", "429", "500", "502", "503", "504", "out of memory", "insufficient ram", "temporarily unavailable", "connection reset", "decode", "i/o"))
+
+
+def _checkpoint_error_payload(exc: Exception) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "error_type": type(exc).__name__,
+        "message": str(exc),
+        "failed_at": utc_now(),
+    }
+    details = getattr(exc, "details", None)
+    if isinstance(details, Mapping):
+        payload["details"] = dict(details)
+    return payload

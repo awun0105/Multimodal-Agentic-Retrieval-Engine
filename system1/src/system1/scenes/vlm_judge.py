@@ -47,6 +47,7 @@ class SemanticSceneBoundaryJudge:
             "primary": "prompt_version",
             "focused_review": "focused_prompt_version",
             "consistency_review": "consistency_prompt_version",
+            "degenerate_review": "degenerate_prompt_version",
         }
         if request_kind not in prompt_keys:
             raise ValueError(f"Unsupported scene boundary request kind: {request_kind}")

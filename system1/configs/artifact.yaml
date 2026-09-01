@@ -35,6 +35,7 @@ checkpoint:
       - scenes.parquet
       - scene_transcript_links.parquet
       - scene_boundary_diagnostics.jsonl
+      - scene_partition_quality.json
     scene_summaries:
       - scene_summaries.parquet
     package:

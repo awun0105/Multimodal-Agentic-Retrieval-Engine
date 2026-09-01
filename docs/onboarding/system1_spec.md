@@ -916,7 +916,7 @@ Tối thiểu, `manifest.json`, `feature_manifest.json` và `dataset_manifest.js
   },
   "versions": {
     "caption_prompt": "shot_caption_v1",
-    "scene_grouping": "scene_grouping_v1",
+    "scene_grouping": "scene_grouping_v2",
     "scene_summary_prompt": "scene_summary_v1",
     "response_schema": "1.0.0"
   }

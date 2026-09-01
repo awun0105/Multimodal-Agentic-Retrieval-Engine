@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
+from statistics import median
 from typing import Any, Protocol
 
 
@@ -31,12 +32,57 @@ class BoundaryDecision:
     false_vote_weight: float
     review_route: str
     consistency_review_triggered: bool
+    diagnostics_schema_version: str = "scene_boundary_diagnostics_v2"
+    consistency_review_round: int | None = None
+    degenerate_review_triggered: bool = False
     reason: str | None = None
     confidence: float | None = None
     evidence_used: tuple[str, ...] = ()
     provider: str | None = None
     model_name: str | None = None
     model_version: str | None = None
+
+
+@dataclass(frozen=True)
+class ScenePartitionQuality:
+    shot_count: int
+    gap_count: int
+    scene_count: int
+    boundary_count: int
+    one_shot_scene_count: int
+    boundary_density: float
+    one_shot_scene_rate: float
+    mean_shots_per_scene: float
+    median_shots_per_scene: float
+    longest_boundary_run: int
+    suspicious: bool
+    flags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SceneGroupingResult:
+    scenes: list[dict[str, Any]]
+    decisions: list[BoundaryDecision]
+    initial_quality: ScenePartitionQuality
+    final_quality: ScenePartitionQuality
+    consistency_review_rounds_run: int
+    degenerate_review_triggered: bool
+    degenerate_review_rounds_run: int
+
+
+class ScenePartitionQualityError(RuntimeError):
+    """Terminal semantic-quality failure for a candidate scene partition."""
+
+    def __init__(self, *, video_id: str, details: Mapping[str, Any]) -> None:
+        final = details["final"]
+        super().__init__(
+            "Scene partition remains suspicious after bounded semantic re-review: "
+            f"video={video_id}, shots={final['shot_count']}, "
+            f"scenes={final['scene_count']}, "
+            f"boundary_density={final['boundary_density']:.3f}, "
+            f"one_shot_scene_rate={final['one_shot_scene_rate']:.3f}"
+        )
+        self.details = dict(details)
 
 
 class SceneBoundaryJudge(Protocol):
@@ -94,7 +140,7 @@ def group_scenes(
     evidence: Sequence[Mapping[str, Any]],
     judge: SceneBoundaryJudge,
     config: Mapping[str, Any],
-) -> tuple[list[dict[str, Any]], list[BoundaryDecision]]:
+) -> SceneGroupingResult:
     if not shots:
         raise ValueError("Scene grouping requires at least one shot")
     _validate_ordered_shots(shots, video_id)
@@ -102,7 +148,21 @@ def group_scenes(
         raise ValueError("Scene evidence must have exactly one item per shot")
     if len(shots) == 1:
         scenes = partition_scenes(video_id=video_id, shots=shots, decisions=[])
-        return scenes, []
+        quality = assess_partition_quality(
+            shots=shots,
+            scenes=scenes,
+            decisions=(),
+            policy=config["quality_guard"],
+        )
+        return SceneGroupingResult(
+            scenes=scenes,
+            decisions=[],
+            initial_quality=quality,
+            final_quality=quality,
+            consistency_review_rounds_run=0,
+            degenerate_review_triggered=False,
+            degenerate_review_rounds_run=0,
+        )
 
     windows = plan_focus_windows(
         len(shots),
@@ -164,58 +224,141 @@ def group_scenes(
             provisional[gap_index] = focused[gap_ids[gap_index]]
             routes[gap_index] = "focused_review"
 
-    triggered = _consistency_trigger_gaps(provisional, votes, config)
-    reviewed: set[int] = set()
-    if triggered and int(config["max_consistency_review_rounds"]) > 0:
-        for region in _merge_review_regions(
-            triggered,
-            gap_count=len(gap_ids),
-            padding=int(config["context_shots_each_side"]),
-        ):
-            region_ids = tuple(gap_ids[index] for index in region)
-            context_start = max(0, region[0] - int(config["context_shots_each_side"]))
-            context_end = min(
-                len(shots), region[-1] + 2 + int(config["context_shots_each_side"])
-            )
-            result = _validate_judgement(
-                judge.judge(
-                    request_kind="consistency_review",
-                    focus_gap_ids=region_ids,
-                    context=evidence[context_start:context_end],
-                ),
-                region_ids,
-            )
-            for gap_index in region:
-                provisional[gap_index] = result[gap_ids[gap_index]]
-                routes[gap_index] = "consistency_review"
-                reviewed.add(gap_index)
+    consistency_rounds, consistency_round_by_gap = _run_consistency_reviews(
+        shots=shots,
+        evidence=evidence,
+        judge=judge,
+        config=config,
+        gap_ids=gap_ids,
+        votes=votes,
+        provisional=provisional,
+        routes=routes,
+    )
 
-    decisions: list[BoundaryDecision] = []
-    for gap_index in range(len(gap_ids)):
-        gap_votes = votes[gap_index]
-        true_weight = sum(vote.weight for vote in gap_votes if vote.is_boundary)
-        false_weight = sum(vote.weight for vote in gap_votes if not vote.is_boundary)
-        diagnostics = _diagnostics_for_gap(judge, gap_ids[gap_index])
-        decisions.append(
-            BoundaryDecision(
-                gap_index=gap_index,
-                after_shot_id=gap_ids[gap_index],
-                is_boundary=provisional[gap_index],
-                primary_boundary_score=scores[gap_index],
-                vote_count=len(gap_votes),
-                true_vote_weight=true_weight,
-                false_vote_weight=false_weight,
-                review_route=routes[gap_index],
-                consistency_review_triggered=gap_index in reviewed,
-                reason=diagnostics.get("reason"),
-                confidence=diagnostics.get("confidence"),
-                evidence_used=tuple(diagnostics.get("evidence_used", ())),
-                provider=diagnostics.get("provider"),
-                model_name=diagnostics.get("model_name"),
-                model_version=diagnostics.get("model_version"),
-            )
+    initial_decisions = _build_decisions(
+        judge=judge,
+        gap_ids=gap_ids,
+        votes=votes,
+        provisional=provisional,
+        routes=routes,
+        scores=scores,
+        consistency_round_by_gap=consistency_round_by_gap,
+        degenerate_reviewed=set(),
+    )
+    initial_scenes = partition_scenes(
+        video_id=video_id,
+        shots=shots,
+        decisions=initial_decisions,
+    )
+    quality_policy = config["quality_guard"]
+    initial_quality = assess_partition_quality(
+        shots=shots,
+        scenes=initial_scenes,
+        decisions=initial_decisions,
+        policy=quality_policy,
+    )
+
+    degenerate_reviewed: set[int] = set()
+    degenerate_rounds = 0
+    degenerate_policy = quality_policy["degenerate_review"]
+    if (
+        initial_quality.suspicious
+        and bool(quality_policy["enabled"])
+        and bool(degenerate_policy["enabled"])
+    ):
+        degenerate_rounds, degenerate_reviewed = _run_degenerate_reviews(
+            shots=shots,
+            evidence=evidence,
+            judge=judge,
+            policy=degenerate_policy,
+            gap_ids=gap_ids,
+            provisional=provisional,
+            routes=routes,
+            quality_policy=quality_policy,
         )
-    return partition_scenes(video_id=video_id, shots=shots, decisions=decisions), decisions
+
+    decisions = _build_decisions(
+        judge=judge,
+        gap_ids=gap_ids,
+        votes=votes,
+        provisional=provisional,
+        routes=routes,
+        scores=scores,
+        consistency_round_by_gap=consistency_round_by_gap,
+        degenerate_reviewed=degenerate_reviewed,
+    )
+    scenes = partition_scenes(video_id=video_id, shots=shots, decisions=decisions)
+    final_quality = assess_partition_quality(
+        shots=shots,
+        scenes=scenes,
+        decisions=decisions,
+        policy=quality_policy,
+    )
+    return SceneGroupingResult(
+        scenes=scenes,
+        decisions=decisions,
+        initial_quality=initial_quality,
+        final_quality=final_quality,
+        consistency_review_rounds_run=consistency_rounds,
+        degenerate_review_triggered=bool(degenerate_reviewed),
+        degenerate_review_rounds_run=degenerate_rounds,
+    )
+
+
+def assess_partition_quality(
+    *,
+    shots: Sequence[Mapping[str, Any]],
+    scenes: Sequence[Mapping[str, Any]],
+    decisions: Sequence[BoundaryDecision],
+    policy: Mapping[str, Any],
+) -> ScenePartitionQuality:
+    shot_count = len(shots)
+    gap_count = max(0, shot_count - 1)
+    boundary_labels = [bool(decision.is_boundary) for decision in decisions]
+    boundary_count = sum(boundary_labels)
+    scene_count = len(scenes)
+    scene_sizes = [int(scene["shot_count"]) for scene in scenes]
+    one_shot_scene_count = sum(size == 1 for size in scene_sizes)
+    boundary_density = boundary_count / gap_count if gap_count else 0.0
+    one_shot_scene_rate = (
+        one_shot_scene_count / scene_count if scene_count else 0.0
+    )
+    mean_shots_per_scene = shot_count / scene_count if scene_count else 0.0
+    median_shots_per_scene = float(median(scene_sizes)) if scene_sizes else 0.0
+    longest_boundary_run = _longest_true_run(boundary_labels)
+
+    flags: list[str] = []
+    suspicious = False
+    if bool(policy["enabled"]) and shot_count >= int(policy["min_shot_count"]):
+        all_boundaries = gap_count > 0 and boundary_count == gap_count
+        extreme_density = boundary_density >= float(
+            policy["suspicious_boundary_density"]
+        )
+        extreme_one_shot_rate = one_shot_scene_rate >= float(
+            policy["suspicious_one_shot_scene_rate"]
+        )
+        if all_boundaries:
+            flags.append("all_gaps_are_boundaries")
+        if extreme_density:
+            flags.append("extreme_boundary_density")
+        if extreme_one_shot_rate:
+            flags.append("extreme_one_shot_scene_rate")
+        suspicious = all_boundaries or (extreme_density and extreme_one_shot_rate)
+
+    return ScenePartitionQuality(
+        shot_count=shot_count,
+        gap_count=gap_count,
+        scene_count=scene_count,
+        boundary_count=boundary_count,
+        one_shot_scene_count=one_shot_scene_count,
+        boundary_density=boundary_density,
+        one_shot_scene_rate=one_shot_scene_rate,
+        mean_shots_per_scene=mean_shots_per_scene,
+        median_shots_per_scene=median_shots_per_scene,
+        longest_boundary_run=longest_boundary_run,
+        suspicious=suspicious,
+        flags=tuple(flags),
+    )
 
 
 def partition_scenes(
@@ -257,7 +400,7 @@ def partition_scenes(
                 "keyframe_count": 0,
                 "scene_type": "semantic",
                 "grouping_method": "multimodal_context_focus",
-                "grouping_version": "scene_grouping_v1",
+                "grouping_version": "scene_grouping_v2",
                 "confidence": None,
                 "boundary_convention": "[start_frame, end_frame)",
                 "status": "pass",
@@ -303,6 +446,175 @@ def _diagnostics_for_gap(judge: SceneBoundaryJudge, gap_id: str) -> dict[str, An
         "model_name": _optional_string(value.get("model_name")),
         "model_version": _optional_string(value.get("model_version")),
     }
+
+
+def _build_decisions(
+    *,
+    judge: SceneBoundaryJudge,
+    gap_ids: tuple[str, ...],
+    votes: Mapping[int, Sequence[BoundaryVote]],
+    provisional: Mapping[int, bool],
+    routes: Mapping[int, str],
+    scores: Mapping[int, float],
+    consistency_round_by_gap: Mapping[int, int],
+    degenerate_reviewed: set[int],
+) -> list[BoundaryDecision]:
+    decisions: list[BoundaryDecision] = []
+    for gap_index, gap_id in enumerate(gap_ids):
+        gap_votes = votes[gap_index]
+        true_weight = sum(vote.weight for vote in gap_votes if vote.is_boundary)
+        false_weight = sum(vote.weight for vote in gap_votes if not vote.is_boundary)
+        diagnostics = _diagnostics_for_gap(judge, gap_id)
+        decisions.append(
+            BoundaryDecision(
+                gap_index=gap_index,
+                after_shot_id=gap_id,
+                is_boundary=provisional[gap_index],
+                primary_boundary_score=scores[gap_index],
+                vote_count=len(gap_votes),
+                true_vote_weight=true_weight,
+                false_vote_weight=false_weight,
+                review_route=routes[gap_index],
+                consistency_review_triggered=(
+                    gap_index in consistency_round_by_gap
+                ),
+                consistency_review_round=consistency_round_by_gap.get(gap_index),
+                degenerate_review_triggered=gap_index in degenerate_reviewed,
+                reason=diagnostics.get("reason"),
+                confidence=diagnostics.get("confidence"),
+                evidence_used=tuple(diagnostics.get("evidence_used", ())),
+                provider=diagnostics.get("provider"),
+                model_name=diagnostics.get("model_name"),
+                model_version=diagnostics.get("model_version"),
+            )
+        )
+    return decisions
+
+
+def _run_consistency_reviews(
+    *,
+    shots: Sequence[Mapping[str, Any]],
+    evidence: Sequence[Mapping[str, Any]],
+    judge: SceneBoundaryJudge,
+    config: Mapping[str, Any],
+    gap_ids: tuple[str, ...],
+    votes: Mapping[int, Sequence[BoundaryVote]],
+    provisional: dict[int, bool],
+    routes: dict[int, str],
+) -> tuple[int, dict[int, int]]:
+    rounds_run = 0
+    reviewed_round: dict[int, int] = {}
+    for round_index in range(1, int(config["max_consistency_review_rounds"]) + 1):
+        triggered = _consistency_trigger_gaps(provisional, votes, config)
+        if not triggered:
+            break
+        before = dict(provisional)
+        for region in _merge_review_regions(
+            triggered,
+            gap_count=len(gap_ids),
+            padding=int(config["context_shots_each_side"]),
+        ):
+            region_ids = tuple(gap_ids[index] for index in region)
+            context_start = max(
+                0,
+                region[0] - int(config["context_shots_each_side"]),
+            )
+            context_end = min(
+                len(shots),
+                region[-1] + 2 + int(config["context_shots_each_side"]),
+            )
+            result = _validate_judgement(
+                judge.judge(
+                    request_kind="consistency_review",
+                    focus_gap_ids=region_ids,
+                    context=evidence[context_start:context_end],
+                ),
+                region_ids,
+            )
+            for gap_index in region:
+                provisional[gap_index] = result[gap_ids[gap_index]]
+                routes[gap_index] = "consistency_review"
+                reviewed_round[gap_index] = round_index
+        rounds_run = round_index
+        if provisional == before:
+            break
+    return rounds_run, reviewed_round
+
+
+def _run_degenerate_reviews(
+    *,
+    shots: Sequence[Mapping[str, Any]],
+    evidence: Sequence[Mapping[str, Any]],
+    judge: SceneBoundaryJudge,
+    policy: Mapping[str, Any],
+    gap_ids: tuple[str, ...],
+    provisional: dict[int, bool],
+    routes: dict[int, str],
+    quality_policy: Mapping[str, Any],
+) -> tuple[int, set[int]]:
+    reviewed: set[int] = set()
+    rounds_run = 0
+    for round_index in range(1, int(policy["max_rounds"]) + 1):
+        before = dict(provisional)
+        windows = plan_focus_windows(
+            len(shots),
+            focus_gap_count=int(policy["focus_gap_count"]),
+            context_shots_each_side=int(policy["context_shots_each_side"]),
+            stride=int(policy["focus_gap_count"]),
+        )
+        for window in windows:
+            focus_ids = tuple(gap_ids[index] for index in window.focus_gap_indices)
+            result = _validate_judgement(
+                judge.judge(
+                    request_kind="degenerate_review",
+                    focus_gap_ids=focus_ids,
+                    context=[evidence[index] for index in window.context_shot_indices],
+                ),
+                focus_ids,
+            )
+            for gap_index in window.focus_gap_indices:
+                provisional[gap_index] = result[gap_ids[gap_index]]
+                routes[gap_index] = "degenerate_review"
+                reviewed.add(gap_index)
+        rounds_run = round_index
+        if provisional == before:
+            break
+        candidate_decisions = [
+            BoundaryDecision(
+                gap_index=index,
+                after_shot_id=gap_ids[index],
+                is_boundary=provisional[index],
+                primary_boundary_score=0.0,
+                vote_count=0,
+                true_vote_weight=0.0,
+                false_vote_weight=0.0,
+                review_route=routes[index],
+                consistency_review_triggered=False,
+            )
+            for index in range(len(gap_ids))
+        ]
+        candidate_scenes = partition_scenes(
+            video_id=str(shots[0]["video_id"]),
+            shots=shots,
+            decisions=candidate_decisions,
+        )
+        if not assess_partition_quality(
+            shots=shots,
+            scenes=candidate_scenes,
+            decisions=candidate_decisions,
+            policy=quality_policy,
+        ).suspicious:
+            break
+    return rounds_run, reviewed
+
+
+def _longest_true_run(values: Sequence[bool]) -> int:
+    longest = 0
+    current = 0
+    for value in values:
+        current = current + 1 if value else 0
+        longest = max(longest, current)
+    return longest
 
 
 def _optional_string(value: Any) -> str | None:

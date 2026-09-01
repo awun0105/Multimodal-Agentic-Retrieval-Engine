@@ -60,10 +60,32 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
                 "after_shot_id": "L21_V001_SH00000",
                 "is_boundary": False,
                 "primary_boundary_score": 0.1,
+                "vote_count": 2,
+                "true_vote_weight": 0.2,
+                "false_vote_weight": 1.8,
                 "review_route": "primary",
+                "consistency_review_triggered": False,
+                "consistency_review_round": None,
+                "degenerate_review_triggered": False,
+                "provider": "qwen_local",
+                "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
+                "model_version": "revision",
             }
         )
         + "\n",
+        encoding="utf-8",
+    )
+    (root / "diagnostics" / "scene_partition_quality.json").write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "degenerate_review_triggered": False,
+                "final": {
+                    "boundary_density": 0.0,
+                    "one_shot_scene_rate": 1.0,
+                },
+            }
+        ),
         encoding="utf-8",
     )
     with zipfile.ZipFile(artifact, "w") as archive:
@@ -94,3 +116,11 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
     }
     assert first_payload["sample_size_actual"] == 3
     assert first_payload["samples"] == second_payload["samples"]
+    boundary = next(
+        row
+        for row in first_payload["samples"]
+        if row["review_kind"] == "scene_boundary"
+    )
+    assert boundary["evidence"]["vote_count"] == 2
+    assert boundary["evidence"]["partition_status"] == "pass"
+    assert "reason" not in boundary["evidence"]

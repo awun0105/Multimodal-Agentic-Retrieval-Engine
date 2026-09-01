@@ -24,12 +24,24 @@ from system1.phase01.production import (
     _assemble_package,
     _build_captions,
     _build_scene_summaries,
+    _checkpoint_error_payload,
     _keyframe_diagnostic_counts,
     _normalize_required_text,
+    _require_scene_partition_quality,
     _required_text,
+    _retryable_video_error,
+    _scene_partition_quality_payload,
 )
 from system1.phase01.runner import _build_runtime_diagnostics
-from system1.phase01.validation import validate_rows
+from system1.phase01.validation import (
+    _validate_scene_partition_quality_report,
+    validate_rows,
+)
+from system1.scenes import (
+    SceneGroupingResult,
+    ScenePartitionQuality,
+    ScenePartitionQualityError,
+)
 
 SYSTEM1_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = SYSTEM1_ROOT / "configs"
@@ -46,14 +58,74 @@ def user_settings(**overrides: object) -> dict[str, object]:
     return settings
 
 
+def _quality_metrics(*, shot_count: int = 1, scene_count: int = 1) -> dict:
+    return {
+        "shot_count": shot_count,
+        "gap_count": max(0, shot_count - 1),
+        "scene_count": scene_count,
+        "boundary_count": max(0, scene_count - 1),
+        "one_shot_scene_count": scene_count if shot_count == scene_count else 0,
+        "boundary_density": 0.0 if shot_count == 1 else (scene_count - 1) / (shot_count - 1),
+        "one_shot_scene_rate": 1.0 if shot_count == scene_count else 0.0,
+        "mean_shots_per_scene": shot_count / scene_count,
+        "median_shots_per_scene": shot_count / scene_count,
+        "longest_boundary_run": max(0, scene_count - 1),
+        "suspicious": False,
+        "flags": [],
+    }
+
+
+def _passing_scene_quality_report(
+    video_id: str,
+    *,
+    shot_count: int = 1,
+    scene_count: int = 1,
+) -> dict:
+    metrics = _quality_metrics(shot_count=shot_count, scene_count=scene_count)
+    return {
+        "schema_version": "scene_partition_quality_v1",
+        "video_id": video_id,
+        "status": "pass",
+        "guard_enabled": True,
+        "consistency_review_rounds_run": 0,
+        "degenerate_review_triggered": False,
+        "degenerate_review_rounds_run": 0,
+        "policy": {
+            "min_shot_count": 8,
+            "suspicious_boundary_density": 0.9,
+            "suspicious_one_shot_scene_rate": 0.8,
+            "unresolved_action": "fail_terminal",
+        },
+        "initial": dict(metrics),
+        "final": dict(metrics),
+    }
+
+
+def _scene_quality(*, suspicious: bool) -> ScenePartitionQuality:
+    return ScenePartitionQuality(
+        shot_count=10,
+        gap_count=9,
+        scene_count=10 if suspicious else 3,
+        boundary_count=9 if suspicious else 2,
+        one_shot_scene_count=10 if suspicious else 0,
+        boundary_density=1.0 if suspicious else 2 / 9,
+        one_shot_scene_rate=1.0 if suspicious else 0.0,
+        mean_shots_per_scene=1.0 if suspicious else 10 / 3,
+        median_shots_per_scene=1.0 if suspicious else 3.0,
+        longest_boundary_run=9 if suspicious else 1,
+        suspicious=suspicious,
+        flags=("all_gaps_are_boundaries",) if suspicious else (),
+    )
+
+
 def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     configs = load_configs(CONFIG_DIR)
     phase01 = configs["phase01"]
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_5"
-    assert phase01["pipeline_id"] == "phase01_production_v1_5"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_6"
+    assert phase01["pipeline_id"] == "phase01_production_v1_6"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -114,6 +186,10 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "double_quant": True,
     }
     assert models["phase01"]["scene_boundary"]["provider"] == "qwen_local"
+    assert (
+        models["phase01"]["scene_boundary"]["degenerate_prompt_version"]
+        == "scene_boundary_degenerate_label_v1"
+    )
     assert models["phase01"]["scene_summary"]["provider"] == "qwen_local"
     assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
 
@@ -125,6 +201,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         phase01["schemas"]["scene_summaries"]
         == "scene_summaries_v3"
     )
+    assert phase01["schemas"]["scenes"] == "scenes_v2"
 
     assert (
         models["phase01"]["shot_caption"][
@@ -200,6 +277,143 @@ def test_semantic_sampling_thresholds_and_downstream_roles_are_validated() -> No
     ]
     with pytest.raises(ValueError, match="supplemental OCR evidence"):
         require_phase01_production_ready(resolved)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        (("min_shot_count",), 1, "min_shot_count"),
+        (("suspicious_boundary_density",), 1.1, "suspicious_boundary_density"),
+        (("suspicious_one_shot_scene_rate",), -0.1, "suspicious_one_shot_scene_rate"),
+        (("unresolved_action",), "accept", "unresolved_action"),
+        (("degenerate_review", "max_rounds"), -1, "max_rounds"),
+    ],
+)
+def test_scene_quality_guard_config_is_validated(
+    path: tuple[str, ...], value: object, message: str
+) -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    target = resolved.payload["phase01"]["scene_grouping"]["quality_guard"]
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = value
+
+    with pytest.raises(ValueError, match=message):
+        require_phase01_production_ready(resolved)
+
+
+def test_suspicious_scene_partition_fails_terminal_quality_gate() -> None:
+    quality = _scene_quality(suspicious=True)
+    result = SceneGroupingResult(
+        scenes=[],
+        decisions=[],
+        initial_quality=quality,
+        final_quality=quality,
+        consistency_review_rounds_run=1,
+        degenerate_review_triggered=True,
+        degenerate_review_rounds_run=1,
+    )
+    payload = _scene_partition_quality_payload(
+        video_id="v",
+        result=result,
+        policy={
+            "enabled": True,
+            "min_shot_count": 8,
+            "suspicious_boundary_density": 0.9,
+            "suspicious_one_shot_scene_rate": 0.8,
+            "unresolved_action": "fail_terminal",
+        },
+    )
+
+    with pytest.raises(ScenePartitionQualityError) as captured:
+        _require_scene_partition_quality(
+            video_id="v",
+            result=result,
+            payload=payload,
+        )
+
+    assert captured.value.details["manual_review_required"] is True
+    assert captured.value.details["final"]["suspicious"] is True
+    assert _retryable_video_error(captured.value) is False
+
+
+def test_scene_quality_failure_persists_structured_checkpoint_details() -> None:
+    final = {
+        "shot_count": 10,
+        "scene_count": 10,
+        "boundary_density": 1.0,
+        "one_shot_scene_rate": 1.0,
+        "suspicious": True,
+    }
+    error = ScenePartitionQualityError(
+        video_id="v",
+        details={
+            "quality_contract": "scene_partition_quality_v1",
+            "manual_review_required": True,
+            "initial": {"suspicious": True},
+            "final": final,
+            "degenerate_review_triggered": True,
+        },
+    )
+
+    payload = _checkpoint_error_payload(error)
+
+    assert payload["error_type"] == "ScenePartitionQualityError"
+    assert payload["details"] == error.details
+    assert payload["details"] is not error.details
+    assert payload["failed_at"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing", "Missing scene partition quality report"),
+        ("failed", "not passing"),
+        ("suspicious", "remains suspicious"),
+    ],
+)
+def test_package_quality_report_requires_passing_final_state(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    diagnostics = tmp_path / "diagnostics"
+    diagnostics.mkdir()
+    path = diagnostics / "scene_partition_quality.json"
+    payload = _passing_scene_quality_report("v")
+    if mutation == "failed":
+        payload["status"] = "failed_quality_gate"
+    elif mutation == "suspicious":
+        payload["final"]["suspicious"] = True
+    if mutation != "missing":
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises((FileNotFoundError, ValueError), match=message):
+        _validate_scene_partition_quality_report(
+            tmp_path,
+            video_id="v",
+            shot_count=1,
+            scene_count=1,
+        )
+
+
+def test_package_quality_report_accepts_passing_final_state(tmp_path: Path) -> None:
+    diagnostics = tmp_path / "diagnostics"
+    diagnostics.mkdir()
+    (diagnostics / "scene_partition_quality.json").write_text(
+        json.dumps(_passing_scene_quality_report("v")),
+        encoding="utf-8",
+    )
+
+    _validate_scene_partition_quality_report(
+        tmp_path,
+        video_id="v",
+        shot_count=1,
+        scene_count=1,
+    )
 
 
 def test_supplemental_keyframe_cannot_be_representative() -> None:
@@ -310,8 +524,8 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_5"
-    assert diagnostics["models_schema_version"] == "phase01_models_v1_3"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_6"
+    assert diagnostics["models_schema_version"] == "phase01_models_v1_4"
     assert diagnostics["asr"] == {
         "provider": "nemo",
         "model_id": "nvidia/parakeet-ctc-0.6b-vi",
@@ -704,6 +918,22 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
     assert focused_hashes["scenes"] != resolved.stage_config_hashes["scenes"]
     assert focused_hashes["keyframes"] == resolved.stage_config_hashes["keyframes"]
 
+    quality_changed = copy.deepcopy(resolved.payload)
+    quality_changed["phase01"]["scene_grouping"]["quality_guard"][
+        "suspicious_boundary_density"
+    ] = 0.95
+    quality_hashes = _stage_config_hashes(quality_changed)
+    assert quality_hashes["scenes"] != resolved.stage_config_hashes["scenes"]
+    for stage in (
+        "shots",
+        "keyframes",
+        "asr",
+        "ocr",
+        "shot_captions",
+        "shot_transcript_links",
+    ):
+        assert quality_hashes[stage] == resolved.stage_config_hashes[stage]
+
 
 def test_phase01_config_can_select_nemo_asr_provider() -> None:
     resolved = resolve_phase01_config(
@@ -1045,7 +1275,7 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "end_sec": 0.08, "duration_sec": 0.08, "frame_count": 2,
             "shot_count": 1, "keyframe_count": 0, "scene_type": "semantic",
             "grouping_method": "multimodal_context_focus",
-            "grouping_version": "scene_grouping_v1", "confidence": None,
+            "grouping_version": "scene_grouping_v2", "confidence": None,
             "boundary_convention": "[start_frame, end_frame)", "status": "pass",
         }],
         "scene_summaries": [{
@@ -1064,6 +1294,10 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
         pd.DataFrame(columns=PARQUET_COLUMNS[name]).to_parquet(
             stage / f"{name}.parquet", index=False
         )
+    (stage / "scene_partition_quality.json").write_text(
+        json.dumps(_passing_scene_quality_report(video_id)),
+        encoding="utf-8",
+    )
     metadata = tmp_path / "metadata.json"
     metadata.write_text(json.dumps({"video_id": video_id}), encoding="utf-8")
     resolved = resolve_phase01_config(
@@ -1085,6 +1319,7 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
     assert (artifact / "errors.jsonl").read_text(encoding="utf-8") == ""
     assert pd.read_parquet(artifact / "shots.parquet").iloc[0]["scene_id"] == scene_id
     assert pd.read_parquet(artifact / "scenes.parquet").iloc[0]["keyframe_count"] == 2
+    assert (artifact / "diagnostics" / "scene_partition_quality.json").is_file()
 
 def test_shared_semantic_runtime_rejects_padding_side_drift() -> None:
     resolved = resolve_phase01_config(

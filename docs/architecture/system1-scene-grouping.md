@@ -1,352 +1,74 @@
 # System 1 Phase01 Scene Grouping
 
-Date: 2026-08-05
+Date: 2026-09-01
 
 ## Status
 
-Accepted and implemented package design for Notebook 01 /
-`phase01_structure`. Deterministic fake-judge tests cover windowing, voting,
-review routing, partitioning, and failure validation. Qwen2.5-VL is the local
-primary and Gemini is its structured fallback; real-provider and manual quality
-review remain pending. `TimelineAwareFallbackProvider` is available only
-through guarded debug/test injection.
+Accepted production design for Notebook 01 / `phase01_structure`.
+
+Qwen2.5-VL is the local semantic primary. The shared semantic client unloads
+Qwen and activates the pinned Vintern-3B-R fallback when its existing sticky
+fallback policy requires it. Boundary requests use a strict plain-text label:
+
+```text
+BOUNDARY | SAME_SCENE
+```
+
+Python owns voting, review routing, scene IDs and ranges, partition validation,
+quality policy, promotion, and failure status. Fake-judge tests prove the
+deterministic contract. A heterogeneous real-model smoke remains required to
+calibrate semantic quality thresholds.
 
 ## Canonical Definition
 
-A scene is one or more consecutive shots that belong to the same principal
-event, setting, or topic.
-
-Scene grouping uses multimodal context-window segmentation:
-
-```text
-ordered shots
-+ representative images
-+ canonical shot captions
-+ caption objects/actions and canonical OCR
-+ ASR transcripts
-+ decoded timeline
-  -> VLM judges candidate boundaries in overlapping context/focus windows
-  -> package validates and aggregates judgements
-  -> package resolves ambiguous boundaries
-  -> package reviews locally inconsistent regions
-  -> package creates one contiguous partition of the complete shot timeline
-  -> scenes.parquet + scene mappings
-```
-
-The VLM decides only whether a gap between two adjacent shots is a scene
-boundary. Package code remains authoritative for IDs, frame/time ranges,
-partition construction, validation, status, and provenance.
-
-## Scope And Phase Boundary
-
-This workflow belongs to Notebook 01 after shot detection, keyframe selection,
-canonical shot captioning, ASR, and shot-to-transcript linking.
-
-Notebook 01 generates canonical OCR and caption objects/actions before scene
-grouping, and these are inputs to the grouper. Organizer object detections and
-visual embeddings remain Phase02 concerns and are not canonical boundary
-evidence.
-
-Scene summaries are generated after the partition exists. They may reuse the
-same multimodal evidence, but summary generation is not allowed to alter scene
-boundaries implicitly.
-
-## 1. Canonical Inputs
-
-The grouper operates on one video's unpacked per-video structure workspace.
-Parquet names and fields below follow the current repository contract.
-
-### `shots.parquet`
-
-Required scene-grouping fields:
+A shot is an editing unit between camera cuts. A scene is a semantic unit made
+of one or more consecutive shots belonging to the same principal event,
+setting, or topic. A camera cut does not by itself create a scene boundary.
 
 ```text
-shot_id
-video_id
-start_frame
-end_frame
-start_sec
-end_sec
+ordered shots + multimodal shot evidence
+  -> overlapping primary judgements
+  -> weighted vote aggregation
+  -> focused review of ambiguous gaps
+  -> bounded consistency review
+  -> candidate partition
+  -> partition-level quality assessment
+  -> optional bounded degenerate review
+  -> pass and promote, or fail closed
 ```
 
-Useful additional fields include `shot_index`, `detection_method`, `confidence`,
-`status`, and `boundary_convention`.
+The VLM decides only whether the gap after a named shot is a boundary. It does
+not generate scene IDs, timestamps, confidence scores, reasons, or a partition.
 
-`representative_keyframe_id` is not required on a shot row. The canonical join
-to the representative image is:
+## Scope And Inputs
 
-```text
-shots.shot_id
-  -> shot_captions.shot_id
-  -> shot_captions.representative_keyframe_id
-  -> keyframes.keyframe_id
-```
+Scene grouping runs after shots, keyframes, ASR, OCR, shot captions, and
+shot-to-transcript links. Each ordered `ShotEvidence` item contains:
 
-### `keyframes.parquet`
+- shot ID and frame/time range;
+- representative image and available early/late/supplemental images;
+- Vietnamese and English caption, objects, actions, and visible-text summary;
+- canonical OCR text;
+- overlapping ASR text; and
+- timeline order.
 
-Relevant fields:
+Organizer detections, embeddings, and organizer metadata are not boundary
+evidence. Scene summaries run only after the scene partition is accepted and
+cannot alter its boundaries.
 
-```text
-keyframe_id
-video_id
-frame_id
-shot_id
-keyframe_role
-is_representative
-keyframe_ref
-thumbnail_ref
-```
+## Context-Focus Windows And Primary Votes
 
-Exactly one representative keyframe is expected per shot. A normal shot has
-early/middle/late rows selected from search bands centered at 20%/50%/80%; a
-short shot may have fewer roles after duplicate frame IDs are removed. A long
-shot can additionally have bounded non-representative `supplemental` rows
-selected by temporal, visual-novelty, and text-change signals. Focused review
-selects configured early/late/supplemental evidence; all supplemental paths are
-kept as an ordered list so repeated roles cannot overwrite one another. Roles
-do not change the canonical `keyframe_id = "{video_id}:{frame_id}"` convention.
+`plan_focus_windows()` produces overlapping focus-gap windows with bounded
+left/right shot context. Every real adjacent-shot gap must appear in at least
+one focus window and no gap exists after the final shot.
 
-At scene-grouping input time, `keyframes.scene_id` may be null or provisional.
-It is assigned from the final shot partition after grouping.
+The provider contract is one request per gap. Requests in the same window share
+the bounded context contact sheet and textual evidence, but each response is
+exactly one allowed label. Unknown, missing, extra, duplicated, or non-Boolean
+normalized decisions fail validation.
 
-### `shot_captions.parquet`
-
-Relevant fields:
-
-```text
-shot_caption_id
-video_id
-shot_id
-representative_keyframe_id
-representative_timestamp_sec
-caption_vi
-caption_en
-provider
-model_name
-model_version
-prompt_version
-schema_version
-confidence
-status
-```
-
-Phase01 has one canonical bilingual caption row per shot. Both
-`caption_vi` and `caption_en` are required for a successful production row.
-
-### `asr_segments.parquet`
-
-Relevant fields:
-
-```text
-asr_segment_id
-video_id
-start_sec
-end_sec
-text
-language
-confidence
-model_name
-status
-```
-
-The canonical identifier is `asr_segment_id`, not `segment_id`.
-
-### `shot_transcript_links.parquet`
-
-Relevant fields:
-
-```text
-shot_id
-asr_segment_id
-video_id
-coverage
-```
-
-The evidence builder uses these rows to select ASR segments for a shot. It
-sorts selected segments by `(start_sec, end_sec, asr_segment_id)` and joins
-their non-empty text in timeline order. When a segment overlaps multiple shots,
-each relevant link may exist with its own coverage value; text must not be
-duplicated within one shot because of duplicate link rows.
-
-### Timeline context
-
-The Phase00 decoded frame timeline remains the authority for exact frame/time
-mapping. Scene ranges are derived from shot rows, so the grouper must not
-recompute frames using `timestamp * fps`.
-
-Metadata is preserved elsewhere in the structure artifact but is not a
-canonical scene-boundary input. OCR and caption objects/actions are Phase01
-evidence; embeddings and organizer object outputs remain Phase02 outputs.
-
-## 2. Internal `ShotEvidence`
-
-Package code builds one immutable internal record per ordered shot. This is an
-ephemeral processing type, not a new canonical Parquet table.
-
-```python
-@dataclass(frozen=True)
-class ShotEvidence:
-    shot_id: str
-    video_id: str
-    start_frame: int
-    end_frame: int
-    start_sec: float
-    end_sec: float
-
-    representative_keyframe_id: str
-    representative_image: Path
-    early_image: Path | None
-    late_image: Path | None
-
-    caption_vi: str
-    caption_en: str
-    transcript: str
-```
-
-Image `Path` values are resolved temporary local paths used by the provider.
-Canonical artifact rows continue to store logical `keyframe_ref` and
-`thumbnail_ref` values, not machine-specific paths.
-
-Example evidence rendered for a provider request:
-
-```text
-SHOT: L21_V001_SH00012
-TIME: 32.10-36.80
-
-CAPTION_VI:
-Một người đứng trước quầy vé trong nhà ga.
-
-CAPTION_EN:
-A person stands in front of a ticket counter inside a train station.
-
-SPEECH:
-Bây giờ tôi sẽ mua vé tại quầy này.
-```
-
-Empty ASR is valid evidence and must be represented explicitly. Missing or
-failed representative-image/caption evidence follows the Phase01 error policy;
-it must not be concealed by notebook code.
-
-## 3. Context-Focus Window Planning
-
-For `N` ordered shots, there are `N - 1` candidate gaps. Gap `i` is identified
-by the shot immediately before it, `after_shot_id = shots[i].shot_id`, and lies
-between `shots[i]` and `shots[i + 1]`. There is no gap after the final shot.
-
-Initial configuration:
-
-```yaml
-scene_grouping:
-  focus_gap_count: 8
-  context_shots_each_side: 4
-  stride: 6
-```
-
-- `focus_gap_count = 8`: one primary request judges at most eight gaps.
-- `context_shots_each_side = 4`: include up to four additional shots before
-  and after the shots participating in the focus gaps.
-- `stride = 6`: adjacent focus ranges overlap by two gaps when full-sized.
-
-Example:
-
-```text
-context shots:  SH001 ... SH017
-focus gaps:     SH005|SH006 ... SH012|SH013
-```
-
-The planner clips context at video boundaries and handles short videos with one
-smaller window. It must guarantee that every candidate gap appears in at least
-one focus range and that no focus range contains a gap outside the video.
-
-This avoids judging every adjacent pair in isolation. A context window can see
-alternating camera angles such as person A, person B, person A, and a wide shot
-while retaining one continuous scene when the principal event continues.
-
-## 4. Visual Contact Sheets
-
-Each primary window produces a contact sheet ordered from left to right and top
-to bottom by shot timeline. Every tile contains:
-
-```text
-representative keyframe
-shot_id
-start_sec-end_sec
-```
-
-Example layout:
-
-```text
-+------------+------------+------------+------------+
-| SH001      | SH002      | SH003      | SH004      |
-| 00:00-03   | 00:03-07   | 00:07-11   | 00:11-15   |
-+------------+------------+------------+------------+
-| SH005      | SH006      | SH007      | SH008      |
-| ...        | ...        | ...        | ...        |
-+------------+------------+------------+------------+
-```
-
-Contact-sheet generation must be deterministic for the same ordered evidence:
-same grid policy, image fit, dimensions, label format, and output encoding.
-The visual exists only to help the judge associate image changes with ordered
-shot IDs; it is not a canonical keyframe artifact.
-
-## 5. Primary Window Judgement
-
-Each request contains:
-
-1. The context window contact sheet.
-2. Ordered shot IDs and frame/time ranges.
-3. The canonical Vietnamese and English captions for each shot.
-4. The timeline-ordered transcript for each shot.
-5. The exact focus gaps the provider must judge.
-
-The prompt requires the judge to:
-
-- mark a boundary when the principal event, setting, time, or topic changes to
-  a new unit;
-- keep shots together when only camera angle changes while the principal event
-  continues;
-- use visual evidence, captions, transcripts, and temporal order together;
-- judge only the listed focus gaps; and
-- return exactly one Boolean decision for every focus gap.
-
-Canonical structured response:
-
-```json
-{
-  "boundaries": [
-    {
-      "after_shot_id": "L21_V001_SH00005",
-      "is_scene_boundary": false
-    },
-    {
-      "after_shot_id": "L21_V001_SH00006",
-      "is_scene_boundary": true
-    }
-  ]
-}
-```
-
-The provider adapter rejects a response unless:
-
-- it is valid JSON matching the versioned response schema;
-- every `after_shot_id` exists and denotes a real adjacent-shot gap;
-- every returned gap belongs to the requested focus set;
-- every requested focus gap appears exactly once;
-- no gap is duplicated; and
-- `is_scene_boundary` is a Boolean, not free-form text or an inferred score.
-
-Invalid responses may receive a bounded schema-repair retry. Raw responses,
-validation failures, retry counts, provider, model, prompt version, and schema
-version are recorded in diagnostics without exposing secrets.
-
-## 6. Overlap Vote Aggregation
-
-Overlapping focus windows can judge the same gap more than once. A vote near
-the center of its focus range receives more weight than a vote near the edge.
-
-For a focus range with `m` gaps and zero-based position `j`, the v1 deterministic
-weight is:
+Overlapping windows can vote on the same gap. A vote at focus position `j` in a
+window of `m` gaps receives:
 
 ```text
 depth(j, m)  = min(j, m - 1 - j)
@@ -354,397 +76,200 @@ max_depth(m) = max(1, floor((m - 1) / 2))
 weight(j, m) = 1 + depth(j, m) / max_depth(m)
 ```
 
-This gives edge votes weight `1` and central votes up to `2` without allowing
-window size to make one request dominate arbitrarily.
+The deterministic boundary score is the weighted fraction of `BOUNDARY` votes.
+Scores above `boundary_threshold` become boundaries; scores below
+`non_boundary_threshold` become non-boundaries; scores between the thresholds
+go through focused review.
 
-For each gap:
+## Focused And Consistency Review
 
-```text
-true  = 1
-false = 0
+Focused review re-evaluates one ambiguous gap with bounded neighboring context
+and configured early/late/supplemental keyframes. Its strict label replaces the
+ambiguous provisional decision.
 
-boundary_score(gap) =
-  sum(vote * weight) / sum(weight)
-```
-
-Initial thresholds:
-
-```yaml
-scene_grouping:
-  boundary_threshold: 0.67
-  non_boundary_threshold: 0.33
-```
-
-Classification:
-
-```text
-score >= 0.67             -> boundary
-score <= 0.33             -> non-boundary
-0.33 < score < 0.67       -> ambiguous
-```
-
-Aggregation is package logic and must be deterministic. The provider cannot
-override vote weights or thresholds in its response.
-
-## 7. Ambiguous-Boundary Second Pass
-
-Each ambiguous gap receives a focused request containing, when available:
-
-```text
-three shots before
-shot_left
-shot_right
-three shots after
-```
-
-Visual evidence includes representative images for all neighboring shots plus
-configured early/late/supplemental evidence when those optional roles exist.
-All supplemental images survive contact-sheet construction in frame order. If
-optional images are unavailable, the request remains valid with representative
-images and records the reduced evidence.
-
-Text evidence includes captions, transcripts, and timeline ranges.
-
-Response:
-
-```json
-{
-  "after_shot_id": "L21_V001_SH00015",
-  "is_scene_boundary": true
-}
-```
-
-The validated second-pass Boolean becomes the final local decision for that
-gap, subject only to a later consistency review of a surrounding region.
-
-## 8. Global Consistency Review
-
-Once every gap has a provisional Boolean decision, package code scans the
-complete sequence. It schedules a larger regional review when it detects:
+Consistency review detects:
 
 - adjacent boundaries that create a one-shot scene;
-- an unusually dense cluster of boundaries;
-- strong disagreement among overlapping primary-window votes; or
-- a missing/unresolved judgement after bounded provider retries.
+- dense local boundary regions; and
+- strong disagreement among overlapping primary votes.
 
-A one-shot scene is not automatically invalid. It triggers review because it
-may represent either a real short scene or an unstable local decision.
+`max_consistency_review_rounds` is a real upper bound. After each round Python
+recomputes the triggers. Review stops when no trigger remains, the configured
+round limit is reached, or a round changes no decision. A valid review replaces
+only the requested gaps. One-shot scenes remain legal; they merely contribute
+to review/quality evidence.
 
-The regional request includes a larger ordered context and asks for every gap
-in the flagged region:
+## Partition Quality Guard
 
-```json
-{
-  "boundaries": [
-    {
-      "after_shot_id": "L21_V001_SH00020",
-      "is_scene_boundary": false
-    },
-    {
-      "after_shot_id": "L21_V001_SH00021",
-      "is_scene_boundary": true
-    },
-    {
-      "after_shot_id": "L21_V001_SH00022",
-      "is_scene_boundary": false
-    }
-  ]
-}
-```
-
-A valid regional result atomically replaces local decisions only for its
-requested gaps. Package code then reruns consistency checks before partitioning.
-The implementation must cap review rounds so provider instability cannot create
-an infinite loop.
-
-If provider calls remain unavailable or invalid after bounded retries, the
-video fails scene grouping. Production must not convert unresolved gaps to
-non-boundaries or silently emit one fallback scene. A successful all-false
-judgement is different: it is valid evidence that the whole shot sequence is
-one scene.
-
-## 9. Deterministic Scene Partition
-
-Package code scans ordered shots and splits after every final boundary:
+After ordinary review, Python constructs a candidate partition and computes the
+versioned deterministic `scene_partition_quality_v1` report:
 
 ```text
-SH00000
-SH00001
-SH00002  <- boundary
-SH00003
-SH00004
-SH00005  <- boundary
-SH00006
-```
-
-```text
-scene 0 = SH00000-SH00002
-scene 1 = SH00003-SH00005
-scene 2 = SH00006-...
-```
-
-Scene IDs follow the existing zero-based, five-digit contract:
-
-```text
-{video_id}_SC{scene_index:05d}
-
-L21_V001_SC00000
-L21_V001_SC00001
-L21_V001_SC00002
-```
-
-The browser proposal's six-digit examples such as `SC000001` are not used.
-
-Ranges are derived only from the first and last shot:
-
-```text
-scene.start_frame = first_shot.start_frame
-scene.end_frame   = last_shot.end_frame
-scene.start_sec   = first_shot.start_sec
-scene.end_sec     = last_shot.end_sec
-```
-
-Frame ranges retain the repository convention `[start_frame, end_frame)`, so
-`end_frame` is exclusive. The VLM never returns or calculates scene IDs,
-frames, timestamps, counts, or ranges.
-
-## 10. Canonical Outputs And Backfills
-
-### `scenes.parquet`
-
-The production target row contains:
-
-```text
-scene_id
-video_id
-scene_index
-start_shot_id
-end_shot_id
-start_frame
-end_frame
-start_sec
-end_sec
-duration_sec
-frame_count
 shot_count
-keyframe_count
-scene_type
-grouping_method
-grouping_version
-confidence
-boundary_convention
-status
+gap_count
+scene_count
+boundary_count
+one_shot_scene_count
+boundary_density
+one_shot_scene_rate
+mean_shots_per_scene
+median_shots_per_scene
+longest_boundary_run
+suspicious
+flags
 ```
 
-For this implementation:
+The initial v1 suspicious rule is intentionally small:
 
 ```text
-grouping_method  = multimodal_context_focus
-grouping_version = scene_grouping_v1
+if shot_count < min_shot_count:
+    normal
+elif every gap is BOUNDARY:
+    suspicious
+elif boundary_density >= configured threshold
+     and one_shot_scene_rate >= configured threshold:
+    suspicious
+else:
+    normal
+```
+
+This rule is a safety trigger, not a semantic truth rule. It does not declare
+that every one-shot scene is invalid, target a scene count, or mutate labels.
+
+## Degenerate Review And Fail-Closed Promotion
+
+A suspicious candidate partition can enter one bounded recovery pass using the
+`scene_boundary_degenerate_label_v1` prompt. The pass re-evaluates every gap
+exactly once per configured round in non-overlapping focus blocks with bounded
+context. It does not force `SAME_SCENE`, select another provider, or send an
+unbounded whole-video prompt.
+
+Python rebuilds and reassesses the partition after recovery:
+
+- normal result: status `pass_after_review`, then promote;
+- suspicious result: raise `ScenePartitionQualityError`, mark the scenes stage
+  `failed_terminal`, and do not promote scenes or run downstream scene
+  summaries/package/sync.
+
+The failure stores compact structured policy/metrics under checkpoint
+`error.details`. Upstream shots, keyframes, ASR, OCR, captions, and shot links
+remain reusable.
+
+## Deterministic Scene Partition
+
+Python scans ordered shots and splits after each accepted boundary. Every scene
+contains at least one consecutive shot and uses the first/last shot for its
+frame/time range.
+
+```text
+scene_id            = {video_id}_SC{scene_index:05d}
 boundary_convention = [start_frame, end_frame)
+grouping_method     = multimodal_context_focus
+grouping_version    = scene_grouping_v2
+schema              = scenes_v2
 ```
 
-`confidence` is a deterministic aggregate of final boundary evidence and must
-be documented in the implementation; it is not a fabricated provider
-probability.
+The structural validator requires complete shot coverage, canonical ordering,
+and no frame gap or overlap. A one-shot video produces one scene,
+`boundary_density = 0`, and is not suspicious.
 
-### Mapping updates
+## Outputs And Diagnostics
 
-After partitioning:
-
-- backfill `shots.scene_id` so every shot belongs to exactly one scene;
-- backfill `keyframes.scene_id` from each keyframe's `shot_id`;
-- build `scene_transcript_links.parquet` from final scene ranges and canonical
-  ASR links; and
-- generate `scene_summaries.parquet` from the final scenes and their evidence.
-
-Canonical `shot_captions.parquet` remains shot-owned and does not depend on
-scene IDs for identity or rebuild behavior.
-
-VLM requests, votes, contact sheets, and caches are intermediate diagnostics;
-they are not new canonical runtime tables and do not belong in System 2's data
-contract.
-
-## 11. Package Interfaces And Layout
-
-Provider interface:
-
-```python
-class SceneBoundaryJudge(Protocol):
-    def judge(
-        self,
-        *,
-        request_kind: str,
-        focus_gap_ids: tuple[str, ...],
-        context: Sequence[Mapping[str, Any]],
-    ) -> Mapping[str, bool]:
-        ...
-```
-
-Pure orchestration interface:
-
-```python
-def group_scenes(
-    shots: list[Shot],
-    shot_evidence: list[ShotEvidence],
-    judge: SceneBoundaryJudge,
-    config: SceneGroupingConfig,
-) -> list[SceneRange]:
-    ...
-```
-
-Implemented module layout:
+The successful scenes checkpoint contains:
 
 ```text
-system1/src/system1/scenes/
-|-- builder.py
-|-- grouping.py
-`-- gemini_judge.py
+scenes.parquet
+scene_transcript_links.parquet
+scene_boundary_diagnostics.jsonl
+scene_partition_quality.json
 ```
 
-- `gemini_judge.py`: the compatibility-named generic structured
-  `SceneBoundaryJudge`, deterministic contact sheets, strict response shape,
-  and request evidence serialization. Qwen is primary and Gemini fallback;
-  models, credentials, timeouts, and retry limits come from config/runtime and
-  are not hardcoded in Notebook 01.
-- `grouping.py`: window planning, contact-sheet request planning, vote
-  aggregation, ambiguous second pass, consistency review, failure handling,
-  partition,
-  and pure validation logic.
-- `phase01/production.py`: load canonical tables, resolve logical image refs to
-  temporary local media, build evidence, invoke grouping, write tables, backfill
-  mappings, and record diagnostics. `builder.py` is the legacy debug path.
-
-Notebook 01 remains thin orchestration. It calls package/CLI behavior and does
-not contain grouping algorithms, prompt text, JSON parsing, cache logic, or
-table mutation.
-
-## 12. Cache And Reproducibility
-
-Every provider request has a deterministic cache key containing:
+`scene_boundary_diagnostics_v2` records deterministic audit fields including:
 
 ```text
-request_kind
-video_id
-ordered shot_ids
-representative/early/late image content hashes actually used
-Vietnamese/English caption content hashes
-transcript content hashes
-focus gaps
-scene grouping config hash
+gap_index
+after_shot_id
+is_boundary
+primary_boundary_score
+vote_count
+true_vote_weight
+false_vote_weight
+review_route
+consistency_review_triggered
+consistency_review_round
+degenerate_review_triggered
 provider
 model_name
-prompt_version
-schema_version
+model_version
 ```
 
-Logical namespaces are kept for:
+Legacy `reason`, `confidence`, and `evidence_used` fields may remain null/empty
+for compatibility; they are not authoritative under the label-only contract.
+Manual QA surfaces the deterministic fields plus compact partition context.
+
+`scene_partition_quality.json` records the policy, initial/final metrics,
+review counts, and one of:
 
 ```text
-primary window judgement cache
-ambiguous-boundary cache
-consistency-review cache
+pass
+pass_after_review
+failed_quality_gate
 ```
 
-These may share one physical content-addressed cache store. Cache entries are
-disposable intermediate state under the run/checkpoint workspace, not canonical
-per-video or runtime artifacts. A response is reusable only when the complete
-key matches; provider/model/prompt/schema/config changes invalidate it
-automatically.
+Only the first two statuses can appear in a successful package. Package
+validation requires the report, verifies its video/counts, and requires
+`final.suspicious = false`.
 
-Cache metadata and diagnostics must not store API keys or other secrets.
+## Reproducibility And Checkpoints
 
-## 13. Validation
+The scenes stage fingerprint already includes the complete
+`phase01.scene_grouping` policy, scene-boundary model/prompt configuration, and
+relevant schema versions. Therefore changes to quality thresholds, review
+policy, prompts, or `scenes_v2` invalidate scenes and downstream stages without
+invalidating upstream artifacts.
 
-Scene grouping passes only when all of the following hold:
+Provider requests continue through the shared stage-local content-addressed
+client cache. Diagnostics and caches must not expose credentials.
 
-1. Every input shot belongs to exactly one scene.
-2. No input shot is omitted.
-3. No shot belongs to two scenes.
-4. Shots inside each scene are consecutive in canonical shot order.
-5. Scene ranges do not overlap.
-6. Scenes create no gap over the ordered shot timeline.
-7. Scene `start_frame`/`end_frame` equal the first/last shot range.
-8. Scene `start_sec`/`end_sec` equal the first/last shot range.
-9. Every frame range uses `[start_frame, end_frame)`.
-10. `scene_id` values are deterministic and unique.
-11. Every scene contains at least one shot.
-12. Every `shots.scene_id` references the scene containing that shot.
-13. Every `keyframes.scene_id` agrees with its linked shot's scene.
-14. Every `scene_transcript_links` row references existing scene and ASR rows.
-15. Provider/cache/prompt/schema/config provenance and final status are
-    present in the per-video manifest or diagnostics.
-
-Provider success does not substitute for partition validation. Provider
-unavailability after bounded retry is a production video failure.
-
-## 14. Required Tests
-
-### Unit tests
-
-- Context/focus/stride window planning is correct at normal, short-video, and
-  end-of-video boundaries.
-- Every real focus gap appears in at least one window.
-- No non-existent gap after the final shot is requested.
-- Contact-sheet tile ordering and labels are deterministic.
-- Weighted overlap aggregation follows the v1 formula.
-- Scores at both thresholds are classified correctly.
-- Ambiguous gaps trigger the second pass.
-- Invalid JSON, unknown gaps, duplicate gaps, extra gaps, and missing gaps are
-  rejected.
-- Regional consistency results replace only requested gaps.
-- Review rounds and retries are bounded.
-- Provider failure after bounded retry fails the production video explicitly.
-- Scene partitioning covers every shot exactly once.
-- Scene ranges and counts derive correctly from shot/keyframe ranges.
-- Shot/keyframe scene backfills and scene-transcript links remain consistent.
-- Cache keys change when any image, caption, transcript, focus gap, config,
-  provider, model, prompt, or schema input changes.
-
-### Behavioral fixtures
-
-1. A -> B -> A camera sequence within one conversation remains one scene.
-2. A move from a train station to a street creates a scene boundary.
-3. Camera-angle changes without event change do not create a boundary.
-4. Similar captions with a clear transcript topic change use both modalities.
-5. Empty transcript with a strong visual setting change can still create a
-   boundary.
-6. Adjacent boundaries forming a one-shot scene trigger consistency review.
-7. A genuinely short one-shot scene survives review when evidence supports it.
-8. Provider outage fails the production video and cannot produce a misleading
-   successful partition.
-
-Tests use fake deterministic judges and fixtures. Live local-Qwen and Gemini
-calls are a separate opt-in integration/rehearsal layer and are not required
-for unit-test determinism.
-
-## 15. Complete Execution Sequence
+## Implementation Map
 
 ```text
-load ordered shots
-  -> load representative and optional early/late/supplemental keyframes
-  -> load canonical shot captions
-  -> load ASR segments and shot-transcript links
-  -> build ShotEvidence
-  -> plan overlapping context/focus windows
-  -> create deterministic contact sheets
-  -> call SceneBoundaryJudge for primary windows
-  -> validate and cache structured responses
-  -> aggregate overlapping weighted votes
-  -> second-pass ambiguous gaps
-  -> consistency-review conflicting regions
-  -> fail the video if any gap remains unresolved after bounded retry
-  -> construct contiguous deterministic scene partition
-  -> validate partition and ranges
-  -> write scenes.parquet
-  -> backfill shots.scene_id and keyframes.scene_id
-  -> write scene_transcript_links.parquet
-  -> generate scene_summaries.parquet
-  -> write manifest provenance, diagnostics, errors, and final status
+system1/src/system1/scenes/grouping.py
+  deterministic windows, voting, reviews, quality assessment, partition
+
+system1/src/system1/scenes/vlm_judge.py
+  contact sheets, one strict label request per gap, provider diagnostics
+
+system1/src/system1/phase01/production.py
+  evidence loading, quality artifact, promotion gate, terminal failure
+
+system1/src/system1/phase01/validation.py
+  successful-package defense-in-depth
+
+system1/src/system1/phase01/qa.py
+  operator-facing boundary and partition evidence
 ```
 
-This is the canonical Phase01 scene-grouping design. Future changes may optimize
-batching, contact-sheet rendering, or cache storage, but must preserve the
-inputs, structured boundary semantics, deterministic partition authority,
-canonical IDs/ranges, validation guarantees, and explicit failure behavior
-defined here.
+Notebook 01 remains thin orchestration and contains no grouping algorithm,
+prompt, parsing, or partition logic.
+
+## Required Proof
+
+Deterministic tests cover:
+
+- focus-window coverage and weighted votes;
+- ambiguous focused review;
+- bounded consistency rounds and stable early stop;
+- all-false one-scene behavior;
+- short videos below the safety threshold;
+- suspicious all-boundary recovery and unresolved failure;
+- legitimate isolated one-shot scenes;
+- single-shot videos;
+- scene-stage fingerprint invalidation;
+- terminal failure classification and structured error details;
+- quality report packaging and package validation; and
+- deterministic manual-QA diagnostics.
+
+These tests prove the contract, not real-model semantic accuracy. Before a full
+dataset run, rerun a heterogeneous real Qwen/Vintern smoke and calibrate the
+quality thresholds against normal edited video and legitimate rapid montage.

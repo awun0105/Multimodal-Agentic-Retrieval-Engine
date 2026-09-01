@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "scenes_v1",
+  "title": "scenes_v2",
   "type": "object",
   "required": ["scene_id", "video_id", "scene_index", "start_shot_id", "end_shot_id", "start_frame", "end_frame", "start_sec", "end_sec", "duration_sec", "frame_count", "shot_count", "keyframe_count", "scene_type", "grouping_method", "grouping_version", "confidence", "boundary_convention", "status"],
   "properties": {
@@ -19,7 +19,7 @@
     "keyframe_count": {"type": "integer", "minimum": 0},
     "scene_type": {"const": "semantic"},
     "grouping_method": {"const": "multimodal_context_focus"},
-    "grouping_version": {"const": "scene_grouping_v1"},
+    "grouping_version": {"const": "scene_grouping_v2"},
     "confidence": {"type": "null"},
     "boundary_convention": {"const": "[start_frame, end_frame)"},
     "status": {"const": "pass"}

@@ -398,6 +398,7 @@ def _validate_prompt_files(config: ResolvedPhase01Config) -> None:
         str(models["scene_boundary"]["prompt_version"]),
         str(models["scene_boundary"]["focused_prompt_version"]),
         str(models["scene_boundary"]["consistency_prompt_version"]),
+        str(models["scene_boundary"]["degenerate_prompt_version"]),
         *map(str, models["scene_summary"]["prompt_versions"].values()),
     }
     prompt_root = Path(__file__).resolve().parents[3] / "prompts"
@@ -446,8 +447,8 @@ def _validate_transformers_runtime_imports() -> None:
             AutoTokenizer,
             GenerationConfig,
             LlamaForCausalLM,
-            Qwen2ForCausalLM,
             Qwen2_5_VLForConditionalGeneration,
+            Qwen2ForCausalLM,
         )
     except (ImportError, RuntimeError, OSError) as exc:
         raise RuntimeError(

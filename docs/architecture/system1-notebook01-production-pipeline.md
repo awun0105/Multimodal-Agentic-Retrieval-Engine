@@ -440,12 +440,20 @@ caption objects/actions, canonical OCR, ASR transcript evidence, and the
 timeline. It does not use organizer support artifacts, embeddings, or organizer
 metadata as boundary evidence.
 
-The configured structured client returns only strict Boolean adjacent-shot
-boundary judgements. Qwen is primary and Gemini is fallback. Package
-code owns overlap voting, ambiguity review, consistency review, deterministic
-scene partitioning, IDs, ranges, mappings, and validation. Every shot belongs
-to exactly one scene; scenes cannot overlap, leave a shot-order gap, or reorder
-shots.
+The configured semantic client returns one strict `BOUNDARY | SAME_SCENE`
+adjacent-shot label per request. Qwen is primary and the existing sticky local
+fallback is Vintern-3B-R. Package code owns overlap voting, ambiguity review,
+bounded consistency review, deterministic scene partitioning, IDs, ranges,
+mappings, and validation. Every shot belongs to exactly one scene; scenes
+cannot overlap, leave a shot-order gap, or reorder shots.
+
+Before promotion, `scene_grouping_v2` computes partition-level boundary-density
+and one-shot-scene metrics. A suspicious result receives one configured bounded
+degenerate semantic review. If the rebuilt partition remains suspicious, the
+scenes stage fails terminally and is not promoted. A successful stage writes
+`scene_partition_quality.json`; successful package validation requires that
+report to have `pass` or `pass_after_review` status and a non-suspicious final
+partition.
 
 A valid all-false boundary result creates one successful scene. Failure of both
 the local primary and configured fallback after bounded retry fails the video;
@@ -507,6 +515,7 @@ The per-video structure package is:
 |-- diagnostics/
 |   |-- keyframe_diagnostics.jsonl
 |   |-- scene_boundary_diagnostics.jsonl
+|   |-- scene_partition_quality.json
 |   |-- transnet_predictions.json
 |   |-- asr_status.json
 |   `-- ocr_status.json
