@@ -21,6 +21,7 @@ STAGES = (
     "shot_captions",
     "shot_transcript_links",
     "scenes",
+    "scene_transcript_links",
     "scene_summaries",
     "package",
     "sync",
@@ -33,7 +34,15 @@ STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "shot_captions": ("keyframes", "ocr"),
     "shot_transcript_links": ("shots", "asr"),
     "scenes": ("shots", "keyframes", "ocr", "shot_captions", "shot_transcript_links"),
-    "scene_summaries": ("scenes", "keyframes", "ocr", "shot_captions", "shot_transcript_links"),
+    "scene_transcript_links": ("scenes", "asr"),
+    "scene_summaries": (
+        "scenes",
+        "scene_transcript_links",
+        "asr",
+        "keyframes",
+        "ocr",
+        "shot_captions",
+    ),
     "package": (
         "shots",
         "keyframes",
@@ -42,6 +51,7 @@ STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
         "shot_captions",
         "shot_transcript_links",
         "scenes",
+        "scene_transcript_links",
         "scene_summaries",
     ),
     "sync": ("package",),
@@ -141,9 +151,12 @@ class CheckpointManager:
         if not self.store.exists(self.state_path):
             self._state_cache = self._empty_state()
             return copy.deepcopy(self._state_cache)
-        payload = self.store.read_json(self.state_path)
+        raw_payload = self.store.read_json(self.state_path)
+        payload, migrated = self._migrate_state(raw_payload)
         _validate_checkpoint_state(payload)
         self._validate_state_identity(payload)
+        if migrated:
+            self.store.write_json(self.state_path, payload)
         self._state_cache = payload
         return copy.deepcopy(payload)
 
@@ -369,7 +382,7 @@ class CheckpointManager:
 
     def _empty_state(self) -> dict[str, Any]:
         return {
-            "schema_version": "phase01_checkpoint_state_v1",
+            "schema_version": "phase01_checkpoint_state_v2",
             "release_id": self.release_id,
             "video_id": self.video_id,
             "config_hash": self.config_hash,
@@ -393,13 +406,36 @@ class CheckpointManager:
         }
 
     def _validate_state_identity(self, payload: Mapping[str, Any]) -> None:
-        if payload.get("schema_version") != "phase01_checkpoint_state_v1":
+        if payload.get("schema_version") != "phase01_checkpoint_state_v2":
             raise ValueError("Unsupported Phase01 checkpoint schema")
         if payload.get("release_id") != self.release_id or payload.get("video_id") != self.video_id:
             raise ValueError("Checkpoint identity does not match requested release/video")
         stages = payload.get("stages")
         if not isinstance(stages, dict) or set(stages) != set(STAGES):
             raise ValueError("Checkpoint state has an invalid stage set")
+
+    def _migrate_state(
+        self, payload: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
+        version = payload.get("schema_version")
+        if version == "phase01_checkpoint_state_v2":
+            return copy.deepcopy(dict(payload)), False
+        if version != "phase01_checkpoint_state_v1":
+            raise ValueError("Unsupported Phase01 checkpoint schema")
+        migrated = copy.deepcopy(dict(payload))
+        stages = migrated.get("stages")
+        if not isinstance(stages, dict):
+            raise TypeError("Checkpoint state has an invalid stage set")
+        expected_v1 = set(STAGES) - {"scene_transcript_links"}
+        if set(stages) != expected_v1:
+            raise ValueError("Phase01 v1 checkpoint state has an invalid stage set")
+        stages["scene_transcript_links"] = self._empty_stage(
+            "scene_transcript_links"
+        )
+        migrated["schema_version"] = "phase01_checkpoint_state_v2"
+        migrated["status"] = self._video_status(migrated)
+        migrated["updated_at"] = utc_now()
+        return migrated, True
 
     def _invalidate_stage(self, stage: str, state: dict[str, Any]) -> None:
         state["stages"][stage].update(self._empty_stage(stage, status="invalidated"))
@@ -417,7 +453,7 @@ class CheckpointManager:
     @staticmethod
     def _video_status(state: Mapping[str, Any]) -> str:
         statuses = [record["status"] for record in state["stages"].values()]
-        if statuses[-1] == "complete":
+        if statuses and all(status == "complete" for status in statuses):
             return "complete"
         if "failed_terminal" in statuses:
             return "failed_terminal"

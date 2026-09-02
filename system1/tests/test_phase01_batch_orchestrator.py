@@ -254,7 +254,14 @@ def _configure_batch_fixture(
     monkeypatch.setattr(
         production,
         "transcribe_video",
-        lambda *_args, **_kwargs: AsrResult("no_audio", [], None, 0, None),
+        lambda *_args, **_kwargs: AsrResult(
+            status="no_audio",
+            segment_rows=[],
+            word_rows=[],
+            compute_type=None,
+            attempts=0,
+            detected_language=None,
+        ),
     )
     monkeypatch.setattr(
         production,
@@ -352,7 +359,14 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     monkeypatch.setattr(
         production,
         "transcribe_video",
-        lambda *_args, **_kwargs: AsrResult("no_audio", [], None, 0, None),
+        lambda *_args, **_kwargs: AsrResult(
+            status="no_audio",
+            segment_rows=[],
+            word_rows=[],
+            compute_type=None,
+            attempts=0,
+            detected_language=None,
+        ),
     )
     monkeypatch.setattr(
         production,
@@ -392,9 +406,10 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         "asr",
         "ocr",
         "shot_captions",
-        "shot_transcript_links",
-        "scenes",
-        "scene_summaries",
+            "shot_transcript_links",
+            "scenes",
+            "scene_transcript_links",
+            "scene_summaries",
         "package",
     }
     assert payload["videos"][0]["stage_sources"] == {
@@ -433,6 +448,49 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         *SEMANTIC_REQUEST_KINDS,
     ]
 
+    # Simulate an older/interrupted run that has accepted scenes but has not
+    # completed the new deterministic scene-link stage. Resume must preserve
+    # scenes and rebuild only the new stage plus its downstream consumers.
+    interrupted = checkpoint_store.read_json(
+        f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
+    )
+    pending_template = dict(interrupted["stages"]["sync"])
+    for stage in ("scene_transcript_links", "scene_summaries", "package"):
+        interrupted["stages"][stage] = {
+            **pending_template,
+            "stage": stage,
+            "config_hash": resolved.stage_config_hashes[stage],
+        }
+    interrupted["status"] = "running"
+    checkpoint_store.write_json(
+        f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json",
+        interrupted,
+    )
+
+    resumed_report = production.process_production_batch(
+        release_dir=release,
+        config=resolved,
+        scratch_root=tmp_path / "scratch",
+        transnet_artifact_dir=tmp_path / "transnet",
+        sync_release=False,
+    )
+    resumed_payload = json.loads(resumed_report.read_text(encoding="utf-8"))
+    assert resumed_payload["videos"][0]["stage_sources"] == {
+        stage: (
+            "computed"
+            if stage in {"scene_transcript_links", "scene_summaries", "package"}
+            else "restored"
+        )
+        for stage in expected_local_stages
+    }
+    expected_requests_after_resume = [
+        "keyframe_ocr",
+        *SEMANTIC_REQUEST_KINDS,
+        "scene_summary_vi",
+        "scene_summary_en",
+    ]
+    assert FakeLocalStructuredClient.requests == expected_requests_after_resume
+
     before_metadata_change = checkpoint_store.read_json(
         f"phase01_checkpoints/canonical_release_v001/{video_id}/state.json"
     )
@@ -457,10 +515,7 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
         after_metadata_change["stages"]["package"]["input_fingerprint"]
         != before_metadata_change["stages"]["package"]["input_fingerprint"]
     )
-    assert FakeLocalStructuredClient.requests == [
-        "keyframe_ocr",
-        *SEMANTIC_REQUEST_KINDS,
-    ]
+    assert FakeLocalStructuredClient.requests == expected_requests_after_resume
     artifact = release / "artifacts" / "structure" / f"{video_id}_structure.zip"
     with zipfile.ZipFile(artifact) as archive:
         names = set(archive.namelist())

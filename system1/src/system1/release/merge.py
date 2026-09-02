@@ -14,6 +14,7 @@ from system1.release.types import write_json
 
 STRUCTURE_TABLES = [
     "asr_segments",
+    "asr_words",
     "shots",
     "scenes",
     "keyframes",

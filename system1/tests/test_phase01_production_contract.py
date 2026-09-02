@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 from typer.testing import CliRunner
 
+from system1.asr import AsrAlignmentError
 from system1.cli import app
 from system1.config import (
     load_configs,
@@ -129,8 +130,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_6"
-    assert phase01["pipeline_id"] == "phase01_production_v1_6"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_7"
+    assert phase01["pipeline_id"] == "phase01_production_v1_7"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -161,6 +162,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "shot_captions",
         "shot_transcript_links",
         "scenes",
+        "scene_transcript_links",
         "scene_summaries",
         "package",
         "sync",
@@ -312,6 +314,34 @@ def test_scene_quality_guard_config_is_validated(
         require_phase01_production_ready(resolved)
 
 
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        (("required_for_accepted_segments",), False, "required_for_accepted_segments"),
+        (("policy",), "unknown", "alignment.policy"),
+        (("interval_assignment", "policy"), "unknown", "interval assignment"),
+        (("interval_assignment", "interval_convention"), "closed", "interval convention"),
+        (("text_reconstruction", "normalization"), "unknown", "reconstruction"),
+    ],
+)
+def test_asr_alignment_config_is_validated(
+    path: tuple[str, ...], value: object, message: str
+) -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    target = resolved.payload["phase01"]["asr"]["alignment"]
+    for component in path[:-1]:
+        target = target[component]
+    target[path[-1]] = value
+
+    with pytest.raises(ValueError, match=message):
+        require_phase01_production_ready(resolved)
+
+
 def test_suspicious_scene_partition_fails_terminal_quality_gate() -> None:
     quality = _scene_quality(suspicious=True)
     result = SceneGroupingResult(
@@ -345,6 +375,10 @@ def test_suspicious_scene_partition_fails_terminal_quality_gate() -> None:
     assert captured.value.details["manual_review_required"] is True
     assert captured.value.details["final"]["suspicious"] is True
     assert _retryable_video_error(captured.value) is False
+
+
+def test_deterministic_asr_alignment_failure_is_terminal() -> None:
+    assert _retryable_video_error(AsrAlignmentError("impossible CTC path")) is False
 
 
 def test_suspicious_scene_partition_never_promotes_checkpoint(
@@ -389,10 +423,8 @@ def test_suspicious_scene_partition_never_promotes_checkpoint(
             failure_diagnostics_ref="checkpoints/v/failures/scenes/fingerprint",
             input_fingerprint="f" * 64,
             scenes_path=tmp_path / "scenes.parquet",
-            scene_links_path=tmp_path / "scene_transcript_links.parquet",
             scene_diagnostics_path=tmp_path / "scene_boundary_diagnostics.jsonl",
             scene_quality_path=tmp_path / "scene_partition_quality.json",
-            asr_rows=[],
             model={},
             prompt_version="prompt",
             schema_version="scenes_v2",
@@ -587,8 +619,8 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_6"
-    assert diagnostics["models_schema_version"] == "phase01_models_v1_4"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_7"
+    assert diagnostics["models_schema_version"] == "phase01_models_v1_5"
     assert diagnostics["asr"] == {
         "provider": "nemo",
         "model_id": "nvidia/parakeet-ctc-0.6b-vi",
@@ -788,7 +820,21 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
         keyframes=keyframes,
         ocr_rows=[],
         captions=captions,
-        asr_rows=[],
+        asr_words=[{
+            "asr_word_id": "L21_V001_ASR00000_W00000",
+            "asr_segment_id": "L21_V001_ASR00000",
+            "word_index": 0,
+            "text": "xin",
+            "start_sec": 0.1,
+            "end_sec": 0.3,
+        }, {
+            "asr_word_id": "L21_V001_ASR00000_W00001",
+            "asr_segment_id": "L21_V001_ASR00000",
+            "word_index": 1,
+            "text": "chào",
+            "start_sec": 0.4,
+            "end_sec": 0.7,
+        }],
         scene_links=[],
         stage_dir=stage_dir,
         client=client,
@@ -804,6 +850,7 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
     assert rows[0]["summary_vi"] == "Một người đang phát biểu."
     assert rows[0]["summary_en"] == "A person is speaking."
     assert rows[0]["provider"] == "mixed"
+    assert "SCENE_TRANSCRIPT:\nxin chào" in client.batches[0][0].prompt
     provenance = (
         stage_dir / "scene_summary_field_provenance.jsonl"
     ).read_text(encoding="utf-8").splitlines()
@@ -906,6 +953,8 @@ def test_phase01_config_encodes_oom_and_dependency_invalidation_policy() -> None
         "shot_captions",
         "shot_transcript_links",
     }
+    assert set(dependencies["scene_transcript_links"]) == {"scenes", "asr"}
+    assert "scene_transcript_links" in dependencies["scene_summaries"]
     assert dependencies["sync"] == ["package"]
 
 
@@ -997,6 +1046,27 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
     ):
         assert quality_hashes[stage] == resolved.stage_config_hashes[stage]
 
+    scene_links_changed = copy.deepcopy(resolved.payload)
+    scene_links_changed["phase01"]["schemas"][
+        "scene_transcript_links"
+    ] = "scene_transcript_links_v999"
+    scene_links_hashes = _stage_config_hashes(scene_links_changed)
+    assert (
+        scene_links_hashes["scene_transcript_links"]
+        != resolved.stage_config_hashes["scene_transcript_links"]
+    )
+    for stage in ("asr", "shot_transcript_links", "scenes"):
+        assert scene_links_hashes[stage] == resolved.stage_config_hashes[stage]
+
+    assignment_changed = copy.deepcopy(resolved.payload)
+    assignment_changed["phase01"]["asr"]["alignment"]["interval_assignment"][
+        "interval_convention"
+    ] = "test-only-policy-change"
+    assignment_hashes = _stage_config_hashes(assignment_changed)
+    assert assignment_hashes["asr"] == resolved.stage_config_hashes["asr"]
+    for stage in ("shot_transcript_links", "scene_transcript_links"):
+        assert assignment_hashes[stage] != resolved.stage_config_hashes[stage]
+
 
 def test_phase01_config_can_select_nemo_asr_provider() -> None:
     resolved = resolve_phase01_config(
@@ -1031,6 +1101,7 @@ def test_phase01_config_can_select_faster_whisper_asr_provider() -> None:
     assert asr["provider"] == "faster_whisper"
     assert asr["model_id"] == "Systran/faster-whisper-large-v3"
     assert asr["model_revision"] == "edaa852ec7e145841d8ffdb056a99866b5f0a478"
+    assert asr["word_timestamps"] is True
 
 
 def test_resolved_config_is_stable_secret_free_and_auto_resolves_release(tmp_path: Path) -> None:
@@ -1237,6 +1308,7 @@ def test_phase01_json_schemas_lock_checkpoint_and_keyframe_contracts() -> None:
         "shot_captions",
         "shot_transcript_links",
         "scenes",
+        "scene_transcript_links",
         "scene_summaries",
         "package",
         "sync",
@@ -1353,7 +1425,12 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
     }
     for name, values in rows.items():
         pd.DataFrame(values).to_parquet(stage / f"{name}.parquet", index=False)
-    for name in ("asr_segments", "shot_transcript_links", "scene_transcript_links"):
+    for name in (
+        "asr_segments",
+        "asr_words",
+        "shot_transcript_links",
+        "scene_transcript_links",
+    ):
         pd.DataFrame(columns=PARQUET_COLUMNS[name]).to_parquet(
             stage / f"{name}.parquet", index=False
         )

@@ -49,7 +49,7 @@ shot-to-transcript links. Each ordered `ShotEvidence` item contains:
 - representative image and available early/late/supplemental images;
 - Vietnamese and English caption, objects, actions, and visible-text summary;
 - canonical OCR text;
-- overlapping ASR text; and
+- temporally attributed word-level shot transcript; and
 - timeline order.
 
 Organizer detections, embeddings, and organizer metadata are not boundary
@@ -200,10 +200,14 @@ The successful scenes checkpoint contains:
 
 ```text
 scenes.parquet
-scene_transcript_links.parquet
 scene_boundary_diagnostics.jsonl
 scene_partition_quality.json
 ```
+
+After accepted scenes are promoted, the deterministic first-class
+`scene_transcript_links` stage writes `scene_transcript_links.parquet` from
+scene/segment overlap. That table preserves segment provenance; word-level
+assignment owns scene-specific transcript text.
 
 `scene_boundary_diagnostics_v2` records deterministic audit fields including:
 

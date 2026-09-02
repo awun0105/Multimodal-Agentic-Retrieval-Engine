@@ -44,10 +44,11 @@ official video
   -> deterministic representative-keyframe selection
   -> default pinned NeMo/Parakeet Vietnamese ASR, or Faster-Whisper Large-v3 override
   -> OpenCV text-presence gate, then Vintern OCR for uncertain/text frames
-  -> shared 4-bit Qwen strict shot-caption JSON, batched over representative frames
-  -> ASR-to-shot alignment
+  -> shared 4-bit Qwen plain-text shot-caption fields, batched over representative frames
+  -> canonical ASR word alignment and deterministic ASR-to-shot attribution
   -> shared Qwen multimodal context-focus scene grouping
-  -> shared Qwen strict bilingual scene-summary JSON
+  -> deterministic ASR-to-scene attribution
+  -> shared Qwen bilingual plain-text scene summaries
   -> exclusive sticky Vintern-3B-R fallback for failed semantic requests/runtime
   -> validated per-video structure ZIP
 ```
@@ -86,13 +87,14 @@ release and checkpoint writes go only to configured test repositories under
 be `computed`:
 
 ```text
-shots, keyframes, asr, ocr, shot_captions,
-shot_transcript_links, scenes, scene_summaries, package, sync
+shots, keyframes, asr, ocr, shot_captions, shot_transcript_links,
+scenes, scene_transcript_links, scene_summaries, package, sync
 ```
 
 The smoke report records dependency/runtime identity, providers, timings,
-RAM/VRAM peaks, row counts, representative ASR/OCR/caption/summary rows, package
-validation, and remote checksum proof. Local fixture, output, checkpoint cache,
+RAM/VRAM peaks, row counts, representative ASR segment/word, OCR, caption and
+summary rows, word-alignment coverage, unassigned/duplicate word counts,
+package validation, and remote checksum proof. Local fixture, output, checkpoint cache,
 and run scratch are removable while the shared model cache remains. Optional
 remote cleanup enumerates and validates each exact object and refuses deletion
 unless the repository and `_smoke/<run_id>` prefix match configured test
@@ -324,6 +326,15 @@ runtime preflight. Production does not fall back to greedy decoding. Missing or
 mismatched pinned artifacts fail preflight; transient decoder or resource
 failure receives the bounded video retry and then fails that video explicitly.
 
+Flashlight remains the sole canonical transcript authority. NeMo 2.7.3 retains
+the CTC acoustic matrix from that same inference; package code retokenizes the
+Flashlight text with the model tokenizer and performs deterministic CTC
+Viterbi forced alignment. Output timestep duration comes from the runtime
+preprocessor stride and encoder subsampling factor. There is no second greedy
+inference and `compute_timestamps` remains disabled for beam decoding. Every
+accepted segment must reconstruct from one or more canonical `asr_words_v1`
+rows or the ASR stage fails terminally.
+
 CTC blank ratio, non-blank posterior, normalized entropy, text density,
 character rate, and repetition checks run after decoding. Rejected candidates
 remain in `asr_diagnostics.jsonl` with reason codes and acoustic metrics but do
@@ -332,7 +343,7 @@ short meaningful speech and lyrics; they are intended for calibration from
 real smoke evidence rather than semantic deletion by an LLM.
 
 - No audio stream: record video ASR status `no_audio`; emit an empty,
-  schema-valid `asr_segments.parquet` and empty
+  schema-valid `asr_segments.parquet`, `asr_words.parquet`, and empty
   `shot_transcript_links.parquet`; continue the video.
 - Audio exists but VAD finds no speech: record `no_speech`; emit empty
   schema-valid ASR/link tables; continue.
@@ -344,6 +355,9 @@ real smoke evidence rather than semantic deletion by an LLM.
 - Every non-empty ASR row stores `asr_segment_id`, `video_id`, time range,
   decoded-frame range when resolvable, text, detected language, confidence when
   available, provider/model/version, and status.
+- Every accepted ASR segment has ordered canonical word rows with stable IDs,
+  word-local time/frame ranges, alignment method/version, and matching
+  provider/model identity. Rejected hypotheses never fabricate word rows.
 
 ## OCR And Canonical Shot Captions
 
@@ -417,7 +431,10 @@ local fallback.
 
 ## Transcript-Shot Alignment
 
-`shot_transcript_links.parquet` links ASR segments to every overlapping shot.
+`shot_transcript_links.parquet` links ASR segments to every overlapping shot
+for provenance. Text attribution is separate: aligned words are assigned to
+exactly one half-open shot interval by maximum temporal overlap, with midpoint
+and right-boundary ownership as deterministic tie breakers.
 It contains at least:
 
 ```text
@@ -425,9 +442,12 @@ video_id
 shot_id
 asr_segment_id
 coverage
+assigned_word_count
 ```
 
-Coverage is derived deterministically from time overlap. Empty `no_audio` or
+The v2 contract also carries overlap start/end/duration plus explicit segment
+and entity coverage; `coverage` remains a compatibility alias for segment
+coverage. Empty `no_audio` or
 `no_speech` ASR produces an empty schema-valid link table, not fabricated text.
 
 ## Scene Grouping
@@ -437,7 +457,8 @@ The authoritative algorithm is
 
 Its inputs are ordered shots, representative images, optional
 early/late/supplemental images for focused review, bilingual shot captions,
-caption objects/actions, canonical OCR, ASR transcript evidence, and the
+caption objects/actions, canonical OCR, temporally attributed word-level shot
+transcript evidence, and the
 timeline. It does not use organizer support artifacts, embeddings, or organizer
 metadata as boundary evidence.
 
@@ -464,7 +485,9 @@ production does not turn an unresolved result into one fabricated scene.
 
 Only after scene boundaries are fixed, the same shared Qwen runtime receives
 the scene's sampled representative images, bilingual shot captions,
-objects/actions, OCR, ASR transcript evidence, and timeline. Vintern-3B-R
+objects/actions, OCR, a scene-specific transcript assembled from words assigned
+exactly once to that scene interval, and timeline. Segment links remain
+provenance and are never used to duplicate full segment text. Vintern-3B-R
 receives the same bounded evidence only when local fallback is required.
 Vietnamese and English summaries are separate required plain-text requests;
 Python assembles and validates the canonical row.
@@ -502,6 +525,7 @@ The per-video structure package is:
 |-- ocr.parquet
 |-- shot_captions.parquet
 |-- asr_segments.parquet
+|-- asr_words.parquet
 |-- shot_transcript_links.parquet
 |-- scenes.parquet
 |-- scene_transcript_links.parquet
@@ -522,10 +546,10 @@ The per-video structure package is:
 `-- errors.jsonl
 ```
 
-`scene_transcript_links.parquet` is retained even though it was omitted from
-the proposed list. It is the canonical direct mapping from scene context to ASR
-segments used by System 2 and is already part of the repository data contract.
-It is derived after the scene partition is fixed.
+`scene_transcript_links.parquet` is the canonical segment-level provenance map
+for scenes. It is derived in its own checkpoint stage after the scene partition
+is accepted. Scene-specific text is assembled from `asr_words.parquet`, not by
+copying the full text of every overlapping segment.
 
 Contact sheets, raw provider responses, retry logs, and request caches are
 intermediate/checkpoint data and are not canonical runtime tables.
@@ -579,8 +603,8 @@ independent retrieval indexes.
 - Model/decode/inference/API failure after bounded retry fails the video at the
   responsible stage.
 - The checkpoint key is `release_id + video_id + stage`. Stages are `shots`,
-  `keyframes`, `asr`, `shot_captions`, `shot_transcript_links`, `scenes`,
-  `scene_summaries`, `package`, and `sync`.
+  `keyframes`, `asr`, `ocr`, `shot_captions`, `shot_transcript_links`, `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
 - Each stage stores status, input fingerprint, relevant config hash,
   model/revision, prompt version when applicable, schema version, output
   checksums, and completion time.

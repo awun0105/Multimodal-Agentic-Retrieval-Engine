@@ -9,9 +9,10 @@ import threading
 import time
 import traceback
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any
 
 import pandas as pd
 
@@ -19,6 +20,7 @@ from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.artifacts.package import validate_artifact_zip
 from system1.artifacts.reports import utc_now
+from system1.asr.links import assign_words_to_intervals
 from system1.config import (
     ResolvedPhase01Config,
     load_configs,
@@ -40,9 +42,12 @@ from system1.phase01.runner import (
     _hf_store,
     _scratch_root,
 )
-from system1.phase01_qualification import new_run_id, sanitize_payload, write_json_atomic
+from system1.phase01_qualification import (
+    new_run_id,
+    sanitize_payload,
+    write_json_atomic,
+)
 from system1.release.sync import phase00_ingestion_remote_prefix
-
 
 _REQUIRED_STAGES = (
     "shots",
@@ -52,6 +57,7 @@ _REQUIRED_STAGES = (
     "shot_captions",
     "shot_transcript_links",
     "scenes",
+    "scene_transcript_links",
     "scene_summaries",
     "package",
     "sync",
@@ -336,7 +342,7 @@ def run_phase01_smoke(
 def _smoke_policy(configs: Mapping[str, Any]) -> dict[str, Any]:
     value = configs["phase01"].get("smoke")
     if not isinstance(value, dict):
-        raise ValueError("phase01.yaml is missing smoke policy")
+        raise TypeError("phase01.yaml is missing smoke policy")
     if value.get("schema_version") != "phase01_real_smoke_config_v1":
         raise ValueError("unsupported Phase01 smoke policy")
     required = set(_REQUIRED_STAGES)
@@ -551,7 +557,7 @@ def _inspect_smoke_package(
             "scene_summaries",
         }
         if require_non_empty_asr:
-            required_non_empty.add("asr_segments")
+            required_non_empty.update(("asr_segments", "asr_words"))
         empty = sorted(name for name in required_non_empty if counts.get(name, 0) < 1)
         if empty:
             raise RuntimeError(f"smoke package has empty required outputs: {empty}")
@@ -563,6 +569,7 @@ def _inspect_smoke_package(
                 preferred_text_fields=("text",),
                 require_text=require_non_empty_asr,
             ),
+            "asr_words": _asr_word_sample(archive, video_id),
             "ocr": _parquet_sample(
                 archive,
                 video_id,
@@ -585,6 +592,17 @@ def _inspect_smoke_package(
                 require_text=True,
             ),
         }
+        temporal_metrics = _asr_temporal_metrics(archive, video_id)
+        if require_non_empty_asr and temporal_metrics["word_alignment_coverage"] != 1.0:
+            raise RuntimeError("smoke ASR word alignment coverage is not complete")
+        for field in (
+            "unassigned_shot_word_count",
+            "unassigned_scene_word_count",
+            "duplicate_shot_word_count",
+            "duplicate_scene_word_count",
+        ):
+            if temporal_metrics[field] != 0:
+                raise RuntimeError(f"smoke ASR temporal integrity failed: {field}")
     return {
         "path": str(artifact_path),
         "sha256": sha256_file(artifact_path),
@@ -593,7 +611,81 @@ def _inspect_smoke_package(
         "artifact_manifest": artifact_manifest,
         "row_counts": counts,
         "samples": samples,
+        "asr_temporal_alignment": temporal_metrics,
         "remote_checksum": "pass",
+    }
+
+
+def _asr_word_sample(
+    archive: zipfile.ZipFile,
+    video_id: str,
+) -> list[dict[str, Any]]:
+    frame = pd.read_parquet(
+        io.BytesIO(archive.read(f"{video_id}/asr_words.parquet"))
+    )
+    if frame.empty:
+        return []
+    first_segment = str(frame.iloc[0]["asr_segment_id"])
+    rows = frame[frame["asr_segment_id"].astype(str) == first_segment]
+    return [
+        sanitize_payload(
+            {
+                key: _json_scalar(row[key])
+                for key in (
+                    "asr_word_id",
+                    "asr_segment_id",
+                    "text",
+                    "start_sec",
+                    "end_sec",
+                    "alignment_method",
+                    "alignment_version",
+                )
+            }
+        )
+        for row in rows.head(5).to_dict("records")
+    ]
+
+
+def _asr_temporal_metrics(
+    archive: zipfile.ZipFile,
+    video_id: str,
+) -> dict[str, Any]:
+    def read(filename: str) -> pd.DataFrame:
+        return pd.read_parquet(io.BytesIO(archive.read(f"{video_id}/{filename}")))
+
+    segments = read("asr_segments.parquet")
+    words = read("asr_words.parquet")
+    shots = read("shots.parquet")
+    scenes = read("scenes.parquet")
+    segment_ids_with_words = set(words["asr_segment_id"].astype(str))
+    accepted_count = len(segments)
+
+    def attribution(frame: pd.DataFrame, entity_id: str) -> tuple[int, int]:
+        assigned = assign_words_to_intervals(
+            frame.to_dict("records"),
+            words.to_dict("records"),
+            entity_id_field=entity_id,
+        )
+        word_ids = [
+            str(word["asr_word_id"])
+            for rows in assigned.values()
+            for word in rows
+        ]
+        return len(words) - len(set(word_ids)), len(word_ids) - len(set(word_ids))
+
+    unassigned_shot, duplicate_shot = attribution(shots, "shot_id")
+    unassigned_scene, duplicate_scene = attribution(scenes, "scene_id")
+    return {
+        "segment_count": accepted_count,
+        "word_count": len(words),
+        "segments_with_words": len(segment_ids_with_words),
+        "word_alignment_coverage": (
+            len(segment_ids_with_words) / accepted_count if accepted_count else 1.0
+        ),
+        "unassigned_shot_word_count": unassigned_shot,
+        "unassigned_scene_word_count": unassigned_scene,
+        "duplicate_shot_word_count": duplicate_shot,
+        "duplicate_scene_word_count": duplicate_scene,
     }
 
 

@@ -22,26 +22,11 @@ def alignment_metrics(
     *,
     blank_index: int | None = None,
 ) -> dict[str, float | int | None]:
-    alignments = getattr(hypothesis, "alignments", None)
-    if alignments is None:
-        return {
-            "alignment_frames": None,
-            "blank_argmax_ratio": None,
-            "mean_nonblank_posterior": None,
-            "normalized_entropy": None,
-        }
-    value = alignments
-    if hasattr(value, "detach"):
-        value = value.detach()
-    if hasattr(value, "float"):
-        value = value.float()
-    if hasattr(value, "cpu"):
-        value = value.cpu()
-    if hasattr(value, "numpy"):
-        value = value.numpy()
-    array = np.asarray(value, dtype=np.float64)
-    array = np.squeeze(array)
-    if array.ndim != 2 or not array.size or not np.isfinite(array).all():
+    from .alignment import AsrAlignmentError, extract_ctc_log_probs
+
+    try:
+        array = extract_ctc_log_probs(hypothesis)
+    except AsrAlignmentError:
         return {
             "alignment_frames": None,
             "blank_argmax_ratio": None,

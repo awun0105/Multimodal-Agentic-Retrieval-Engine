@@ -97,12 +97,53 @@ def write_valid_schema_release(release_dir: Path) -> None:
         ],
     )
     write_table(
+        release_dir / "tables" / "asr_words.parquet",
+        [
+            {
+                "asr_word_id": "L21_V001_ASR00000_W00000",
+                "asr_segment_id": "L21_V001_ASR00000",
+                "video_id": "L21_V001",
+                "word_index": 0,
+                "text": "sample",
+                "start_sec": 0.0,
+                "end_sec": 0.02,
+                "start_frame": 0,
+                "end_frame": 1,
+                "confidence": 0.9,
+                "alignment_method": "provider_word_timestamps",
+                "alignment_version": "ctc_word_alignment_v1",
+                "provider": "faster_whisper",
+                "model_name": "fixture-asr",
+                "model_version": "fixture",
+                "status": "pass",
+            },
+            {
+                "asr_word_id": "L21_V001_ASR00000_W00001",
+                "asr_segment_id": "L21_V001_ASR00000",
+                "video_id": "L21_V001",
+                "word_index": 1,
+                "text": "transcript",
+                "start_sec": 0.02,
+                "end_sec": 0.04,
+                "start_frame": 0,
+                "end_frame": 1,
+                "confidence": 0.9,
+                "alignment_method": "provider_word_timestamps",
+                "alignment_version": "ctc_word_alignment_v1",
+                "provider": "faster_whisper",
+                "model_name": "fixture-asr",
+                "model_version": "fixture",
+                "status": "pass",
+            },
+        ],
+    )
+    write_table(
         release_dir / "tables" / "shot_transcript_links.parquet",
-        [{"shot_id": "L21_V001_SH00000", "asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "coverage": 1.0}],
+        [{"shot_id": "L21_V001_SH00000", "asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "overlap_start_sec": 0.0, "overlap_end_sec": 0.04, "overlap_sec": 0.04, "segment_coverage": 1.0, "entity_coverage": 1.0, "coverage": 1.0, "assigned_word_count": 2}],
     )
     write_table(
         release_dir / "tables" / "scene_transcript_links.parquet",
-        [{"scene_id": "L21_V001_SC00000", "asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "coverage": 1.0}],
+        [{"scene_id": "L21_V001_SC00000", "asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "overlap_start_sec": 0.0, "overlap_end_sec": 0.04, "overlap_sec": 0.04, "segment_coverage": 1.0, "entity_coverage": 1.0, "coverage": 1.0, "assigned_word_count": 2}],
     )
     write_table(
         release_dir / "tables" / "shot_captions.parquet",

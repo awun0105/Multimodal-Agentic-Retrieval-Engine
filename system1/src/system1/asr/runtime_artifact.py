@@ -10,13 +10,12 @@ import platform
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterator
+from typing import Any
 
 from huggingface_hub import hf_hub_download
-
 
 RECEIPT_SCHEMA = "phase01_flashlight_runtime_receipt_v1"
 MANIFEST_SCHEMA = "phase01_flashlight_runtime_manifest_v1"
@@ -195,7 +194,7 @@ def validate_runtime_manifest(
         raise RuntimeError("Flashlight runtime wheel does not match the platform")
     wheel = manifest.get("wheel")
     if not isinstance(wheel, Mapping):
-        raise RuntimeError("Flashlight runtime manifest has no wheel record")
+        raise TypeError("Flashlight runtime manifest has no wheel record")
     filename = _safe_basename(str(wheel.get("filename", "")))
     if expected_python not in filename or "x86_64" not in filename:
         raise RuntimeError("Flashlight runtime wheel filename has an invalid ABI tag")

@@ -291,6 +291,7 @@ def stage_hashes() -> dict[str, str]:
         "shot_captions",
         "shot_transcript_links",
         "scenes",
+        "scene_transcript_links",
         "scene_summaries",
         "package",
         "sync",
@@ -327,6 +328,72 @@ def test_checkpoint_promotes_outputs_before_complete_state(tmp_path: Path) -> No
     assert checkpoint.is_reusable("shots", input_fingerprint=fingerprint)
     restored = checkpoint.restore_stage("shots", tmp_path / "restore")
     assert restored[0].read_bytes() == b"shot-data"
+
+
+def test_checkpoint_v1_migrates_to_v2_without_invalidating_upstream(
+    tmp_path: Path,
+) -> None:
+    checkpoint = manager(tmp_path)
+    output = tmp_path / "shots.parquet"
+    output.write_bytes(b"shot-data")
+    fingerprint = compute_fingerprint("video", "timeline")
+    checkpoint.promote_stage(
+        "shots",
+        input_fingerprint=fingerprint,
+        outputs=[output],
+        schema_version="shots_v1",
+    )
+    old_state = checkpoint.store.read_json(checkpoint.state_path)
+    shot_record = old_state["stages"]["shots"]
+    for stage, record in old_state["stages"].items():
+        record.update(
+            {
+                "status": "complete",
+                "input_fingerprint": fingerprint,
+                "config_hash": checkpoint.stage_config_hashes[stage],
+                "schema_version": f"{stage}_legacy",
+                "output_checksums": dict(shot_record["output_checksums"]),
+                "completed_at": shot_record["completed_at"],
+            }
+        )
+    old_state["status"] = "complete"
+    old_state["schema_version"] = "phase01_checkpoint_state_v1"
+    old_state["stages"].pop("scene_transcript_links")
+    checkpoint.store.write_json(checkpoint.state_path, old_state)
+
+    restored = manager(tmp_path)
+    migrated = restored.load_state()
+
+    assert migrated["schema_version"] == "phase01_checkpoint_state_v2"
+    assert migrated["status"] == "running"
+    assert migrated["stages"]["shots"]["status"] == "complete"
+    assert migrated["stages"]["scene_transcript_links"]["status"] == "pending"
+    assert restored.is_reusable(
+        "shots", input_fingerprint=fingerprint, restore_dir=tmp_path / "restore"
+    )
+
+
+def test_scene_transcript_links_checkpoint_restores_independently(
+    tmp_path: Path,
+) -> None:
+    checkpoint = manager(tmp_path)
+    output = tmp_path / "scene_transcript_links.parquet"
+    output.write_bytes(b"links")
+    fingerprint = compute_fingerprint("scenes", "asr")
+    checkpoint.promote_stage(
+        "scene_transcript_links",
+        input_fingerprint=fingerprint,
+        outputs=[output],
+        schema_version="scene_transcript_links_v2",
+    )
+
+    restored_dir = tmp_path / "restored-links"
+    assert checkpoint.is_reusable(
+        "scene_transcript_links",
+        input_fingerprint=fingerprint,
+        restore_dir=restored_dir,
+    )
+    assert (restored_dir / output.name).read_bytes() == b"links"
 
 
 def test_checkpoint_groups_stage_outputs_into_one_backend_upload(tmp_path: Path) -> None:
@@ -481,9 +548,10 @@ def test_promoting_changed_upstream_invalidates_only_downstream(tmp_path: Path) 
     )
     assert "shots" not in downstream_stages("asr")
     assert set(downstream_stages("asr")) == {
-        "shot_transcript_links",
-        "scenes",
-        "scene_summaries",
+            "shot_transcript_links",
+            "scenes",
+            "scene_transcript_links",
+            "scene_summaries",
         "package",
         "sync",
     }

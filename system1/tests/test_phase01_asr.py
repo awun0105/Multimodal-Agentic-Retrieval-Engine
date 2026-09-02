@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
 
-from system1.asr import AsrResult
+from system1.asr import AsrAlignmentError, AsrResult, build_shot_transcript_links
 from system1.asr import transcribe_video as transcribe_with_configured_provider
-from system1.asr.faster_whisper import build_shot_transcript_links, transcribe_video
+from system1.asr.faster_whisper import transcribe_video
 from system1.asr.vad import SpeechRange
 
 
@@ -22,6 +22,15 @@ class Segment:
     text: str
     avg_logprob: float = -0.2
     no_speech_prob: float = 0.01
+    words: list[object] = field(default_factory=list)
+
+
+@dataclass
+class Word:
+    start: float
+    end: float
+    word: str
+    probability: float = 0.9
 
 
 @dataclass
@@ -44,7 +53,7 @@ def config() -> dict:
         "language": "auto",
         "vad_enabled": True,
         "beam_size": 5,
-        "word_timestamps": False,
+        "word_timestamps": True,
         "vad_parameters": {"threshold": 0.5, "max_speech_duration_s": None},
         "compute_type": {
             "cuda_default": "float16",
@@ -113,7 +122,14 @@ def test_no_audio_is_valid_empty_asr() -> None:
 def test_asr_dispatch_without_provider_uses_nemo(monkeypatch) -> None:
     from system1 import asr
 
-    expected = AsrResult("no_audio", [], None, 0, None)
+    expected = AsrResult(
+        status="no_audio",
+        segment_rows=[],
+        word_rows=[],
+        compute_type=None,
+        attempts=0,
+        detected_language=None,
+    )
     monkeypatch.setattr(asr, "_transcribe_nemo", lambda *_args, **_kwargs: expected)
     monkeypatch.setattr(
         asr,
@@ -150,13 +166,35 @@ def test_asr_rows_are_canonical_and_map_to_decoded_frames() -> None:
         config=config(),
         audio_present=True,
         model_factory=lambda *_args, **_kwargs: FakeModel(
-            [Segment(0.08, 0.20, " Xin chào ")]
+            [
+                Segment(
+                    0.08,
+                    0.20,
+                    " Xin chào ",
+                    words=[Word(0.08, 0.14, " Xin"), Word(0.14, 0.20, " chào")],
+                )
+            ]
         ),
     )
     assert result.status == "pass"
     assert result.rows[0]["text"] == "Xin chào"
     assert (result.rows[0]["start_frame"], result.rows[0]["end_frame"]) == (2, 5)
     assert result.rows[0]["confidence"] is None
+    assert [row["text"] for row in result.word_rows] == ["Xin", "chào"]
+
+
+def test_faster_whisper_rejects_word_text_mismatch() -> None:
+    with pytest.raises(AsrAlignmentError, match="do not reconstruct"):
+        transcribe_video(
+            "unused.mp4",
+            video_id="L21_V001",
+            frame_timeline=timeline(),
+            config=config(),
+            audio_present=True,
+            model_factory=lambda *_args, **_kwargs: FakeModel(
+                [Segment(0.08, 0.20, "Xin chào", words=[Word(0.08, 0.20, "khác")])]
+            ),
+        )
 
 
 def test_transcript_links_use_segment_coverage() -> None:
@@ -167,6 +205,7 @@ def test_transcript_links_use_segment_coverage() -> None:
     segments = [{"asr_segment_id": "a0", "start_sec": 0.5, "end_sec": 1.5}]
     links = build_shot_transcript_links(shots, segments)
     assert [row["coverage"] for row in links] == [0.5, 0.5]
+    assert [row["assigned_word_count"] for row in links] == [0, 0]
 
 
 class FakeHypothesis:
@@ -201,6 +240,36 @@ class FakeNemoModel:
         return [FakeHypothesis(next(self.texts))]
 
 
+def _fake_nemo_words(_hypothesis, _model, **kwargs):
+    text = str(kwargs["text"])
+    if not text:
+        return []
+    segment_id = str(kwargs["segment_id"])
+    values = text.split()
+    duration = (float(kwargs["segment_end_sec"]) - float(kwargs["segment_start_sec"])) / len(values)
+    return [
+        {
+            "asr_word_id": f"{segment_id}_W{index:05d}",
+            "asr_segment_id": segment_id,
+            "video_id": kwargs["video_id"],
+            "word_index": index,
+            "text": value,
+            "start_sec": float(kwargs["segment_start_sec"]) + index * duration,
+            "end_sec": float(kwargs["segment_start_sec"]) + (index + 1) * duration,
+            "start_frame": index,
+            "end_frame": index + 1,
+            "confidence": None,
+            "alignment_method": "ctc_forced_alignment",
+            "alignment_version": "ctc_word_alignment_v1",
+            "provider": "nemo",
+            "model_name": kwargs["model_name"],
+            "model_version": kwargs["model_version"],
+            "status": "pass",
+        }
+        for index, value in enumerate(values)
+    ]
+
+
 def test_nemo_streams_one_speech_segment_and_emits_diagnostics(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -212,6 +281,7 @@ def test_nemo_streams_one_speech_segment_and_emits_diagnostics(
         "_extract_audio_segment",
         lambda _video, output, **_kwargs: output.write_bytes(b"wav"),
     )
+    monkeypatch.setattr(nemo, "align_nemo_hypothesis_words", _fake_nemo_words)
     ranges = [SpeechRange(0.0, 1.0, 0), SpeechRange(1.0, 2.0, 1)]
     result = transcribe_with_configured_provider(
         tmp_path / "video.mp4",
@@ -226,6 +296,7 @@ def test_nemo_streams_one_speech_segment_and_emits_diagnostics(
     assert len(result.rows) == 1
     assert result.rows[0]["provider"] == "nemo"
     assert result.rows[0]["text"] == "Xin chào"
+    assert [row["text"] for row in result.word_rows] == ["Xin", "chào"]
     assert [item["accepted"] for item in result.diagnostics] == [True, False]
     assert result.status_details["decoder"]["beam_size"] == 64
 
@@ -262,6 +333,47 @@ def test_nemo_marks_detected_speech_low_confidence_when_all_rows_are_rejected(
     ]
 
 
+def test_nemo_forced_split_trims_segment_text_and_words_together(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from system1.asr import nemo
+
+    monkeypatch.setattr(nemo, "_media_duration", lambda _path: 2.0)
+    monkeypatch.setattr(
+        nemo,
+        "_extract_audio_segment",
+        lambda _video, output, **_kwargs: output.write_bytes(b"wav"),
+    )
+    monkeypatch.setattr(nemo, "align_nemo_hypothesis_words", _fake_nemo_words)
+    result = nemo.transcribe_video(
+        tmp_path / "video.mp4",
+        video_id="L21_V001",
+        frame_timeline=timeline(),
+        config=nemo_config(),
+        audio_present=True,
+        model_factory=lambda *_args, **_kwargs: FakeNemoModel(
+            ["thành phố hồ chí minh", "hồ chí minh hôm nay đông"]
+        ),
+        speech_range_detector=lambda *_args, **_kwargs: [
+            SpeechRange(0.0, 1.0, 0),
+            SpeechRange(0.75, 2.0, 1, forced_split=True, overlap_seconds=0.25),
+        ],
+    )
+    assert [row["text"] for row in result.segment_rows] == [
+        "thành phố hồ chí minh",
+        "hôm nay đông",
+    ]
+    words_by_segment: dict[str, list[str]] = {}
+    for row in result.word_rows:
+        words_by_segment.setdefault(str(row["asr_segment_id"]), []).append(
+            str(row["text"])
+        )
+    assert list(words_by_segment.values()) == [
+        ["thành", "phố", "hồ", "chí", "minh"],
+        ["hôm", "nay", "đông"],
+    ]
+
+
 def test_nemo_skips_model_load_when_vad_finds_no_speech(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -293,7 +405,8 @@ def test_nemo_runs_memory_guard_before_load_and_releases_after_use(
         "_extract_audio_segment",
         lambda _video, output, **_kwargs: output.write_bytes(b"wav"),
     )
-    monkeypatch.setattr(nemo, "_release_gpu_memory", lambda: events.append("release"))
+    monkeypatch.setattr(nemo, "release_gpu_memory", lambda: events.append("release"))
+    monkeypatch.setattr(nemo, "align_nemo_hypothesis_words", _fake_nemo_words)
     result = nemo.transcribe_video(
         tmp_path / "video.mp4",
         video_id="L21_V001",
@@ -418,6 +531,35 @@ def test_deterministic_nemo_model_error_is_not_retried(tmp_path: Path) -> None:
     assert attempts == 1
 
 
+def test_deterministic_nemo_alignment_error_is_not_retried(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from system1.asr import nemo
+
+    attempts = 0
+
+    def factory(*_args, **_kwargs):
+        nonlocal attempts
+        attempts += 1
+        return FakeNemoModel(["Xin chào"])
+
+    def fail_alignment(*_args, **_kwargs):
+        raise AsrAlignmentError("decode evidence cannot satisfy the CTC contract")
+
+    monkeypatch.setattr(nemo, "_transcribe_streaming", fail_alignment)
+    with pytest.raises(AsrAlignmentError, match="CTC contract"):
+        nemo.transcribe_video(
+            tmp_path / "video.mp4",
+            video_id="v",
+            frame_timeline=timeline(),
+            config=nemo_config(),
+            audio_present=True,
+            model_factory=factory,
+            speech_range_detector=lambda *_args, **_kwargs: [SpeechRange(0, 1, 0)],
+        )
+    assert attempts == 1
+
+
 def test_nemo_resource_failure_retries_without_greedy_fallback(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -426,7 +568,7 @@ def test_nemo_resource_failure_retries_without_greedy_fallback(
     attempts = 0
     configured = nemo_config()
     configured["total_attempts"] = 2
-    monkeypatch.setattr(nemo, "_release_gpu_memory", lambda: None)
+    monkeypatch.setattr(nemo, "release_gpu_memory", lambda: None)
 
     def factory(*_args, **_kwargs):
         nonlocal attempts

@@ -23,7 +23,14 @@ from system1.artifacts.hf_store import HuggingFaceDatasetArtifactStore
 from system1.artifacts.package import validate_artifact_zip, write_artifact_zip
 from system1.artifacts.reports import utc_now, write_worker_report
 from system1.artifacts.store import ArtifactStore
-from system1.asr import AsrResourceError, build_shot_transcript_links, transcribe_video
+from system1.asr import (
+    AsrAlignmentError,
+    AsrResourceError,
+    build_interval_transcripts,
+    build_scene_transcript_links,
+    build_shot_transcript_links,
+    transcribe_video,
+)
 from system1.config import ResolvedPhase01Config, persist_resolved_phase01_config
 from system1.ingest.discovery import read_metadata
 from system1.keyframes import (
@@ -88,8 +95,22 @@ PARQUET_COLUMNS: dict[str, list[str]] = {
         "text", "language", "confidence", "avg_logprob", "no_speech_prob", "provider",
         "model_name", "model_version", "status",
     ],
-    "shot_transcript_links": ["video_id", "shot_id", "asr_segment_id", "coverage"],
-    "scene_transcript_links": ["video_id", "scene_id", "asr_segment_id", "coverage"],
+    "asr_words": [
+        "asr_word_id", "asr_segment_id", "video_id", "word_index", "text",
+        "start_sec", "end_sec", "start_frame", "end_frame", "confidence",
+        "alignment_method", "alignment_version", "provider", "model_name",
+        "model_version", "status",
+    ],
+    "shot_transcript_links": [
+        "video_id", "shot_id", "asr_segment_id", "overlap_start_sec",
+        "overlap_end_sec", "overlap_sec", "segment_coverage", "entity_coverage",
+        "coverage", "assigned_word_count",
+    ],
+    "scene_transcript_links": [
+        "video_id", "scene_id", "asr_segment_id", "overlap_start_sec",
+        "overlap_end_sec", "overlap_sec", "segment_coverage", "entity_coverage",
+        "coverage", "assigned_word_count",
+    ],
     "ocr": [
         "ocr_id", "video_id", "keyframe_id", "shot_id", "frame_id", "text", "raw_text",
         "provider", "model_name", "model_version", "language", "confidence", "status",
@@ -875,6 +896,7 @@ def _process_video_flow(
     manager.active_stage = "asr"
     _emit_stage_progress(manager, "asr", scratch, status="start")
     asr_path = stage_dir / "asr_segments.parquet"
+    asr_words_path = stage_dir / "asr_words.parquet"
     asr_status_path = stage_dir / "asr_status.json"
     asr_diagnostics_path = stage_dir / "asr_diagnostics.jsonl"
     asr_fingerprint = compute_fingerprint(
@@ -890,7 +912,16 @@ def _process_video_flow(
             config=asr_config,
             pre_load_callback=asr_pre_load_callback,
         )
-        _write_parquet(asr_path, result.rows, empty_columns=PARQUET_COLUMNS["asr_segments"])
+        _write_parquet(
+            asr_path,
+            result.segment_rows,
+            empty_columns=PARQUET_COLUMNS["asr_segments"],
+        )
+        _write_parquet(
+            asr_words_path,
+            result.word_rows,
+            empty_columns=PARQUET_COLUMNS["asr_words"],
+        )
         _write_jsonl(asr_diagnostics_path, result.diagnostics)
         _write_json(asr_status_path, {
             "status": result.status,
@@ -902,7 +933,12 @@ def _process_video_flow(
         manager.promote_stage(
             "asr",
             input_fingerprint=asr_fingerprint,
-            outputs=[asr_path, asr_status_path, asr_diagnostics_path],
+            outputs=[
+                asr_path,
+                asr_words_path,
+                asr_status_path,
+                asr_diagnostics_path,
+            ],
             model=models["asr"],
             schema_version=phase01["schemas"]["asr_segments"],
         )
@@ -910,6 +946,7 @@ def _process_video_flow(
         manager, "asr", scratch, status="complete", reused=asr_reused
     )
     asr_rows = pd.read_parquet(asr_path).to_dict("records")
+    asr_word_rows = pd.read_parquet(asr_words_path).to_dict("records")
     asr_output_fingerprint = manager.stage_output_fingerprint("asr")
 
     # The decoded Phase00 timeline can be very large. Release it before this
@@ -1040,7 +1077,7 @@ def _process_video_flow(
         manager, "shot_transcript_links", links_fingerprint, stage_dir
     )
     if not links_reused:
-        links = build_shot_transcript_links(shots, asr_rows)
+        links = build_shot_transcript_links(shots, asr_rows, asr_word_rows)
         _write_parquet(links_path, links, empty_columns=PARQUET_COLUMNS["shot_transcript_links"])
         manager.promote_stage(
             "shot_transcript_links",
@@ -1065,7 +1102,6 @@ def _process_video_flow(
     manager.active_stage = "scenes"
     _emit_stage_progress(manager, "scenes", scratch, status="start")
     scenes_path = stage_dir / "scenes.parquet"
-    scene_links_path = stage_dir / "scene_transcript_links.parquet"
     scene_diagnostics_path = stage_dir / "scene_boundary_diagnostics.jsonl"
     scene_quality_path = stage_dir / "scene_partition_quality.json"
     scenes_fingerprint = compute_fingerprint(
@@ -1081,7 +1117,14 @@ def _process_video_flow(
         manager, "scenes", scenes_fingerprint, stage_dir
     )
     if not scenes_reused:
-        evidence = _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links, stage_dir)
+        evidence = _build_scene_evidence(
+            shots,
+            keyframes,
+            ocr_rows,
+            captions,
+            asr_word_rows,
+            stage_dir,
+        )
         judge = SemanticSceneBoundaryJudge(
             caption_client,
             video_id=video_id,
@@ -1138,10 +1181,8 @@ def _process_video_flow(
             failure_diagnostics_ref=failure_diagnostics_ref,
             input_fingerprint=scenes_fingerprint,
             scenes_path=scenes_path,
-            scene_links_path=scene_links_path,
             scene_diagnostics_path=scene_diagnostics_path,
             scene_quality_path=scene_quality_path,
-            asr_rows=asr_rows,
             model=scene_boundary_model,
             prompt_version=scene_boundary_model["prompt_version"],
             schema_version=phase01["schemas"]["scenes"],
@@ -1151,8 +1192,50 @@ def _process_video_flow(
         manager, "scenes", scratch, status="complete", reused=scenes_reused
     )
     scenes = pd.read_parquet(scenes_path).to_dict("records")
-    scene_links = pd.read_parquet(scene_links_path).to_dict("records")
     scenes_output_fingerprint = manager.stage_output_fingerprint("scenes")
+
+    manager.active_stage = "scene_transcript_links"
+    _emit_stage_progress(
+        manager, "scene_transcript_links", scratch, status="start"
+    )
+    scene_links_path = stage_dir / "scene_transcript_links.parquet"
+    scene_links_fingerprint = compute_fingerprint(
+        scenes_output_fingerprint,
+        asr_output_fingerprint,
+        config.stage_config_hashes["scene_transcript_links"],
+    )
+    scene_links_reused = _restore_if_reusable(
+        manager,
+        "scene_transcript_links",
+        scene_links_fingerprint,
+        stage_dir,
+    )
+    if not scene_links_reused:
+        scene_links = build_scene_transcript_links(
+            scenes, asr_rows, asr_word_rows
+        )
+        _write_parquet(
+            scene_links_path,
+            scene_links,
+            empty_columns=PARQUET_COLUMNS["scene_transcript_links"],
+        )
+        manager.promote_stage(
+            "scene_transcript_links",
+            input_fingerprint=scene_links_fingerprint,
+            outputs=[scene_links_path],
+            schema_version=phase01["schemas"]["scene_transcript_links"],
+        )
+    _emit_stage_progress(
+        manager,
+        "scene_transcript_links",
+        scratch,
+        status="complete",
+        reused=scene_links_reused,
+    )
+    scene_links = pd.read_parquet(scene_links_path).to_dict("records")
+    scene_links_output_fingerprint = manager.stage_output_fingerprint(
+        "scene_transcript_links"
+    )
 
     yield "scene_summaries"
 
@@ -1161,11 +1244,11 @@ def _process_video_flow(
     summaries_path = stage_dir / "scene_summaries.parquet"
     summaries_fingerprint = compute_fingerprint(
         scenes_output_fingerprint,
+        scene_links_output_fingerprint,
         keyframes_output_fingerprint,
         ocr_output_fingerprint,
         asr_output_fingerprint,
         captions_output_fingerprint,
-        links_output_fingerprint,
         config.stage_config_hashes["scene_summaries"],
     )
     summaries_reused = _restore_if_reusable(
@@ -1179,7 +1262,7 @@ def _process_video_flow(
             keyframes=keyframes,
             ocr_rows=ocr_rows,
             captions=captions,
-            asr_rows=asr_rows,
+            asr_words=asr_word_rows,
             scene_links=scene_links,
             stage_dir=stage_dir,
             client=caption_client,
@@ -1212,6 +1295,7 @@ def _process_video_flow(
     shots = []
     keyframes = []
     asr_rows = []
+    asr_word_rows = []
     ocr_rows = []
     captions = []
     links = []
@@ -1230,6 +1314,7 @@ def _process_video_flow(
         captions_output_fingerprint,
         links_output_fingerprint,
         scenes_output_fingerprint,
+        scene_links_output_fingerprint,
         summaries_output_fingerprint,
         config.stage_config_hashes["package"],
     )
@@ -1258,14 +1343,14 @@ def _process_video_flow(
             batch_id=str(config.payload["runtime"]["batch_id"]),
             worker_id=str(config.payload["runtime"]["worker_id"]),
             status="complete",
-            schema_version="phase01_structure_v2",
+            schema_version="phase01_structure_v3",
         )
         validate_artifact_zip(package_path)
         manager.promote_stage(
             "package",
             input_fingerprint=package_fingerprint,
             outputs=[package_path],
-            schema_version="phase01_structure_v2",
+            schema_version="phase01_structure_v3",
         )
     _emit_stage_progress(
         manager, "package", scratch, status="complete", reused=package_reused
@@ -2060,16 +2145,24 @@ def _aggregate_model_identity(
     return "mixed", "mixed", "mixed"
 
 
-def _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links, stage_dir):
+def _build_scene_evidence(
+    shots,
+    keyframes,
+    ocr_rows,
+    captions,
+    asr_words,
+    stage_dir,
+):
     by_shot_keyframes: dict[str, list[dict[str, Any]]] = {}
     for row in keyframes:
         by_shot_keyframes.setdefault(str(row["shot_id"]), []).append(row)
     caption_by_shot = {str(row["shot_id"]): row for row in captions}
     ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
-    asr_by_id = {str(row["asr_segment_id"]): row for row in asr_rows}
-    links_by_shot: dict[str, list[dict[str, Any]]] = {}
-    for row in links:
-        links_by_shot.setdefault(str(row["shot_id"]), []).append(row)
+    transcripts_by_shot = build_interval_transcripts(
+        shots,
+        asr_words,
+        entity_id_field="shot_id",
+    )
     evidence = []
     for shot in shots:
         shot_id = str(shot["shot_id"])
@@ -2087,24 +2180,7 @@ def _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links,
             for row in sorted(frames, key=lambda value: int(value["frame_id"]))
             if str(row["keyframe_role"]) == "supplemental"
         ]
-        linked_ids = {
-            str(link["asr_segment_id"])
-            for link in links_by_shot.get(shot_id, [])
-            if str(link["asr_segment_id"]) in asr_by_id
-        }
-        ordered_segments = sorted(
-            (asr_by_id[segment_id] for segment_id in linked_ids),
-            key=lambda row: (
-                float(row["start_sec"]),
-                float(row["end_sec"]),
-                str(row["asr_segment_id"]),
-            ),
-        )
-        transcript = " ".join(
-            str(row["text"]).strip()
-            for row in ordered_segments
-            if str(row["text"]).strip()
-        )
+        transcript = transcripts_by_shot[shot_id]
         caption = caption_by_shot[shot_id]
         shot_ocr = [
             ocr_by_keyframe[str(row["keyframe_id"])]
@@ -2128,19 +2204,6 @@ def _build_scene_evidence(shots, keyframes, ocr_rows, captions, asr_rows, links,
     return evidence
 
 
-def _build_scene_transcript_links(scenes, asr_rows):
-    rows = []
-    for scene in scenes:
-        for segment in asr_rows:
-            overlap = min(float(scene["end_sec"]), float(segment["end_sec"])) - max(float(scene["start_sec"]), float(segment["start_sec"]))
-            if overlap > 0:
-                duration = float(segment["end_sec"]) - float(segment["start_sec"])
-                if duration <= 0:
-                    raise ValueError("ASR segment duration must be positive")
-                rows.append({"video_id": scene["video_id"], "scene_id": scene["scene_id"], "asr_segment_id": segment["asr_segment_id"], "coverage": min(1.0, max(0.0, overlap / duration))})
-    return rows
-
-
 def _build_scene_summaries(
     *,
     video_id,
@@ -2149,7 +2212,7 @@ def _build_scene_summaries(
     keyframes,
     ocr_rows,
     captions,
-    asr_rows,
+    asr_words,
     scene_links,
     stage_dir,
     client,
@@ -2173,11 +2236,11 @@ def _build_scene_summaries(
     keyframes_by_shot: dict[str, list[dict[str, Any]]] = {}
     for row in keyframes:
         keyframes_by_shot.setdefault(str(row["shot_id"]), []).append(row)
-    asr_by_id = {str(row["asr_segment_id"]): row for row in asr_rows}
-    links_by_scene: dict[str, list[dict[str, Any]]] = {}
-    for link in scene_links:
-        links_by_scene.setdefault(str(link["scene_id"]), []).append(link)
-
+    transcripts_by_scene = build_interval_transcripts(
+        scenes,
+        asr_words,
+        entity_id_field="scene_id",
+    )
     contexts: list[dict[str, Any]] = []
     for scene in scenes:
         scene_id = str(scene["scene_id"])
@@ -2214,23 +2277,7 @@ def _build_scene_summaries(
                 )
             )
 
-        segment_ids = {
-            str(link["asr_segment_id"])
-            for link in links_by_scene.get(scene_id, [])
-            if str(link["asr_segment_id"]) in asr_by_id
-        }
-        transcript = " ".join(
-            str(segment["text"]).strip()
-            for segment in sorted(
-                (asr_by_id[segment_id] for segment_id in segment_ids),
-                key=lambda row: (
-                    float(row["start_sec"]),
-                    float(row["end_sec"]),
-                    str(row["asr_segment_id"]),
-                ),
-            )
-            if str(segment["text"]).strip()
-        )
+        transcript = transcripts_by_scene[scene_id]
         transcript = _bounded_text(
             transcript,
             max_chars=int(summary_config["max_transcript_chars"]),
@@ -2435,10 +2482,8 @@ def _promote_scene_checkpoint(
     failure_diagnostics_ref: str | None,
     input_fingerprint: str,
     scenes_path: Path,
-    scene_links_path: Path,
     scene_diagnostics_path: Path,
     scene_quality_path: Path,
-    asr_rows: list[dict[str, Any]],
     model: Mapping[str, Any],
     prompt_version: str,
     schema_version: str,
@@ -2451,18 +2496,11 @@ def _promote_scene_checkpoint(
     )
     scenes = result.scenes
     _write_parquet(scenes_path, scenes)
-    scene_links = _build_scene_transcript_links(scenes, asr_rows)
-    _write_parquet(
-        scene_links_path,
-        scene_links,
-        empty_columns=PARQUET_COLUMNS["scene_transcript_links"],
-    )
     manager.promote_stage(
         "scenes",
         input_fingerprint=input_fingerprint,
         outputs=[
             scenes_path,
-            scene_links_path,
             scene_diagnostics_path,
             scene_quality_path,
         ],
@@ -2645,7 +2683,7 @@ def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path,
     artifact_dir.mkdir(parents=True)
     metadata = read_metadata(metadata_path)
     _write_json(artifact_dir / "metadata_normalized.json", metadata)
-    for name in ("shots.parquet", "keyframes.parquet", "asr_segments.parquet", "ocr.parquet", "shot_captions.parquet", "shot_transcript_links.parquet", "scenes.parquet", "scene_transcript_links.parquet", "scene_summaries.parquet"):
+    for name in ("shots.parquet", "keyframes.parquet", "asr_segments.parquet", "asr_words.parquet", "ocr.parquet", "shot_captions.parquet", "shot_transcript_links.parquet", "scenes.parquet", "scene_transcript_links.parquet", "scene_summaries.parquet"):
         shutil.copy2(stage_dir / name, artifact_dir / name)
     shutil.copytree(stage_dir / "keyframes", artifact_dir / "keyframes")
     shutil.copytree(stage_dir / "thumbnails", artifact_dir / "thumbnails")
@@ -2670,7 +2708,7 @@ def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path,
     persist_resolved_phase01_config(config, artifact_dir / "resolved_config.json")
     counts = {path.stem: len(pd.read_parquet(path)) for path in artifact_dir.glob("*.parquet")}
     _validate_package_invariants(artifact_dir, counts)
-    _write_json(artifact_dir / "manifest.json", {"schema_version": "phase01_video_manifest_v2", "video_id": video_id, "status": "complete", "config_hash": config.config_hash, "stage_config_hashes": config.stage_config_hashes, "counts": counts, "created_at": utc_now()})
+    _write_json(artifact_dir / "manifest.json", {"schema_version": "phase01_video_manifest_v3", "video_id": video_id, "status": "complete", "config_hash": config.config_hash, "stage_config_hashes": config.stage_config_hashes, "counts": counts, "created_at": utc_now()})
 
 
 def _backfill_scene_ids(artifact_dir: Path):
@@ -3106,7 +3144,7 @@ def _required_text(payload: Mapping[str, Any], key: str) -> str:
 
 
 def _retryable_video_error(exc):
-    if isinstance(exc, ScenePartitionQualityError):
+    if isinstance(exc, (AsrAlignmentError, ScenePartitionQualityError)):
         return False
     if isinstance(exc, (AsrResourceError, InsufficientMemoryError)):
         return True

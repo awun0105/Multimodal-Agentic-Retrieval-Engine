@@ -124,7 +124,7 @@ Out of scope:
 
 ### Task 1: Scene Grouping Correctness
 
-Status: Closure patch complete; awaiting review before Task 2
+Status: Accepted
 
 Objective: Prevent suspicious partitions such as every adjacent gap becoming a
 boundary from being silently promoted as canonical.
@@ -155,7 +155,7 @@ Focused acceptance cases:
 
 ### Task 2: ASR Temporal Alignment
 
-Status: Not Started
+Status: Implementation Complete - Live Acceptance Pending
 
 Depends on: Task 1 accepted.
 
@@ -318,8 +318,8 @@ Focused acceptance cases:
 - [x] Read-only audit of current `dev` code, docs, schemas, and test source.
 - [x] Record master remediation scope and five-task dependency order.
 - [x] Task 1: Scene Grouping Correctness.
-- [ ] Review and accept Task 1 before Task 2.
-- [ ] Task 2: ASR Temporal Alignment.
+- [x] Review and accept Task 1 before Task 2.
+- [x] Task 2: ASR Temporal Alignment implementation and local proof.
 - [ ] Review and accept Task 2 before Task 3.
 - [ ] Task 3: Speech-Aware Scene Grouping.
 - [ ] Review and accept Task 3 before Task 4.
@@ -371,6 +371,29 @@ Focused acceptance cases:
   the partition-quality JSON plus per-gap boundary JSONL. It never changes the
   scenes stage to complete; checkpoint `error.details` and the worker result
   expose `diagnostics_ref` for operators.
+- 2026-09-02: Task 2 started from clean `dev` at `b7bd2ee`. Installed source
+  inspection confirms NeMo 2.7.3. Flashlight beam search initially produces
+  token IDs, but `EncDecCTCModel.transcribe(..., return_hypotheses=True)`
+  replaces the returned `Hypothesis.y_sequence` with the `T x V` CTC
+  log-probability tensor and retains that tensor in `alignments`; no separate
+  `logprobs` field exists on the returned hypothesis. Beam timestamp mode is
+  explicitly unsupported, so Task 2 will not enable `compute_timestamps` or
+  rerun greedy decoding.
+- 2026-09-02: Task 2 uses a deterministic CTC Viterbi adapter over the preserved
+  log probabilities and retokenizes the canonical Flashlight text with the
+  loaded model's own tokenizer. Word grouping follows NeMo's model-aware
+  tokenizer structure (BPE/SentencePiece for the pinned Parakeet model, with
+  char-vocabulary compatibility). Output timestep duration is derived from
+  `model.cfg.preprocessor.window_stride * model.encoder.subsampling_factor`,
+  matching NeMo 2.7.3's forced-alignment utility; it is never hard-coded.
+- 2026-09-02: Segment overlap remains provenance in transcript-link v2 tables;
+  interval text is now assembled only from canonical aligned words. Assignment
+  uses maximum temporal overlap and a midpoint/half-open right-boundary tie
+  rule, so one canonical word is never copied into two shots or scenes.
+- 2026-09-02: `scene_transcript_links` is an independent deterministic stage
+  after accepted scenes. Checkpoint state v1 is migrated before v2 validation;
+  the new stage starts pending and a previously complete video becomes running
+  until the new stage and downstream outputs are rebuilt.
 
 ## Validation
 
@@ -400,6 +423,28 @@ Task 1 closure proof on 2026-09-02:
 - Ruff over every closure-changed Python file: passed;
 - `git diff --check`: passed.
 
+Task 2 local proof on 2026-09-02:
+
+- focused ASR/alignment/link tests: 28 passed;
+- checkpoint/foundation/production-contract/smoke/schema/orchestrator tests:
+  116 passed before the final resume and validation additions;
+- focused migration/resume/word-validation closure tests: 9 passed;
+- `pytest -q tests/test_phase01*.py`: 245 passed;
+- full `pytest -q`: 451 passed, with the same unrelated Notebook 00B
+  `monolith-mvp-app` assertion failure described above;
+- Ruff over the Task 2 ASR, config, production, checkpoint, smoke, validation,
+  and focused-test scope: passed;
+- repository-wide `ruff check src tests` is not clean and reports 154 findings
+  across broader legacy/current surfaces; this task does not claim that check
+  as passed;
+- `git diff --check`: passed after final closure.
+
+Live acceptance was not run. The current host exposes a Quadro T2000 with 4 GB
+VRAM rather than the required T4-class qualification runtime, and no HF token is
+available. A real forced-split boundary was therefore also not exercised. The
+one-video T4 smoke, manual timestamp spot-check, and heterogeneous speech batch
+remain explicit acceptance gates.
+
 - Focused proof: each task must add and run behavior-specific tests described in
   its acceptance cases.
 - Integration proof: affected checkpoint invalidation, package assembly, schema
@@ -413,8 +458,9 @@ Task 1 closure proof on 2026-09-02:
 
 ## Result
 
-Active. Task 1 and its closure patch are implemented and locally validated;
-Task 2 remains Not Started pending review.
+Active. Task 1 and its closure patch are accepted. Task 2 is implemented and
+locally validated; live/provider acceptance remains pending, and Task 3 has not
+started.
 
 Task 1 changed:
 
@@ -437,11 +483,34 @@ The closure patch additionally changes `system1/src/system1/phase01/checkpoint.p
 adds long-sequence/no-promote/failure-persistence/duration proof, and syncs ADR
 0014, amended ADR 0018, the decisions index, and the active Notebook 01 plan.
 
-Checkpoint impact:
+Task 2 changed:
+
+- ASR contracts/alignment/linking:
+  `system1/src/system1/asr/{alignment.py,contracts.py,links.py,runtime.py,timing.py}`
+  plus NeMo, Faster-Whisper, quality, VAD/runtime-artifact, and package exports;
+- canonical contracts: `asr_words_v1`, transcript links v2, checkpoint state
+  v2, artifact config v2, pipeline/production v1.7, models v1.5, and structure
+  package/video manifest v3;
+- production/checkpoint/smoke/validation wiring for atomic `asr_words`, the
+  first-class scene-link stage, v1-to-v2 state migration, and deterministic
+  word ownership;
+- merge, SQLite, generic table validation, and the guarded legacy/debug builder
+  needed to consume the additive canonical table;
+- focused proof in ASR alignment/link tests and existing Phase01 contract,
+  checkpoint, orchestrator, smoke, and schema suites;
+- current architecture, ADR 0018/0020, and Notebook 01 plan documentation.
+
+Task 2 checkpoint impact:
+
+- reusable where fingerprints match: shots, keyframes, OCR, and shot captions;
+- recomputed: ASR, shot-transcript links, scenes, scene-transcript links, scene
+  summaries, package, and sync.
+
+Task 1 checkpoint impact:
 
 - reusable: shots, keyframes, ASR, OCR, shot captions, and shot-transcript
   links;
 - invalidated: scenes, scene summaries, package, and sync.
 
-The Task 1 commit is identified by its Git history and final handoff report; a
-commit cannot embed its own final SHA without changing that SHA.
+Task commits are identified by Git history and final handoff reports; a commit
+cannot embed its own final SHA without changing that SHA.

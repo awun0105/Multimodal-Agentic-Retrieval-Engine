@@ -340,6 +340,10 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
     phase01 = payload["phase01"]
     models = payload["models"]
     schemas = phase01["schemas"]
+    asr_stage_policy = copy.deepcopy(phase01["asr"])
+    interval_assignment = asr_stage_policy["alignment"].pop(
+        "interval_assignment"
+    )
     stage_payloads: dict[str, Any] = {
         "shots": {
             "model": models["shot_detection"],
@@ -352,9 +356,9 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
         },
         "asr": {
             "model": models["asr"],
-            "policy": phase01["asr"],
+            "policy": asr_stage_policy,
             "retry": phase01["retry"],
-            "schema": schemas["asr_segments"],
+            "schemas": [schemas["asr_segments"], schemas["asr_words"]],
         },
         "ocr": {
             "model": models["ocr"],
@@ -371,6 +375,7 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
         },
         "shot_transcript_links": {
             "schema": schemas["shot_transcript_links"],
+            "assignment": interval_assignment,
         },
         "scenes": {
             "model": _resolved_semantic_model(models, "scene_boundary"),
@@ -379,7 +384,11 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "api": phase01["api"],
             "retry": phase01["retry"],
             "grouping": phase01["scene_grouping"],
-            "schemas": [schemas["scenes"], schemas["scene_transcript_links"]],
+            "schema": schemas["scenes"],
+        },
+        "scene_transcript_links": {
+            "schema": schemas["scene_transcript_links"],
+            "assignment": interval_assignment,
         },
         "scene_summaries": {
             "model": _resolved_semantic_model(models, "scene_summary"),
@@ -452,6 +461,7 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
 
     _validate_semantic_sampling_policy(payload)
     _validate_scene_grouping_policy(payload)
+    _validate_asr_alignment_policy(payload)
 
     models = payload["models"]
     
@@ -518,6 +528,37 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
                 f"shot_caption and {stage_key} must use the same primary/fallback "
                 "client chain"
             )
+
+
+def _validate_asr_alignment_policy(payload: dict[str, Any]) -> None:
+    policy = payload["phase01"]["asr"].get("alignment")
+    if not isinstance(policy, dict):
+        raise TypeError("Phase01 asr.alignment must be a mapping")
+    if policy.get("required_for_accepted_segments") is not True:
+        raise ValueError(
+            "Phase01 asr.alignment.required_for_accepted_segments must be true"
+        )
+    if str(policy.get("policy")) != "ctc_word_alignment_v1":
+        raise ValueError("Unsupported Phase01 asr.alignment.policy")
+    interval = policy.get("interval_assignment")
+    if not isinstance(interval, dict):
+        raise TypeError("Phase01 asr.alignment.interval_assignment must be a mapping")
+    if str(interval.get("policy")) != "max_overlap_midpoint_v1":
+        raise ValueError("Unsupported Phase01 ASR interval assignment policy")
+    if str(interval.get("interval_convention")) != "[start_sec, end_sec)":
+        raise ValueError("Unsupported Phase01 ASR interval convention")
+    reconstruction = policy.get("text_reconstruction")
+    if not isinstance(reconstruction, dict) or str(
+        reconstruction.get("normalization")
+    ) != "unicode_word_v1":
+        raise ValueError("Unsupported Phase01 ASR text reconstruction policy")
+    asr_model = payload["models"]["asr"]
+    if str(asr_model.get("provider")) == "faster_whisper" and asr_model.get(
+        "word_timestamps"
+    ) is not True:
+        raise ValueError(
+            "Phase01 faster_whisper ASR requires word_timestamps=true"
+        )
 
 
 def _validate_semantic_sampling_policy(payload: dict[str, Any]) -> None:

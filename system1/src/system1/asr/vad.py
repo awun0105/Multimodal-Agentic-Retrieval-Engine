@@ -9,7 +9,6 @@ from typing import Any
 
 import numpy as np
 
-
 SAMPLE_RATE = 16_000
 
 
@@ -108,8 +107,7 @@ def _decode_audio_block(
             "f32le",
             "pipe:1",
         ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if result.returncode != 0:

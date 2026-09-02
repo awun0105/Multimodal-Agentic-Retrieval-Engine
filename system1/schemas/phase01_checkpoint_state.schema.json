@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "phase01_checkpoint_state_v1",
+  "$id": "phase01_checkpoint_state_v2",
   "title": "Phase01 Per-Video Checkpoint State",
   "type": "object",
   "required": [
@@ -14,7 +14,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "phase01_checkpoint_state_v1"
+      "const": "phase01_checkpoint_state_v2"
     },
     "release_id": {
       "type": "string",
@@ -47,6 +47,7 @@
         "shot_captions",
         "shot_transcript_links",
         "scenes",
+        "scene_transcript_links",
         "scene_summaries",
         "package",
         "sync"
@@ -59,6 +60,7 @@
         "shot_captions": {"$ref": "#/$defs/stage"},
         "shot_transcript_links": {"$ref": "#/$defs/stage"},
         "scenes": {"$ref": "#/$defs/stage"},
+        "scene_transcript_links": {"$ref": "#/$defs/stage"},
         "scene_summaries": {"$ref": "#/$defs/stage"},
         "package": {"$ref": "#/$defs/stage"},
         "sync": {"$ref": "#/$defs/stage"}
@@ -95,6 +97,7 @@
             "shot_captions",
             "shot_transcript_links",
             "scenes",
+            "scene_transcript_links",
             "scene_summaries",
             "package",
             "sync"

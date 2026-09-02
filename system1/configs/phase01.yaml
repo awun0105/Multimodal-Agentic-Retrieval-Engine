@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_6
-pipeline_id: phase01_production_v1_6
+schema_version: phase01_pipeline_v1_7
+pipeline_id: phase01_production_v1_7
 
 execution:
   video_order: batch_manifest
@@ -36,6 +36,7 @@ stages:
     - shot_captions
     - shot_transcript_links
     - scenes
+    - scene_transcript_links
     - scene_summaries
     - package
     - sync
@@ -47,7 +48,8 @@ stages:
     shot_captions: [keyframes, ocr]
     shot_transcript_links: [shots, asr]
     scenes: [shots, keyframes, ocr, shot_captions, shot_transcript_links]
-    scene_summaries: [scenes, keyframes, ocr, shot_captions, shot_transcript_links]
+    scene_transcript_links: [scenes, asr]
+    scene_summaries: [scenes, scene_transcript_links, asr, keyframes, ocr, shot_captions]
     package:
       - shots
       - keyframes
@@ -56,6 +58,7 @@ stages:
       - shot_captions
       - shot_transcript_links
       - scenes
+      - scene_transcript_links
       - scene_summaries
     sync: [package]
 
@@ -74,6 +77,14 @@ asr:
   decoder_failure_status: failed_retryable
   allow_greedy_fallback: false
   rejected_hypotheses_destination: diagnostics_only
+  alignment:
+    required_for_accepted_segments: true
+    policy: ctc_word_alignment_v1
+    interval_assignment:
+      policy: max_overlap_midpoint_v1
+      interval_convention: "[start_sec, end_sec)"
+    text_reconstruction:
+      normalization: unicode_word_v1
 
 ocr:
   model_key: ocr
@@ -137,15 +148,16 @@ manual_review:
 
 schemas:
   resolved_config: resolved_config_v1
-  checkpoint_state: phase01_checkpoint_state_v1
+  checkpoint_state: phase01_checkpoint_state_v2
   shots: shots_v1
   keyframes: keyframes_v3
   asr_segments: asr_segments_v1
+  asr_words: asr_words_v1
   ocr: ocr_v2
   shot_captions: shot_captions_v4
-  shot_transcript_links: shot_transcript_links_v1
+  shot_transcript_links: shot_transcript_links_v2
   scenes: scenes_v2
-  scene_transcript_links: scene_transcript_links_v1
+  scene_transcript_links: scene_transcript_links_v2
   scene_summaries: scene_summaries_v3
 
 production_readiness:
@@ -189,6 +201,7 @@ smoke:
     shot_captions: computed
     shot_transcript_links: computed
     scenes: computed
+    scene_transcript_links: computed
     scene_summaries: computed
     package: computed
     sync: computed

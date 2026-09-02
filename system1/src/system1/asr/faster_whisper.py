@@ -1,47 +1,15 @@
 from __future__ import annotations
 
-import bisect
-import gc
-import json
 import math
-import subprocess
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
-@dataclass(frozen=True)
-class AsrResult:
-    status: str
-    rows: list[dict[str, Any]]
-    compute_type: str | None
-    attempts: int
-    detected_language: str | None
-    diagnostics: list[dict[str, Any]] = field(default_factory=list)
-    status_details: dict[str, Any] = field(default_factory=dict)
-
-
-def has_audio_stream(video_path: Path | str) -> bool:
-    result = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "a",
-            "-show_entries",
-            "stream=index",
-            "-of",
-            "json",
-            str(video_path),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    payload = json.loads(result.stdout or "{}")
-    return bool(payload.get("streams"))
+from .alignment import ALIGNMENT_VERSION, AsrAlignmentError
+from .contracts import AsrResult
+from .quality import normalize_for_comparison
+from .runtime import has_audio_stream, is_retryable_local_error, release_gpu_memory
+from .timing import index_frame_timeline, time_range_to_frames
 
 
 def transcribe_video(
@@ -56,7 +24,15 @@ def transcribe_video(
 ) -> AsrResult:
     present = has_audio_stream(video_path) if audio_present is None else audio_present
     if not present:
-        return AsrResult("no_audio", [], None, 0, None)
+        return AsrResult(
+            status="no_audio",
+            segment_rows=[],
+            word_rows=[],
+            compute_type=None,
+            attempts=0,
+            detected_language=None,
+            status_details=_alignment_status_details([], []),
+        )
     if model_factory is None:
         try:
             from faster_whisper import WhisperModel
@@ -89,9 +65,9 @@ def transcribe_video(
                 beam_size=int(config.get("beam_size", 5)),
                 vad_filter=bool(config.get("vad_enabled", True)),
                 vad_parameters=_normalized_vad_parameters(config.get("vad_parameters", {})),
-                word_timestamps=bool(config.get("word_timestamps", False)),
+                word_timestamps=True,
             )
-            rows = _normalize_segments(
+            segment_rows, word_rows = _normalize_segments(
                 segments,
                 video_id=video_id,
                 frame_timeline=frame_timeline,
@@ -99,15 +75,19 @@ def transcribe_video(
                 model_config=config,
             )
             return AsrResult(
-                "pass" if rows else "no_speech",
-                rows,
-                str(compute_type),
-                attempt,
-                getattr(info, "language", None),
+                status="pass" if segment_rows else "no_speech",
+                segment_rows=segment_rows,
+                word_rows=word_rows,
+                compute_type=str(compute_type),
+                attempts=attempt,
+                detected_language=getattr(info, "language", None),
+                status_details=_alignment_status_details(segment_rows, word_rows),
             )
+        except AsrAlignmentError:
+            raise
         except Exception as exc:
             last_error = exc
-            if not _is_retryable_local_error(exc):
+            if not is_retryable_local_error(exc):
                 raise
             if device == "cuda" and _is_oom_error(exc):
                 compute_type = config["compute_type"]["cuda_oom_retry"]
@@ -115,38 +95,11 @@ def transcribe_video(
                 break
         finally:
             del model
-            _release_gpu_memory()
+            release_gpu_memory()
     raise RuntimeError(
         f"faster-whisper failed after {total_attempts} attempt(s): "
         f"{last_error}"
     ) from last_error
-
-
-def build_shot_transcript_links(
-    shots: Iterable[Mapping[str, Any]], segments: Iterable[Mapping[str, Any]]
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for shot in shots:
-        shot_start = float(shot["start_sec"])
-        shot_end = float(shot["end_sec"])
-        for segment in segments:
-            segment_start = float(segment["start_sec"])
-            segment_end = float(segment["end_sec"])
-            overlap = min(shot_end, segment_end) - max(shot_start, segment_start)
-            if overlap <= 0:
-                continue
-            duration = segment_end - segment_start
-            if duration <= 0:
-                raise ValueError("ASR segment duration must be positive")
-            rows.append(
-                {
-                    "video_id": str(shot["video_id"]),
-                    "shot_id": str(shot["shot_id"]),
-                    "asr_segment_id": str(segment["asr_segment_id"]),
-                    "coverage": min(1.0, max(0.0, overlap / duration)),
-                }
-            )
-    return rows
 
 
 def _normalize_segments(
@@ -156,8 +109,10 @@ def _normalize_segments(
     frame_timeline: list[dict[str, Any]],
     language: str | None,
     model_config: Mapping[str, Any],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
+    word_rows: list[dict[str, Any]] = []
+    timeline_index = index_frame_timeline(frame_timeline)
     previous_start = -1.0
     for segment_index, segment in enumerate(segments):
         start = float(segment.start)
@@ -170,10 +125,11 @@ def _normalize_segments(
         if start < previous_start:
             raise ValueError("faster-whisper segments are not timeline ordered")
         previous_start = start
-        start_frame, end_frame = _time_range_to_frames(start, end, frame_timeline)
+        start_frame, end_frame = time_range_to_frames(start, end, timeline_index)
+        segment_id = f"{video_id}_ASR{segment_index:05d}"
         rows.append(
             {
-                "asr_segment_id": f"{video_id}_ASR{segment_index:05d}",
+                "asr_segment_id": segment_id,
                 "video_id": video_id,
                 "start_sec": start,
                 "end_sec": end,
@@ -190,25 +146,72 @@ def _normalize_segments(
                 "status": "pass",
             }
         )
-    return rows
+        words = list(getattr(segment, "words", None) or [])
+        canonical_words: list[dict[str, Any]] = []
+        for word_index, word in enumerate(words):
+            word_text = str(getattr(word, "word", "")).strip()
+            word_start = float(getattr(word, "start", math.nan))
+            word_end = float(getattr(word, "end", math.nan))
+            if not word_text or not (
+                math.isfinite(word_start)
+                and math.isfinite(word_end)
+                and start <= word_start < word_end <= end + 1e-6
+            ):
+                raise AsrAlignmentError(
+                    f"faster-whisper returned invalid word timing for {segment_id}"
+                )
+            word_start_frame, word_end_frame = time_range_to_frames(
+                word_start, min(word_end, end), timeline_index
+            )
+            canonical_words.append(
+                {
+                    "asr_word_id": f"{segment_id}_W{word_index:05d}",
+                    "asr_segment_id": segment_id,
+                    "video_id": video_id,
+                    "word_index": word_index,
+                    "text": word_text,
+                    "start_sec": word_start,
+                    "end_sec": min(word_end, end),
+                    "start_frame": word_start_frame,
+                    "end_frame": word_end_frame,
+                    "confidence": _finite_or_none(getattr(word, "probability", None)),
+                    "alignment_method": "provider_word_timestamps",
+                    "alignment_version": ALIGNMENT_VERSION,
+                    "provider": "faster_whisper",
+                    "model_name": str(model_config["model_id"]),
+                    "model_version": str(model_config["model_revision"]),
+                    "status": "pass",
+                }
+            )
+        if not canonical_words:
+            raise AsrAlignmentError(
+                f"Accepted faster-whisper segment has no aligned words: {segment_id}"
+            )
+        if normalize_for_comparison(text) != normalize_for_comparison(
+            " ".join(row["text"] for row in canonical_words)
+        ):
+            raise AsrAlignmentError(
+                f"faster-whisper words do not reconstruct segment text: {segment_id}"
+            )
+        word_rows.extend(canonical_words)
+    return rows, word_rows
 
 
-def _time_range_to_frames(
-    start: float, end: float, timeline: list[dict[str, Any]]
-) -> tuple[int | None, int | None]:
-    if not timeline:
-        return None, None
-    ordered = sorted(timeline, key=lambda row: int(row["frame_id"]))
-    timestamps = [float(row["pts_time"]) for row in ordered]
-    start_position = max(0, bisect.bisect_right(timestamps, start) - 1)
-    end_position = bisect.bisect_left(timestamps, end)
-    end_position = min(len(ordered), max(start_position + 1, end_position))
-    exclusive_end = (
-        int(ordered[end_position]["frame_id"])
-        if end_position < len(ordered)
-        else int(ordered[-1]["frame_id"]) + 1
-    )
-    return int(ordered[start_position]["frame_id"]), exclusive_end
+def _alignment_status_details(
+    segment_rows: list[dict[str, Any]], word_rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    accepted = len(segment_rows)
+    aligned = len({str(row["asr_segment_id"]) for row in word_rows})
+    return {
+        "accepted_segment_count": accepted,
+        "rejected_segment_count": 0,
+        "word_count": len(word_rows),
+        "aligned_segment_count": aligned,
+        "alignment_failed_segment_count": 0,
+        "word_alignment_coverage": aligned / accepted if accepted else 1.0,
+        "alignment_method": "provider_word_timestamps",
+        "alignment_version": ALIGNMENT_VERSION,
+    }
 
 
 def _normalized_vad_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
@@ -231,33 +234,6 @@ def _cuda_available() -> bool:
         return False
 
 
-def _is_retryable_local_error(exc: Exception) -> bool:
-    message = str(exc).lower()
-    return any(
-        marker in message
-        for marker in (
-            "out of memory",
-            "cuda error",
-            "temporarily unavailable",
-            "resource temporarily unavailable",
-            "decode",
-            "i/o",
-            "input/output",
-        )
-    )
-
-
 def _is_oom_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return "out of memory" in message or "cuda error" in message
-
-
-def _release_gpu_memory() -> None:
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except ImportError:
-        return

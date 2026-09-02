@@ -99,7 +99,8 @@ shots
 asr
 shots + asr -> shot_transcript_links
 shots + keyframes + ocr + shot_captions + shot_transcript_links -> scenes
-scenes + keyframes + ocr + shot_captions + shot_transcript_links -> scene_summaries
+scenes + asr -> scene_transcript_links
+scenes + scene_transcript_links + asr + keyframes + ocr + shot_captions -> scene_summaries
 all canonical stages -> package -> sync
 ```
 
@@ -259,8 +260,9 @@ state update have all succeeded.
 ### Work Package 10: Local Structured-Output Recovery
 
 1. Version the OCR prompt without changing the canonical OCR response schema.
-2. Attach the exact JSON Schema contract to every local Vintern/Qwen request
-   and include the contract version in local request-cache identity.
+2. Attach the exact JSON Schema contract to OCR requests and the versioned
+   plain-text/label contract to semantic Qwen/Vintern requests; include the
+   relevant contract version in local request-cache identity.
 3. Emit bounded parse-failure samples so provider output can be diagnosed
    without flooding logs.
 4. Classify OCR health against actual Vintern requests and refuse checkpoint
@@ -285,7 +287,7 @@ state update have all succeeded.
    flow can validate the fresh process before restoring its deterministic
    Phase00 fixture.
 5. Add explicit `computed`/`restored` execution provenance at each checkpoint
-   reuse decision. Require all ten production stages through `sync` to be
+   reuse decision. Require all eleven production stages through `sync` to be
    computed in the real one-video smoke.
 6. Keep the smoke implementation package-owned, but expose it only through the
    explicit `phase01-smoke` developer command and a Markdown block that can be
@@ -299,18 +301,22 @@ state update have all succeeded.
 The minimum invalidation rules are:
 
 - `shots` change invalidates `keyframes`, `shot_captions`,
-  `shot_transcript_links`, `scenes`, `scene_summaries`, `package`, and `sync`.
-- `keyframes` change invalidates `shot_captions`, `scenes`, `scene_summaries`,
-  `package`, and `sync`.
-- `ocr` change invalidates `shot_captions`, `scenes`, `scene_summaries`,
-  `package`, and `sync`.
-- `asr` change invalidates `shot_transcript_links`, `scenes`,
+  `shot_transcript_links`, `scenes`, `scene_transcript_links`,
   `scene_summaries`, `package`, and `sync`.
-- `shot_captions` change invalidates `scenes`, `scene_summaries`, `package`, and
-  `sync`.
-- `shot_transcript_links` change invalidates `scenes`, `scene_summaries`,
+- `keyframes` change invalidates `shot_captions`, `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- `ocr` change invalidates `shot_captions`, `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- `asr` change invalidates `shot_transcript_links`, `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- `shot_captions` change invalidates `scenes`, `scene_transcript_links`,
+  `scene_summaries`, `package`, and `sync`.
+- `shot_transcript_links` change invalidates `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- `scenes` change invalidates `scene_transcript_links`, `scene_summaries`,
   `package`, and `sync`.
-- `scenes` change invalidates `scene_summaries`, `package`, and `sync`.
+- `scene_transcript_links` change invalidates `scene_summaries`, `package`, and
+  `sync`.
 - `scene_summaries` change invalidates `package` and `sync`.
 - `package` change invalidates only `sync`.
 
@@ -430,9 +436,10 @@ completed stage.
   probes alone use exact `pts_time`; only visual/text novelty may produce a
   bounded non-representative `supplemental` row, while captions and summary
   images stay representative-only.
-- 2026-08-25: Local Vintern/Qwen generation receives a versioned exact JSON
-  Schema contract. OCR may degrade per request, but a video with zero
-  successful Vintern responses must fail the OCR stage before promotion.
+- 2026-08-25: Local OCR generation receives a versioned exact JSON Schema;
+  semantic Qwen/Vintern generation uses versioned plain-text or strict-label
+  contracts. OCR may degrade per request, but a video with zero successful
+  Vintern responses must fail the OCR stage before promotion.
 - 2026-08-29: Runtime qualification is a separate lightweight console entry
   point because the main CLI eagerly imports Phase01. Candidate manifests are
   the union of base and production-extra direct dependencies and preserve
@@ -551,10 +558,10 @@ Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
-are covered by the 396-test local suite. OCR and the shared Qwen runtime now
-receive the exact versioned JSON Schema in their prompts; OCR records bounded
-parse diagnostics and fails before checkpoint promotion when every Vintern
-request fails. The intentionally deferred gate is
+are covered by the local suite. OCR receives its versioned JSON contract while
+Qwen/Vintern semantic requests use versioned plain-text/label contracts; OCR
+records bounded parse diagnostics and fails before checkpoint promotion when
+every Vintern request fails. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation

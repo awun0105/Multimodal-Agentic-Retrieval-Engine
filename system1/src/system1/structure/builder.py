@@ -25,6 +25,7 @@ from system1.text.builder import metadata_text
 
 STRUCTURE_PARQUET_FILES = (
     "asr_segments.parquet",
+    "asr_words.parquet",
     "shots.parquet",
     "scenes.parquet",
     "keyframes.parquet",
@@ -53,8 +54,22 @@ PARQUET_COLUMNS: dict[str, list[str]] = {
         "model_version",
         "status",
     ],
-    "shot_transcript_links": ["shot_id", "asr_segment_id", "video_id", "coverage"],
-    "scene_transcript_links": ["scene_id", "asr_segment_id", "video_id", "coverage"],
+    "asr_words": [
+        "asr_word_id", "asr_segment_id", "video_id", "word_index", "text",
+        "start_sec", "end_sec", "start_frame", "end_frame", "confidence",
+        "alignment_method", "alignment_version", "provider", "model_name",
+        "model_version", "status",
+    ],
+    "shot_transcript_links": [
+        "video_id", "shot_id", "asr_segment_id", "overlap_start_sec",
+        "overlap_end_sec", "overlap_sec", "segment_coverage", "entity_coverage",
+        "coverage", "assigned_word_count",
+    ],
+    "scene_transcript_links": [
+        "video_id", "scene_id", "asr_segment_id", "overlap_start_sec",
+        "overlap_end_sec", "overlap_sec", "segment_coverage", "entity_coverage",
+        "coverage", "assigned_word_count",
+    ],
     "ocr": [
         "ocr_id",
         "video_id",
@@ -257,13 +272,24 @@ def _write_video_structure_artifact(
         end_frame=shot.end_frame,
         provider=provider_plan.asr,
     )
+    legacy_link = {
+        "video_id": video_id,
+        "asr_segment_id": asr_segment_id,
+        "overlap_start_sec": float(shot.start_seconds),
+        "overlap_end_sec": float(shot.end_seconds),
+        "overlap_sec": float(shot.end_seconds - shot.start_seconds),
+        "segment_coverage": 1.0,
+        "entity_coverage": 1.0,
+        "coverage": 1.0,
+        "assigned_word_count": 0,
+    }
     shot_transcript_links = (
-        [{"shot_id": shot_id, "asr_segment_id": asr_segment_id, "video_id": video_id, "coverage": 1.0}]
+        [{**legacy_link, "shot_id": shot_id}]
         if asr_rows
         else []
     )
     scene_transcript_links = (
-        [{"scene_id": scene_id, "asr_segment_id": asr_segment_id, "video_id": video_id, "coverage": 1.0}]
+        [{**legacy_link, "scene_id": scene_id}]
         if asr_rows
         else []
     )
@@ -280,6 +306,9 @@ def _write_video_structure_artifact(
     )
     tables = {
         "asr_segments": asr_rows,
+        # This legacy/debug builder has no acoustic alignment evidence. It emits
+        # an explicitly empty sibling table instead of fabricating word timing.
+        "asr_words": [],
         "shots": [{
             "shot_id": shot_id,
             "video_id": video_id,

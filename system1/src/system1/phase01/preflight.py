@@ -195,10 +195,17 @@ def run_phase01_runtime_preflight(
             )
         try:
             importlib.import_module("nemo.collections.asr")
+            aligner_utils = importlib.import_module(
+                "nemo.collections.asr.parts.utils.aligner_utils"
+            )
         except (ImportError, AttributeError, RuntimeError, OSError) as exc:
             raise RuntimeError(
                 "nemo_toolkit[asr] could not initialize for configured NeMo ASR"
             ) from exc
+        if not callable(getattr(aligner_utils, "get_utt_obj", None)):
+            raise RuntimeError(
+                "Pinned NeMo runtime does not expose tokenizer-aware alignment"
+            )
         _validate_nemo_asr_contract(asr_model)
         validate_installed_flashlight_runtime(
             artifact_config=asr_model["decoder"]["runtime_artifact"]

@@ -1,4 +1,4 @@
-schema_version: phase01_artifact_v1
+schema_version: phase01_artifact_v2
 
 resolved_config:
   filename: resolved_config.json
@@ -22,6 +22,7 @@ checkpoint:
       - keyframes.zip
     asr:
       - asr_segments.parquet
+      - asr_words.parquet
       - asr_status.json
       - asr_diagnostics.jsonl
     ocr:
@@ -33,9 +34,10 @@ checkpoint:
       - shot_transcript_links.parquet
     scenes:
       - scenes.parquet
-      - scene_transcript_links.parquet
       - scene_boundary_diagnostics.jsonl
       - scene_partition_quality.json
+    scene_transcript_links:
+      - scene_transcript_links.parquet
     scene_summaries:
       - scene_summaries.parquet
     package:

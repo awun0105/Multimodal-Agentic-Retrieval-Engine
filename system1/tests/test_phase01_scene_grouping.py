@@ -489,11 +489,20 @@ def test_two_supplementals_reach_focused_scene_evidence_without_overwrite(
                 "caption_en": "A scene",
             }
         ],
-        [],
-        [],
+        [
+            {
+                "asr_word_id": "v_ASR00000_W00000",
+                "asr_segment_id": "v_ASR00000",
+                "word_index": 0,
+                "text": "liên tục",
+                "start_sec": 1.0,
+                "end_sec": 1.5,
+            }
+        ],
         tmp_path,
     )
 
+    assert evidence[0]["transcript"] == "liên tục"
     assert [path.name for path in evidence[0]["supplemental_paths"]] == [
         "supplemental_1.jpg",
         "supplemental_2.jpg",

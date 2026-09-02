@@ -57,7 +57,7 @@ images and detector errors continue to Vintern. Gate thresholds live in
 versioned Phase01 config and therefore participate in OCR checkpoint identity.
 
 ASR defaults to the pinned `nvidia/parakeet-ctc-0.6b-vi` Hugging Face alias and
-NeMo 2.6. Faster-Whisper Large-v3 remains an explicit config override. Provider,
+NeMo 2.7.3. Faster-Whisper Large-v3 remains an explicit config override. Provider,
 model, prompt, schema, OCR policy, and quantization changes invalidate the
 affected stage and its downstream dependants. Execution-only batch sizes do
 not alter semantic checkpoint identity.
