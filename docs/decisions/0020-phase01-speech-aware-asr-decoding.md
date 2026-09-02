@@ -63,6 +63,10 @@ therefore retokenizes the canonical text with NeMo's model-aware tokenizer
 utility, runs deterministic CTC Viterbi alignment over the retained matrix,
 and derives timestep duration from preprocessor stride times encoder
 subsampling. `compute_timestamps=False` remains required for Flashlight.
+For a forced-split overlap, System1 aligns the complete raw Flashlight text
+against the complete retained acoustic matrix first, then removes the matched
+aligned-word prefix and reindexes the retained canonical words. It never aligns
+an already-trimmed reference against audio that still contains the overlap.
 
 Accepted segments publish `asr_words_v1`. Faster-Whisper, when explicitly
 selected, must enable provider word timestamps and normalize them to the same

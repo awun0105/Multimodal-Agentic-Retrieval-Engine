@@ -15,6 +15,7 @@ from .alignment import (
     ALIGNMENT_VERSION,
     AsrAlignmentError,
     align_nemo_hypothesis_words,
+    trim_aligned_word_prefix,
 )
 from .contracts import AsrResult
 from .quality import (
@@ -175,9 +176,13 @@ def _transcribe_streaming(
             hypothesis: Any = None
             try:
                 hypothesis = _transcribe_one(model, wav_path)
-                text = _transcription_text(hypothesis)
+                raw_text = _transcription_text(hypothesis)
+                text = raw_text
+                removed_overlap_prefix = ""
                 if speech_range.overlap_seconds > 0 and previous_text:
-                    text = _remove_forced_overlap(previous_text, text)
+                    text, removed_overlap_prefix = _remove_forced_overlap(
+                        previous_text, raw_text
+                    )
                 acoustic = alignment_metrics(hypothesis, blank_index=blank_index)
                 decision = evaluate_transcript(
                     text,
@@ -200,15 +205,16 @@ def _transcribe_streaming(
                     "alignment_version": ALIGNMENT_VERSION,
                     "alignment_frame_count": decision.metrics.get("alignment_frames"),
                     "aligned_word_count": 0,
+                    "forced_overlap_trimmed_word_count": 0,
                     "alignment_error": None,
                 }
                 segment_id = f"{video_id}_ASR{speech_range.segment_index:05d}"
                 aligned_words: list[dict[str, Any]] = []
                 if decision.accepted:
-                    aligned_words = align_nemo_hypothesis_words(
+                    raw_aligned_words = align_nemo_hypothesis_words(
                         hypothesis,
                         model,
-                        text=text,
+                        text=raw_text,
                         segment_id=segment_id,
                         video_id=video_id,
                         segment_start_sec=float(speech_range.start_sec),
@@ -218,8 +224,17 @@ def _transcribe_streaming(
                         model_name=str(config["model_id"]),
                         model_version=str(config["model_revision"]),
                     )
+                    aligned_words = trim_aligned_word_prefix(
+                        raw_aligned_words,
+                        removed_prefix_text=removed_overlap_prefix,
+                        canonical_text=text,
+                        segment_id=segment_id,
+                    )
                     diagnostic["alignment_status"] = "aligned"
                     diagnostic["aligned_word_count"] = len(aligned_words)
+                    diagnostic["forced_overlap_trimmed_word_count"] = (
+                        len(raw_aligned_words) - len(aligned_words)
+                    )
                 diagnostics.append(diagnostic)
                 candidates.append(
                     {
@@ -421,7 +436,7 @@ def _apply_adjacent_repetition_gate(
             diagnostic["reason_codes"] = reasons
 
 
-def _remove_forced_overlap(previous_text: str, current_text: str) -> str:
+def _remove_forced_overlap(previous_text: str, current_text: str) -> tuple[str, str]:
     previous = previous_text.split()
     current = current_text.split()
     maximum = min(12, len(previous), len(current))
@@ -429,8 +444,11 @@ def _remove_forced_overlap(previous_text: str, current_text: str) -> str:
         left = normalize_for_comparison(" ".join(previous[-count:]))
         right = normalize_for_comparison(" ".join(current[:count]))
         if left and left == right:
-            return " ".join(current[count:]).strip()
-    return current_text.strip()
+            return (
+                " ".join(current[count:]).strip(),
+                " ".join(current[:count]).strip(),
+            )
+    return current_text.strip(), ""
 
 
 def _extract_audio_segment(

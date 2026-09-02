@@ -338,13 +338,19 @@ def test_nemo_forced_split_trims_segment_text_and_words_together(
 ) -> None:
     from system1.asr import nemo
 
+    aligned_texts: list[str] = []
+
+    def align_raw_text(hypothesis, model, **kwargs):
+        aligned_texts.append(str(kwargs["text"]))
+        return _fake_nemo_words(hypothesis, model, **kwargs)
+
     monkeypatch.setattr(nemo, "_media_duration", lambda _path: 2.0)
     monkeypatch.setattr(
         nemo,
         "_extract_audio_segment",
         lambda _video, output, **_kwargs: output.write_bytes(b"wav"),
     )
-    monkeypatch.setattr(nemo, "align_nemo_hypothesis_words", _fake_nemo_words)
+    monkeypatch.setattr(nemo, "align_nemo_hypothesis_words", align_raw_text)
     result = nemo.transcribe_video(
         tmp_path / "video.mp4",
         video_id="L21_V001",
@@ -363,6 +369,10 @@ def test_nemo_forced_split_trims_segment_text_and_words_together(
         "thành phố hồ chí minh",
         "hôm nay đông",
     ]
+    assert aligned_texts == [
+        "thành phố hồ chí minh",
+        "hồ chí minh hôm nay đông",
+    ]
     words_by_segment: dict[str, list[str]] = {}
     for row in result.word_rows:
         words_by_segment.setdefault(str(row["asr_segment_id"]), []).append(
@@ -372,6 +382,21 @@ def test_nemo_forced_split_trims_segment_text_and_words_together(
         ["thành", "phố", "hồ", "chí", "minh"],
         ["hôm", "nay", "đông"],
     ]
+    second_segment_words = [
+        row
+        for row in result.word_rows
+        if row["asr_segment_id"] == "L21_V001_ASR00001"
+    ]
+    assert [row["word_index"] for row in second_segment_words] == [0, 1, 2]
+    assert [row["asr_word_id"] for row in second_segment_words] == [
+        "L21_V001_ASR00001_W00000",
+        "L21_V001_ASR00001_W00001",
+        "L21_V001_ASR00001_W00002",
+    ]
+    assert second_segment_words[0]["start_sec"] == pytest.approx(
+        0.75 + 3 * (1.25 / 6)
+    )
+    assert result.diagnostics[1]["forced_overlap_trimmed_word_count"] == 3
 
 
 def test_nemo_skips_model_load_when_vad_finds_no_speech(

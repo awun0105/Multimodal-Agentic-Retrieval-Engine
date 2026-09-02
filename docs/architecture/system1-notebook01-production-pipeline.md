@@ -335,6 +335,11 @@ inference and `compute_timestamps` remains disabled for beam decoding. Every
 accepted segment must reconstruct from one or more canonical `asr_words_v1`
 rows or the ASR stage fails terminally.
 
+Forced-split cleanup happens after alignment: the full raw Flashlight text is
+aligned to the full overlapping acoustic matrix, then the duplicated aligned
+prefix is removed and the remaining canonical word IDs/indexes are rebuilt.
+This preserves the original acoustic timing of words after the overlap.
+
 CTC blank ratio, non-blank posterior, normalized entropy, text density,
 character rate, and repetition checks run after decoding. Rejected candidates
 remain in `asr_diagnostics.jsonl` with reason codes and acoustic metrics but do

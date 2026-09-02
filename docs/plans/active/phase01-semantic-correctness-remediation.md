@@ -155,7 +155,7 @@ Focused acceptance cases:
 
 ### Task 2: ASR Temporal Alignment
 
-Status: Implementation Complete - Live Acceptance Pending
+Status: Closure In Progress - Live Acceptance Pending
 
 Depends on: Task 1 accepted.
 

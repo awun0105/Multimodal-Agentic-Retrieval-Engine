@@ -197,6 +197,59 @@ def align_nemo_hypothesis_words(
     return result
 
 
+def trim_aligned_word_prefix(
+    word_rows: Sequence[Mapping[str, Any]],
+    *,
+    removed_prefix_text: str,
+    canonical_text: str,
+    segment_id: str,
+) -> list[dict[str, Any]]:
+    """Drop a deduplicated forced-split prefix after full-text alignment.
+
+    Matching the prefix against aligned surface words keeps this operation
+    tokenizer-aware: a whitespace-derived overlap is accepted only when the
+    aligned word sequence independently reconstructs both the removed prefix
+    and the retained canonical text.
+    """
+
+    rows = [dict(row) for row in word_rows]
+    prefix = normalize_for_comparison(removed_prefix_text)
+    canonical = normalize_for_comparison(canonical_text)
+    if not canonical:
+        raise AsrAlignmentError("Accepted ASR text cannot be empty after overlap removal")
+
+    trim_count = 0
+    if prefix:
+        for candidate_count in range(1, len(rows) + 1):
+            candidate = normalize_for_comparison(
+                " ".join(str(row["text"]) for row in rows[:candidate_count])
+            )
+            if candidate != prefix:
+                continue
+            retained = normalize_for_comparison(
+                " ".join(str(row["text"]) for row in rows[candidate_count:])
+            )
+            if retained == canonical:
+                trim_count = candidate_count
+                break
+        else:
+            raise AsrAlignmentError(
+                "Aligned words do not match the forced-split overlap prefix"
+            )
+    elif normalize_for_comparison(
+        " ".join(str(row["text"]) for row in rows)
+    ) != canonical:
+        raise AsrAlignmentError("Aligned words do not reconstruct canonical segment text")
+
+    retained_rows = rows[trim_count:]
+    if not retained_rows:
+        raise AsrAlignmentError("Forced-split overlap removed every aligned word")
+    for word_index, row in enumerate(retained_rows):
+        row["word_index"] = word_index
+        row["asr_word_id"] = f"{segment_id}_W{word_index:05d}"
+    return retained_rows
+
+
 def _viterbi_state_path(
     matrix: np.ndarray,
     extended_target: Sequence[int],
