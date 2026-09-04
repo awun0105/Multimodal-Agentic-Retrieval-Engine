@@ -155,7 +155,10 @@ Focused acceptance cases:
 
 ### Task 2: ASR Temporal Alignment
 
-Status: Closure In Progress - Live Acceptance Pending
+Status: Accepted
+
+Local contract is closed. Live T4/Colab/Kaggle provider smoke is deferred
+until Tasks 3-5 are complete and is not claimed by this acceptance.
 
 Depends on: Task 1 accepted.
 
@@ -320,7 +323,7 @@ Focused acceptance cases:
 - [x] Task 1: Scene Grouping Correctness.
 - [x] Review and accept Task 1 before Task 2.
 - [x] Task 2: ASR Temporal Alignment implementation and local proof.
-- [ ] Review and accept Task 2 before Task 3.
+- [x] Review and accept Task 2 before Task 3.
 - [ ] Task 3: Speech-Aware Scene Grouping.
 - [ ] Review and accept Task 3 before Task 4.
 - [ ] Task 4: Adaptive Scene Summary.
@@ -394,6 +397,11 @@ Focused acceptance cases:
   after accepted scenes. Checkpoint state v1 is migrated before v2 validation;
   the new stage starts pending and a previously complete video becomes running
   until the new stage and downstream outputs are rebuilt.
+- 2026-09-04: Task 2 is accepted on local contract evidence. The operator will
+  run the pinned T4 Colab/Kaggle notebook smoke once after Tasks 3-5, not as a
+  per-task gate. This acceptance unblocks Task 3. It does not claim live ASR
+  timestamp quality, forced-split behavior on real audio, or heterogeneous
+  speech-batch proof.
 
 ## Validation
 
@@ -439,11 +447,12 @@ Task 2 local proof on 2026-09-02:
   as passed;
 - `git diff --check`: passed after final closure.
 
-Live acceptance was not run. The current host exposes a Quadro T2000 with 4 GB
-VRAM rather than the required T4-class qualification runtime, and no HF token is
-available. A real forced-split boundary was therefore also not exercised. The
-one-video T4 smoke, manual timestamp spot-check, and heterogeneous speech batch
-remain explicit acceptance gates.
+Live acceptance was not run during Task 2. The implementation host exposed a
+Quadro T2000 with 4 GB VRAM rather than the required T4-class qualification
+runtime, and no HF token was available. A real forced-split boundary was
+therefore also not exercised. On 2026-09-04 those live gates were deferred to a
+single post-Task-5 T4 Colab/Kaggle notebook run. They remain required before
+claiming live/provider acceptance; they no longer block Task 2 local closure.
 
 - Focused proof: each task must add and run behavior-specific tests described in
   its acceptance cases.
@@ -458,9 +467,10 @@ remain explicit acceptance gates.
 
 ## Result
 
-Active. Task 1 and its closure patch are accepted. Task 2 is implemented and
-locally validated; live/provider acceptance remains pending, and Task 3 has not
-started.
+Active. Task 1 and its closure patch are accepted. Task 2 is accepted on local
+contract evidence (`86d0ada`, `867dabc`). Live/provider smoke is deferred until
+after Task 5. Task 3 has not started and waits for an explicit implementation
+guide.
 
 Task 1 changed:
 
