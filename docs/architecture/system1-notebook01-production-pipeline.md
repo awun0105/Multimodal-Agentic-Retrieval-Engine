@@ -339,6 +339,11 @@ Forced-split cleanup happens after alignment: the full raw Flashlight text is
 aligned to the full overlapping acoustic matrix, then the duplicated aligned
 prefix is removed and the remaining canonical word IDs/indexes are rebuilt.
 This preserves the original acoustic timing of words after the overlap.
+Deduplication runs after both quality and adjacent-repetition rejection gates.
+Only a retained preceding chunk with temporal overlap can supply the prefix;
+rejected chunks break the deduplication chain. Raw quality text remains in
+diagnostics alongside the resulting canonical text. The versioned forced-overlap
+policy participates in the ASR checkpoint hash.
 
 CTC blank ratio, non-blank posterior, normalized entropy, text density,
 character rate, and repetition checks run after decoding. Rejected candidates

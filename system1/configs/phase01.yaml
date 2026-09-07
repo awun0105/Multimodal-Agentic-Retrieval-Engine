@@ -80,6 +80,7 @@ asr:
   alignment:
     required_for_accepted_segments: true
     policy: ctc_word_alignment_v1
+    forced_overlap_policy: retained_after_quality_v2
     interval_assignment:
       policy: max_overlap_midpoint_v1
       interval_convention: "[start_sec, end_sec)"

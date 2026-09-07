@@ -159,7 +159,6 @@ def _transcribe_streaming(
     quality_config = _mapping(config, "quality_gate")
     diagnostics: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
-    previous_text = ""
     blank_index = _ctc_blank_index(model)
     timeline_index = index_frame_timeline(frame_timeline)
 
@@ -178,11 +177,6 @@ def _transcribe_streaming(
                 hypothesis = _transcribe_one(model, wav_path)
                 raw_text = _transcription_text(hypothesis)
                 text = raw_text
-                removed_overlap_prefix = ""
-                if speech_range.overlap_seconds > 0 and previous_text:
-                    text, removed_overlap_prefix = _remove_forced_overlap(
-                        previous_text, raw_text
-                    )
                 acoustic = alignment_metrics(hypothesis, blank_index=blank_index)
                 decision = evaluate_transcript(
                     text,
@@ -197,6 +191,8 @@ def _transcribe_streaming(
                     "forced_split": speech_range.forced_split,
                     "overlap_seconds": speech_range.overlap_seconds,
                     "text": text,
+                    "quality_text": raw_text,
+                    "quality_text_scope": "raw_decoded_before_overlap_removal",
                     "accepted": decision.accepted,
                     "reason_codes": list(decision.reason_codes),
                     "metrics": decision.metrics,
@@ -224,17 +220,9 @@ def _transcribe_streaming(
                         model_name=str(config["model_id"]),
                         model_version=str(config["model_revision"]),
                     )
-                    aligned_words = trim_aligned_word_prefix(
-                        raw_aligned_words,
-                        removed_prefix_text=removed_overlap_prefix,
-                        canonical_text=text,
-                        segment_id=segment_id,
-                    )
+                    aligned_words = raw_aligned_words
                     diagnostic["alignment_status"] = "aligned"
                     diagnostic["aligned_word_count"] = len(aligned_words)
-                    diagnostic["forced_overlap_trimmed_word_count"] = (
-                        len(raw_aligned_words) - len(aligned_words)
-                    )
                 diagnostics.append(diagnostic)
                 candidates.append(
                     {
@@ -245,14 +233,13 @@ def _transcribe_streaming(
                         "words": aligned_words,
                     }
                 )
-                if text:
-                    previous_text = text
             finally:
                 wav_path.unlink(missing_ok=True)
                 del hypothesis
                 gc.collect()
 
     _apply_adjacent_repetition_gate(candidates, quality_config)
+    _deduplicate_retained_candidates(candidates)
     rows: list[dict[str, Any]] = []
     word_rows: list[dict[str, Any]] = []
     for candidate in candidates:
@@ -434,6 +421,49 @@ def _apply_adjacent_repetition_gate(
             if "adjacent_low_information_repetition" not in reasons:
                 reasons.append("adjacent_low_information_repetition")
             diagnostic["reason_codes"] = reasons
+
+
+def _deduplicate_retained_candidates(candidates: list[dict[str, Any]]) -> None:
+    """Deduplicate only after every rejection gate has settled ownership.
+
+    Quality gates inspect raw decoded speech. Rejected chunks break the chain:
+    they must never claim words from the next chunk. Alignment has already run
+    against each complete acoustic matrix, so trimming never changes timing.
+    """
+    previous: dict[str, Any] | None = None
+    for candidate in candidates:
+        if not candidate["accepted"]:
+            previous = None
+            continue
+        speech_range = candidate["range"]
+        if (
+            previous is not None
+            and speech_range.overlap_seconds > 0
+            and previous["range"].end_sec > speech_range.start_sec
+        ):
+            text, prefix = _remove_forced_overlap(previous["text"], candidate["text"])
+            if prefix:
+                diagnostic = candidate["diagnostic"]
+                original_words = candidate["words"]
+                if text:
+                    words = trim_aligned_word_prefix(
+                        original_words,
+                        removed_prefix_text=prefix,
+                        canonical_text=text,
+                        segment_id=str(original_words[0]["asr_segment_id"]),
+                    )
+                else:
+                    words = []
+                    candidate["accepted"] = False
+                    diagnostic["accepted"] = False
+                    diagnostic["reason_codes"].append("forced_overlap_only")
+                candidate["text"] = text
+                candidate["words"] = words
+                diagnostic["text"] = text
+                diagnostic["aligned_word_count"] = len(words)
+                diagnostic["forced_overlap_trimmed_word_count"] = len(original_words) - len(words)
+        # An entirely duplicated chunk owns no canonical speech itself.
+        previous = candidate if candidate["accepted"] else None
 
 
 def _remove_forced_overlap(previous_text: str, current_text: str) -> tuple[str, str]:

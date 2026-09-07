@@ -399,6 +399,46 @@ def test_nemo_forced_split_trims_segment_text_and_words_together(
     assert result.diagnostics[1]["forced_overlap_trimmed_word_count"] == 3
 
 
+@pytest.mark.parametrize(
+    ("texts", "expected"),
+    [
+        (["a", "a xin chào"], ["a xin chào"]),
+        (["xin chào"] * 3 + ["xin chào mọi người"], ["xin chào mọi người"]),
+        (["xin chào", "xin chào"], ["xin chào"]),
+    ],
+)
+def test_overlap_ownership_follows_final_quality_decisions(
+    monkeypatch, tmp_path: Path, texts: list[str], expected: list[str]
+) -> None:
+    from system1.asr import nemo
+
+    monkeypatch.setattr(nemo, "_media_duration", lambda _path: 5.0)
+    monkeypatch.setattr(
+        nemo, "_extract_audio_segment",
+        lambda _video, output, **_kwargs: output.write_bytes(b"wav"),
+    )
+    monkeypatch.setattr(nemo, "align_nemo_hypothesis_words", _fake_nemo_words)
+    result = nemo.transcribe_video(
+        tmp_path / "video.mp4", video_id="v", frame_timeline=timeline(),
+        config=nemo_config(), audio_present=True,
+        model_factory=lambda *_args, **_kwargs: FakeNemoModel(texts),
+        speech_range_detector=lambda *_args, **_kwargs: [
+            SpeechRange(index * 0.75, index * 0.75 + 1.0, index,
+                        forced_split=index > 0, overlap_seconds=0.25 if index else 0)
+            for index in range(len(texts))
+        ],
+    )
+    assert [row["text"] for row in result.segment_rows] == expected
+    for segment in result.segment_rows:
+        words = [row for row in result.word_rows
+                 if row["asr_segment_id"] == segment["asr_segment_id"]]
+        assert " ".join(row["text"] for row in words) == segment["text"]
+        assert [row["word_index"] for row in words] == list(range(len(words)))
+    if len(texts) == 4:
+        assert all("adjacent_low_information_repetition" in row["reason_codes"]
+                   for row in result.diagnostics[:3])
+
+
 def test_nemo_skips_model_load_when_vad_finds_no_speech(
     monkeypatch, tmp_path: Path
 ) -> None:

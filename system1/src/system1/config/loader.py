@@ -540,6 +540,8 @@ def _validate_asr_alignment_policy(payload: dict[str, Any]) -> None:
         )
     if str(policy.get("policy")) != "ctc_word_alignment_v1":
         raise ValueError("Unsupported Phase01 asr.alignment.policy")
+    if policy.get("forced_overlap_policy") != "retained_after_quality_v2":
+        raise ValueError("Unsupported Phase01 asr.alignment.forced_overlap_policy")
     interval = policy.get("interval_assignment")
     if not isinstance(interval, dict):
         raise TypeError("Phase01 asr.alignment.interval_assignment must be a mapping")

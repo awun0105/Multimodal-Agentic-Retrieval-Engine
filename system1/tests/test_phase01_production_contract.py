@@ -319,6 +319,7 @@ def test_scene_quality_guard_config_is_validated(
     [
         (("required_for_accepted_segments",), False, "required_for_accepted_segments"),
         (("policy",), "unknown", "alignment.policy"),
+        (("forced_overlap_policy",), "unknown", "forced_overlap_policy"),
         (("interval_assignment", "policy"), "unknown", "interval assignment"),
         (("interval_assignment", "interval_convention"), "closed", "interval convention"),
         (("text_reconstruction", "normalization"), "unknown", "reconstruction"),
@@ -1059,6 +1060,13 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
         assert scene_links_hashes[stage] == resolved.stage_config_hashes[stage]
 
     assignment_changed = copy.deepcopy(resolved.payload)
+    old_overlap = copy.deepcopy(resolved.payload)
+    del old_overlap["phase01"]["asr"]["alignment"]["forced_overlap_policy"]
+    old_hashes = _stage_config_hashes(old_overlap)
+    assert old_hashes["asr"] != resolved.stage_config_hashes["asr"]
+    for stage in ("shots", "keyframes", "ocr", "shot_captions"):
+        assert old_hashes[stage] == resolved.stage_config_hashes[stage]
+
     assignment_changed["phase01"]["asr"]["alignment"]["interval_assignment"][
         "interval_convention"
     ] = "test-only-policy-change"

@@ -67,6 +67,14 @@ For a forced-split overlap, System1 aligns the complete raw Flashlight text
 against the complete retained acoustic matrix first, then removes the matched
 aligned-word prefix and reindexes the retained canonical words. It never aligns
 an already-trimmed reference against audio that still contains the overlap.
+Quality and adjacent-repetition gates evaluate raw decoded text before overlap
+deduplication. Only the immediately preceding retained, temporally overlapping
+chunk may own a duplicate prefix; a rejected chunk breaks that chain. A chunk
+containing only an already retained prefix is omitted with `forced_overlap_only`.
+Diagnostics retain `quality_text` and its scope so raw-text metrics remain
+auditable after canonical text is trimmed. The ASR fingerprint includes
+`forced_overlap_policy: retained_after_quality_v2`, invalidating checkpoints
+created before this ownership and timing correction.
 
 Accepted segments publish `asr_words_v1`. Faster-Whisper, when explicitly
 selected, must enable provider word timestamps and normalize them to the same

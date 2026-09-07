@@ -405,6 +405,19 @@ Focused acceptance cases:
 
 ## Validation
 
+Task 2 follow-up on 2026-09-08: local closure complete. Forced-overlap
+deduplication now runs after final rejection decisions and preserves raw quality
+evidence. ASR-hashed `retained_after_quality_v2` invalidates pre-fix checkpoints
+and their dependent stages; shots, keyframes, OCR and captions remain reusable.
+Task 3 remains unstarted.
+
+- ASR/alignment/production-contract/checkpoint focused suite: 106 passed.
+- `pytest -q tests/test_phase01*.py`: 252 passed; 463 warnings from unavailable
+  NVML in the sandbox, not live GPU qualification.
+- Ruff on all changed Python files: passed; `git diff --check`: passed.
+- Full suite was not rerun for this bounded follow-up. Live provider smoke
+  remains deferred under the existing post-Task-5 acceptance decision.
+
 Task 1 local proof on 2026-09-01:
 
 - `pytest -q tests/test_phase01_scene_grouping.py`: 17 passed.
