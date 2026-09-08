@@ -9,7 +9,7 @@ from typing import Any
 
 from system1.asr.links import assign_words_to_intervals
 
-CONTRACT_VERSION = "aligned_speech_continuity_v1"
+CONTRACT_VERSION = "aligned_speech_continuity_v2"
 TIMELINE_EPSILON = 1e-9
 
 
@@ -20,6 +20,7 @@ class SpeechGapEvidence:
     right_shot_id: str
     asr_status: str
     speech_evidence_reliable: bool
+    reliability_reason: str
     left_aligned_word_count: int
     right_aligned_word_count: int
     shared_segment_ids: tuple[str, ...]
@@ -81,7 +82,6 @@ def build_speech_gap_evidence(
             )
         links[key] = row
 
-    reliable = bool(policy["enabled"]) and asr_status == "pass"
     result: dict[str, SpeechGapEvidence] = {}
     for left, right in pairwise(shots):
         boundary = float(left["end_sec"])
@@ -91,6 +91,12 @@ def build_speech_gap_evidence(
         right_id = str(right["shot_id"])
         left_words = assignments[left_id]
         right_words = assignments[right_id]
+        reliable, reliability_reason = _gap_reliability(
+            enabled=bool(policy["enabled"]),
+            asr_status=asr_status,
+            left_word_count=len(left_words),
+            right_word_count=len(right_words),
+        )
         left_segments = {str(w["asr_segment_id"]) for w in left_words}
         right_segments = {str(w["asr_segment_id"]) for w in right_words}
         # Lexical ID order is deterministic; selected ID is only for compact coverage.
@@ -121,6 +127,7 @@ def build_speech_gap_evidence(
             right_shot_id=right_id,
             asr_status=asr_status,
             speech_evidence_reliable=reliable,
+            reliability_reason=reliability_reason,
             left_aligned_word_count=len(left_words),
             right_aligned_word_count=len(right_words),
             shared_segment_ids=shared,
@@ -152,6 +159,26 @@ def build_speech_gap_evidence(
     return result
 
 
+def _gap_reliability(
+    *,
+    enabled: bool,
+    asr_status: str,
+    left_word_count: int,
+    right_word_count: int,
+) -> tuple[bool, str]:
+    if not enabled:
+        return False, "disabled"
+    if asr_status != "pass":
+        return False, f"video_asr_{asr_status}"
+    if left_word_count == 0 and right_word_count == 0:
+        return False, "missing_both_aligned_words"
+    if left_word_count == 0:
+        return False, "missing_left_aligned_words"
+    if right_word_count == 0:
+        return False, "missing_right_aligned_words"
+    return True, "reliable_words_both_sides"
+
+
 def speech_diagnostics(evidence: SpeechGapEvidence | None) -> dict[str, Any]:
     if evidence is None:
         return {}
@@ -159,6 +186,7 @@ def speech_diagnostics(evidence: SpeechGapEvidence | None) -> dict[str, Any]:
         "speech_contract_version": evidence.contract_version,
         "speech_asr_status": evidence.asr_status,
         "speech_evidence_reliable": evidence.speech_evidence_reliable,
+        "speech_reliability_reason": evidence.reliability_reason,
         "speech_left_aligned_word_count": evidence.left_aligned_word_count,
         "speech_right_aligned_word_count": evidence.right_aligned_word_count,
         "speech_shared_segment_crosses_gap": evidence.shared_segment_crosses_gap,
@@ -177,6 +205,18 @@ def speech_diagnostics(evidence: SpeechGapEvidence | None) -> dict[str, Any]:
 def render_speech_evidence(evidence: SpeechGapEvidence | None) -> str:
     if evidence is None:
         return "SPEECH_GAP_EVIDENCE: <NONE>"
+    enabled = evidence.reliability_reason != "disabled"
+    if not evidence.speech_evidence_reliable:
+        return "\n".join(
+            (
+                "SPEECH_GAP_EVIDENCE:",
+                f"CONTRACT: {evidence.contract_version}",
+                f"ENABLED: {'YES' if enabled else 'NO'}",
+                "SPEECH_EVIDENCE_RELIABLE: NO",
+                f"RELIABILITY_REASON: {evidence.reliability_reason}",
+                "CONTINUITY_EVALUATION: NOT_EVALUATED",
+            )
+        )
     lines = ["SPEECH_GAP_EVIDENCE:"]
     for key, value in asdict(evidence).items():
         if isinstance(value, bool):

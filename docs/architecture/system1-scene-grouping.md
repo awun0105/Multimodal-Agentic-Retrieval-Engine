@@ -34,7 +34,7 @@ ordered shots + multimodal shot evidence
   -> candidate partition
   -> partition-level quality assessment
   -> optional bounded degenerate review
-  -> pass and promote, or fail closed
+  -> pass and promote, or quarantine for exact manual disposition
 ```
 
 The VLM decides only whether the gap after a named shot is a boundary. It does
@@ -63,7 +63,7 @@ Task 2 word timing remains the only text-attribution authority. Before any VLM
 request, `build_speech_gap_evidence()` assigns canonical ASR words to the
 ordered shot intervals using the same maximum-overlap and midpoint tie rules as
 shot transcript construction. For each real adjacent-shot gap it records the
-versioned `aligned_speech_continuity_v1` facts:
+versioned `aligned_speech_continuity_v2` facts:
 
 ```text
 ASR status and evidence reliability
@@ -84,10 +84,14 @@ words occur within the configured one-second boundary and inter-word limits.
 When multiple segments cross one gap, every ID is retained in lexical order;
 the first ID is selected only for compact link-coverage fields.
 
-`pass` is eligible for positive evidence. `no_audio`, `no_speech`, and
-`low_confidence` set `speech_evidence_reliable = false`; missing or rejected
-speech is never interpreted as a semantic break. The thresholds are evidence
-policy, not a scene rule.
+Reliability is evaluated per gap, not only per video. `pass` ASR is eligible
+for positive evidence only when both neighboring shots own aligned words.
+Missing left, right, or both-side words therefore produce an explicit neutral
+reason such as `missing_left_aligned_words`; `no_audio`, `no_speech`, and
+`low_confidence` remain neutral video-level reasons. An unreliable block is
+rendered compactly as `CONTINUITY_EVALUATION: NOT_EVALUATED` and omits false
+continuity facts. Missing or rejected speech is never interpreted as a semantic
+break. The thresholds are evidence policy, not a scene rule.
 
 Every primary, focused, consistency, and degenerate request receives the same
 compact `SPEECH_GAP_EVIDENCE` block through the shared gap renderer. Reliable
@@ -151,7 +155,7 @@ whole-video contact sheet or repeat whole-video text for every gap.
 ## Partition Quality Guard
 
 After ordinary review, Python constructs a candidate partition and computes the
-versioned deterministic `scene_partition_quality_v1` report:
+versioned deterministic `scene_partition_quality_v2` report:
 
 ```text
 shot_count
@@ -187,7 +191,7 @@ else:
 This rule is a safety trigger, not a semantic truth rule. It does not declare
 that every one-shot scene is invalid, target a scene count, or mutate labels.
 
-## Degenerate Review And Fail-Closed Promotion
+## Degenerate Review And Asynchronous Quarantine
 
 A suspicious candidate partition can enter one bounded recovery pass using the
 `scene_boundary_degenerate_label_v2` prompt. The pass re-evaluates every gap
@@ -198,24 +202,35 @@ unbounded whole-video prompt.
 Python rebuilds and reassesses the partition after recovery:
 
 - normal result: status `pass_after_review`, then promote;
-- suspicious result: raise `ScenePartitionQualityError`, mark the scenes stage
-  `failed_terminal`, and do not promote scenes or run downstream scene
-  summaries/package/sync.
+- suspicious result: persist an immutable review candidate, return
+  `review_required`, keep the scenes stage pending, and skip scene links,
+  summaries, package, and sync for that video while other videos continue.
 
-The failure stores compact structured policy/metrics under checkpoint
-`error.details`. Before raising the terminal error, the pipeline persists
-`scene_partition_quality.json` and `scene_boundary_diagnostics.jsonl` under the
-non-canonical checkpoint namespace:
+The review candidate and its evidence are stored outside canonical stage
+outputs:
 
 ```text
 phase01_checkpoints/{release_id}/{video_id}/
-  failures/scenes/{scene_fingerprint}/{diagnostic_fingerprint}/
+  reviews/scene_partition/{candidate_fingerprint}/
+    candidate.json
+    scene_partition_quality.json
+    scene_boundary_diagnostics.jsonl
+    decision.json                 # only after disposition
 ```
 
-The worker result exposes this location as `diagnostics_ref`. These files are
-inspectable evidence only: they do not complete the scenes stage, cannot be
-restored as canonical outputs, and are not included in a successful package.
-Upstream shots, keyframes, ASR, OCR, captions, and shot links remain reusable.
+The candidate fingerprint commits to the exact scene input/config hashes,
+ordered decisions and scenes, initial/final quality, grouping version, and
+review metadata; creation time is excluded. Public review helpers list/get
+pending candidates and write one immutable `approve` or `reject` decision with
+a non-empty reviewer and timezone-aware review time.
+
+On rerun, only the exact candidate may consume its decision. Approval promotes
+that exact suspicious partition with `pass_after_manual_review`; rejection is
+a durable `review_rejected` outcome and never pretends to remain pending. A
+changed input or scene config has a different identity, so a stale decision
+cannot apply. Candidate reuse also prevents repeating VLM grouping merely to
+resume an already quarantined video. The candidate files are inspectable
+evidence, not canonical stage outputs. Upstream stages remain reusable.
 
 ## Deterministic Scene Partition
 
@@ -227,8 +242,8 @@ frame/time range.
 scene_id            = {video_id}_SC{scene_index:05d}
 boundary_convention = [start_frame, end_frame)
 grouping_method     = multimodal_context_focus
-grouping_version    = scene_grouping_v3
-schema              = scenes_v3
+grouping_version    = scene_grouping_v4
+schema              = scenes_v4
 ```
 
 The structural validator requires complete shot coverage, canonical ordering,
@@ -250,7 +265,7 @@ After accepted scenes are promoted, the deterministic first-class
 scene/segment overlap. That table preserves segment provenance; word-level
 assignment owns scene-specific transcript text.
 
-`scene_boundary_diagnostics_v3` records deterministic audit fields including:
+`scene_boundary_diagnostics_v4` records deterministic audit fields including:
 
 ```text
 gap_index
@@ -270,6 +285,7 @@ model_version
 speech_contract_version
 speech_asr_status
 speech_evidence_reliable
+speech_reliability_reason
 speech_left_aligned_word_count
 speech_right_aligned_word_count
 speech_shared_segment_crosses_gap
@@ -293,20 +309,27 @@ review counts, and one of:
 ```text
 pass
 pass_after_review
-failed_quality_gate
+review_required
+pass_after_manual_review
 ```
 
-Only the first two statuses can appear in a successful package. Package
-validation requires the report, verifies its video/counts, and requires
-`final.suspicious = false`.
+`review_required` exists only in the quarantined candidate. The first two
+statuses require a non-suspicious final partition. A successful package may
+also contain `pass_after_manual_review`, but only with the exact embedded
+approved decision and decision reference; its final partition remains marked
+suspicious by the deterministic policy rather than being rewritten. Package
+validation verifies the report, counts, and approval identity.
 
 ## Reproducibility And Checkpoints
 
 The scenes stage fingerprint already includes the complete
 `phase01.scene_grouping` policy, scene-boundary model/prompt configuration, and
 relevant schema versions. Therefore changes to quality thresholds, review
-policy, prompts, or `scenes_v3` invalidate scenes and downstream stages without
+policy, prompts, or `scenes_v4` invalidate scenes and downstream stages without
 invalidating upstream artifacts.
+
+The checkpoint DAG declares ASR as a direct scenes dependency because the
+aligned-speech evidence reads `asr_status.json` as well as word/link outputs.
 
 Provider requests continue through the shared stage-local content-addressed
 client cache. Diagnostics and caches must not expose credentials.
@@ -324,7 +347,10 @@ system1/src/system1/scenes/vlm_judge.py
   contact sheets, one strict label request per gap, provider diagnostics
 
 system1/src/system1/phase01/production.py
-  evidence loading, quality artifact, promotion gate, terminal failure
+  evidence loading, quality artifact, quarantine, exact approval, promotion
+
+system1/src/system1/phase01/review.py
+  immutable candidate identity, listing, approval, and rejection
 
 system1/src/system1/phase01/validation.py
   successful-package defense-in-depth
@@ -345,14 +371,14 @@ Deterministic tests cover:
 - bounded consistency rounds and stable early stop;
 - all-false one-scene behavior;
 - short videos below the safety threshold;
-- suspicious all-boundary recovery and unresolved failure;
+- suspicious all-boundary recovery and asynchronous quarantine;
 - bounded consistency focus/context for long all-boundary sequences;
 - legitimate isolated one-shot scenes;
 - single-shot videos;
 - scene-stage fingerprint invalidation;
-- terminal failure classification and structured error details;
-- non-canonical persistence of terminal failure diagnostics;
-- direct proof that suspicious output cannot call scenes promotion;
+- deterministic candidate identity, pending discovery, approval, and rejection;
+- stale-decision rejection and approved-candidate resume without VLM rerun;
+- direct proof that unapproved suspicious output cannot call scenes promotion;
 - quality report packaging and package validation;
 - deterministic manual-QA diagnostics;
 - same-segment crossing based on assigned words rather than segment overlap;

@@ -70,7 +70,7 @@ def write_valid_schema_release(release_dir: Path) -> None:
             "end_sec": 0.04,
             "shot_count": 1,
             "grouping_method": "multimodal_context_focus",
-            "grouping_version": "scene_grouping_v3",
+            "grouping_version": "scene_grouping_v4",
             "status": "pass",
         }],
     )

@@ -5,6 +5,7 @@ import importlib
 import json
 import weakref
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
@@ -16,6 +17,10 @@ from system1.artifacts.checkpoint import sha256_file
 from system1.artifacts.store import ArtifactStore
 from system1.asr import AsrResult
 from system1.config import resolve_phase01_config
+from system1.phase01.review import (
+    approve_scene_partition,
+    list_pending_scene_reviews,
+)
 from system1.vlm.client import BatchRequestError
 
 production = importlib.import_module("system1.phase01.production")
@@ -744,6 +749,97 @@ def test_caption_failure_for_one_video_does_not_block_other_video_checkpoint(
     assert [video["video_id"] for video in report["videos"]] == video_ids
     assert report["videos"][0]["status"] == "failed_terminal"
     assert report["videos"][1]["status"] == "complete_local"
+
+
+def test_suspicious_scene_partition_is_quarantined_without_blocking_batch_and_resumes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    video_ids = ["L21_V001", "L21_V002"]
+    ChunkLocalStructuredClient.reset()
+    release, checkpoint_store, resolved = _configure_batch_fixture(
+        tmp_path, monkeypatch, video_ids
+    )
+    original_group_scenes = production.group_scenes
+    grouping_calls: list[str] = []
+
+    def suspicious_first_video(**kwargs):
+        grouping_calls.append(str(kwargs["video_id"]))
+        result = original_group_scenes(**kwargs)
+        if kwargs["video_id"] != video_ids[0]:
+            return result
+        suspicious = replace(
+            result.final_quality,
+            suspicious=True,
+            flags=("forced_test_suspicious_partition",),
+        )
+        return replace(
+            result,
+            initial_quality=suspicious,
+            final_quality=suspicious,
+        )
+
+    monkeypatch.setattr(production, "group_scenes", suspicious_first_video)
+    report_path = production.process_production_batch(
+        release_dir=release,
+        config=resolved,
+        scratch_root=tmp_path / "scratch",
+        transnet_artifact_dir=tmp_path / "transnet",
+        sync_release=False,
+    )
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert [row["status"] for row in report["videos"]] == [
+        "review_required",
+        "complete_local",
+    ]
+    assert report["counts"]["review_required"] == 1
+    assert report["videos_failed"] == 0
+    pending = list_pending_scene_reviews(
+        checkpoint_store, release_id="canonical_release_v001"
+    )
+    assert [row["video_id"] for row in pending] == [video_ids[0]]
+    first_state = checkpoint_store.read_json(
+        f"phase01_checkpoints/canonical_release_v001/{video_ids[0]}/state.json"
+    )
+    assert first_state["stages"]["scenes"]["status"] == "pending"
+    for stage in (
+        "scene_transcript_links",
+        "scene_summaries",
+        "package",
+        "sync",
+    ):
+        assert first_state["stages"][stage]["status"] == "pending"
+    assert not (
+        release / "artifacts" / "structure" / f"{video_ids[0]}_structure.zip"
+    ).exists()
+
+    approve_scene_partition(
+        checkpoint_store,
+        release_id="canonical_release_v001",
+        video_id=video_ids[0],
+        candidate_fingerprint=pending[0]["candidate_fingerprint"],
+        reviewer="operator",
+    )
+    calls_before_resume = list(grouping_calls)
+    resumed_path = production.process_production_batch(
+        release_dir=release,
+        config=resolved,
+        scratch_root=tmp_path / "scratch",
+        transnet_artifact_dir=tmp_path / "transnet",
+        sync_release=False,
+    )
+
+    resumed = json.loads(resumed_path.read_text(encoding="utf-8"))
+    assert [row["status"] for row in resumed["videos"]] == [
+        "complete_local",
+        "complete_local",
+    ]
+    assert grouping_calls == calls_before_resume
+    resumed_state = checkpoint_store.read_json(
+        f"phase01_checkpoints/canonical_release_v001/{video_ids[0]}/state.json"
+    )
+    assert resumed_state["stages"]["scenes"]["status"] == "complete"
+    assert resumed_state["stages"]["package"]["status"] == "complete"
 
 
 def test_critical_ram_blocks_heavy_model_load_and_marks_ocr_retryable(

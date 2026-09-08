@@ -33,7 +33,14 @@ STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "ocr": ("keyframes",),
     "shot_captions": ("keyframes", "ocr"),
     "shot_transcript_links": ("shots", "asr"),
-    "scenes": ("shots", "keyframes", "ocr", "shot_captions", "shot_transcript_links"),
+    "scenes": (
+        "shots",
+        "keyframes",
+        "asr",
+        "ocr",
+        "shot_captions",
+        "shot_transcript_links",
+    ),
     "scene_transcript_links": ("scenes", "asr"),
     "scene_summaries": (
         "scenes",
@@ -76,6 +83,8 @@ class CheckpointStore(Protocol):
     def read_json(self, relative_path: str | Path) -> dict[str, Any]: ...
 
     def write_json(self, relative_path: str | Path, payload: dict[str, Any]) -> Path: ...
+
+    def list_files(self, prefix: str | Path = "") -> list[Path]: ...
 
 
 def checkpoint_root(

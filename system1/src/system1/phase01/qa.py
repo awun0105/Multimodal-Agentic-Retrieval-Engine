@@ -26,7 +26,28 @@ def write_manual_review_report(
         "scene_boundary": [],
         "scene_summary": [],
     }
+    partition_reviews: list[dict[str, Any]] = []
     for result in video_results:
+        if result.get("status") in {"review_required", "review_rejected"}:
+            partition_reviews.append(
+                {
+                    key: result.get(key)
+                    for key in (
+                        "video_id",
+                        "status",
+                        "review_status",
+                        "candidate_fingerprint",
+                        "candidate_ref",
+                        "review_candidate_ref",
+                        "diagnostics_ref",
+                        "decision_ref",
+                        "manual_review_decision",
+                        "reviewer",
+                        "reviewed_at",
+                    )
+                    if result.get(key) is not None
+                }
+            )
         if not str(result.get("status", "")).startswith("complete"):
             continue
         artifact = Path(str(result["artifact"]))
@@ -36,7 +57,12 @@ def write_manual_review_report(
         "schema_version": "phase01_manual_review_v1",
         "batch_id": batch_id,
         "worker_id": worker_id,
-        "status": "pending_manual_review" if selected else "not_available",
+        "status": (
+            "pending_manual_review"
+            if selected
+            or any(row["status"] == "review_required" for row in partition_reviews)
+            else "not_available"
+        ),
         "sample_size_requested": sample_size,
         "sample_size_actual": len(selected),
         "created_at": utc_now(),
@@ -45,6 +71,10 @@ def write_manual_review_report(
             "and bilingual fidelity. Fill reviewer fields without changing canonical artifacts."
         ),
         "samples": selected,
+        "scene_partition_reviews": sorted(
+            partition_reviews,
+            key=lambda row: (str(row["video_id"]), str(row["status"])),
+        ),
     }
     path = (
         release_dir
@@ -185,6 +215,7 @@ def _collect_artifact_candidates(
                                 key: row.get(key)
                                 for key in (
                                     "speech_evidence_reliable",
+                                    "speech_reliability_reason",
                                     "speech_near_boundary_continuity",
                                     "speech_shared_segment_crosses_gap",
                                     "speech_shared_segment_ids",

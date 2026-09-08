@@ -44,10 +44,20 @@ from system1.keyframes import (
 )
 from system1.phase01.checkpoint import CheckpointManager, compute_fingerprint
 from system1.phase01.qa import write_manual_review_report
+from system1.phase01.review import (
+    build_scene_review_candidate,
+    find_scene_review_candidate,
+    get_scene_review_decision,
+    persist_scene_review_candidate,
+    scene_review_candidate_ref,
+    scene_review_decision_ref,
+)
 from system1.phase01.scheduler import plan_runtime_chunks
 from system1.phase01.validation import validate_phase01_package, validate_rows
 from system1.scenes import (
+    BoundaryDecision,
     SceneGroupingResult,
+    ScenePartitionQuality,
     ScenePartitionQualityError,
     build_speech_gap_evidence,
     group_scenes,
@@ -451,8 +461,34 @@ def process_production_batch(
     if any(result is None for result in result_slots):
         raise RuntimeError("Phase01 scheduler finished without a result for every video")
     results = [result for result in result_slots if result is not None]
+    allowed_result_statuses = {
+        "complete",
+        "complete_local",
+        "review_required",
+        "review_rejected",
+        "failed_retryable",
+        "failed_terminal",
+    }
+    unknown_statuses = sorted(
+        {
+            str(row.get("status"))
+            for row in results
+            if row.get("status") not in allowed_result_statuses
+        }
+    )
+    if unknown_statuses:
+        raise RuntimeError(
+            "Phase01 worker produced unsupported video statuses: "
+            + ", ".join(unknown_statuses)
+        )
 
-    failed = [row for row in results if not row["status"].startswith("complete")]
+    failed = [
+        row
+        for row in results
+        if row["status"] in {"failed_retryable", "failed_terminal"}
+    ]
+    review_required = [row for row in results if row["status"] == "review_required"]
+    review_rejected = [row for row in results if row["status"] == "review_rejected"]
     manual_review_path = write_manual_review_report(
         release_dir=release_dir,
         batch_id=batch_id,
@@ -460,6 +496,9 @@ def process_production_batch(
         video_results=results,
         sample_size=int(config.payload["phase01"]["manual_review"]["sample_size"]),
     )
+    manual_review_status = json.loads(
+        manual_review_path.read_text(encoding="utf-8")
+    )["status"]
     report = write_worker_report(
         release_dir,
         phase="structure",
@@ -474,12 +513,14 @@ def process_production_batch(
             "release_id": release_id,
             "config_hash": config.config_hash,
             "manual_review": {
-                "status": "pending_manual_review",
+                "status": manual_review_status,
                 "path": str(manual_review_path),
             },
             "counts": {
                 "complete": sum(row["status"] == "complete" for row in results),
                 "complete_local": sum(row["status"] == "complete_local" for row in results),
+                "review_required": len(review_required),
+                "review_rejected": len(review_rejected),
                 "failed_retryable": sum(row["status"] == "failed_retryable" for row in results),
                 "failed_terminal": sum(row["status"] == "failed_terminal" for row in results),
             },
@@ -511,6 +552,8 @@ def process_production_batch(
         batch_id=batch_id,
         video_count=len(video_ids),
         failed_count=len(failed),
+        review_required_count=len(review_required),
+        review_rejected_count=len(review_rejected),
     )
     if failed:
         raise RuntimeError(
@@ -608,6 +651,34 @@ def _run_chunk_client_phase(
                             f"{expected_yield}, received {yielded!r}"
                         )
                     next_survivors.append(flow)
+                except StopIteration as completed:
+                    result = completed.value
+                    if not isinstance(result, dict) or result.get("status") not in {
+                        "review_required",
+                        "review_rejected",
+                    }:
+                        _finish_failed_video(
+                            flow,
+                            RuntimeError(
+                                "Phase01 video flow ended before the expected "
+                                f"{expected_yield} milestone"
+                            ),
+                            result_slots=result_slots,
+                            scratch_root=scratch_root,
+                            release_id=release_id,
+                            batch_id=batch_id,
+                            video_count=video_count,
+                        )
+                    else:
+                        _finish_video(
+                            flow,
+                            result,
+                            result_slots=result_slots,
+                            scratch_root=scratch_root,
+                            release_id=release_id,
+                            batch_id=batch_id,
+                            video_count=video_count,
+                        )
                 except Exception as exc:  # noqa: BLE001 - isolate failures per video
                     _finish_failed_video(
                         flow,
@@ -847,6 +918,9 @@ def _process_video_flow(
             video_id=video_id,
             scenes_inclusive=predictions["scenes_inclusive"],
             frame_timeline=timeline,
+            time_boundary_policy=str(
+                phase01["shot_detection"]["time_boundary_policy"]
+            ),
         )
         _write_parquet(shots_path, shots)
         manager.promote_stage(
@@ -1118,45 +1192,58 @@ def _process_video_flow(
         manager, "scenes", scenes_fingerprint, stage_dir
     )
     if not scenes_reused:
-        evidence = _build_scene_evidence(
-            shots,
-            keyframes,
-            ocr_rows,
-            captions,
-            asr_word_rows,
-            stage_dir,
-            shot_transcript_links=links,
-            asr_status=json.loads(
-                asr_status_path.read_text(encoding="utf-8")
-            )["status"],
-            speech_policy=phase01["scene_grouping"]["speech_continuity"],
-        )
-        judge = SemanticSceneBoundaryJudge(
-            caption_client,
+        prior_candidate = find_scene_review_candidate(
+            manager.store,
+            release_id=manager.release_id,
             video_id=video_id,
-            prompt_dir=_prompt_dir(),
-            diagnostics_dir=stage_dir / "diagnostics" / "scene_requests",
-            model_config=scene_boundary_model,
-            focused_keyframe_roles=tuple(
-                str(role)
-                for role in phase01["scene_grouping"][
-                    "focused_review_keyframe_roles"
-                ]
-            ),
-            max_ocr_chars_per_shot=int(
-                phase01["scene_grouping"]["max_ocr_chars_per_shot"]
-            ),
-            max_transcript_chars_per_shot=int(
-                phase01["scene_grouping"]["max_transcript_chars_per_shot"]
-            ),
+            scenes_input_fingerprint=scenes_fingerprint,
+            scenes_stage_config_hash=config.stage_config_hashes["scenes"],
+            root_template=str(config.payload["artifact"]["checkpoint"]["root"]),
         )
-        grouping_result = group_scenes(
-            video_id=video_id,
-            shots=shots,
-            evidence=evidence,
-            judge=judge,
-            config=phase01["scene_grouping"],
-        )
+        if prior_candidate is not None:
+            grouping_result = _scene_grouping_result_from_candidate(prior_candidate)
+            judge = None
+            evidence = None
+        else:
+            evidence = _build_scene_evidence(
+                shots,
+                keyframes,
+                ocr_rows,
+                captions,
+                asr_word_rows,
+                stage_dir,
+                shot_transcript_links=links,
+                asr_status=json.loads(
+                    asr_status_path.read_text(encoding="utf-8")
+                )["status"],
+                speech_policy=phase01["scene_grouping"]["speech_continuity"],
+            )
+            judge = SemanticSceneBoundaryJudge(
+                caption_client,
+                video_id=video_id,
+                prompt_dir=_prompt_dir(),
+                diagnostics_dir=stage_dir / "diagnostics" / "scene_requests",
+                model_config=scene_boundary_model,
+                focused_keyframe_roles=tuple(
+                    str(role)
+                    for role in phase01["scene_grouping"][
+                        "focused_review_keyframe_roles"
+                    ]
+                ),
+                max_ocr_chars_per_shot=int(
+                    phase01["scene_grouping"]["max_ocr_chars_per_shot"]
+                ),
+                max_transcript_chars_per_shot=int(
+                    phase01["scene_grouping"]["max_transcript_chars_per_shot"]
+                ),
+            )
+            grouping_result = group_scenes(
+                video_id=video_id,
+                shots=shots,
+                evidence=evidence,
+                judge=judge,
+                config=phase01["scene_grouping"],
+            )
         quality_payload = _scene_partition_quality_payload(
             video_id=video_id,
             result=grouping_result,
@@ -1167,17 +1254,37 @@ def _process_video_flow(
             scene_diagnostics_path,
             [asdict(decision) for decision in grouping_result.decisions],
         )
-        _emit_scene_partition_quality(
-            manager=manager,
-            scratch=scratch,
-            payload=quality_payload,
-        )
         failure_diagnostics_ref = None
         if grouping_result.final_quality.suspicious:
-            failure_diagnostics_ref = manager.persist_failure_diagnostics(
-                "scenes",
-                input_fingerprint=scenes_fingerprint,
-                outputs=[scene_quality_path, scene_diagnostics_path],
+            review_result, quality_payload = _resolve_scene_partition_review(
+                manager=manager,
+                config=config,
+                video_id=video_id,
+                scenes_fingerprint=scenes_fingerprint,
+                grouping_result=grouping_result,
+                quality_payload=quality_payload,
+                scene_quality_path=scene_quality_path,
+                scene_diagnostics_path=scene_diagnostics_path,
+            )
+            _write_json(scene_quality_path, quality_payload)
+            _emit_scene_partition_quality(
+                manager=manager,
+                scratch=scratch,
+                payload=quality_payload,
+            )
+            if review_result is not None:
+                _emit_stage_progress(
+                    manager,
+                    "scenes",
+                    scratch,
+                    status=str(review_result["status"]),
+                )
+                return review_result
+        else:
+            _emit_scene_partition_quality(
+                manager=manager,
+                scratch=scratch,
+                payload=quality_payload,
             )
         _promote_scene_checkpoint(
             manager=manager,
@@ -2443,13 +2550,13 @@ def _scene_partition_quality_payload(
     policy: Mapping[str, Any],
 ) -> dict[str, Any]:
     if result.final_quality.suspicious:
-        status = "failed_quality_gate"
+        status = "review_required"
     elif result.degenerate_review_triggered:
         status = "pass_after_review"
     else:
         status = "pass"
     return {
-        "schema_version": "scene_partition_quality_v1",
+        "schema_version": "scene_partition_quality_v2",
         "video_id": video_id,
         "status": status,
         "guard_enabled": bool(policy["enabled"]),
@@ -2480,8 +2587,19 @@ def _require_scene_partition_quality(
 ) -> None:
     if not result.final_quality.suspicious:
         return
+    manual_review = payload.get("manual_review")
+    if (
+        payload.get("status") == "pass_after_manual_review"
+        and isinstance(manual_review, Mapping)
+        and manual_review.get("decision") == "approve"
+        and manual_review.get("candidate_fingerprint")
+        == payload.get("candidate_fingerprint")
+        and str(manual_review.get("reviewer", "")).strip()
+        and str(manual_review.get("reviewed_at", "")).strip()
+    ):
+        return
     details = {
-        "quality_contract": "scene_partition_quality_v1",
+        "quality_contract": "scene_partition_quality_v2",
         "manual_review_required": True,
         "initial": dict(payload["initial"]),
         "final": dict(payload["final"]),
@@ -2493,6 +2611,170 @@ def _require_scene_partition_quality(
         video_id=video_id,
         details=details,
     )
+
+
+def _resolve_scene_partition_review(
+    *,
+    manager: CheckpointManager,
+    config: ResolvedPhase01Config,
+    video_id: str,
+    scenes_fingerprint: str,
+    grouping_result: SceneGroupingResult,
+    quality_payload: dict[str, Any],
+    scene_quality_path: Path,
+    scene_diagnostics_path: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    if not grouping_result.final_quality.suspicious:
+        return None, quality_payload
+    root_template = str(config.payload["artifact"]["checkpoint"]["root"])
+    candidate = build_scene_review_candidate(
+        release_id=manager.release_id,
+        video_id=video_id,
+        scenes_input_fingerprint=scenes_fingerprint,
+        scenes_stage_config_hash=config.stage_config_hashes["scenes"],
+        grouping_version=str(grouping_result.scenes[0]["grouping_version"]),
+        decisions=[asdict(decision) for decision in grouping_result.decisions],
+        scenes=grouping_result.scenes,
+        initial_quality=asdict(grouping_result.initial_quality),
+        final_quality=asdict(grouping_result.final_quality),
+        grouping_metadata={
+            "consistency_review_rounds_run": (
+                grouping_result.consistency_review_rounds_run
+            ),
+            "degenerate_review_triggered": (
+                grouping_result.degenerate_review_triggered
+            ),
+            "degenerate_review_rounds_run": (
+                grouping_result.degenerate_review_rounds_run
+            ),
+        },
+    )
+    fingerprint = str(candidate["candidate_fingerprint"])
+    candidate_ref = scene_review_candidate_ref(
+        release_id=manager.release_id,
+        video_id=video_id,
+        candidate_fingerprint=fingerprint,
+        root_template=root_template,
+    )
+    quality_payload = {
+        **quality_payload,
+        "status": "review_required",
+        "candidate_fingerprint": fingerprint,
+        "candidate_ref": candidate_ref,
+    }
+    _write_json(scene_quality_path, quality_payload)
+    persisted_ref = persist_scene_review_candidate(
+        manager.store,
+        candidate,
+        evidence_files=[scene_quality_path, scene_diagnostics_path],
+        root_template=root_template,
+    )
+    if persisted_ref != candidate_ref:
+        raise ValueError("Scene review candidate reference mismatch")
+    decision = get_scene_review_decision(
+        manager.store,
+        release_id=manager.release_id,
+        video_id=video_id,
+        candidate_fingerprint=fingerprint,
+        root_template=root_template,
+    )
+    if decision is None:
+        return (
+            {
+                "video_id": video_id,
+                "status": "review_required",
+                "review_status": "pending",
+                "manual_review_required": True,
+                "candidate_fingerprint": fingerprint,
+                "candidate_ref": candidate_ref,
+                "review_candidate_ref": candidate_ref,
+                "diagnostics_ref": str(Path(candidate_ref).parent),
+                "scene_count": len(grouping_result.scenes),
+                "downstream_stages_skipped": [
+                    "scene_transcript_links",
+                    "scene_summaries",
+                    "package",
+                    "sync",
+                ],
+            },
+            quality_payload,
+        )
+    decision_ref = scene_review_decision_ref(
+        release_id=manager.release_id,
+        video_id=video_id,
+        candidate_fingerprint=fingerprint,
+        root_template=root_template,
+    )
+    if decision["decision"] == "reject":
+        return (
+            {
+                "video_id": video_id,
+                "status": "review_rejected",
+                "review_status": "rejected",
+                "manual_review_required": False,
+                "candidate_fingerprint": fingerprint,
+                "candidate_ref": candidate_ref,
+                "review_candidate_ref": candidate_ref,
+                "diagnostics_ref": str(Path(candidate_ref).parent),
+                "decision_ref": decision_ref,
+                "manual_review_decision": "reject",
+                "reviewer": decision["reviewer"],
+                "reviewed_at": decision["reviewed_at"],
+                "downstream_stages_skipped": [
+                    "scene_transcript_links",
+                    "scene_summaries",
+                    "package",
+                    "sync",
+                ],
+            },
+            {**quality_payload, "review_disposition": "rejected"},
+        )
+    return (
+        None,
+        {
+            **quality_payload,
+            "status": "pass_after_manual_review",
+            "manual_review": dict(decision),
+            "decision_ref": decision_ref,
+        },
+    )
+
+
+def _scene_grouping_result_from_candidate(
+    candidate: Mapping[str, Any],
+) -> SceneGroupingResult:
+    decisions = []
+    for raw in candidate["decisions"]:
+        row = dict(raw)
+        row["speech_shared_segment_ids"] = tuple(
+            row.get("speech_shared_segment_ids", ())
+        )
+        row["evidence_used"] = tuple(row.get("evidence_used", ()))
+        decisions.append(BoundaryDecision(**row))
+    metadata = candidate["grouping_metadata"]
+    return SceneGroupingResult(
+        scenes=[dict(row) for row in candidate["scenes"]],
+        decisions=decisions,
+        initial_quality=_scene_partition_quality_from_mapping(
+            candidate["initial_quality"]
+        ),
+        final_quality=_scene_partition_quality_from_mapping(
+            candidate["final_quality"]
+        ),
+        consistency_review_rounds_run=int(
+            metadata["consistency_review_rounds_run"]
+        ),
+        degenerate_review_triggered=bool(metadata["degenerate_review_triggered"]),
+        degenerate_review_rounds_run=int(metadata["degenerate_review_rounds_run"]),
+    )
+
+
+def _scene_partition_quality_from_mapping(
+    value: Mapping[str, Any],
+) -> ScenePartitionQuality:
+    row = dict(value)
+    row["flags"] = tuple(row.get("flags", ()))
+    return ScenePartitionQuality(**row)
 
 
 def _promote_scene_checkpoint(
@@ -2701,7 +2983,8 @@ def _evenly_sample(rows: list[dict[str, Any]], maximum: int) -> list[dict[str, A
 
 
 def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path, stage_dir: Path, config: ResolvedPhase01Config):
-    if artifact_dir.exists(): shutil.rmtree(artifact_dir)
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir)
     artifact_dir.mkdir(parents=True)
     metadata = read_metadata(metadata_path)
     _write_json(artifact_dir / "metadata_normalized.json", metadata)
@@ -2709,7 +2992,8 @@ def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path,
         shutil.copy2(stage_dir / name, artifact_dir / name)
     shutil.copytree(stage_dir / "keyframes", artifact_dir / "keyframes")
     shutil.copytree(stage_dir / "thumbnails", artifact_dir / "thumbnails")
-    diagnostics = artifact_dir / "diagnostics"; diagnostics.mkdir()
+    diagnostics = artifact_dir / "diagnostics"
+    diagnostics.mkdir()
     for name in (
         "keyframe_diagnostics.jsonl",
         "scene_boundary_diagnostics.jsonl",
@@ -2722,7 +3006,8 @@ def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path,
         "ocr_status.json",
     ):
         source = stage_dir / name
-        if source.exists(): shutil.copy2(source, diagnostics / name)
+        if source.exists():
+            shutil.copy2(source, diagnostics / name)
     # A complete per-video package has no item-level errors, but retains the
     # canonical file so downstream readers never need layout-specific logic.
     _write_jsonl(artifact_dir / "errors.jsonl", [])
@@ -2742,7 +3027,8 @@ def _backfill_scene_ids(artifact_dir: Path):
     for scene in scenes.to_dict("records"):
         start = next(i for i,row in enumerate(shot_rows) if row["shot_id"] == scene["start_shot_id"])
         end = next(i for i,row in enumerate(shot_rows) if row["shot_id"] == scene["end_shot_id"])
-        for row in shot_rows[start:end+1]: mapping[str(row["shot_id"])] = str(scene["scene_id"])
+        for row in shot_rows[start:end+1]:
+            mapping[str(row["shot_id"])] = str(scene["scene_id"])
     shots["scene_id"] = shots["shot_id"].astype(str).map(mapping)
     keyframes["scene_id"] = keyframes["shot_id"].astype(str).map(mapping)
     keyframe_counts = keyframes.groupby("scene_id").size().to_dict()
@@ -2785,10 +3071,12 @@ def _write_directory_zip(root, output, members):
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for member in members:
             path = root / member
-            if path.is_file(): archive.write(path, path.relative_to(root))
+            if path.is_file():
+                archive.write(path, path.relative_to(root))
             elif path.is_dir():
                 for child in sorted(path.rglob("*")):
-                    if child.is_file(): archive.write(child, child.relative_to(root))
+                    if child.is_file():
+                        archive.write(child, child.relative_to(root))
 
 
 def _safe_extract_zip(bundle: Path, target_dir: Path) -> None:
@@ -3055,9 +3343,11 @@ def _materialize_canonical(mapping, key, target_dir):
     local_keys = ("video_local_path", "debug_video_local_path", "source_video_path") if "video" in key else ("metadata_local_path", "debug_metadata_local_path", "source_metadata_path")
     for local_key in local_keys:
         value = mapping.get(local_key)
-        if _present_scalar(value) and Path(str(value)).is_file(): return Path(str(value))
+        if _present_scalar(value) and Path(str(value)).is_file():
+            return Path(str(value))
     target_dir.mkdir(parents=True, exist_ok=True)
-    remote_path = str(mapping[key]); target = target_dir / Path(remote_path).name
+    remote_path = str(mapping[key])
+    target = target_dir / Path(remote_path).name
     store = HuggingFaceDatasetArtifactStore(
         repo_id=str(mapping["canonical_repo_id"]),
         repo_type=(
@@ -3085,7 +3375,8 @@ def _timeline_path(release_dir, video_id, video_row):
     candidate = video_row.get("frame_timeline_ref")
     ref = candidate if _present_scalar(candidate) else f"frame_timeline/{video_id}.parquet"
     path = release_dir / str(ref)
-    if not path.is_file(): raise FileNotFoundError(path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
     return path
 
 
@@ -3128,13 +3419,18 @@ def _json_scalar(value: Any) -> Any:
 def _validate_keyframe_rows(shots, rows):
     for shot in shots:
         members = [row for row in rows if row["shot_id"] == shot["shot_id"]]
-        if not members or sum(row["is_representative"] for row in members) != 1: raise ValueError(f"Invalid keyframe selection for {shot['shot_id']}")
+        if not members or sum(row["is_representative"] for row in members) != 1:
+            raise ValueError(f"Invalid keyframe selection for {shot['shot_id']}")
         if any(
             row["keyframe_role"] == "supplemental" and row["is_representative"]
             for row in members
         ):
             raise ValueError("Supplemental keyframes cannot be representative")
-        if any(not (shot["start_frame"] <= row["frame_id"] < shot["end_frame"]) for row in members): raise ValueError("Keyframe lies outside its shot")
+        if any(
+            not (shot["start_frame"] <= row["frame_id"] < shot["end_frame"])
+            for row in members
+        ):
+            raise ValueError("Keyframe lies outside its shot")
 
 
 def _write_parquet(path, rows, empty_columns=None):
@@ -3146,11 +3442,22 @@ def _write_parquet(path, rows, empty_columns=None):
 
 
 def _write_json(path, payload):
-    path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_jsonl(path, rows):
-    path.parent.mkdir(parents=True, exist_ok=True); path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
 
 
 def _prompt_dir(): return Path(__file__).resolve().parents[3] / "prompts"

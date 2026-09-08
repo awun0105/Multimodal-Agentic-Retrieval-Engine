@@ -46,7 +46,7 @@ def config() -> dict:
             "min_shot_count": 8,
             "suspicious_boundary_density": 0.9,
             "suspicious_one_shot_scene_rate": 0.8,
-            "unresolved_action": "fail_terminal",
+            "unresolved_action": "review_required",
             "degenerate_review": {
                 "enabled": True,
                 "focus_gap_count": 8,
@@ -187,7 +187,7 @@ def test_all_boundary_partition_recovers_through_degenerate_review() -> None:
         for decision in result.decisions
     )
     assert all(
-        decision.diagnostics_schema_version == "scene_boundary_diagnostics_v3"
+            decision.diagnostics_schema_version == "scene_boundary_diagnostics_v4"
         for decision in result.decisions
     )
     assert all(

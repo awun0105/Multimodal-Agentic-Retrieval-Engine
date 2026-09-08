@@ -32,10 +32,11 @@ class BoundaryDecision:
     false_vote_weight: float
     review_route: str
     consistency_review_triggered: bool
-    diagnostics_schema_version: str = "scene_boundary_diagnostics_v3"
+    diagnostics_schema_version: str = "scene_boundary_diagnostics_v4"
     speech_contract_version: str | None = None
     speech_asr_status: str | None = None
     speech_evidence_reliable: bool = False
+    speech_reliability_reason: str | None = None
     speech_left_aligned_word_count: int = 0
     speech_right_aligned_word_count: int = 0
     speech_shared_segment_crosses_gap: bool = False
@@ -58,6 +59,7 @@ _SPEECH_DIAGNOSTIC_FIELDS = (
     "speech_contract_version",
     "speech_asr_status",
     "speech_evidence_reliable",
+    "speech_reliability_reason",
     "speech_left_aligned_word_count",
     "speech_right_aligned_word_count",
     "speech_shared_segment_crosses_gap",
@@ -437,7 +439,7 @@ def partition_scenes(
                 "keyframe_count": 0,
                 "scene_type": "semantic",
                 "grouping_method": "multimodal_context_focus",
-                "grouping_version": "scene_grouping_v3",
+                "grouping_version": "scene_grouping_v4",
                 "confidence": None,
                 "boundary_convention": "[start_frame, end_frame)",
                 "status": "pass",

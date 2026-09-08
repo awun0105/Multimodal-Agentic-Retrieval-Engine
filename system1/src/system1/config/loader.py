@@ -460,6 +460,8 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
             )
 
     _validate_semantic_sampling_policy(payload)
+    _validate_phase01_stage_graph(payload)
+    _validate_shot_detection_policy(payload)
     _validate_scene_grouping_policy(payload)
     _validate_asr_alignment_policy(payload)
 
@@ -561,6 +563,33 @@ def _validate_asr_alignment_policy(payload: dict[str, Any]) -> None:
         raise ValueError(
             "Phase01 faster_whisper ASR requires word_timestamps=true"
         )
+
+
+def _validate_shot_detection_policy(payload: dict[str, Any]) -> None:
+    policy = payload["phase01"].get("shot_detection")
+    if not isinstance(policy, dict):
+        raise TypeError("Phase01 shot_detection must be a mapping")
+    if policy.get("time_boundary_policy") != "next_shot_start_pts_v1":
+        raise ValueError("Unsupported Phase01 shot_detection.time_boundary_policy")
+
+
+def _validate_phase01_stage_graph(payload: dict[str, Any]) -> None:
+    from system1.phase01.checkpoint import STAGES, STAGE_DEPENDENCIES
+
+    graph = payload["phase01"].get("stages")
+    if not isinstance(graph, dict):
+        raise TypeError("Phase01 stages must be a mapping")
+    if graph.get("order") != list(STAGES):
+        raise ValueError("Phase01 stage order does not match checkpoint authority")
+    dependencies = graph.get("dependencies")
+    if not isinstance(dependencies, dict) or set(dependencies) != set(STAGES):
+        raise ValueError("Phase01 stage dependencies have an invalid stage set")
+    for stage, expected in STAGE_DEPENDENCIES.items():
+        actual = dependencies.get(stage)
+        if not isinstance(actual, list) or tuple(actual) != expected:
+            raise ValueError(
+                f"Phase01 stage dependencies for {stage} do not match checkpoint authority"
+            )
 
 
 def _validate_semantic_sampling_policy(payload: dict[str, Any]) -> None:
@@ -678,10 +707,10 @@ def _validate_scene_grouping_policy(payload: dict[str, Any]) -> None:
             raise ValueError(
                 f"Phase01 scene_grouping.quality_guard.{field} must be in (0, 1]"
             )
-    if str(quality.get("unresolved_action")) != "fail_terminal":
+    if str(quality.get("unresolved_action")) != "review_required":
         raise ValueError(
             "Phase01 scene_grouping.quality_guard.unresolved_action must be "
-            "fail_terminal"
+            "review_required"
         )
 
     review = quality.get("degenerate_review")

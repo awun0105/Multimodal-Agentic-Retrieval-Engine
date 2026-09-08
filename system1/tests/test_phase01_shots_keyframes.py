@@ -47,6 +47,57 @@ def test_transnet_scene_conversion_preserves_exclusive_canonical_ranges() -> Non
     assert rows[-1]["end_sec"] == 0.24000000000000002
 
 
+@pytest.mark.parametrize("non_final_duration", [0.01, 0.20])
+def test_transnet_non_final_shot_uses_next_frame_pts_on_vfr_timeline(
+    non_final_duration: float,
+) -> None:
+    timeline = [
+        {"frame_id": 0, "pts_time": 0.0, "duration_time": 0.08},
+        {"frame_id": 1, "pts_time": 0.05, "duration_time": non_final_duration},
+        {"frame_id": 2, "pts_time": 0.11, "duration_time": 0.04},
+        {"frame_id": 3, "pts_time": 0.18, "duration_time": 0.03},
+    ]
+
+    rows = scenes_to_shot_rows(
+        video_id="L21_V001",
+        scenes_inclusive=[[0, 1], [2, 3]],
+        frame_timeline=timeline,
+    )
+
+    assert rows[0]["end_sec"] == pytest.approx(0.11)
+    assert rows[1]["start_sec"] == pytest.approx(0.11)
+    assert rows[0]["end_sec"] == rows[1]["start_sec"]
+    assert rows[0]["end_sec"] != pytest.approx(0.05 + non_final_duration)
+    assert rows[-1]["end_sec"] == pytest.approx(0.21)
+
+
+@pytest.mark.parametrize("duration", [None, 0.0, -0.01])
+def test_transnet_final_frame_requires_positive_duration(duration: float | None) -> None:
+    timeline = [
+        {"frame_id": 0, "pts_time": 0.0, "duration_time": 0.04},
+        {"frame_id": 1, "pts_time": 0.04, "duration_time": duration},
+    ]
+
+    with pytest.raises(ValueError, match="positive duration_time"):
+        scenes_to_shot_rows(
+            video_id="L21_V001",
+            scenes_inclusive=[[0, 1]],
+            frame_timeline=timeline,
+        )
+
+
+def test_transnet_rejects_unknown_time_boundary_policy() -> None:
+    with pytest.raises(ValueError, match="time boundary policy"):
+        scenes_to_shot_rows(
+            video_id="L21_V001",
+            scenes_inclusive=[[0, 0]],
+            frame_timeline=[
+                {"frame_id": 0, "pts_time": 0.0, "duration_time": 0.04}
+            ],
+            time_boundary_policy="fps_math_v0",
+        )
+
+
 def test_transnet_all_false_and_all_true_predictions_are_one_shot() -> None:
     assert predictions_to_scenes(np.zeros(4), 0.5) == [[0, 3]]
     assert predictions_to_scenes(np.ones(4), 0.5) == [[0, 3]]

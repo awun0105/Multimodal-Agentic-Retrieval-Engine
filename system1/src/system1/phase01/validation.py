@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -142,6 +143,7 @@ def validate_phase01_package(artifact_dir: Path) -> None:
 
 def _validate_contiguous_ranges(frame: pd.DataFrame, label: str) -> None:
     previous_end: int | None = 0
+    previous_end_sec: float | None = None
     for row in frame.to_dict("records"):
         start = int(row["start_frame"])
         end = int(row["end_frame"])
@@ -149,7 +151,25 @@ def _validate_contiguous_ranges(frame: pd.DataFrame, label: str) -> None:
             raise ValueError(f"{label} range must be non-empty")
         if previous_end is not None and start != previous_end:
             raise ValueError(f"{label} ranges are not contiguous")
+        start_sec = float(row["start_sec"])
+        end_sec = float(row["end_sec"])
+        if not math.isfinite(start_sec) or not math.isfinite(end_sec) or end_sec <= start_sec:
+            raise ValueError(f"{label} time range must be finite and non-empty")
+        if previous_end_sec is not None and not math.isclose(
+            start_sec, previous_end_sec, rel_tol=0.0, abs_tol=1e-9
+        ):
+            raise ValueError(f"{label} time ranges are not contiguous")
+        if "duration_sec" in row and not math.isclose(
+            float(row["duration_sec"]),
+            end_sec - start_sec,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            raise ValueError(f"{label} duration_sec does not match its time range")
+        if "frame_count" in row and int(row["frame_count"]) != end - start:
+            raise ValueError(f"{label} frame_count does not match its frame range")
         previous_end = end
+        previous_end_sec = end_sec
 
 
 def _validate_scene_membership(
@@ -439,21 +459,82 @@ def _validate_scene_partition_quality_report(
     if not path.is_file():
         raise FileNotFoundError("Missing scene partition quality report")
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "scene_partition_quality_v1":
+    if payload.get("schema_version") != "scene_partition_quality_v2":
         raise ValueError("Unsupported scene partition quality report schema")
     if str(payload.get("video_id")) != video_id:
         raise ValueError("Scene partition quality report video_id mismatch")
-    if payload.get("status") not in {"pass", "pass_after_review"}:
+    if payload.get("status") not in {
+        "pass",
+        "pass_after_review",
+        "pass_after_manual_review",
+    }:
         raise ValueError("Scene partition quality report is not passing")
     final = payload.get("final")
     if not isinstance(final, Mapping):
         raise TypeError("Scene partition quality report has no final metrics")
-    if bool(final.get("suspicious", True)):
-        raise ValueError("Scene partition quality report remains suspicious")
+    if payload.get("status") == "pass_after_manual_review":
+        _validate_manual_scene_partition_approval(payload)
+    elif bool(final.get("suspicious", True)):
+        raise ValueError("Suspicious scene partition lacks manual approval")
     if int(final.get("shot_count", -1)) != shot_count:
         raise ValueError("Scene partition quality shot_count mismatch")
     if int(final.get("scene_count", -1)) != scene_count:
         raise ValueError("Scene partition quality scene_count mismatch")
+
+
+def _validate_manual_scene_partition_approval(payload: Mapping[str, Any]) -> None:
+    if payload.get("status") != "pass_after_manual_review":
+        raise ValueError("Suspicious scene partition lacks manual approval")
+    fingerprint = payload.get("candidate_fingerprint")
+    if not isinstance(fingerprint, str) or len(fingerprint) != 64 or any(
+        character not in "0123456789abcdef" for character in fingerprint
+    ):
+        raise ValueError("Manual scene approval candidate fingerprint is invalid")
+    decision_ref = payload.get("decision_ref")
+    if not isinstance(decision_ref, str) or not decision_ref.strip():
+        raise ValueError("Manual scene approval requires decision_ref")
+    decision = payload.get("manual_review")
+    if not isinstance(decision, Mapping):
+        raise ValueError("Suspicious scene partition lacks manual approval")
+    expected_fields = {
+        "schema_version",
+        "release_id",
+        "video_id",
+        "candidate_fingerprint",
+        "decision",
+        "reviewer",
+        "reviewed_at",
+        "notes",
+    }
+    if set(decision) != expected_fields:
+        raise ValueError("Manual scene approval fields do not match schema")
+    if decision.get("schema_version") != "scene_partition_manual_review_v1":
+        raise ValueError("Unsupported manual scene approval schema")
+    if decision.get("decision") != "approve":
+        raise ValueError("Manual scene review is not an approval decision")
+    if decision.get("candidate_fingerprint") != fingerprint:
+        raise ValueError("Manual scene approval fingerprint mismatch")
+    if decision.get("video_id") != payload.get("video_id"):
+        raise ValueError("Manual scene approval video_id mismatch")
+    if not isinstance(decision.get("release_id"), str) or not decision[
+        "release_id"
+    ].strip():
+        raise ValueError("Manual scene approval requires release_id")
+    if not isinstance(decision.get("reviewer"), str) or not decision[
+        "reviewer"
+    ].strip():
+        raise ValueError("Manual scene approval requires reviewer")
+    reviewed_at = decision.get("reviewed_at")
+    if not isinstance(reviewed_at, str):
+        raise ValueError("Manual scene approval requires reviewed_at")
+    try:
+        parsed = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Manual scene approval reviewed_at must be ISO-8601") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("Manual scene approval reviewed_at must include timezone")
+    if decision.get("notes") is not None and not isinstance(decision["notes"], str):
+        raise ValueError("Manual scene approval notes must be text or null")
 
 
 def _load_schema(table_name: str) -> dict[str, Any]:

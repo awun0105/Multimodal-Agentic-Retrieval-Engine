@@ -182,6 +182,12 @@ script enforces private storage only when run with `--require-private`.
 - Test/mock profiles may keep explicit fallback fixtures, but their manifests
   must identify them as non-production.
 - Shot ranges use `[start_frame, end_frame)` and decoded original frame IDs.
+- Shot time ranges use the decoded PTS partition. A non-final shot ends at the
+  PTS of its exclusive `end_frame`, which is exactly the next shot's start PTS;
+  individual frame-duration metadata cannot create gaps or overlaps there.
+  Only the final shot uses the final decoded frame's positive
+  `duration_time` to close the video interval. Missing or non-positive final
+  duration is a contract error, never an FPS-derived fallback.
 - Shot IDs remain `{video_id}_SH{shot_index:05d}`, zero-based in timeline order.
 
 ## Search-Band Keyframes
@@ -488,13 +494,16 @@ bounded consistency review, deterministic scene partitioning, IDs, ranges,
 mappings, and validation. Every shot belongs to exactly one scene; scenes
 cannot overlap, leave a shot-order gap, or reorder shots.
 
-Before promotion, `scene_grouping_v3` computes partition-level boundary-density
+Before promotion, `scene_grouping_v4` computes partition-level boundary-density
 and one-shot-scene metrics. A suspicious result receives one configured bounded
 degenerate semantic review. If the rebuilt partition remains suspicious, the
-scenes stage fails terminally and is not promoted. A successful stage writes
-`scene_partition_quality.json`; successful package validation requires that
-report to have `pass` or `pass_after_review` status and a non-suspicious final
-partition.
+video is quarantined as `review_required`: its exact candidate, quality report,
+and gap diagnostics are persisted outside canonical stage outputs; scenes and
+all downstream stages remain pending while other videos continue. An immutable
+exact-candidate approval resumes and promotes it as
+`pass_after_manual_review`; rejection becomes a durable `review_rejected`
+outcome. Successful package validation accepts normal non-suspicious reports or
+an exact embedded manual approval, never a stale or free-form override.
 
 A valid all-false boundary result creates one successful scene. Failure of both
 the local primary and configured fallback after bounded retry fails the video;
@@ -624,6 +633,9 @@ independent retrieval indexes.
 - The checkpoint key is `release_id + video_id + stage`. Stages are `shots`,
   `keyframes`, `asr`, `ocr`, `shot_captions`, `shot_transcript_links`, `scenes`,
   `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- The scenes stage directly depends on ASR as well as shot transcript links,
+  because per-gap reliability reads the persisted ASR status. A change to ASR
+  therefore invalidates scene evidence through an explicit DAG edge.
 - Each stage stores status, input fingerprint, relevant config hash,
   model/revision, prompt version when applicable, schema version, output
   checksums, and completion time.
@@ -633,8 +645,10 @@ independent retrieval indexes.
 - A rerun reuses only complete stages whose persistent outputs, checksums,
   upstream fingerprints, and relevant versions still match. Dependency changes
   invalidate only downstream stages.
-- Worker reports and `errors.jsonl` distinguish failed, no-audio/no-speech, and
-  successful-empty states.
+- Worker reports distinguish complete, `review_required`, `review_rejected`,
+  technical failures, no-audio/no-speech, and successful-empty states.
+  Review dispositions are not written to `errors.jsonl`; a quarantined video
+  does not abort the batch or consume a retry slot.
 
 Notebook 01 processes a resource-aware chunk of videos while preserving one
 heavy local VLM resident at a time. Vintern serves OCR and is released before

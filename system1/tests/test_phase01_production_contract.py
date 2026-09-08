@@ -87,7 +87,7 @@ def _passing_scene_quality_report(
 ) -> dict:
     metrics = _quality_metrics(shot_count=shot_count, scene_count=scene_count)
     return {
-        "schema_version": "scene_partition_quality_v1",
+        "schema_version": "scene_partition_quality_v2",
         "video_id": video_id,
         "status": "pass",
         "guard_enabled": True,
@@ -98,7 +98,7 @@ def _passing_scene_quality_report(
             "min_shot_count": 8,
             "suspicious_boundary_density": 0.9,
             "suspicious_one_shot_scene_rate": 0.8,
-            "unresolved_action": "fail_terminal",
+            "unresolved_action": "review_required",
         },
         "initial": dict(metrics),
         "final": dict(metrics),
@@ -130,8 +130,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_8"
-    assert phase01["pipeline_id"] == "phase01_production_v1_8"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_9"
+    assert phase01["pipeline_id"] == "phase01_production_v1_9"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -221,10 +221,10 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         phase01["schemas"]["scene_summaries"]
         == "scene_summaries_v3"
     )
-    assert phase01["schemas"]["scenes"] == "scenes_v3"
+    assert phase01["schemas"]["scenes"] == "scenes_v4"
     assert phase01["scene_grouping"]["speech_continuity"] == {
         "enabled": True,
-        "contract_version": "aligned_speech_continuity_v1",
+        "contract_version": "aligned_speech_continuity_v2",
         "max_boundary_word_distance_sec": 1.0,
         "max_inter_word_gap_sec": 1.0,
     }
@@ -333,6 +333,34 @@ def test_scene_quality_guard_config_is_validated(
         require_phase01_production_ready(resolved)
 
 
+def test_shot_time_boundary_policy_is_validated() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["phase01"]["shot_detection"]["time_boundary_policy"] = (
+        "fps_math_v0"
+    )
+
+    with pytest.raises(ValueError, match="shot_detection.time_boundary_policy"):
+        require_phase01_production_ready(resolved)
+
+
+def test_scene_stage_requires_direct_asr_dependency() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["phase01"]["stages"]["dependencies"]["scenes"].remove("asr")
+
+    with pytest.raises(ValueError, match="dependencies for scenes"):
+        require_phase01_production_ready(resolved)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "exception", "message"),
     [
@@ -409,7 +437,7 @@ def test_asr_alignment_config_is_validated(
         require_phase01_production_ready(resolved)
 
 
-def test_suspicious_scene_partition_fails_terminal_quality_gate() -> None:
+def test_suspicious_scene_partition_requires_exact_manual_approval() -> None:
     quality = _scene_quality(suspicious=True)
     result = SceneGroupingResult(
         scenes=[],
@@ -428,7 +456,7 @@ def test_suspicious_scene_partition_fails_terminal_quality_gate() -> None:
             "min_shot_count": 8,
             "suspicious_boundary_density": 0.9,
             "suspicious_one_shot_scene_rate": 0.8,
-            "unresolved_action": "fail_terminal",
+            "unresolved_action": "review_required",
         },
     )
 
@@ -476,7 +504,7 @@ def test_suspicious_scene_partition_never_promotes_checkpoint(
             "min_shot_count": 8,
             "suspicious_boundary_density": 0.9,
             "suspicious_one_shot_scene_rate": 0.8,
-            "unresolved_action": "fail_terminal",
+            "unresolved_action": "review_required",
         },
     )
     manager = RecordingManager()
@@ -494,7 +522,7 @@ def test_suspicious_scene_partition_never_promotes_checkpoint(
             scene_quality_path=tmp_path / "scene_partition_quality.json",
             model={},
             prompt_version="prompt",
-            schema_version="scenes_v3",
+            schema_version="scenes_v4",
         )
 
     assert manager.promote_calls == []
@@ -515,7 +543,7 @@ def test_scene_quality_failure_persists_structured_checkpoint_details() -> None:
     error = ScenePartitionQualityError(
         video_id="v",
         details={
-            "quality_contract": "scene_partition_quality_v1",
+            "quality_contract": "scene_partition_quality_v2",
             "manual_review_required": True,
             "initial": {"suspicious": True},
             "final": final,
@@ -536,7 +564,7 @@ def test_scene_quality_failure_persists_structured_checkpoint_details() -> None:
     [
         ("missing", "Missing scene partition quality report"),
         ("failed", "not passing"),
-        ("suspicious", "remains suspicious"),
+        ("suspicious", "lacks manual approval"),
     ],
 )
 def test_package_quality_report_requires_passing_final_state(
@@ -576,6 +604,91 @@ def test_package_quality_report_accepts_passing_final_state(tmp_path: Path) -> N
         shot_count=1,
         scene_count=1,
     )
+
+
+def test_package_quality_report_accepts_exact_manual_approval(tmp_path: Path) -> None:
+    diagnostics = tmp_path / "diagnostics"
+    diagnostics.mkdir()
+    payload = _passing_scene_quality_report("v", shot_count=10, scene_count=10)
+    fingerprint = "a" * 64
+    payload.update(
+        {
+            "status": "pass_after_manual_review",
+            "candidate_fingerprint": fingerprint,
+            "decision_ref": "phase01_checkpoints/release/v/reviews/decision.json",
+            "manual_review": {
+                "schema_version": "scene_partition_manual_review_v1",
+                "release_id": "release",
+                "video_id": "v",
+                "candidate_fingerprint": fingerprint,
+                "decision": "approve",
+                "reviewer": "reviewer",
+                "reviewed_at": "2026-09-08T10:00:00Z",
+                "notes": None,
+            },
+        }
+    )
+    payload["final"]["suspicious"] = True
+    (diagnostics / "scene_partition_quality.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    _validate_scene_partition_quality_report(
+        tmp_path,
+        video_id="v",
+        shot_count=10,
+        scene_count=10,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("decision", "reject", "approval decision"),
+        ("reviewer", "", "reviewer"),
+        ("reviewed_at", "not-a-date", "reviewed_at"),
+        ("candidate_fingerprint", "b" * 64, "fingerprint mismatch"),
+        ("video_id", "other", "video_id mismatch"),
+        ("release_id", "", "release_id"),
+    ],
+)
+def test_package_quality_report_rejects_invalid_manual_approval(
+    tmp_path: Path, field: str, value: str, message: str
+) -> None:
+    diagnostics = tmp_path / "diagnostics"
+    diagnostics.mkdir()
+    fingerprint = "a" * 64
+    payload = _passing_scene_quality_report("v", shot_count=10, scene_count=10)
+    payload.update(
+        {
+            "status": "pass_after_manual_review",
+            "candidate_fingerprint": fingerprint,
+            "decision_ref": "reviews/decision.json",
+            "manual_review": {
+                "schema_version": "scene_partition_manual_review_v1",
+                "release_id": "release",
+                "video_id": "v",
+                "candidate_fingerprint": fingerprint,
+                "decision": "approve",
+                "reviewer": "reviewer",
+                "reviewed_at": "2026-09-08T10:00:00Z",
+                "notes": None,
+            },
+        }
+    )
+    payload["final"]["suspicious"] = True
+    payload["manual_review"][field] = value
+    (diagnostics / "scene_partition_quality.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=message):
+        _validate_scene_partition_quality_report(
+            tmp_path,
+            video_id="v",
+            shot_count=10,
+            scene_count=10,
+        )
 
 
 def test_supplemental_keyframe_cannot_be_representative() -> None:
@@ -686,7 +799,7 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_8"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_9"
     assert diagnostics["models_schema_version"] == "phase01_models_v1_6"
     assert diagnostics["asr"] == {
         "provider": "nemo",
@@ -1016,6 +1129,7 @@ def test_phase01_config_encodes_oom_and_dependency_invalidation_policy() -> None
     assert set(dependencies["scenes"]) == {
         "shots",
         "keyframes",
+        "asr",
         "ocr",
         "shot_captions",
         "shot_transcript_links",
@@ -1121,6 +1235,14 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
     assert speech_hashes["scenes"] != resolved.stage_config_hashes["scenes"]
     for stage in ("asr", "shot_transcript_links", "shot_captions"):
         assert speech_hashes[stage] == resolved.stage_config_hashes[stage]
+
+    shot_timing_changed = copy.deepcopy(resolved.payload)
+    shot_timing_changed["phase01"]["shot_detection"]["time_boundary_policy"] = (
+        "next_shot_start_pts_v999"
+    )
+    shot_timing_hashes = _stage_config_hashes(shot_timing_changed)
+    assert shot_timing_hashes["shots"] != resolved.stage_config_hashes["shots"]
+    assert shot_timing_hashes["asr"] == resolved.stage_config_hashes["asr"]
 
     scene_links_changed = copy.deepcopy(resolved.payload)
     scene_links_changed["phase01"]["schemas"][
@@ -1493,7 +1615,7 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "end_sec": 0.08, "duration_sec": 0.08, "frame_count": 2,
             "shot_count": 1, "keyframe_count": 0, "scene_type": "semantic",
             "grouping_method": "multimodal_context_focus",
-            "grouping_version": "scene_grouping_v3", "confidence": None,
+            "grouping_version": "scene_grouping_v4", "confidence": None,
             "boundary_convention": "[start_frame, end_frame)", "status": "pass",
         }],
         "scene_summaries": [{

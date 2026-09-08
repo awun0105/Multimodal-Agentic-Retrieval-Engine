@@ -122,6 +122,30 @@ Out of scope:
 
 ## Approach
 
+### Task 1-3 Closure
+
+Status: Implementation Complete - Review Pending
+
+This closure pass preserves the accepted Task 1 and Task 2 contracts and the
+implemented Task 3 behavior while resolving four remaining correctness gaps:
+gap-local speech reliability, canonical PTS-derived shot time boundaries,
+asynchronous quarantine/manual disposition for persistently suspicious scene
+partitions, and the corresponding DAG/version/QA/documentation updates. It does
+not begin Task 4.
+
+Implemented from clean `dev` at `46f9252`. Aligned-speech v2 makes missing
+left/right word evidence explicitly neutral; shot time boundaries now form an
+exact decoded-PTS partition; persistent suspicious partitions are stored as
+immutable review candidates and return without promoting scenes or blocking
+other videos; exact approval resumes the existing candidate without repeating
+VLM grouping, while rejection is durable. Scenes now directly depend on ASR.
+
+Version impact: Phase01 pipeline/production v1.9,
+`aligned_speech_continuity_v2`, `scene_grouping_v4`, `scenes_v4`,
+`scene_boundary_diagnostics_v4`, and `scene_partition_quality_v2`. Models stay
+v1.6; checkpoint state stays v2; package/video manifest stays v3; scene
+summaries stay v3.
+
 ### Task 1: Scene Grouping Correctness
 
 Status: Accepted
@@ -209,21 +233,29 @@ Current Markdown workflow supersedes the retired Harness context CLI.
 Package format remains `phase01_structure_v3`: no table/file shape is added;
 the versioned scene table records the new grouping implementation instead.
 
-Implemented contract: `aligned_speech_continuity_v1` derives one immutable
+Implemented contract: `aligned_speech_continuity_v2` derives one immutable
 evidence record per adjacent-shot gap from canonical `asr_words`, Task 2's
 word-to-shot assignment, shot transcript-link coverage, and the persisted ASR
 status. Same-segment crossing requires assigned words on both sides; temporal
-proximity may remain positive across forced-split segment IDs. Only `pass` ASR
-is reliable. All four VLM review routes receive the same compact evidence
-block, while Python voting, review routing, quality gates, and labels remain
-unchanged.
+proximity may remain positive across forced-split segment IDs. Reliability is
+gap-local: even `pass` ASR is neutral when either neighboring shot lacks
+aligned words. Unreliable evidence renders only its reason and
+`NOT_EVALUATED`. All four VLM review routes receive the same evidence contract,
+while Python voting and labels remain non-authoritative with respect to speech.
 
-Version impact: `scene_grouping_v3`, `scenes_v3`,
-`scene_boundary_diagnostics_v3`, Phase01 pipeline/production v1.8, models v1.6,
-and primary/focused/consistency prompt v3 plus degenerate prompt v2. Package,
-checkpoint, ASR, transcript-link, partition-quality, and scene-summary formats
-remain unchanged. The exact ending commit is recorded in Git history and the
-Task 3 final report because a commit cannot contain its own final SHA.
+The Task 1-3 closure also replaces terminal handling of a persistently
+suspicious partition with an immutable asynchronous review candidate. Exact
+fingerprint approval resumes and promotes only that candidate; rejection is a
+durable non-canonical disposition; other videos continue without waiting.
+Canonical shot time ranges now partition decoded PTS exactly, and scenes have
+a direct ASR DAG dependency because gap reliability reads persisted ASR status.
+
+Version impact: `scene_grouping_v4`, `scenes_v4`,
+`scene_boundary_diagnostics_v4`, `scene_partition_quality_v2`, Phase01
+pipeline/production v1.9, and aligned-speech v2. Models remain v1.6; package,
+checkpoint, ASR, transcript-link, and scene-summary formats remain unchanged.
+The exact ending commit is recorded in Git history and the final handoff report
+because a commit cannot contain its own final SHA.
 
 Depends on: Task 2 accepted.
 
@@ -435,8 +467,46 @@ Focused acceptance cases:
   `scenes_v3` / `scene_grouping_v3`; the existing scenes stage hash covers the
   speech policy, prompt configuration, and scene schema, so upstream ASR,
   words, links, captions, OCR, keyframes, and shots remain reusable.
+- 2026-09-08: The Task 1-3 closure replaces video-level-only speech
+  reliability with `aligned_speech_continuity_v2`. A gap is reliable only when
+  ASR status is `pass` and both adjacent shots own aligned words. Missing-side
+  evidence is rendered as neutral `NOT_EVALUATED`, never as discontinuity.
+- 2026-09-08: Canonical shot time uses `next_shot_start_pts_v1`: each non-final
+  shot ends at the exclusive end frame's decoded PTS, and only the final frame
+  uses its positive duration. This prevents VFR frame-duration metadata from
+  creating temporal gaps or overlaps.
+- 2026-09-08: A partition still suspicious after deterministic and degenerate
+  review is quarantined as an immutable `scene_partition_review_candidate_v1`
+  instead of becoming a technical terminal failure. Exact
+  `scene_partition_manual_review_v1` approval permits deferred promotion;
+  rejection is durable; changed input/config cannot consume a stale decision.
+- 2026-09-08: Scenes directly depend on ASR because gap reliability consumes
+  `asr_status.json`. Current versions are pipeline/production v1.9,
+  aligned-speech v2, grouping/scenes v4, boundary diagnostics v4, and partition
+  quality v2. Models v1.6, checkpoint v2, package v3, and summaries v3 are
+  intentionally unchanged.
 
 ## Validation
+
+Task 1-3 closure local proof on 2026-09-08:
+
+- closure-focused review/shot/speech/grouping/production/batch/QA/schema/
+  checkpoint/ASR-link tests: 219 passed;
+- expanded Phase01 set excluding the environment-dependent NeMo alignment
+  module: 304 passed;
+- `test_phase01_asr_alignment.py`: 6 passed and 3 could not execute because
+  this Python environment does not have the `nemo` package;
+- `pytest -q system1/tests/test_phase01*.py` stopped during collection because
+  `torch` is unavailable to `test_phase01_vlm_client.py`;
+- repository-root `pytest -q` stopped during collection with 22 missing-runtime
+  import errors across Kaggle, MVP, and System1 (`gradio_client`, `trake`,
+  `torch`, `faiss`, and project-specific import roots); no test assertion ran
+  in that command;
+- Ruff 0.12.12 over every closure-changed Python/test file: passed;
+- `python -m compileall` over System1 source and focused new tests: passed;
+- `git diff --check`: passed;
+- live T4 / Parakeet / Qwen / Vintern validation: not run and remains an
+  operator gate after Tasks 3-5.
 
 Task 2 follow-up on 2026-09-08: local closure complete. Forced-overlap
 deduplication now runs after final rejection decisions and preserves raw quality
@@ -526,10 +596,10 @@ claiming live/provider acceptance; they no longer block Task 2 local closure.
 
 ## Result
 
-Active. Task 1 and its closure patch are accepted. Task 2 is accepted on local
-contract evidence (`86d0ada`, `867dabc`, `59b6c62`). Task 3 implementation and
-local proof are complete and await review. Live/provider smoke is deferred
-until after Task 5. Task 4 has not started.
+Active. Task 1 and Task 2 are accepted on local contract evidence
+(`86d0ada`, `867dabc`, `59b6c62`). Task 3 plus the Task 1-3 correctness closure
+are implementation-complete and await external review. Live/provider smoke is
+deferred until after Task 5. Task 4 has not started.
 
 Task 1 changed:
 

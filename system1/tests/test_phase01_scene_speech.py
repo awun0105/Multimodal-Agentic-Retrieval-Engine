@@ -8,21 +8,23 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from system1.asr.links import build_shot_transcript_links
+from system1.asr.links import assign_words_to_intervals, build_shot_transcript_links
 from system1.phase01.production import _build_scene_evidence
 from system1.scenes.grouping import group_scenes
 from system1.scenes.speech import (
     SpeechGapEvidence,
     build_speech_gap_evidence,
+    render_speech_evidence,
     validate_speech_policy,
 )
 from system1.scenes.vlm_judge import SemanticSceneBoundaryJudge
+from system1.shots.transnet import scenes_to_shot_rows
 
 
 def _policy() -> dict[str, Any]:
     return {
         "enabled": True,
-        "contract_version": "aligned_speech_continuity_v1",
+        "contract_version": "aligned_speech_continuity_v2",
         "max_boundary_word_distance_sec": 1.0,
         "max_inter_word_gap_sec": 1.0,
     }
@@ -46,7 +48,7 @@ def _grouping_config() -> dict[str, Any]:
             "min_shot_count": 8,
             "suspicious_boundary_density": 0.9,
             "suspicious_one_shot_scene_rate": 0.8,
-            "unresolved_action": "fail_terminal",
+            "unresolved_action": "review_required",
             "degenerate_review": {
                 "enabled": True,
                 "focus_gap_count": 8,
@@ -119,6 +121,8 @@ def test_shared_and_near_boundary_facts() -> None:
     item = _evidence()
 
     assert item.shared_segment_ids == ("a",)
+    assert item.speech_evidence_reliable
+    assert item.reliability_reason == "reliable_words_both_sides"
     assert item.shared_segment_crosses_gap
     assert item.near_boundary_speech_continuity
     assert item.left_word_distance_to_boundary_sec == pytest.approx(0.15)
@@ -129,7 +133,10 @@ def test_shared_and_near_boundary_facts() -> None:
 
 
 def test_segment_overlap_without_words_is_not_crossing() -> None:
-    assert not _evidence(_words()[1:]).shared_segment_crosses_gap
+    item = _evidence(_words()[1:])
+    assert not item.shared_segment_crosses_gap
+    assert not item.speech_evidence_reliable
+    assert item.reliability_reason == "missing_left_aligned_words"
 
 
 def test_different_segments_can_have_near_speech() -> None:
@@ -171,20 +178,51 @@ def test_remote_speech_does_not_imply_near_continuity() -> None:
     assert not _evidence(_words(near=False)).near_boundary_speech_continuity
 
 
-@pytest.mark.parametrize("status", ["no_audio", "no_speech", "low_confidence"])
-def test_unreliable_asr_never_asserts_positive_continuity(status: str) -> None:
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        ("no_audio", "video_asr_no_audio"),
+        ("no_speech", "video_asr_no_speech"),
+        ("low_confidence", "video_asr_low_confidence"),
+    ],
+)
+def test_unreliable_asr_never_asserts_positive_continuity(
+    status: str, reason: str
+) -> None:
     item = _evidence(status=status)
 
     assert not item.speech_evidence_reliable
+    assert item.reliability_reason == reason
     assert not item.shared_segment_crosses_gap
     assert not item.near_boundary_speech_continuity
+    rendered = render_speech_evidence(item)
+    assert "CONTINUITY_EVALUATION: NOT_EVALUATED" in rendered
+    assert "SHARED_SEGMENT_CROSSES_GAP" not in rendered
+    assert "NEAR_BOUNDARY_SPEECH_CONTINUITY" not in rendered
 
 
 def test_empty_and_disabled_speech() -> None:
-    assert not _evidence([]).near_boundary_speech_continuity
-    assert not _evidence(
+    empty = _evidence([])
+    assert not empty.near_boundary_speech_continuity
+    assert empty.reliability_reason == "missing_both_aligned_words"
+    disabled = _evidence(
         policy={**_policy(), "enabled": False}
-    ).speech_evidence_reliable
+    )
+    assert not disabled.speech_evidence_reliable
+    assert disabled.reliability_reason == "disabled"
+    rendered = render_speech_evidence(disabled)
+    assert "ENABLED: NO" in rendered
+    assert "CONTINUITY_EVALUATION: NOT_EVALUATED" in rendered
+
+
+def test_one_sided_words_are_gap_locally_unreliable() -> None:
+    left_only = _evidence(_words()[:1])
+    right_only = _evidence(_words()[1:])
+
+    assert left_only.reliability_reason == "missing_right_aligned_words"
+    assert right_only.reliability_reason == "missing_left_aligned_words"
+    assert not left_only.speech_evidence_reliable
+    assert not right_only.speech_evidence_reliable
 
 
 @pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf"), True])
@@ -205,6 +243,62 @@ def test_malformed_shot_partition_rejected() -> None:
             asr_status="pass",
             policy=_policy(),
         )
+
+
+def test_vfr_pts_partition_assigns_boundary_words_once_and_builds_gap_evidence() -> None:
+    timeline = [
+        {"frame_id": 0, "pts_time": 0.0, "duration_time": 0.08},
+        {"frame_id": 1, "pts_time": 0.05, "duration_time": 0.20},
+        {"frame_id": 2, "pts_time": 0.11, "duration_time": 0.04},
+        {"frame_id": 3, "pts_time": 0.18, "duration_time": 0.03},
+    ]
+    shots = scenes_to_shot_rows(
+        video_id="v",
+        scenes_inclusive=[[0, 1], [2, 3]],
+        frame_timeline=timeline,
+    )
+    words = [
+        {
+            "asr_word_id": "w0",
+            "asr_segment_id": "a",
+            "word_index": 0,
+            "text": "xin",
+            "start_sec": 0.08,
+            "end_sec": 0.10,
+        },
+        {
+            "asr_word_id": "w1",
+            "asr_segment_id": "a",
+            "word_index": 1,
+            "text": "chào",
+            "start_sec": 0.105,
+            "end_sec": 0.125,
+        },
+    ]
+    segments = [{"asr_segment_id": "a", "start_sec": 0.07, "end_sec": 0.14}]
+    assignments = assign_words_to_intervals(
+        shots,
+        words,
+        entity_id_field="shot_id",
+    )
+
+    assert shots[0]["end_sec"] == shots[1]["start_sec"] == pytest.approx(0.11)
+    assert [word["asr_word_id"] for word in assignments[shots[0]["shot_id"]]] == [
+        "w0"
+    ]
+    assert [word["asr_word_id"] for word in assignments[shots[1]["shot_id"]]] == [
+        "w1"
+    ]
+    evidence = build_speech_gap_evidence(
+        shots=shots,
+        asr_words=words,
+        shot_transcript_links=build_shot_transcript_links(shots, segments, words),
+        asr_status="pass",
+        policy=_policy(),
+    )[shots[0]["shot_id"]]
+    assert evidence.speech_evidence_reliable
+    assert evidence.shared_segment_crosses_gap
+    assert evidence.near_boundary_speech_continuity
 
 
 def test_production_scene_evidence_attaches_exact_gap_speech(
@@ -324,17 +418,28 @@ def test_all_routes_render_speech_and_preserve_semantic_label(
         request_kind=route,
     ) == expected
     prompt = requests_seen[0].prompt
-    for field in (
+    reliable = not scenario.startswith("silent")
+    required_fields = [
         "SPEECH_GAP_EVIDENCE",
-        "ASR_STATUS",
         "SPEECH_EVIDENCE_RELIABLE",
-        "SHARED_SEGMENT_CROSSES_GAP",
-        "NEAR_BOUNDARY_SPEECH_CONTINUITY",
-        "INTER_WORD_GAP_SEC",
         "TARGET_LEFT_SHOT_ID",
         "TARGET_RIGHT_SHOT_ID",
         "ORDERED_CONTEXT",
-    ):
+    ]
+    if reliable:
+        required_fields.extend(
+            (
+                "ASR_STATUS",
+                "SHARED_SEGMENT_CROSSES_GAP",
+                "NEAR_BOUNDARY_SPEECH_CONTINUITY",
+                "INTER_WORD_GAP_SEC",
+            )
+        )
+    else:
+        required_fields.extend(("RELIABILITY_REASON", "CONTINUITY_EVALUATION"))
+        assert "SHARED_SEGMENT_CROSSES_GAP" not in prompt
+        assert "NEAR_BOUNDARY_SPEECH_CONTINUITY" not in prompt
+    for field in required_fields:
         assert field in prompt
     assert "Speech continuity alone does not prove" in prompt
     assert "documentary/news voice-over" in prompt
@@ -351,7 +456,11 @@ def test_all_routes_render_speech_and_preserve_semantic_label(
     assert result.decisions[0].is_boundary == (label == "BOUNDARY")
     diagnostic = asdict(result.decisions[0])
     assert diagnostic["diagnostics_schema_version"] == (
-        "scene_boundary_diagnostics_v3"
+        "scene_boundary_diagnostics_v4"
+    )
+    assert diagnostic["speech_reliability_reason"] == (
+        "video_asr_no_speech" if scenario.startswith("silent")
+        else "reliable_words_both_sides"
     )
     assert diagnostic["speech_near_boundary_continuity"] == (
         not scenario.startswith("silent")

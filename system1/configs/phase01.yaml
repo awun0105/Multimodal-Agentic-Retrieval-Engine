@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_8
-pipeline_id: phase01_production_v1_8
+schema_version: phase01_pipeline_v1_9
+pipeline_id: phase01_production_v1_9
 
 execution:
   video_order: batch_manifest
@@ -47,7 +47,7 @@ stages:
     ocr: [keyframes]
     shot_captions: [keyframes, ocr]
     shot_transcript_links: [shots, asr]
-    scenes: [shots, keyframes, ocr, shot_captions, shot_transcript_links]
+    scenes: [shots, keyframes, asr, ocr, shot_captions, shot_transcript_links]
     scene_transcript_links: [scenes, asr]
     scene_summaries: [scenes, scene_transcript_links, asr, keyframes, ocr, shot_captions]
     package:
@@ -65,6 +65,7 @@ stages:
 shot_detection:
   model_key: shot_detection
   boundary_convention: "[start_frame, end_frame)"
+  time_boundary_policy: next_shot_start_pts_v1
   no_cut_status: transnet_v2_no_cut
   production_fallback: null
 
@@ -110,7 +111,7 @@ retry:
 scene_grouping:
   speech_continuity:
     enabled: true
-    contract_version: aligned_speech_continuity_v1
+    contract_version: aligned_speech_continuity_v2
     max_boundary_word_distance_sec: 1.0
     max_inter_word_gap_sec: 1.0
   focused_review_keyframe_roles: [early, late, supplemental]
@@ -132,7 +133,7 @@ scene_grouping:
     min_shot_count: 8
     suspicious_boundary_density: 0.90
     suspicious_one_shot_scene_rate: 0.80
-    unresolved_action: fail_terminal
+    unresolved_action: review_required
     degenerate_review:
       enabled: true
       focus_gap_count: 8
@@ -162,7 +163,7 @@ schemas:
   ocr: ocr_v2
   shot_captions: shot_captions_v4
   shot_transcript_links: shot_transcript_links_v2
-  scenes: scenes_v3
+  scenes: scenes_v4
   scene_transcript_links: scene_transcript_links_v2
   scene_summaries: scene_summaries_v3
 
