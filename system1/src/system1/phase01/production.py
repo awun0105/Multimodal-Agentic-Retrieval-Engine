@@ -49,6 +49,7 @@ from system1.phase01.validation import validate_phase01_package, validate_rows
 from system1.scenes import (
     SceneGroupingResult,
     ScenePartitionQualityError,
+    build_speech_gap_evidence,
     group_scenes,
 )
 from system1.scenes.vlm_judge import SemanticSceneBoundaryJudge
@@ -1124,6 +1125,11 @@ def _process_video_flow(
             captions,
             asr_word_rows,
             stage_dir,
+            shot_transcript_links=links,
+            asr_status=json.loads(
+                asr_status_path.read_text(encoding="utf-8")
+            )["status"],
+            speech_policy=phase01["scene_grouping"]["speech_continuity"],
         )
         judge = SemanticSceneBoundaryJudge(
             caption_client,
@@ -2152,7 +2158,22 @@ def _build_scene_evidence(
     captions,
     asr_words,
     stage_dir,
+    *,
+    shot_transcript_links=(),
+    asr_status=None,
+    speech_policy=None,
 ):
+    speech_gaps = (
+        build_speech_gap_evidence(
+            shots=shots,
+            asr_words=asr_words,
+            shot_transcript_links=shot_transcript_links,
+            asr_status=asr_status,
+            policy=speech_policy,
+        )
+        if speech_policy is not None
+        else {}
+    )
     by_shot_keyframes: dict[str, list[dict[str, Any]]] = {}
     for row in keyframes:
         by_shot_keyframes.setdefault(str(row["shot_id"]), []).append(row)
@@ -2200,6 +2221,7 @@ def _build_scene_evidence(
             "visible_text_summary_vi": caption.get("visible_text_summary_vi", ""),
             "visible_text_summary_en": caption.get("visible_text_summary_en", ""),
             "ocr_text": shot_ocr, "transcript": transcript,
+            "speech_to_next_gap": speech_gaps.get(shot_id),
         })
     return evidence
 

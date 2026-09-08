@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_7
-pipeline_id: phase01_production_v1_7
+schema_version: phase01_pipeline_v1_8
+pipeline_id: phase01_production_v1_8
 
 execution:
   video_order: batch_manifest
@@ -108,6 +108,11 @@ retry:
   local_model_total_attempts: 2
 
 scene_grouping:
+  speech_continuity:
+    enabled: true
+    contract_version: aligned_speech_continuity_v1
+    max_boundary_word_distance_sec: 1.0
+    max_inter_word_gap_sec: 1.0
   focused_review_keyframe_roles: [early, late, supplemental]
   focus_gap_count: 8
   context_shots_each_side: 4
@@ -157,7 +162,7 @@ schemas:
   ocr: ocr_v2
   shot_captions: shot_captions_v4
   shot_transcript_links: shot_transcript_links_v2
-  scenes: scenes_v2
+  scenes: scenes_v3
   scene_transcript_links: scene_transcript_links_v2
   scene_summaries: scene_summaries_v3
 

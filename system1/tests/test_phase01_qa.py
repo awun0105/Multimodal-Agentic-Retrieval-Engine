@@ -67,6 +67,13 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
                 "consistency_review_triggered": False,
                 "consistency_review_round": None,
                 "degenerate_review_triggered": False,
+                "speech_evidence_reliable": True,
+                "speech_near_boundary_continuity": True,
+                "speech_shared_segment_crosses_gap": True,
+                "speech_shared_segment_ids": ["L21_V001_ASR00000"],
+                "speech_inter_word_gap_sec": 0.18,
+                "speech_left_word_distance_to_boundary_sec": 0.10,
+                "speech_right_word_distance_to_boundary_sec": 0.08,
                 "provider": "qwen_local",
                 "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
                 "model_version": "revision",
@@ -126,4 +133,8 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
     assert boundary["evidence"]["vote_count"] == 2
     assert boundary["evidence"]["partition_status"] == "pass"
     assert boundary["evidence"]["final_mean_scene_duration_sec"] == 2.0
+    assert boundary["evidence"]["speech_evidence_reliable"] is True
+    assert boundary["evidence"]["speech_near_boundary_continuity"] is True
+    assert boundary["evidence"]["speech_shared_segment_crosses_gap"] is True
+    assert boundary["evidence"]["speech_inter_word_gap_sec"] == 0.18
     assert "reason" not in boundary["evidence"]

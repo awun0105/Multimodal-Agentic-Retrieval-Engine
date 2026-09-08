@@ -9,6 +9,8 @@ from PIL import Image, ImageDraw, ImageOps
 
 from system1.vlm import TEXT_RESPONSE_SCHEMA, ModelRequest, StructuredClient
 
+from .speech import render_speech_evidence, speech_diagnostics
+
 
 class SemanticSceneBoundaryJudge:
     def __init__(
@@ -58,7 +60,7 @@ class SemanticSceneBoundaryJudge:
         contact_sheet = self.diagnostics_dir / f"{self.request_index:05d}_{request_kind}.jpg"
         _write_contact_sheet(context, contact_sheet)
         image_paths = [contact_sheet]
-        
+
         if request_kind != "primary":
             role_sheet = (
                 self.diagnostics_dir
@@ -127,7 +129,11 @@ class SemanticSceneBoundaryJudge:
             gap_id = str(request.identity["after_shot_id"])
             label = str(response["text"])
             result[gap_id] = label == "BOUNDARY"
+            left_evidence = next(
+                item for item in context if str(item["shot_id"]) == gap_id
+            )
             self._diagnostics[gap_id] = {
+                **speech_diagnostics(left_evidence.get("speech_to_next_gap")),
                 "reason": None,
                 "confidence": None,
                 "evidence_used": [],
@@ -231,6 +237,7 @@ def _render_gap_evidence(
     blocks = [
         f"TARGET_LEFT_SHOT_ID: {left_id}",
         f"TARGET_RIGHT_SHOT_ID: {right_id}",
+        render_speech_evidence(context[left_index].get("speech_to_next_gap")),
         "ORDERED_CONTEXT:",
     ]
     blocks.extend(

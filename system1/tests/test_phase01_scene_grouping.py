@@ -187,7 +187,7 @@ def test_all_boundary_partition_recovers_through_degenerate_review() -> None:
         for decision in result.decisions
     )
     assert all(
-        decision.diagnostics_schema_version == "scene_boundary_diagnostics_v2"
+        decision.diagnostics_schema_version == "scene_boundary_diagnostics_v3"
         for decision in result.decisions
     )
     assert all(
@@ -361,10 +361,10 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
         prompt_dir=prompt_dir,
         diagnostics_dir=tmp_path / "diagnostics",
         model_config={
-            "prompt_version": "scene_boundary_primary_label_v2",
-            "focused_prompt_version": "scene_boundary_focused_label_v2",
-            "consistency_prompt_version": "scene_boundary_consistency_label_v2",
-            "degenerate_prompt_version": "scene_boundary_degenerate_label_v1",
+            "prompt_version": "scene_boundary_primary_label_v3",
+            "focused_prompt_version": "scene_boundary_focused_label_v3",
+            "consistency_prompt_version": "scene_boundary_consistency_label_v3",
+            "degenerate_prompt_version": "scene_boundary_degenerate_label_v2",
             "decision_contract_version": "scene_boundary_label_v2",
         },
     )
@@ -392,7 +392,7 @@ def test_generic_qwen_boundary_judge_receives_existing_multimodal_evidence(
         context=context,
     )
     assert degenerate == {"v_SH00000": True}
-    assert client.requests[-1].prompt_version == "scene_boundary_degenerate_label_v1"
+    assert client.requests[-1].prompt_version == "scene_boundary_degenerate_label_v2"
     assert client.requests[-1].request_kind == "scene_boundary_degenerate_review"
 
 
@@ -434,10 +434,10 @@ def test_semantic_boundary_judge_creates_one_ordered_request_per_gap(
         prompt_dir=Path(__file__).resolve().parents[1] / "prompts",
         diagnostics_dir=tmp_path / "diagnostics",
         model_config={
-            "prompt_version": "scene_boundary_primary_label_v2",
-            "focused_prompt_version": "scene_boundary_focused_label_v2",
-            "consistency_prompt_version": "scene_boundary_consistency_label_v2",
-            "degenerate_prompt_version": "scene_boundary_degenerate_label_v1",
+            "prompt_version": "scene_boundary_primary_label_v3",
+            "focused_prompt_version": "scene_boundary_focused_label_v3",
+            "consistency_prompt_version": "scene_boundary_consistency_label_v3",
+            "degenerate_prompt_version": "scene_boundary_degenerate_label_v2",
             "decision_contract_version": "scene_boundary_label_v2",
         },
     )

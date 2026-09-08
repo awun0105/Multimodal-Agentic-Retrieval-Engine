@@ -181,6 +181,18 @@ def _collect_artifact_candidates(
                             "provider": row.get("provider"),
                             "model_name": row.get("model_name"),
                             "model_version": row.get("model_version"),
+                            **{
+                                key: row.get(key)
+                                for key in (
+                                    "speech_evidence_reliable",
+                                    "speech_near_boundary_continuity",
+                                    "speech_shared_segment_crosses_gap",
+                                    "speech_shared_segment_ids",
+                                    "speech_inter_word_gap_sec",
+                                    "speech_left_word_distance_to_boundary_sec",
+                                    "speech_right_word_distance_to_boundary_sec",
+                                )
+                            },
                             **quality_context,
                         },
                     )

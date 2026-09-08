@@ -43,6 +43,16 @@ the pinned Vintern-3B-R local model as its exclusive sticky fallback. The
 scene-grouping algorithm and Python partition authority in this ADR are
 unchanged.
 
+Evidence amendment, 2026-09-08: scene grouping consumes canonical Task 2
+word-aligned shot transcripts plus deterministic `aligned_speech_continuity_v1`
+facts for every adjacent-shot gap. A segment crosses a gap only when it owns
+aligned words in both shots; segment time overlap alone remains provenance.
+Reliable speech close to both sides of a cut is strong semantic-continuity
+evidence, including across forced-split segment IDs, but it never changes a
+Python vote or forces `SAME_SCENE`. Continuous documentary/news voice-over may
+still accompany a genuine audiovisual boundary. Missing or low-confidence ASR
+is neutral rather than evidence of silence or discontinuity.
+
 ## Alternatives Considered
 
 1. Judge every adjacent pair independently. Rejected because it lacks enough

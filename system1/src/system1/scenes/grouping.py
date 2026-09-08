@@ -32,7 +32,18 @@ class BoundaryDecision:
     false_vote_weight: float
     review_route: str
     consistency_review_triggered: bool
-    diagnostics_schema_version: str = "scene_boundary_diagnostics_v2"
+    diagnostics_schema_version: str = "scene_boundary_diagnostics_v3"
+    speech_contract_version: str | None = None
+    speech_asr_status: str | None = None
+    speech_evidence_reliable: bool = False
+    speech_left_aligned_word_count: int = 0
+    speech_right_aligned_word_count: int = 0
+    speech_shared_segment_crosses_gap: bool = False
+    speech_shared_segment_ids: tuple[str, ...] = ()
+    speech_left_word_distance_to_boundary_sec: float | None = None
+    speech_right_word_distance_to_boundary_sec: float | None = None
+    speech_inter_word_gap_sec: float | None = None
+    speech_near_boundary_continuity: bool = False
     consistency_review_round: int | None = None
     degenerate_review_triggered: bool = False
     reason: str | None = None
@@ -41,6 +52,21 @@ class BoundaryDecision:
     provider: str | None = None
     model_name: str | None = None
     model_version: str | None = None
+
+
+_SPEECH_DIAGNOSTIC_FIELDS = (
+    "speech_contract_version",
+    "speech_asr_status",
+    "speech_evidence_reliable",
+    "speech_left_aligned_word_count",
+    "speech_right_aligned_word_count",
+    "speech_shared_segment_crosses_gap",
+    "speech_shared_segment_ids",
+    "speech_left_word_distance_to_boundary_sec",
+    "speech_right_word_distance_to_boundary_sec",
+    "speech_inter_word_gap_sec",
+    "speech_near_boundary_continuity",
+)
 
 
 @dataclass(frozen=True)
@@ -411,7 +437,7 @@ def partition_scenes(
                 "keyframe_count": 0,
                 "scene_type": "semantic",
                 "grouping_method": "multimodal_context_focus",
-                "grouping_version": "scene_grouping_v2",
+                "grouping_version": "scene_grouping_v3",
                 "confidence": None,
                 "boundary_convention": "[start_frame, end_frame)",
                 "status": "pass",
@@ -450,6 +476,11 @@ def _diagnostics_for_gap(judge: SceneBoundaryJudge, gap_id: str) -> dict[str, An
     if not isinstance(evidence_used, (list, tuple)):
         evidence_used = ()
     return {
+        **{
+            key: value[key]
+            for key in _SPEECH_DIAGNOSTIC_FIELDS
+            if key in value
+        },
         "reason": str(reason) if reason is not None else None,
         "confidence": float(confidence) if isinstance(confidence, (int, float)) else None,
         "evidence_used": tuple(str(item) for item in evidence_used),
@@ -497,6 +528,11 @@ def _build_decisions(
                 provider=diagnostics.get("provider"),
                 model_name=diagnostics.get("model_name"),
                 model_version=diagnostics.get("model_version"),
+                **{
+                    key: diagnostics[key]
+                    for key in _SPEECH_DIAGNOSTIC_FIELDS
+                    if key in diagnostics
+                },
             )
         )
     return decisions

@@ -641,7 +641,10 @@ def _validate_semantic_sampling_policy(payload: dict[str, Any]) -> None:
 
 
 def _validate_scene_grouping_policy(payload: dict[str, Any]) -> None:
+    from system1.scenes.speech import validate_speech_policy
+
     grouping = payload["phase01"]["scene_grouping"]
+    validate_speech_policy(grouping.get("speech_continuity"))
     non_boundary = float(grouping.get("non_boundary_threshold", -1))
     boundary = float(grouping.get("boundary_threshold", -1))
     if not 0 <= non_boundary < boundary <= 1:

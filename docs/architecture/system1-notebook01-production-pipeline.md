@@ -468,9 +468,18 @@ The authoritative algorithm is
 Its inputs are ordered shots, representative images, optional
 early/late/supplemental images for focused review, bilingual shot captions,
 caption objects/actions, canonical OCR, temporally attributed word-level shot
-transcript evidence, and the
-timeline. It does not use organizer support artifacts, embeddings, or organizer
-metadata as boundary evidence.
+transcript evidence, deterministic aligned-speech facts for each adjacent-shot
+gap, and the timeline. It does not use organizer support artifacts, embeddings,
+or organizer metadata as boundary evidence.
+
+The gap facts distinguish segment provenance from word ownership. They record
+whether the same accepted ASR segment owns words on both sides of the cut and
+whether reliable speech is temporally close to both sides of the boundary.
+They are rendered for primary, focused, consistency, and degenerate review.
+Continuous speech is strong continuity evidence but never changes a Python
+vote or label directly: documentary/news narration may span a genuine event,
+topic, setting, or time transition, and unreliable or missing ASR remains
+neutral.
 
 The configured semantic client returns one strict `BOUNDARY | SAME_SCENE`
 adjacent-shot label per request. Qwen is primary and the existing sticky local
@@ -479,7 +488,7 @@ bounded consistency review, deterministic scene partitioning, IDs, ranges,
 mappings, and validation. Every shot belongs to exactly one scene; scenes
 cannot overlap, leave a shot-order gap, or reorder shots.
 
-Before promotion, `scene_grouping_v2` computes partition-level boundary-density
+Before promotion, `scene_grouping_v3` computes partition-level boundary-density
 and one-shot-scene metrics. A suspicious result receives one configured bounded
 degenerate semantic review. If the rebuilt partition remains suspicious, the
 scenes stage fails terminally and is not promoted. A successful stage writes

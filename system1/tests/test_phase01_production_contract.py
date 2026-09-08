@@ -130,8 +130,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_7"
-    assert phase01["pipeline_id"] == "phase01_production_v1_7"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_8"
+    assert phase01["pipeline_id"] == "phase01_production_v1_8"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -193,10 +193,23 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "double_quant": True,
     }
     assert models["phase01"]["scene_boundary"]["provider"] == "qwen_local"
-    assert (
-        models["phase01"]["scene_boundary"]["degenerate_prompt_version"]
-        == "scene_boundary_degenerate_label_v1"
-    )
+    boundary_prompts = models["phase01"]["scene_boundary"]
+    assert {
+        key: boundary_prompts[key]
+        for key in (
+            "prompt_version",
+            "focused_prompt_version",
+            "consistency_prompt_version",
+            "degenerate_prompt_version",
+            "decision_contract_version",
+        )
+    } == {
+        "prompt_version": "scene_boundary_primary_label_v3",
+        "focused_prompt_version": "scene_boundary_focused_label_v3",
+        "consistency_prompt_version": "scene_boundary_consistency_label_v3",
+        "degenerate_prompt_version": "scene_boundary_degenerate_label_v2",
+        "decision_contract_version": "scene_boundary_label_v2",
+    }
     assert models["phase01"]["scene_summary"]["provider"] == "qwen_local"
     assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
 
@@ -208,7 +221,13 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         phase01["schemas"]["scene_summaries"]
         == "scene_summaries_v3"
     )
-    assert phase01["schemas"]["scenes"] == "scenes_v2"
+    assert phase01["schemas"]["scenes"] == "scenes_v3"
+    assert phase01["scene_grouping"]["speech_continuity"] == {
+        "enabled": True,
+        "contract_version": "aligned_speech_continuity_v1",
+        "max_boundary_word_distance_sec": 1.0,
+        "max_inter_word_gap_sec": 1.0,
+    }
 
     assert (
         models["phase01"]["shot_caption"][
@@ -311,6 +330,53 @@ def test_scene_quality_guard_config_is_validated(
     target[path[-1]] = value
 
     with pytest.raises(ValueError, match=message):
+        require_phase01_production_ready(resolved)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "exception", "message"),
+    [
+        ("enabled", "true", ValueError, "enabled must be bool"),
+        ("contract_version", "unknown", ValueError, "contract_version"),
+        (
+            "max_boundary_word_distance_sec",
+            0,
+            ValueError,
+            "max_boundary_word_distance_sec",
+        ),
+        ("max_inter_word_gap_sec", -1, ValueError, "max_inter_word_gap_sec"),
+    ],
+)
+def test_speech_continuity_config_is_validated(
+    field: str,
+    value: object,
+    exception: type[Exception],
+    message: str,
+) -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["phase01"]["scene_grouping"]["speech_continuity"][
+        field
+    ] = value
+
+    with pytest.raises(exception, match=message):
+        require_phase01_production_ready(resolved)
+
+
+def test_speech_continuity_config_must_be_a_mapping() -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["phase01"]["scene_grouping"]["speech_continuity"] = []
+
+    with pytest.raises(TypeError, match="speech_continuity must be a mapping"):
         require_phase01_production_ready(resolved)
 
 
@@ -428,7 +494,7 @@ def test_suspicious_scene_partition_never_promotes_checkpoint(
             scene_quality_path=tmp_path / "scene_partition_quality.json",
             model={},
             prompt_version="prompt",
-            schema_version="scenes_v2",
+            schema_version="scenes_v3",
         )
 
     assert manager.promote_calls == []
@@ -620,8 +686,8 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_7"
-    assert diagnostics["models_schema_version"] == "phase01_models_v1_5"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_8"
+    assert diagnostics["models_schema_version"] == "phase01_models_v1_6"
     assert diagnostics["asr"] == {
         "provider": "nemo",
         "model_id": "nvidia/parakeet-ctc-0.6b-vi",
@@ -1047,6 +1113,15 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
     ):
         assert quality_hashes[stage] == resolved.stage_config_hashes[stage]
 
+    speech_changed = copy.deepcopy(resolved.payload)
+    speech_changed["phase01"]["scene_grouping"]["speech_continuity"][
+        "max_inter_word_gap_sec"
+    ] = 0.75
+    speech_hashes = _stage_config_hashes(speech_changed)
+    assert speech_hashes["scenes"] != resolved.stage_config_hashes["scenes"]
+    for stage in ("asr", "shot_transcript_links", "shot_captions"):
+        assert speech_hashes[stage] == resolved.stage_config_hashes[stage]
+
     scene_links_changed = copy.deepcopy(resolved.payload)
     scene_links_changed["phase01"]["schemas"][
         "scene_transcript_links"
@@ -1418,7 +1493,7 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "end_sec": 0.08, "duration_sec": 0.08, "frame_count": 2,
             "shot_count": 1, "keyframe_count": 0, "scene_type": "semantic",
             "grouping_method": "multimodal_context_focus",
-            "grouping_version": "scene_grouping_v2", "confidence": None,
+            "grouping_version": "scene_grouping_v3", "confidence": None,
             "boundary_convention": "[start_frame, end_frame)", "status": "pass",
         }],
         "scene_summaries": [{

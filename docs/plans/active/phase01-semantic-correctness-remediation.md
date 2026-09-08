@@ -201,7 +201,29 @@ Real-provider acceptance:
 
 ### Task 3: Speech-Aware Scene Grouping
 
-Status: Not Started
+Status: Implementation Complete - Review Pending
+
+Baseline: `59b6c62`, including the retained-ASR dedup correction after the
+guide's `a8d777d` snapshot. Both supplied Task 3 attachments are identical.
+Current Markdown workflow supersedes the retired Harness context CLI.
+Package format remains `phase01_structure_v3`: no table/file shape is added;
+the versioned scene table records the new grouping implementation instead.
+
+Implemented contract: `aligned_speech_continuity_v1` derives one immutable
+evidence record per adjacent-shot gap from canonical `asr_words`, Task 2's
+word-to-shot assignment, shot transcript-link coverage, and the persisted ASR
+status. Same-segment crossing requires assigned words on both sides; temporal
+proximity may remain positive across forced-split segment IDs. Only `pass` ASR
+is reliable. All four VLM review routes receive the same compact evidence
+block, while Python voting, review routing, quality gates, and labels remain
+unchanged.
+
+Version impact: `scene_grouping_v3`, `scenes_v3`,
+`scene_boundary_diagnostics_v3`, Phase01 pipeline/production v1.8, models v1.6,
+and primary/focused/consistency prompt v3 plus degenerate prompt v2. Package,
+checkpoint, ASR, transcript-link, partition-quality, and scene-summary formats
+remain unchanged. The exact ending commit is recorded in Git history and the
+Task 3 final report because a commit cannot contain its own final SHA.
 
 Depends on: Task 2 accepted.
 
@@ -324,7 +346,7 @@ Focused acceptance cases:
 - [x] Review and accept Task 1 before Task 2.
 - [x] Task 2: ASR Temporal Alignment implementation and local proof.
 - [x] Review and accept Task 2 before Task 3.
-- [ ] Task 3: Speech-Aware Scene Grouping.
+- [x] Task 3: Speech-Aware Scene Grouping implementation and local proof.
 - [ ] Review and accept Task 3 before Task 4.
 - [ ] Task 4: Adaptive Scene Summary.
 - [ ] Review and accept Task 4 before Task 5.
@@ -402,6 +424,17 @@ Focused acceptance cases:
   per-task gate. This acceptance unblocks Task 3. It does not claim live ASR
   timestamp quality, forced-split behavior on real audio, or heterogeneous
   speech-batch proof.
+- 2026-09-08: Task 3 keeps Task 2 word assignment as temporal authority and
+  introduces `aligned_speech_continuity_v1` in the scene evidence layer. Shared
+  segment IDs are grounded in word ownership, not interval overlap; reliable
+  near-boundary speech is strong VLM context but never a deterministic
+  non-boundary rule. This preserves documentary/news voice-over boundaries and
+  visual-only grouping for missing or unreliable ASR.
+- 2026-09-08: Task 3 keeps `phase01_structure_v3` because it adds no canonical
+  table or packaged file. The changed scene semantics are versioned by
+  `scenes_v3` / `scene_grouping_v3`; the existing scenes stage hash covers the
+  speech policy, prompt configuration, and scene schema, so upstream ASR,
+  words, links, captions, OCR, keyframes, and shots remain reusable.
 
 ## Validation
 
@@ -409,7 +442,9 @@ Task 2 follow-up on 2026-09-08: local closure complete. Forced-overlap
 deduplication now runs after final rejection decisions and preserves raw quality
 evidence. ASR-hashed `retained_after_quality_v2` invalidates pre-fix checkpoints
 and their dependent stages; shots, keyframes, OCR and captions remain reusable.
-Task 3 remains unstarted.
+Task 3 implementation is complete and awaiting review. Real Qwen/Vintern
+semantic interpretation and threshold calibration remain part of the shared
+post-Task-5 GPU acceptance run.
 
 - ASR/alignment/production-contract/checkpoint focused suite: 106 passed.
 - `pytest -q tests/test_phase01*.py`: 252 passed; 463 warnings from unavailable
@@ -417,6 +452,17 @@ Task 3 remains unstarted.
 - Ruff on all changed Python files: passed; `git diff --check`: passed.
 - Full suite was not rerun for this bounded follow-up. Live provider smoke
   remains deferred under the existing post-Task-5 acceptance decision.
+
+Task 3 local proof on 2026-09-08:
+
+- focused scene-speech/grouping/config/QA/schema suite: 149 passed;
+- `pytest -q tests/test_phase01*.py`: 293 passed;
+- full `pytest -q`: 499 passed, with the same unrelated Notebook 00B
+  `monolith-mvp-app` assertion failure described below;
+- Ruff over every Task 3 changed Python file: passed;
+- `git diff --check`: passed;
+- real Qwen/Vintern semantic smoke was not run locally, as required by the
+  Task 3 guide; operator GPU validation remains pending.
 
 Task 1 local proof on 2026-09-01:
 
@@ -481,9 +527,9 @@ claiming live/provider acceptance; they no longer block Task 2 local closure.
 ## Result
 
 Active. Task 1 and its closure patch are accepted. Task 2 is accepted on local
-contract evidence (`86d0ada`, `867dabc`). Live/provider smoke is deferred until
-after Task 5. Task 3 has not started and waits for an explicit implementation
-guide.
+contract evidence (`86d0ada`, `867dabc`, `59b6c62`). Task 3 implementation and
+local proof are complete and await review. Live/provider smoke is deferred
+until after Task 5. Task 4 has not started.
 
 Task 1 changed:
 
@@ -528,6 +574,26 @@ Task 2 checkpoint impact:
 - reusable where fingerprints match: shots, keyframes, OCR, and shot captions;
 - recomputed: ASR, shot-transcript links, scenes, scene-transcript links, scene
   summaries, package, and sync.
+
+Task 3 changed:
+
+- `system1/src/system1/scenes/speech.py` adds the provider-neutral gap contract;
+- production scene evidence, all VLM review routes, diagnostics, and manual QA
+  now carry the same deterministic speech facts;
+- scene grouping/config/model/prompt/diagnostics versions are bumped without
+  changing the checkpoint DAG or package format;
+- focused tests cover word-owned crossing, provenance-only overlap,
+  forced-split temporal continuity, unreliable/empty ASR, every review route,
+  production wiring, config/hash behavior, and non-authoritative documentary
+  boundaries;
+- current architecture and ADR 0014 document the evidence semantics.
+
+Task 3 checkpoint impact:
+
+- reusable: shots, keyframes, ASR, OCR, shot captions, and shot-transcript
+  links;
+- recomputed: scenes, scene-transcript links, scene summaries, package, and
+  sync.
 
 Task 1 checkpoint impact:
 
