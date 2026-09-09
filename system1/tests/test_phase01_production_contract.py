@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -9,8 +10,6 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 from PIL import Image
-from typer.testing import CliRunner
-
 from system1.asr import AsrAlignmentError
 from system1.cli import app
 from system1.config import (
@@ -45,6 +44,7 @@ from system1.scenes import (
     ScenePartitionQuality,
     ScenePartitionQualityError,
 )
+from typer.testing import CliRunner
 
 SYSTEM1_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = SYSTEM1_ROOT / "configs"
@@ -131,8 +131,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_10"
-    assert phase01["pipeline_id"] == "phase01_production_v1_10"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_11"
+    assert phase01["pipeline_id"] == "phase01_production_v1_11"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -841,8 +841,8 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_10"
-    assert diagnostics["models_schema_version"] == "phase01_models_v1_7"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_11"
+    assert diagnostics["models_schema_version"] == "phase01_models_v1_8"
     assert diagnostics["asr"] == {
         "provider": "nemo",
         "model_id": "nvidia/parakeet-ctc-0.6b-vi",
@@ -900,14 +900,25 @@ def test_build_captions_submits_all_shots_through_request_many(
             return responses
 
     client = RequestManyOnlyClient()
-    shots = [{"shot_id": f"L21_V001_SH{index:05d}"} for index in range(2)]
+    shots = [
+        {
+            "shot_id": f"L21_V001_SH{index:05d}",
+            "start_sec": float(index),
+            "end_sec": float(index + 1),
+        }
+        for index in range(2)
+    ]
+    (tmp_path / "keyframes").mkdir()
     keyframes = [
         {
             "shot_id": shot["shot_id"],
             "keyframe_id": f"L21_V001:{index}",
             "keyframe_ref": f"media://keyframes/frame_{index:03d}.jpg",
             "timestamp_sec": float(index),
+            "frame_id": index,
+            "keyframe_role": "middle",
             "is_representative": True,
+            "selection_reason": "middle_within_quality_ratio",
         }
         for index, shot in enumerate(shots)
     ]
@@ -915,6 +926,10 @@ def test_build_captions_submits_all_shots_through_request_many(
         load_configs(CONFIG_DIR)["models"]["phase01"]["shot_caption"]
     )
     model_config["prompt_versions"]["caption_vi"] = "shot_caption_en_v1"
+    for index in range(2):
+        Image.new("RGB", (32, 32), "white").save(
+            tmp_path / "keyframes" / f"frame_{index:03d}.jpg"
+        )
 
     rows = _build_captions(
         video_id="L21_V001",
@@ -924,6 +939,9 @@ def test_build_captions_submits_all_shots_through_request_many(
         stage_dir=tmp_path,
         client=client,
         model_config=model_config,
+        temporal_policy=load_configs(CONFIG_DIR)["phase01"]["shot_caption"][
+            "temporal_understanding"
+        ],
     )
 
     assert len(client.batches) == 1
@@ -1205,7 +1223,7 @@ def test_phase01_config_encodes_oom_and_dependency_invalidation_policy() -> None
     assert phase01["asr"]["exhausted_oom_status"] == "failed_retryable"
     assert dependencies["keyframes"] == ["shots"]
     assert dependencies["ocr"] == ["keyframes"]
-    assert set(dependencies["shot_captions"]) == {"keyframes", "ocr"}
+    assert set(dependencies["shot_captions"]) == {"shots", "keyframes", "ocr"}
     assert set(dependencies["shot_transcript_links"]) == {"shots", "asr"}
     assert set(dependencies["scenes"]) == {
         "shots",
@@ -1255,6 +1273,27 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
     ocr_hashes = _stage_config_hashes(ocr_changed)
     assert ocr_hashes["ocr"] != resolved.stage_config_hashes["ocr"]
     assert ocr_hashes["shots"] == resolved.stage_config_hashes["shots"]
+
+    temporal_changed = copy.deepcopy(resolved.payload)
+    temporal_changed["phase01"]["shot_caption"]["temporal_understanding"][
+        "max_source_keyframes"
+    ] = 4
+    temporal_hashes = _stage_config_hashes(temporal_changed)
+    assert (
+        temporal_hashes["shot_captions"]
+        != resolved.stage_config_hashes["shot_captions"]
+    )
+    for stage in (
+        "shots",
+        "keyframes",
+        "asr",
+        "ocr",
+        "shot_transcript_links",
+        "scenes",
+        "scene_transcript_links",
+        "scene_summaries",
+    ):
+        assert temporal_hashes[stage] == resolved.stage_config_hashes[stage]
 
     quant_changed = copy.deepcopy(resolved.payload)
     quant_changed["models"]["shot_caption"]["quantization"][
@@ -1732,7 +1771,7 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "provider": "qwen_local",
             "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
             "model_version": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
-            "prompt_version": "shot_caption_plain_text_fields_v1",
+            "prompt_version": "shot_caption_temporal_plain_text_fields_v2",
             "schema_version": "shot_caption_response_v3", "confidence": None,
             "status": "pass",
         }],
@@ -1781,6 +1820,53 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
         json.dumps({"status": "no_speech"}),
         encoding="utf-8",
     )
+    caption_provenance = [
+        {
+            "schema_version": "shot_caption_field_provenance_v2",
+            "video_id": video_id,
+            "shot_id": shot_id,
+            "field": field,
+            "provider": "qwen_local",
+            "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+            "model_revision": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+            "prompt_version": f"shot_{field}_v2",
+            "caption_mode": "representative_only",
+            "temporal_understanding_contract_version": (
+                "shot_temporal_understanding_v1"
+            ),
+            "source_selection_policy": "meaningful_ordered_frames_v1",
+            "storyboard_policy": "ordered_temporal_storyboard_v1",
+            "storyboard_sha256": None,
+            "representative_keyframe_id": f"{video_id}:0",
+            "source_keyframe_ids": [f"{video_id}:0"],
+            "source_frame_ids": [0],
+            "source_timestamps_sec": [0.0],
+            "source_keyframe_roles": ["middle"],
+            "source_selection_reasons": ["middle_within_quality_ratio"],
+            "source_image_sha256s": [
+                hashlib.sha256(b"jpg").hexdigest()
+            ],
+            "caption_evidence_fingerprint": "c" * 64,
+            "trigger_reasons": [],
+            "shot_duration_sec": 0.08,
+            "max_visual_change_score": None,
+            "max_ocr_change_score": None,
+        }
+        for field in (
+            "caption_vi",
+            "caption_en",
+            "objects_vi",
+            "objects_en",
+            "actions_vi",
+            "actions_en",
+            "visible_text_summary_vi",
+            "visible_text_summary_en",
+        )
+    ]
+    (stage / "shot_caption_field_provenance.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in caption_provenance) + "\n",
+        encoding="utf-8",
+    )
     metadata = tmp_path / "metadata.json"
     metadata.write_text(json.dumps({"video_id": video_id}), encoding="utf-8")
     resolved = resolve_phase01_config(
@@ -1803,6 +1889,35 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
     assert pd.read_parquet(artifact / "shots.parquet").iloc[0]["scene_id"] == scene_id
     assert pd.read_parquet(artifact / "scenes.parquet").iloc[0]["keyframe_count"] == 2
     assert (artifact / "diagnostics" / "scene_partition_quality.json").is_file()
+
+    caption_provenance_path = (
+        artifact / "diagnostics" / "shot_caption_field_provenance.jsonl"
+    )
+    valid_caption_provenance = caption_provenance_path.read_text(encoding="utf-8")
+    caption_provenance_path.unlink()
+    with pytest.raises(FileNotFoundError, match="shot-caption field provenance"):
+        validate_phase01_package(artifact)
+    caption_provenance_path.write_text(valid_caption_provenance, encoding="utf-8")
+    corrupted_caption_provenance = [
+        json.loads(line) for line in valid_caption_provenance.splitlines()
+    ]
+    corrupted_caption_provenance[0]["source_keyframe_ids"] = ["unknown:999"]
+    caption_provenance_path.write_text(
+        "\n".join(json.dumps(row) for row in corrupted_caption_provenance) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="temporal evidence"):
+        validate_phase01_package(artifact)
+    for row in corrupted_caption_provenance:
+        row["source_keyframe_ids"] = [f"{video_id}:0"]
+        row["source_frame_ids"] = [999]
+    caption_provenance_path.write_text(
+        "\n".join(json.dumps(row) for row in corrupted_caption_provenance) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="keyframe metadata"):
+        validate_phase01_package(artifact)
+    caption_provenance_path.write_text(valid_caption_provenance, encoding="utf-8")
 
     summary_path = artifact / "scene_summaries.parquet"
     valid_summary = pd.read_parquet(summary_path)

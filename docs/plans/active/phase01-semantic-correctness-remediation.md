@@ -284,7 +284,7 @@ Focused acceptance cases:
 
 ### Task 4: Adaptive Scene Summary
 
-Status: Implementation Complete - Review Pending
+Status: Accepted - Live Semantic/Provider Validation Pending
 
 Depends on: Task 3 accepted.
 
@@ -325,7 +325,7 @@ Focused acceptance cases:
 
 ### Task 5: Dynamic Shot Understanding
 
-Status: Not Started
+Status: Implementation Complete - Review Pending
 
 Depends on: Tasks 1-4 accepted.
 
@@ -381,8 +381,8 @@ Focused acceptance cases:
 - [x] Task 3: Speech-Aware Scene Grouping implementation and local proof.
 - [x] Review and accept Task 3 before Task 4.
 - [x] Task 4: Adaptive Scene Summary implementation and local proof.
-- [ ] Review and accept Task 4 before Task 5.
-- [ ] Task 5: Dynamic Shot Understanding.
+- [x] Review and accept Task 4 before Task 5.
+- [x] Task 5: Dynamic Shot Understanding implementation and local proof.
 - [ ] Run required heterogeneous real-provider acceptance and close remaining
   semantic risks.
 - [ ] Move this plan to `docs/plans/completed/` only after verified closure.
@@ -503,8 +503,47 @@ Focused acceptance cases:
   carry no images, while Vintern fallback receives a deterministic neutral
   placeholder rather than scene imagery. Pipeline/production are v1.10 and
   models are v1.7; checkpoint v2 and package/video-manifest v3 remain valid.
+- 2026-09-10: Task 5 keeps one canonical `shot_captions_v4` row per shot and
+  selects request evidence deterministically. A shot uses its representative
+  image unless it has at least two distinct usable keyframes and either a
+  meaningful supplemental keyframe, or it is at least three seconds long with
+  a threshold-crossing dHash/OCR change. Duration alone never selects temporal
+  mode.
+- 2026-09-10: Eligible dynamic shots use one deterministic, chronological
+  storyboard for all eight semantic fields and for the Vintern fallback. Shot
+  caption requests contain visual/OCR evidence only; ASR and transcript
+  evidence remain excluded. Field provenance v2 commits to the exact source
+  keyframes, source image hashes, trigger metrics, storyboard hash, and semantic
+  evidence fingerprint.
+- 2026-09-10: Shot captions now directly depend on shots, keyframes, and OCR.
+  Pipeline/production are v1.11 and models are v1.8; caption, checkpoint, and
+  package schemas remain unchanged. Upstream shots, keyframes, ASR, OCR, and
+  shot-transcript links remain reusable; captions and their semantic downstream
+  stages recompute.
 
 ## Validation
+
+Task 5 local proof on 2026-09-10:
+
+- focused dynamic-shot tests: 29 passed;
+- dynamic-shot, production-contract, QA, batch-orchestrator, table-schema, and
+  Task 1-3 scene regression set: 203 passed;
+- Phase01 suite excluding the two environment-dependent modules
+  `test_phase01_vlm_client.py` and `test_phase01_asr_alignment.py`: 347 passed;
+- the wider System1 suite with those two modules excluded: 553 passed and one
+  pre-existing Notebook 00B assertion failed because that notebook does not
+  contain `monolith-mvp-app`; Task 5 does not modify Notebook 00B;
+- `test_phase01_asr_alignment.py`: 6 passed and 3 failed because this Python
+  environment does not have the `nemo` package;
+- the complete Phase01 collection stopped because `torch` is unavailable to
+  `test_phase01_vlm_client.py`;
+- repository-root `pytest -q` stopped during collection with 22 missing-runtime
+  import errors across Kaggle, MVP, and System1; no test assertion ran in that
+  command;
+- Ruff over every Task 5 changed Python/test file, `python -m compileall`, and
+  `git diff --check`: passed;
+- real T4 / Parakeet / Qwen / Vintern validation: not run. Live dynamic-caption
+  quality and heterogeneous semantic acceptance remain the operator gate.
 
 Task 4 local proof on 2026-09-09:
 
@@ -641,11 +680,11 @@ claiming live/provider acceptance; they no longer block Task 2 local closure.
 
 ## Result
 
-Active. Tasks 1-3 and their correctness closure are accepted on local contract
-evidence. Task 4 is implementation-complete and awaits external code review;
-it introduces adaptive modality-isolated `scene_summaries_v4` without changing
-the Phase01 DAG or beginning Task 5. Live/provider smoke remains deferred until
-after Task 5 and is not claimed by the local proof above.
+Active. Tasks 1-4 and the Task 1-3 correctness closure are accepted on local
+contract evidence. Task 5 is implementation-complete and awaits external code
+review. It adds deterministic adaptive shot evidence without changing the
+one-row-per-shot caption schema or adding ASR to visual captioning. Live/provider
+smoke remains pending and is not claimed by the local proof above.
 
 Task 1 changed:
 
@@ -710,6 +749,28 @@ Task 3 checkpoint impact:
   links;
 - recomputed: scenes, scene-transcript links, scene summaries, package, and
   sync.
+
+Task 5 changed:
+
+- `system1/src/system1/shots/understanding.py` adds deterministic eligibility,
+  visual/OCR change signals, source selection, storyboard rendering, and
+  evidence fingerprints;
+- production uses the same representative image or storyboard for all eight
+  caption fields and writes exact field-level provenance v2;
+- configuration, model prompt bundle, artifact declarations, stage hashing,
+  checkpoint dependencies, package validation, and manual QA reflect the new
+  evidence contract;
+- eight new v2 prompts preserve sparse same-shot chronology and prohibit
+  unsupported motion, speech, identity, intention, or causality;
+- focused proof covers static and changing shots, OCR missingness, duplicate
+  removal, source budgets, storyboard order/hash, Qwen/Vintern request parity,
+  provenance, config, DAG, and package validation.
+
+Task 5 checkpoint impact:
+
+- reusable: shots, keyframes, ASR, OCR, and shot-transcript links;
+- recomputed: shot captions, scenes, scene-transcript links, scene summaries,
+  package, and sync.
 
 Task 1 checkpoint impact:
 

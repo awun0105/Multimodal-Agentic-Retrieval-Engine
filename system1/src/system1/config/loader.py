@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -371,6 +372,7 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
+            "policy": phase01["shot_caption"],
             "schema": schemas["shot_captions"],
         },
         "shot_transcript_links": {
@@ -462,6 +464,7 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
     _validate_semantic_sampling_policy(payload)
     _validate_phase01_stage_graph(payload)
     _validate_shot_detection_policy(payload)
+    _validate_shot_caption_policy(payload)
     _validate_scene_grouping_policy(payload)
     _validate_scene_summary_policy(payload)
     _validate_asr_alignment_policy(payload)
@@ -575,7 +578,7 @@ def _validate_shot_detection_policy(payload: dict[str, Any]) -> None:
 
 
 def _validate_phase01_stage_graph(payload: dict[str, Any]) -> None:
-    from system1.phase01.checkpoint import STAGES, STAGE_DEPENDENCIES
+    from system1.phase01.checkpoint import STAGE_DEPENDENCIES, STAGES
 
     graph = payload["phase01"].get("stages")
     if not isinstance(graph, dict):
@@ -744,6 +747,15 @@ def _validate_scene_summary_policy(payload: dict[str, Any]) -> None:
     from system1.scenes.summary import validate_scene_summary_policy
 
     validate_scene_summary_policy(payload["phase01"].get("scene_summary"))
+
+
+def _validate_shot_caption_policy(payload: dict[str, Any]) -> None:
+    from system1.shots.understanding import validate_temporal_understanding_policy
+
+    policy = payload["phase01"].get("shot_caption")
+    if not isinstance(policy, Mapping):
+        raise TypeError("phase01.shot_caption must be a mapping")
+    validate_temporal_understanding_policy(policy.get("temporal_understanding"))
 
 
 def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:

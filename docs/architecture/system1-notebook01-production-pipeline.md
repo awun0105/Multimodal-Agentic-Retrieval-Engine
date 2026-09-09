@@ -44,7 +44,8 @@ official video
   -> deterministic representative-keyframe selection
   -> default pinned NeMo/Parakeet Vietnamese ASR, or Faster-Whisper Large-v3 override
   -> OpenCV text-presence gate, then Vintern OCR for uncertain/text frames
-  -> shared 4-bit Qwen plain-text shot-caption fields, batched over representative frames
+  -> deterministic representative-only or ordered-storyboard shot evidence
+  -> shared 4-bit Qwen plain-text shot-caption fields, eight batched fields per shot
   -> canonical ASR word alignment and deterministic ASR-to-shot attribution
   -> shared Qwen multimodal context-focus scene grouping
   -> deterministic ASR-to-scene attribution
@@ -286,7 +287,8 @@ Accepted rows use `keyframe_role = supplemental`, are never representative, and
 are covered by `keyframes_v3`. OCR runs on them through the existing text gate;
 their OCR joins the shot's scene evidence, and focused scene review can include
 all supplemental images without role-key overwrite. Shot captioning and scene
-summary image sampling remain representative-only.
+scene-summary image sampling remains representative-only. Shot captioning may
+use these canonical frames through the bounded Task 5 storyboard policy below.
 
 `keyframe_diagnostics.jsonl` records candidate source, timestamp gap, quality,
 visual/text scores, triggered-signal count, keep/drop reason, temporal distance,
@@ -385,10 +387,23 @@ canonical `ocr_v2` row with empty text, `status=empty`, and gate provenance;
 gate counts and failures stay in diagnostics. Thresholds are versioned in
 `phase01.yaml` and participate in the OCR stage fingerprint.
 
-Each shot has exactly one caption row generated from its selected
-representative keyframe. Qwen2.5-VL-7B-Instruct is primary and generates each
-caption field as plain text using the prompt-version mapping in `models.yaml`.
-The caption rows use the canonical `shot_captions_v4` contract.
+Each shot still has exactly one canonical caption row. A deterministic CPU gate
+selects `representative_only` for short/static evidence and
+`temporal_storyboard` when canonical supplemental evidence, or a sufficiently
+long shot plus adjacent dHash/OCR change, establishes meaningful within-shot
+change. Duration alone never enables temporal mode.
+
+Representative-only requests use the canonical representative image. Eligible
+dynamic shots use one deterministic chronological storyboard assembled from a
+bounded selection of canonical early/middle/late/supplemental keyframes. The
+same single image is supplied to Qwen and to the sticky Vintern fallback, so
+the existing eight-request-per-shot and OOM/fallback lifecycle is unchanged.
+The storyboard contains only system labels; per-frame OCR stays in the textual
+evidence block. Shot-caption prompts never receive ASR or transcript evidence.
+
+Qwen2.5-VL-7B-Instruct remains primary and generates each caption field as
+plain text using the v2 prompt-version mapping in `models.yaml`. The caption
+rows retain the canonical `shot_captions_v4` contract.
 
 ```json
 {
@@ -403,9 +418,16 @@ The caption rows use the canonical `shot_captions_v4` contract.
 }
 ```
 
-Both fields are non-empty strings in a successful production row. The provider
-adapter validates the response schema and rejects extra/missing/wrongly typed
-fields according to the versioned contract.
+The two captions are non-empty strings in a successful production row; object,
+action, and visible-text fields retain their existing list/optional-text
+semantics. Python validates each plain-text field and assembles the row.
+
+`diagnostics/shot_caption_field_provenance.jsonl` is an authoritative sidecar
+with exactly eight records per shot. It records caption mode, all source
+keyframe/frame IDs, timestamps, roles and selection reasons, trigger metrics,
+the temporal/storyboard policies, the evidence fingerprint, and field-level
+model/fallback identity. Thus the row remains one-per-shot while its exact
+visual evidence stays auditable.
 
 Canonical `shot_captions.parquet` is one row per shot:
 
@@ -599,8 +621,10 @@ The per-video structure package is:
 |-- thumbnails/
 |-- diagnostics/
 |   |-- keyframe_diagnostics.jsonl
+|   |-- shot_caption_field_provenance.jsonl
 |   |-- scene_boundary_diagnostics.jsonl
 |   |-- scene_partition_quality.json
+|   |-- scene_summary_field_provenance.jsonl
 |   |-- transnet_predictions.json
 |   |-- asr_status.json
 |   `-- ocr_status.json

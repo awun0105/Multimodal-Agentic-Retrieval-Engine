@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from itertools import pairwise
@@ -11,6 +12,7 @@ from typing import Any
 import pandas as pd
 from jsonschema import validate
 
+from system1.artifacts.checkpoint import sha256_file
 from system1.asr.links import assign_words_to_intervals
 from system1.asr.quality import normalize_for_comparison
 from system1.scenes.summary import validate_scene_summary_semantics
@@ -27,6 +29,17 @@ PHASE01_TABLES = (
     "scene_transcript_links",
     "scene_summaries",
 )
+
+SHOT_CAPTION_FIELDS = {
+    "caption_vi",
+    "caption_en",
+    "objects_vi",
+    "objects_en",
+    "actions_vi",
+    "actions_en",
+    "visible_text_summary_vi",
+    "visible_text_summary_en",
+}
 
 
 def validate_rows(table_name: str, rows: Iterable[Mapping[str, Any]]) -> None:
@@ -120,6 +133,12 @@ def validate_phase01_package(artifact_dir: Path) -> None:
         raise ValueError("Scene mappings are incomplete")
     _validate_scene_membership(shots, scenes, keyframes)
     _validate_caption_representatives(captions, keyframes)
+    _validate_shot_caption_provenance(
+        artifact_dir,
+        captions=captions,
+        keyframes=keyframes,
+        shots=shots,
+    )
     _validate_keyframe_media(artifact_dir, keyframes, video_id)
     _validate_asr_words(asr, asr_words, video_id=video_id)
     _validate_scene_summaries(
@@ -295,6 +314,206 @@ def _validate_caption_representatives(
             abs_tol=1e-6,
         ):
             raise ValueError("Shot caption representative timestamp is inconsistent")
+
+
+def _validate_shot_caption_provenance(
+    artifact_dir: Path,
+    *,
+    captions: pd.DataFrame,
+    keyframes: pd.DataFrame,
+    shots: pd.DataFrame,
+) -> None:
+    path = artifact_dir / "diagnostics" / "shot_caption_field_provenance.jsonl"
+    if not path.is_file():
+        raise FileNotFoundError("Missing packaged shot-caption field provenance")
+    rows = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    required = {
+        "schema_version",
+        "video_id",
+        "shot_id",
+        "field",
+        "provider",
+        "model_id",
+        "model_revision",
+        "prompt_version",
+        "caption_mode",
+        "temporal_understanding_contract_version",
+        "source_selection_policy",
+        "storyboard_policy",
+        "storyboard_sha256",
+        "representative_keyframe_id",
+        "source_keyframe_ids",
+        "source_frame_ids",
+        "source_timestamps_sec",
+        "source_keyframe_roles",
+        "source_selection_reasons",
+        "source_image_sha256s",
+        "caption_evidence_fingerprint",
+        "trigger_reasons",
+        "shot_duration_sec",
+        "max_visual_change_score",
+        "max_ocr_change_score",
+    }
+    config = json.loads(
+        (artifact_dir / "resolved_config.json").read_text(encoding="utf-8")
+    )
+    temporal = config["phase01"]["shot_caption"]["temporal_understanding"]
+    maximum = int(temporal["max_source_keyframes"])
+    keyframe_by_id = {
+        str(row["keyframe_id"]): row for row in keyframes.to_dict("records")
+    }
+    caption_by_shot = {
+        str(row["shot_id"]): row for row in captions.to_dict("records")
+    }
+    shot_by_id = {str(row["shot_id"]): row for row in shots.to_dict("records")}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for index, row in enumerate(rows):
+        if set(row) != required:
+            raise ValueError(
+                "Shot-caption provenance row fields do not match v2 contract: "
+                f"row={index}, missing={sorted(required - set(row))}, "
+                f"extra={sorted(set(row) - required)}"
+            )
+        if row["schema_version"] != "shot_caption_field_provenance_v2":
+            raise ValueError("Unsupported shot-caption provenance schema")
+        if row["provider"] not in {"qwen_local", "vintern_reasoning_local"}:
+            raise ValueError("Unsupported shot-caption provenance provider")
+        if any(
+            not isinstance(row[key], str) or not row[key].strip()
+            for key in ("model_id", "model_revision", "prompt_version")
+        ):
+            raise ValueError("Shot-caption provenance model/prompt identity is empty")
+        grouped.setdefault(str(row["shot_id"]), []).append(row)
+    if set(grouped) != set(caption_by_shot):
+        raise ValueError("Shot-caption provenance must cover every canonical shot")
+
+    shared = tuple(
+        key
+        for key in required
+        if key
+        not in {"field", "provider", "model_id", "model_revision", "prompt_version"}
+    )
+    for shot_id, shot_rows in grouped.items():
+        if len(shot_rows) != len(SHOT_CAPTION_FIELDS):
+            raise ValueError("Every shot must have exactly eight caption provenance rows")
+        if {str(row["field"]) for row in shot_rows} != SHOT_CAPTION_FIELDS:
+            raise ValueError("Shot-caption provenance fields are incomplete or duplicated")
+        reference = shot_rows[0]
+        for row in shot_rows[1:]:
+            if any(row[key] != reference[key] for key in shared):
+                raise ValueError("Shot-caption fields disagree on temporal evidence")
+        if not re.fullmatch(
+            r"[0-9a-f]{64}", str(reference["caption_evidence_fingerprint"])
+        ):
+            raise ValueError("Invalid shot-caption evidence fingerprint")
+        if reference["caption_mode"] not in {
+            "representative_only",
+            "temporal_storyboard",
+        }:
+            raise ValueError("Unsupported shot-caption evidence mode")
+        if str(reference["video_id"]) != str(
+            caption_by_shot[shot_id]["video_id"]
+        ):
+            raise ValueError("Shot-caption provenance video_id is inconsistent")
+        expected_duration = float(shot_by_id[shot_id]["end_sec"]) - float(
+            shot_by_id[shot_id]["start_sec"]
+        )
+        if not math.isclose(
+            float(reference["shot_duration_sec"]),
+            expected_duration,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            raise ValueError("Shot-caption provenance duration is inconsistent")
+        if (
+            reference["temporal_understanding_contract_version"]
+            != "shot_temporal_understanding_v1"
+            or reference["source_selection_policy"]
+            != "meaningful_ordered_frames_v1"
+            or reference["storyboard_policy"]
+            != "ordered_temporal_storyboard_v1"
+        ):
+            raise ValueError("Unsupported shot-caption temporal evidence policy")
+        source_ids = [str(value) for value in reference["source_keyframe_ids"]]
+        source_frames = [int(value) for value in reference["source_frame_ids"]]
+        source_times = [float(value) for value in reference["source_timestamps_sec"]]
+        source_roles = [str(value) for value in reference["source_keyframe_roles"]]
+        source_reasons = [str(value) for value in reference["source_selection_reasons"]]
+        source_hashes = [str(value) for value in reference["source_image_sha256s"]]
+        lengths = {
+            len(source_ids),
+            len(source_frames),
+            len(source_times),
+            len(source_roles),
+            len(source_reasons),
+            len(source_hashes),
+        }
+        if len(lengths) != 1 or not source_ids or len(source_ids) > maximum:
+            raise ValueError("Shot-caption provenance source arrays are inconsistent")
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError("Shot-caption provenance repeats a source keyframe")
+        if source_times != sorted(source_times):
+            raise ValueError("Shot-caption provenance sources are not chronological")
+        if list(zip(source_times, source_frames, strict=True)) != sorted(
+            zip(source_times, source_frames, strict=True)
+        ):
+            raise ValueError("Shot-caption provenance source ordering is unstable")
+        representative_id = str(reference["representative_keyframe_id"])
+        if representative_id != str(
+            caption_by_shot[shot_id]["representative_keyframe_id"]
+        ):
+            raise ValueError("Shot-caption provenance representative is inconsistent")
+        if reference["caption_mode"] == "representative_only":
+            if source_ids != [representative_id]:
+                raise ValueError("Representative-only provenance must use one source")
+            if reference["trigger_reasons"]:
+                raise ValueError("Representative-only provenance cannot claim triggers")
+        elif len(source_ids) < 2 or representative_id not in source_ids:
+            raise ValueError("Temporal provenance must include representative and another source")
+        elif not reference["trigger_reasons"]:
+            raise ValueError("Temporal provenance requires a deterministic trigger")
+        if not isinstance(reference["trigger_reasons"], list) or not set(
+            reference["trigger_reasons"]
+        ).issubset({"meaningful_supplemental", "visual_change", "ocr_change"}):
+            raise ValueError("Shot-caption provenance trigger reasons are invalid")
+        for metric in ("max_visual_change_score", "max_ocr_change_score"):
+            value = reference[metric]
+            if value is not None and not 0.0 <= float(value) <= 1.0:
+                raise ValueError(f"Shot-caption provenance {metric} is invalid")
+        if reference["caption_mode"] == "temporal_storyboard":
+            if not re.fullmatch(r"[0-9a-f]{64}", str(reference["storyboard_sha256"])):
+                raise ValueError("Temporal provenance requires a storyboard hash")
+        elif reference["storyboard_sha256"] is not None:
+            raise ValueError("Representative-only provenance cannot claim a storyboard")
+        for position, keyframe_id in enumerate(source_ids):
+            keyframe = keyframe_by_id.get(keyframe_id)
+            if keyframe is None or str(keyframe["shot_id"]) != shot_id:
+                raise ValueError("Shot-caption provenance references a noncanonical keyframe")
+            expected = (
+                int(keyframe["frame_id"]),
+                float(keyframe["timestamp_sec"]),
+                str(keyframe["keyframe_role"]),
+                str(keyframe["selection_reason"]),
+            )
+            actual = (
+                source_frames[position],
+                source_times[position],
+                source_roles[position],
+                source_reasons[position],
+            )
+            if actual != expected:
+                raise ValueError("Shot-caption provenance keyframe metadata is inconsistent")
+            keyframe_name = Path(str(keyframe["keyframe_ref"])).name
+            if (
+                not re.fullmatch(r"[0-9a-f]{64}", source_hashes[position])
+                or source_hashes[position]
+                != sha256_file(artifact_dir / "keyframes" / keyframe_name)
+            ):
+                raise ValueError("Shot-caption provenance image hash is inconsistent")
 
 
 def _validate_keyframe_media(
@@ -543,7 +762,9 @@ def _validate_manual_scene_partition_approval(payload: Mapping[str, Any]) -> Non
         raise ValueError("Manual scene approval requires decision_ref")
     decision = payload.get("manual_review")
     if not isinstance(decision, Mapping):
-        raise ValueError("Suspicious scene partition lacks manual approval")
+        raise ValueError(  # noqa: TRY004 - invalid persisted contract value
+            "Suspicious scene partition lacks manual approval"
+        )
     expected_fields = {
         "schema_version",
         "release_id",
@@ -574,7 +795,9 @@ def _validate_manual_scene_partition_approval(payload: Mapping[str, Any]) -> Non
         raise ValueError("Manual scene approval requires reviewer")
     reviewed_at = decision.get("reviewed_at")
     if not isinstance(reviewed_at, str):
-        raise ValueError("Manual scene approval requires reviewed_at")
+        raise ValueError(  # noqa: TRY004 - invalid persisted contract value
+            "Manual scene approval requires reviewed_at"
+        )
     try:
         parsed = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
     except ValueError as exc:

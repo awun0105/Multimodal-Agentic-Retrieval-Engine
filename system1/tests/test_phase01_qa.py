@@ -5,7 +5,6 @@ import zipfile
 from pathlib import Path
 
 import pandas as pd
-
 from system1.phase01.qa import write_manual_review_report
 
 
@@ -105,6 +104,26 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
         ),
         encoding="utf-8",
     )
+    (root / "diagnostics" / "shot_caption_field_provenance.jsonl").write_text(
+        json.dumps(
+            {
+                "shot_id": "L21_V001_SH00000",
+                "caption_mode": "representative_only",
+                "caption_evidence_fingerprint": "c" * 64,
+                "trigger_reasons": [],
+                "source_keyframe_ids": ["L21_V001:2"],
+                "source_frame_ids": [2],
+                "source_timestamps_sec": [0.5],
+                "source_keyframe_roles": ["middle"],
+                "source_selection_reasons": ["middle_within_quality_ratio"],
+                "source_image_sha256s": ["d" * 64],
+                "max_visual_change_score": None,
+                "max_ocr_change_score": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     with zipfile.ZipFile(artifact, "w") as archive:
         for path in root.rglob("*"):
             if path.is_file():
@@ -146,6 +165,17 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
     assert boundary["evidence"]["speech_shared_segment_crosses_gap"] is True
     assert boundary["evidence"]["speech_inter_word_gap_sec"] == 0.18
     assert "reason" not in boundary["evidence"]
+    caption = next(
+        row
+        for row in first_payload["samples"]
+        if row["review_kind"] == "shot_caption"
+    )
+    assert caption["evidence"]["caption_mode"] == "representative_only"
+    assert caption["evidence"]["source_keyframe_ids"] == ["L21_V001:2"]
+    assert caption["evidence"]["source_keyframe_refs"] == [
+        "media://keyframes/L21_V001/L21_V001_f0000002.jpg"
+    ]
+    assert caption["evidence"]["caption_evidence_fingerprint"] == "c" * 64
     summary = next(
         row
         for row in first_payload["samples"]

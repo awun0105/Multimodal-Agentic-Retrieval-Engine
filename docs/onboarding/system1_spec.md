@@ -2310,8 +2310,10 @@ configured candidate cap. After the one-pass decode and actual-anchor
 selection, persist at most the configured number of `supplemental` rows when
 dHash visual novelty or candidate-present masked-text-edge change is new
 relative to every retained reference. Supplemental rows are never
-representative. OCR and focused scene evidence may use them; shot captions and
-scene-summary images remain representative-only.
+representative. OCR and focused scene evidence may use them. Static/simple shot
+captions remain representative-only; eligible changing shots may use one
+bounded ordered storyboard assembled from canonical frames. Scene-summary
+images remain representative-only.
 ```
 
 Output:
@@ -2370,7 +2372,8 @@ Input:
 ```text
 keyframes.parquet
 shots.parquet
-representative keyframe image for each shot
+ocr.parquet
+canonical keyframe images
 ```
 
 Output:
@@ -2379,10 +2382,20 @@ Output:
 shot_captions.parquet
 ```
 
-Phase01 creates exactly one canonical caption row per shot from that
-shot's representative keyframe. The VLM must return strict JSON containing
-`caption_vi`, `caption_en`, `objects_vi`, `objects_en`, `actions_vi`,
-`actions_en`, `visible_text_summary_vi`, and `visible_text_summary_en`.
+Phase01 creates exactly one canonical caption row per shot. A deterministic
+gate keeps static/simple shots on the representative image. When canonical
+supplemental evidence, or a long-enough shot with adjacent dHash/reliable OCR
+change, establishes meaningful within-shot change, it builds one bounded
+chronological storyboard from existing early/middle/late/supplemental frames.
+Duration by itself never enables storyboard mode. The VLM produces the eight
+caption/object/action/visible-text fields through separate versioned plain-text
+requests; Python assembles the canonical row.
+
+The storyboard is sparse evidence from the same continuous shot, not proof of
+every intermediate motion. Shot captioning never receives ASR or transcript
+evidence. `shot_caption_field_provenance.jsonl` records the exact source frames,
+selection/trigger policies, evidence fingerprint, and field-level model
+identity.
 All frames/keyframes in the
 shot use the same row by joining
 `keyframes.shot_id -> shot_captions.shot_id`. Do not create per-keyframe

@@ -30,6 +30,7 @@ checkpoint:
       - ocr_status.json
     shot_captions:
       - shot_captions.parquet
+      - shot_caption_field_provenance.jsonl
     shot_transcript_links:
       - shot_transcript_links.parquet
     scenes:

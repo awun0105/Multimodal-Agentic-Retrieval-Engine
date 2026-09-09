@@ -803,7 +803,9 @@ Nguyên tắc:
 
 ```text
 - canonical shot captioning thuộc Phase01
-- chỉ caption representative keyframe của mỗi shot
+- static/simple shot dùng representative keyframe; shot có thay đổi có ý nghĩa
+  dùng một ordered storyboard được chọn deterministic từ canonical keyframes
+- vẫn giữ đúng 8 field requests và một canonical caption row cho mỗi shot
 - output phải có model version
 ```
 
@@ -1190,7 +1192,9 @@ Notebook này làm:
 - extract các frame gần 20%/50%/80% của mỗi shot
 - tạo thumbnails nếu cần
 - chọn middle làm representative, rồi early/late nếu quality check thất bại
-- tạo đúng 1 hàng caption song ngữ/shot bằng Gemini từ representative keyframe
+- tạo đúng 1 hàng caption song ngữ/shot bằng shared Qwen/Vintern runtime; shot
+  tĩnh dùng representative image, shot dynamic đủ điều kiện dùng ordered
+  storyboard và lưu source-frame provenance
 - chạy faster-whisper large-v3 với language auto và VAD
 - link transcript vào shot
 - construct scenes từ images, shot captions, transcript, và timeline

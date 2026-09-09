@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-
 from system1.validation.table_schema import validate_release_tables
 
 
@@ -165,7 +164,7 @@ def write_valid_schema_release(release_dir: Path) -> None:
                 "provider": "qwen_local",
                 "model_name": "fixture-qwen",
                 "model_version": "fixture",
-                "prompt_version": "shot_caption_plain_text_fields_v1",
+                "prompt_version": "shot_caption_temporal_plain_text_fields_v2",
                 "schema_version": "shot_caption_response_v3",
                 "confidence": None,
                 "status": "pass",

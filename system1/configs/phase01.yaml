@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_10
-pipeline_id: phase01_production_v1_10
+schema_version: phase01_pipeline_v1_11
+pipeline_id: phase01_production_v1_11
 
 execution:
   video_order: batch_manifest
@@ -45,7 +45,7 @@ stages:
     keyframes: [shots]
     asr: []
     ocr: [keyframes]
-    shot_captions: [keyframes, ocr]
+    shot_captions: [shots, keyframes, ocr]
     shot_transcript_links: [shots, asr]
     scenes: [shots, keyframes, asr, ocr, shot_captions, shot_transcript_links]
     scene_transcript_links: [scenes, asr]
@@ -107,6 +107,24 @@ api:
 
 retry:
   local_model_total_attempts: 2
+
+shot_caption:
+  temporal_understanding:
+    enabled: true
+    contract_version: shot_temporal_understanding_v1
+    mode_policy: adaptive_representative_or_storyboard_v1
+    min_duration_sec: 3.0
+    max_source_keyframes: 5
+    supplemental_trigger: true
+    visual_change:
+      policy: dhash_v1
+      hash_size: 8
+      min_hamming_ratio: 0.25
+    ocr_change:
+      policy: normalized_token_jaccard_v1
+      min_jaccard_distance: 0.35
+    source_selection_policy: meaningful_ordered_frames_v1
+    storyboard_policy: ordered_temporal_storyboard_v1
 
 scene_grouping:
   speech_continuity:

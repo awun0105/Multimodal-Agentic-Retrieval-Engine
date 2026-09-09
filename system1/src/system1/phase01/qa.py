@@ -103,6 +103,18 @@ def _collect_artifact_candidates(
         captions = _read_parquet(archive, f"{video_id}/shot_captions.parquet")
         scenes = _read_parquet(archive, f"{video_id}/scenes.parquet")
         summaries = _read_parquet(archive, f"{video_id}/scene_summaries.parquet")
+        caption_provenance = _read_jsonl(
+            archive,
+            f"{video_id}/diagnostics/shot_caption_field_provenance.jsonl",
+        )
+        caption_evidence_by_shot: dict[str, dict[str, Any]] = {}
+        for provenance in caption_provenance:
+            caption_evidence_by_shot.setdefault(
+                str(provenance["shot_id"]), provenance
+            )
+        keyframe_by_id = {
+            str(row["keyframe_id"]): row for row in keyframes.to_dict("records")
+        }
         representative = {
             str(row["shot_id"]): row
             for row in keyframes.to_dict("records")
@@ -115,6 +127,8 @@ def _collect_artifact_candidates(
         }
         for row in captions.to_dict("records"):
             frame = representative[str(row["shot_id"])]
+            temporal = caption_evidence_by_shot[str(row["shot_id"])]
+            source_ids = [str(value) for value in temporal["source_keyframe_ids"]]
             candidates["shot_caption"].append(
                 _review_row(
                     kind="shot_caption",
@@ -133,6 +147,32 @@ def _collect_artifact_candidates(
                         "visible_text_summary_en": row.get("visible_text_summary_en", ""),
                         "ocr_text": ocr_by_keyframe.get(str(frame["keyframe_id"]), ""),
                         "quality_score": float(frame["quality_score"]),
+                        "caption_mode": temporal["caption_mode"],
+                        "caption_evidence_fingerprint": temporal[
+                            "caption_evidence_fingerprint"
+                        ],
+                        "trigger_reasons": temporal["trigger_reasons"],
+                        "source_keyframe_ids": source_ids,
+                        "source_frame_ids": temporal["source_frame_ids"],
+                        "source_timestamps_sec": temporal[
+                            "source_timestamps_sec"
+                        ],
+                        "source_keyframe_roles": temporal[
+                            "source_keyframe_roles"
+                        ],
+                        "source_selection_reasons": temporal[
+                            "source_selection_reasons"
+                        ],
+                        "source_keyframe_refs": [
+                            keyframe_by_id[keyframe_id]["keyframe_ref"]
+                            for keyframe_id in source_ids
+                        ],
+                        "max_visual_change_score": temporal[
+                            "max_visual_change_score"
+                        ],
+                        "max_ocr_change_score": temporal[
+                            "max_ocr_change_score"
+                        ],
                     },
                 )
             )
@@ -254,6 +294,14 @@ def _read_parquet_optional(archive: zipfile.ZipFile, name: str) -> pd.DataFrame:
     if name not in archive.namelist():
         return pd.DataFrame()
     return _read_parquet(archive, name)
+
+
+def _read_jsonl(archive: zipfile.ZipFile, name: str) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in archive.read(name).decode("utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def _string_values(value: Any) -> list[str]:

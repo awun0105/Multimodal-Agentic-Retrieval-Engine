@@ -61,15 +61,18 @@ from system1.scenes import (
     SceneGroupingResult,
     ScenePartitionQuality,
     ScenePartitionQualityError,
+    build_speech_gap_evidence,
     build_speech_summary_evidence,
     build_visual_summary_evidence,
-    build_speech_gap_evidence,
     group_scenes,
     normalize_audio_visual_relation,
     validate_scene_summary_semantics,
 )
 from system1.scenes.vlm_judge import SemanticSceneBoundaryJudge
 from system1.shots import (
+    PROVENANCE_SCHEMA_VERSION,
+    ShotCaptionEvidence,
+    build_shot_caption_evidence,
     detect_shot_scenes,
     load_transnet_artifact,
     scenes_to_shot_rows,
@@ -1106,7 +1109,13 @@ def _process_video_flow(
     _emit_stage_progress(manager, "shot_captions", scratch, status="start")
     captions_path = stage_dir / "shot_captions.parquet"
     captions_fingerprint = _stage_fingerprint(
-        manager, "shot_captions", compute_fingerprint(keyframes_output_fingerprint, ocr_output_fingerprint)
+        manager,
+        "shot_captions",
+        compute_fingerprint(
+            shots_output_fingerprint,
+            keyframes_output_fingerprint,
+            ocr_output_fingerprint,
+        ),
     )
     captions_reused = _restore_if_reusable(
         manager, "shot_captions", captions_fingerprint, stage_dir
@@ -1125,6 +1134,7 @@ def _process_video_flow(
                 stage_dir=stage_dir,
                 client=caption_client,
                 model_config=models["shot_caption"],
+                temporal_policy=phase01["shot_caption"]["temporal_understanding"],
             )
             _write_parquet(captions_path, caption_rows)
             caption_provenance = stage_dir / "shot_caption_field_provenance.jsonl"
@@ -2086,12 +2096,8 @@ def _build_captions(
     stage_dir: Path,
     client,
     model_config: Mapping[str, Any],
+    temporal_policy: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    representative = {
-        str(row["shot_id"]): row
-        for row in keyframes
-        if row["is_representative"]
-    }
     bundle_version = str(model_config["prompt_bundle_version"])
     bundle = _configured_prompt_versions(
         model_config,
@@ -2099,27 +2105,27 @@ def _build_captions(
         bundle_version=bundle_version,
     )
 
-    ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
     ordered_shots = sorted(shots, key=lambda row: str(row["shot_id"]))
     requests: list[ModelRequest] = []
-    request_context: list[tuple[dict[str, Any], dict[str, Any], str]] = []
+    request_context: list[
+        tuple[dict[str, Any], ShotCaptionEvidence, str]
+    ] = []
 
     for shot in ordered_shots:
         shot_id = str(shot["shot_id"])
-        if shot_id not in representative:
-            raise ValueError(f"Shot has no representative keyframe: {shot_id}")
-        keyframe = representative[shot_id]
-        keyframe_id = str(keyframe["keyframe_id"])
-        image = stage_dir / "keyframes" / Path(str(keyframe["keyframe_ref"])).name
-        ocr_text = ocr_by_keyframe.get(keyframe_id, "")
-
+        evidence = build_shot_caption_evidence(
+            shot=shot,
+            keyframes=keyframes,
+            ocr_rows=ocr_rows,
+            stage_dir=stage_dir,
+            policy=temporal_policy,
+        )
         for field in SHOT_CAPTION_FIELDS:
             prompt_version = str(bundle[field])
             prompt = (
                 build_text_prompt(prompt_version)
                 + "\n\nBEGIN_EVIDENCE\n"
-                + "OCR_EVIDENCE:\n"
-                + (ocr_text if ocr_text else "<NONE>")
+                + evidence.evidence_body
                 + "\nEND_EVIDENCE"
             )
             requests.append(
@@ -2130,16 +2136,23 @@ def _build_captions(
                     prompt_version=prompt_version,
                     response_schema_version="plain_text_response_v1",
                     response_schema=TEXT_RESPONSE_SCHEMA,
-                    image_paths=(image,),
+                    image_paths=(evidence.image_path,),
+                    fallback_image_paths=(evidence.image_path,),
                     identity={
                         "shot_id": shot_id,
-                        "keyframe_id": keyframe_id,
                         "field": field,
+                        "caption_mode": evidence.mode,
+                        "caption_evidence_fingerprint": (
+                            evidence.evidence_fingerprint
+                        ),
+                        "representative_keyframe_id": (
+                            evidence.representative_keyframe_id
+                        ),
                     },
                     response_mode="text",
                 )
             )
-            request_context.append((shot, keyframe, field))
+            request_context.append((shot, evidence, field))
 
     responses = client.request_many(requests)
     if len(responses) != len(request_context):
@@ -2151,15 +2164,22 @@ def _build_captions(
     field_metadata: dict[str, list[tuple[str, str, str]]] = {}
     provenance_rows: list[dict[str, Any]] = []
     for response, context in zip(responses, request_context, strict=True):
-        shot, keyframe, field = context
+        shot, evidence, field = context
         shot_id = str(shot["shot_id"])
+        representative = next(
+            row
+            for row in keyframes
+            if str(row["keyframe_id"]) == evidence.representative_keyframe_id
+        )
         if shot_id not in grouped:
             grouped[shot_id] = {
                 "shot_caption_id": f"{shot_id}_caption",
                 "video_id": video_id,
                 "shot_id": shot_id,
-                "representative_keyframe_id": str(keyframe["keyframe_id"]),
-                "representative_timestamp_sec": float(keyframe["timestamp_sec"]),
+                "representative_keyframe_id": evidence.representative_keyframe_id,
+                "representative_timestamp_sec": float(
+                    representative["timestamp_sec"]
+                ),
                 "prompt_version": bundle_version,
                 "schema_version": str(model_config["response_schema_version"]),
                 "confidence": None,
@@ -2180,6 +2200,7 @@ def _build_captions(
         field_metadata[shot_id].append(metadata)
         provenance_rows.append(
             {
+                "schema_version": PROVENANCE_SCHEMA_VERSION,
                 "video_id": video_id,
                 "shot_id": shot_id,
                 "field": field,
@@ -2187,6 +2208,44 @@ def _build_captions(
                 "model_id": metadata[1],
                 "model_revision": metadata[2],
                 "prompt_version": str(bundle[field]),
+                "caption_mode": evidence.mode,
+                "temporal_understanding_contract_version": (
+                    evidence.temporal_understanding_contract_version
+                ),
+                "source_selection_policy": evidence.source_selection_policy,
+                "storyboard_policy": evidence.storyboard_policy,
+                "storyboard_sha256": evidence.storyboard_sha256,
+                "representative_keyframe_id": (
+                    evidence.representative_keyframe_id
+                ),
+                "source_keyframe_ids": [
+                    str(row["keyframe_id"]) for row in evidence.source_keyframes
+                ],
+                "source_frame_ids": [
+                    int(row["frame_id"]) for row in evidence.source_keyframes
+                ],
+                "source_timestamps_sec": [
+                    float(row["timestamp_sec"])
+                    for row in evidence.source_keyframes
+                ],
+                "source_keyframe_roles": [
+                    str(row["keyframe_role"]) for row in evidence.source_keyframes
+                ],
+                "source_selection_reasons": [
+                    str(row["selection_reason"])
+                    for row in evidence.source_keyframes
+                ],
+                "source_image_sha256s": [
+                    str(row["image_sha256"])
+                    for row in evidence.source_keyframes
+                ],
+                "caption_evidence_fingerprint": evidence.evidence_fingerprint,
+                "trigger_reasons": list(evidence.trigger_reasons),
+                "shot_duration_sec": (
+                    float(shot["end_sec"]) - float(shot["start_sec"])
+                ),
+                "max_visual_change_score": evidence.max_visual_change_score,
+                "max_ocr_change_score": evidence.max_ocr_change_score,
             }
         )
 

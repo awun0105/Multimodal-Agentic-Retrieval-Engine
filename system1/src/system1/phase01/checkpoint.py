@@ -31,7 +31,7 @@ STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "keyframes": ("shots",),
     "asr": (),
     "ocr": ("keyframes",),
-    "shot_captions": ("keyframes", "ocr"),
+    "shot_captions": ("shots", "keyframes", "ocr"),
     "shot_transcript_links": ("shots", "asr"),
     "scenes": (
         "shots",
