@@ -40,6 +40,7 @@ checkpoint:
       - scene_transcript_links.parquet
     scene_summaries:
       - scene_summaries.parquet
+      - scene_summary_field_provenance.jsonl
     package:
       - "{video_id}_structure.zip"
     sync:

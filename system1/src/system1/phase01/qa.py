@@ -152,6 +152,22 @@ def _collect_artifact_candidates(
                     evidence={
                         "start_sec": float(row["start_sec"]),
                         "end_sec": float(row["end_sec"]),
+                        "speech_evidence_status": summary[
+                            "speech_evidence_status"
+                        ],
+                        "speech_evidence_fingerprint": summary[
+                            "speech_evidence_fingerprint"
+                        ],
+                        "visual_evidence_fingerprint": summary[
+                            "visual_evidence_fingerprint"
+                        ],
+                        "speech_summary_vi": summary["speech_summary_vi"],
+                        "speech_summary_en": summary["speech_summary_en"],
+                        "visual_summary_vi": summary["visual_summary_vi"],
+                        "visual_summary_en": summary["visual_summary_en"],
+                        "audio_visual_relation": summary[
+                            "audio_visual_relation"
+                        ],
                         "summary_vi": summary["summary_vi"],
                         "summary_en": summary["summary_en"],
                     },

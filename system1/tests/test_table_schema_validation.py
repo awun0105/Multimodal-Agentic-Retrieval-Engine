@@ -177,13 +177,22 @@ def write_valid_schema_release(release_dir: Path) -> None:
         [{
             "scene_id": "L21_V001_SC00000",
             "video_id": "L21_V001",
+            "speech_evidence_status": "available",
+            "speech_evidence_fingerprint": "a" * 64,
+            "visual_evidence_fingerprint": "b" * 64,
+            "speech_summary_vi": "nội dung lời nói mẫu",
+            "speech_summary_en": "sample speech content",
+            "visual_summary_vi": "mô tả hình ảnh mẫu",
+            "visual_summary_en": "sample visual description",
+            "audio_visual_relation": "aligned",
             "summary_vi": "tóm tắt cảnh mẫu",
             "summary_en": "sample scene summary",
             "provider": "vintern_reasoning_local",
             "model_name": "fixture-vintern-reasoning",
             "model_version": "fixture",
-            "prompt_version": "scene_summary_plain_text_v2",
-            "schema_version": "1.0.0",
+            "prompt_version": "scene_summary_adaptive_plain_text_v1",
+            "schema_version": "scene_summary_response_v2",
+            "confidence": None,
             "status": "pass",
         }],
     )
@@ -322,6 +331,22 @@ def test_schema_validation_catches_empty_bilingual_text(tmp_path):
 
     assert result.status == "fail"
     assert any("scene_summaries.summary_en has 1 empty text values" in error for error in result.errors)
+
+
+def test_schema_validation_catches_unknown_scene_summary_relation(tmp_path):
+    release_dir = tmp_path / "release"
+    write_valid_schema_release(release_dir)
+    summaries = pd.read_parquet(release_dir / "tables" / "scene_summaries.parquet")
+    summaries.loc[0, "audio_visual_relation"] = "maybe_related"
+    summaries.to_parquet(
+        release_dir / "tables" / "scene_summaries.parquet",
+        index=False,
+    )
+
+    result = validate_release_tables(release_dir)
+
+    assert result.status == "fail"
+    assert any("audio_visual_relation" in error for error in result.errors)
 
 
 def test_schema_validation_catches_invalid_asr_provider_and_status(tmp_path):

@@ -1,20 +1,70 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "scene_summaries_v3",
+  "title": "scene_summaries_v4",
   "type": "object",
-  "required": ["scene_id", "video_id", "summary_vi", "summary_en", "provider", "model_name", "model_version", "prompt_version", "schema_version", "confidence", "status"],
+  "required": [
+    "scene_id", "video_id",
+    "speech_evidence_status", "speech_evidence_fingerprint", "visual_evidence_fingerprint",
+    "speech_summary_vi", "speech_summary_en",
+    "visual_summary_vi", "visual_summary_en",
+    "audio_visual_relation", "summary_vi", "summary_en",
+    "provider", "model_name", "model_version", "prompt_version",
+    "schema_version", "confidence", "status"
+  ],
   "properties": {
     "scene_id": {"type": "string", "minLength": 1},
     "video_id": {"type": "string", "minLength": 1},
+    "speech_evidence_status": {"enum": ["available", "no_speech", "unavailable"]},
+    "speech_evidence_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "visual_evidence_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "speech_summary_vi": {"type": ["string", "null"]},
+    "speech_summary_en": {"type": ["string", "null"]},
+    "visual_summary_vi": {"type": "string", "minLength": 1},
+    "visual_summary_en": {"type": "string", "minLength": 1},
+    "audio_visual_relation": {
+      "enum": ["aligned", "complementary", "partial", "b_roll", "unrelated", "contradictory", "no_speech", "speech_unavailable"]
+    },
     "summary_vi": {"type": "string", "minLength": 1},
     "summary_en": {"type": "string", "minLength": 1},
     "provider": {"enum": ["qwen_local", "vintern_reasoning_local", "mixed"]},
     "model_name": {"type": "string", "minLength": 1},
     "model_version": {"type": "string", "minLength": 1},
-    "prompt_version": {"type": "string", "minLength": 1},
-    "schema_version": {"type": "string", "minLength": 1},
-    "confidence": {"type": ["number", "null"]},
+    "prompt_version": {"const": "scene_summary_adaptive_plain_text_v1"},
+    "schema_version": {"const": "scene_summary_response_v2"},
+    "confidence": {"type": "null"},
     "status": {"const": "pass"}
   },
+  "allOf": [
+    {
+      "if": {"properties": {"speech_evidence_status": {"const": "available"}}},
+      "then": {
+        "properties": {
+          "speech_summary_vi": {"type": "string", "minLength": 1},
+          "speech_summary_en": {"type": "string", "minLength": 1},
+          "audio_visual_relation": {"enum": ["aligned", "complementary", "partial", "b_roll", "unrelated", "contradictory"]}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"speech_evidence_status": {"const": "no_speech"}}},
+      "then": {
+        "properties": {
+          "speech_summary_vi": {"type": "null"},
+          "speech_summary_en": {"type": "null"},
+          "audio_visual_relation": {"const": "no_speech"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"speech_evidence_status": {"const": "unavailable"}}},
+      "then": {
+        "properties": {
+          "speech_summary_vi": {"type": "null"},
+          "speech_summary_en": {"type": "null"},
+          "audio_visual_relation": {"const": "speech_unavailable"}
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }

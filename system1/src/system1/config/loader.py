@@ -463,6 +463,7 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
     _validate_phase01_stage_graph(payload)
     _validate_shot_detection_policy(payload)
     _validate_scene_grouping_policy(payload)
+    _validate_scene_summary_policy(payload)
     _validate_asr_alignment_policy(payload)
 
     models = payload["models"]
@@ -737,6 +738,12 @@ def _validate_scene_grouping_policy(payload: dict[str, Any]) -> None:
             "Phase01 scene_grouping.quality_guard.degenerate_review.max_rounds "
             "must be non-negative"
         )
+
+
+def _validate_scene_summary_policy(payload: dict[str, Any]) -> None:
+    from system1.scenes.summary import validate_scene_summary_policy
+
+    validate_scene_summary_policy(payload["phase01"].get("scene_summary"))
 
 
 def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:

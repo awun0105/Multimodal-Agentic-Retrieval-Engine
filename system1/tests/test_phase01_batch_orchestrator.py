@@ -41,8 +41,8 @@ SEMANTIC_REQUEST_KINDS = [
     "shot_caption_actions_en",
     "shot_caption_visible_text_summary_vi",
     "shot_caption_visible_text_summary_en",
-    "scene_summary_vi",
-    "scene_summary_en",
+    "scene_visual_summary_vi",
+    "scene_visual_summary_en",
 ]
 
 
@@ -76,10 +76,20 @@ def _fake_model_response(request):
         return {"text": "scene"}
     if request.request_kind.startswith("shot_caption_"):
         return {"text": "<NONE>"}
-    if request.request_kind == "scene_summary_vi":
+    if request.request_kind == "scene_visual_summary_vi":
         return {"text": "Một cảnh"}
-    if request.request_kind == "scene_summary_en":
+    if request.request_kind == "scene_visual_summary_en":
         return {"text": "A scene"}
+    if request.request_kind == "scene_speech_summary_vi":
+        return {"text": "Một lời mô tả"}
+    if request.request_kind == "scene_speech_summary_en":
+        return {"text": "A spoken description"}
+    if request.request_kind == "scene_audio_visual_relation":
+        return {"text": "ALIGNED"}
+    if request.request_kind == "scene_final_summary_vi":
+        return {"text": "Một cảnh có lời mô tả phù hợp"}
+    if request.request_kind == "scene_final_summary_en":
+        return {"text": "A scene with matching spoken content"}
     if request.request_kind.startswith("scene_boundary_"):
         return {"text": "SAME_SCENE"}
     raise AssertionError(request.request_kind)
@@ -491,8 +501,8 @@ def test_single_video_production_orchestrator_checkpoints_and_packages(
     expected_requests_after_resume = [
         "keyframe_ocr",
         *SEMANTIC_REQUEST_KINDS,
-        "scene_summary_vi",
-        "scene_summary_en",
+        "scene_visual_summary_vi",
+        "scene_visual_summary_en",
     ]
     assert FakeLocalStructuredClient.requests == expected_requests_after_resume
 

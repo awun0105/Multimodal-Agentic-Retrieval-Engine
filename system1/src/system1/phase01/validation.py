@@ -13,6 +13,7 @@ from jsonschema import validate
 
 from system1.asr.links import assign_words_to_intervals
 from system1.asr.quality import normalize_for_comparison
+from system1.scenes.summary import validate_scene_summary_semantics
 
 PHASE01_TABLES = (
     "shots",
@@ -121,6 +122,12 @@ def validate_phase01_package(artifact_dir: Path) -> None:
     _validate_caption_representatives(captions, keyframes)
     _validate_keyframe_media(artifact_dir, keyframes, video_id)
     _validate_asr_words(asr, asr_words, video_id=video_id)
+    _validate_scene_summaries(
+        artifact_dir,
+        summaries,
+        scenes=scenes,
+        asr_words=asr_words,
+    )
     _validate_links(
         shot_links,
         "shot_id",
@@ -170,6 +177,47 @@ def _validate_contiguous_ranges(frame: pd.DataFrame, label: str) -> None:
             raise ValueError(f"{label} frame_count does not match its frame range")
         previous_end = end
         previous_end_sec = end_sec
+
+
+def _validate_scene_summaries(
+    artifact_dir: Path,
+    summaries: pd.DataFrame,
+    *,
+    scenes: pd.DataFrame,
+    asr_words: pd.DataFrame,
+) -> None:
+    for row in summaries.to_dict("records"):
+        validate_scene_summary_semantics(_json_value(row))
+    status_path = artifact_dir / "diagnostics" / "asr_status.json"
+    if not status_path.is_file():
+        raise FileNotFoundError("Missing packaged ASR status for scene summaries")
+    asr_status = str(
+        json.loads(status_path.read_text(encoding="utf-8")).get("status", "")
+    )
+    speech_statuses = set(summaries["speech_evidence_status"].astype(str))
+    if asr_status in {"no_audio", "no_speech"} and speech_statuses != {"no_speech"}:
+        raise ValueError("No-speech ASR status requires no_speech scene summaries")
+    if asr_status == "low_confidence" and speech_statuses != {"unavailable"}:
+        raise ValueError(
+            "Low-confidence ASR status requires unavailable scene speech evidence"
+        )
+    if asr_status == "pass":
+        words_by_scene = assign_words_to_intervals(
+            scenes.to_dict("records"),
+            asr_words.to_dict("records"),
+            entity_id_field="scene_id",
+        )
+        status_by_scene = {
+            str(row["scene_id"]): str(row["speech_evidence_status"])
+            for row in summaries.to_dict("records")
+        }
+        for scene_id, words in words_by_scene.items():
+            expected = "available" if words else "unavailable"
+            if status_by_scene.get(scene_id) != expected:
+                raise ValueError(
+                    "Pass-status ASR requires scene speech evidence status to "
+                    "match canonical aligned-word ownership"
+                )
 
 
 def _validate_scene_membership(

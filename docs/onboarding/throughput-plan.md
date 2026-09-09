@@ -1194,7 +1194,9 @@ Notebook này làm:
 - chạy faster-whisper large-v3 với language auto và VAD
 - link transcript vào shot
 - construct scenes từ images, shot captions, transcript, và timeline
-- tạo scene_summaries.parquet song ngữ bằng Gemini sau khi boundary cố định
+- tạo `scene_summaries_v4` bằng các pass speech/visual tách biệt, relation và
+  adaptive final summary qua shared Qwen/Vintern runtime sau khi boundary được
+  chấp nhận
 - tạo structure artifact ZIP
 - ghi local artifact to artifacts/structure/{video_id}_structure.zip
 - ghi local runtime report to manifests/worker_reports/structure_{batch_id}_{worker_id}.json

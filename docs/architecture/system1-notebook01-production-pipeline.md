@@ -48,7 +48,8 @@ official video
   -> canonical ASR word alignment and deterministic ASR-to-shot attribution
   -> shared Qwen multimodal context-focus scene grouping
   -> deterministic ASR-to-scene attribution
-  -> shared Qwen bilingual plain-text scene summaries
+  -> independent speech-only and ordered visual-only scene summaries
+  -> strict audio-visual relation classification and adaptive final summaries
   -> exclusive sticky Vintern-3B-R fallback for failed semantic requests/runtime
   -> validated per-video structure ZIP
 ```
@@ -511,20 +512,55 @@ production does not turn an unresolved result into one fabricated scene.
 
 ## Bilingual Scene Summaries
 
-Only after scene boundaries are fixed, the same shared Qwen runtime receives
-the scene's sampled representative images, bilingual shot captions,
-objects/actions, OCR, a scene-specific transcript assembled from words assigned
-exactly once to that scene interval, and timeline. Segment links remain
-provenance and are never used to duplicate full segment text. Vintern-3B-R
-receives the same bounded evidence only when local fallback is required.
-Vietnamese and English summaries are separate required plain-text requests;
-Python assembles and validates the canonical row.
+Only after scene boundaries are accepted, `scene_summaries_v4` prepares two
+independent evidence paths inside the existing `scene_summaries` checkpoint
+stage:
+
+```text
+canonical scene-owned ASR words -> speech_summary_vi
+ordered shots + representative images + captions/actions/OCR
+                                -> visual_summary_vi
+speech_summary_vi + visual_summary_vi
+                                -> audio_visual_relation
+both summaries + relation       -> summary_vi -> summary_en
+```
+
+The speech request contains only scene ID/time and a transcript assembled from
+Task 2 canonical words. The visual request contains only ordered visual,
+caption, action, visible-text, and OCR evidence. Segment links remain
+provenance and never become text ownership. English modality summaries are
+faithful translations of their Vietnamese counterparts; they do not receive
+raw evidence again.
+
+The canonical relation is one of `aligned`, `complementary`, `partial`,
+`b_roll`, `unrelated`, or `contradictory` when reliable speech exists.
+`no_audio` and `no_speech` deterministically produce `no_speech`;
+low-confidence ASR or a pass-status scene with zero aligned words produces
+`speech_unavailable`. Both missing-speech states skip relation/fusion requests
+and copy the visual summaries into the final retrieval-facing fields. Zero
+scene words therefore never imply silence.
+
+Speech and visual text have separate limits. Speech retains complete ordered
+words up to its own budget. Visual overflow reduces complete shot blocks with
+deterministic even temporal sampling so early, middle, and late scene evidence
+remain represented. Each path persists a deterministic SHA-256 fingerprint of
+the exact bounded evidence consumed. Qwen receives no image for text-only
+passes; Vintern's image-required fallback receives a neutral technical image
+with no scene semantics, preserving modality isolation.
 
 Canonical `scene_summaries.parquet` is one row per scene:
 
 ```text
 scene_id
 video_id
+speech_evidence_status
+speech_evidence_fingerprint
+visual_evidence_fingerprint
+speech_summary_vi
+speech_summary_en
+visual_summary_vi
+visual_summary_en
+audio_visual_relation
 summary_vi
 summary_en
 provider
@@ -536,10 +572,11 @@ confidence
 status
 ```
 
-Summary calls use the same cache/retry/rate-limit/resume/provenance rules as
-caption calls. Persistent summary failure fails the video. Earlier
-`scene_summary_initial` / `scene_summary_enriched` fields are retired; one
-canonical bilingual summary row is produced after the final scene partition.
+All semantic fields use separate plain-text requests and field-level
+provenance. Qwen remains primary and sticky Vintern-3B-R remains the sole local
+fallback without model reloads between passes. Persistent required-field
+failure prevents atomic stage promotion. Earlier `scene_summary_initial`,
+`scene_summary_enriched`, and direct `scene_summaries_v3` fusion are retired.
 
 ## Structure Artifact Contract
 

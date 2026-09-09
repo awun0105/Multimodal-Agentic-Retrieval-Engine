@@ -1,4 +1,4 @@
-schema_version: phase01_models_v1_6
+schema_version: phase01_models_v1_7
 
 # One fixed local-only production model graph. Qwen is the semantic primary;
 # Vintern-3B-R is the sticky fallback after Qwen has been unloaded.
@@ -228,9 +228,14 @@ phase01:
   scene_summary:
     provider: qwen_local
     model_key: shot_caption
-    prompt_bundle_version: scene_summary_plain_text_v2
+    prompt_bundle_version: scene_summary_adaptive_plain_text_v1
     prompt_versions:
-      summary_vi: scene_summary_vi_v2
-      summary_en: scene_summary_en_v2
-    generation_contract_version: scene_summary_plain_text_v2
-    response_schema_version: scene_summary_response_v1
+      speech_summary_vi: scene_speech_summary_vi_v1
+      speech_summary_en: scene_speech_summary_en_v1
+      visual_summary_vi: scene_visual_summary_vi_v1
+      visual_summary_en: scene_visual_summary_en_v1
+      audio_visual_relation: scene_audio_visual_relation_v1
+      summary_vi: scene_final_summary_vi_v1
+      summary_en: scene_final_summary_en_v1
+    generation_contract_version: scene_summary_adaptive_plain_text_v1
+    response_schema_version: scene_summary_response_v2

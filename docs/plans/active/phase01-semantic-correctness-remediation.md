@@ -124,7 +124,7 @@ Out of scope:
 
 ### Task 1-3 Closure
 
-Status: Implementation Complete - Review Pending
+Status: Accepted
 
 This closure pass preserves the accepted Task 1 and Task 2 contracts and the
 implemented Task 3 behavior while resolving four remaining correctness gaps:
@@ -225,7 +225,7 @@ Real-provider acceptance:
 
 ### Task 3: Speech-Aware Scene Grouping
 
-Status: Implementation Complete - Review Pending
+Status: Accepted - Live Semantic Calibration Pending
 
 Baseline: `59b6c62`, including the retained-ASR dedup correction after the
 guide's `a8d777d` snapshot. Both supplied Task 3 attachments are identical.
@@ -284,7 +284,7 @@ Focused acceptance cases:
 
 ### Task 4: Adaptive Scene Summary
 
-Status: Not Started
+Status: Implementation Complete - Review Pending
 
 Depends on: Task 3 accepted.
 
@@ -379,8 +379,8 @@ Focused acceptance cases:
 - [x] Task 2: ASR Temporal Alignment implementation and local proof.
 - [x] Review and accept Task 2 before Task 3.
 - [x] Task 3: Speech-Aware Scene Grouping implementation and local proof.
-- [ ] Review and accept Task 3 before Task 4.
-- [ ] Task 4: Adaptive Scene Summary.
+- [x] Review and accept Task 3 before Task 4.
+- [x] Task 4: Adaptive Scene Summary implementation and local proof.
 - [ ] Review and accept Task 4 before Task 5.
 - [ ] Task 5: Dynamic Shot Understanding.
 - [ ] Run required heterogeneous real-provider acceptance and close remaining
@@ -485,8 +485,53 @@ Focused acceptance cases:
   aligned-speech v2, grouping/scenes v4, boundary diagnostics v4, and partition
   quality v2. Models v1.6, checkpoint v2, package v3, and summaries v3 are
   intentionally unchanged.
+- 2026-09-09: Task 4 replaces direct raw multimodal fusion with independent
+  speech-only and visual-only summaries inside the existing scene-summaries
+  stage. Only those independent Vietnamese summaries enter the strict
+  audio-visual relation pass, and only the summaries plus relation enter final
+  synthesis. Canonical aligned words remain speech authority; segment links
+  remain provenance.
+- 2026-09-09: `scene_summaries_v4` records bilingual modality summaries,
+  `available | no_speech | unavailable` speech state, the eight-value relation
+  taxonomy, and deterministic SHA-256 identities for the exact bounded speech
+  and visual evidence. `no_audio`/`no_speech` produce deterministic visual-only
+  output with relation `no_speech`; low-confidence ASR or a pass-status scene
+  with zero owned words uses `speech_unavailable`, never inferred silence.
+- 2026-09-09: Visual and speech evidence have independent budgets. Visual
+  overflow keeps complete, evenly spaced shot blocks spanning the scene;
+  speech keeps complete chronological canonical words. Text-only Qwen calls
+  carry no images, while Vintern fallback receives a deterministic neutral
+  placeholder rather than scene imagery. Pipeline/production are v1.10 and
+  models are v1.7; checkpoint v2 and package/video-manifest v3 remain valid.
 
 ## Validation
+
+Task 4 local proof on 2026-09-09:
+
+- adaptive scene-summary tests: 27 passed; production-contract tests: 87
+  passed;
+- QA, generic table-schema, batch-orchestrator, and foundation tests: 39
+  passed;
+- Task 1-3 grouping, speech, review, ASR, and transcript-link regressions: 93
+  passed;
+- Phase01 suite excluding the two environment-dependent modules
+  `test_phase01_vlm_client.py` and `test_phase01_asr_alignment.py`: 318 passed;
+- the wider System1 suite with those two modules excluded: 525 passed and one
+  pre-existing Notebook 00B smoke assertion failed because that notebook does
+  not contain `monolith-mvp-app`; Task 4 does not modify Notebook 00B;
+- `test_phase01_asr_alignment.py`: 6 passed and 3 failed because this Python
+  environment does not have the `nemo` package;
+- `test_phase01_vlm_client.py` could not collect because this Python
+  environment does not have `torch`;
+- repository-root `pytest -q` stopped during collection with 22 missing-runtime
+  import errors across Kaggle, MVP, and System1 (`gradio_client`, `trake`,
+  `torch`, `faiss`, project-local import roots); no test assertion ran in that
+  command;
+- Ruff 0.12.12 over every Task 4 changed Python/test file: passed;
+- `python -m compileall` over System1 source and affected tests: passed;
+- `git diff --check`: passed;
+- real T4 / Parakeet / Qwen / Vintern validation: not run. Live heterogeneous
+  semantic acceptance remains the operator gate after Tasks 4-5.
 
 Task 1-3 closure local proof on 2026-09-08:
 
@@ -596,10 +641,11 @@ claiming live/provider acceptance; they no longer block Task 2 local closure.
 
 ## Result
 
-Active. Task 1 and Task 2 are accepted on local contract evidence
-(`86d0ada`, `867dabc`, `59b6c62`). Task 3 plus the Task 1-3 correctness closure
-are implementation-complete and await external review. Live/provider smoke is
-deferred until after Task 5. Task 4 has not started.
+Active. Tasks 1-3 and their correctness closure are accepted on local contract
+evidence. Task 4 is implementation-complete and awaits external code review;
+it introduces adaptive modality-isolated `scene_summaries_v4` without changing
+the Phase01 DAG or beginning Task 5. Live/provider smoke remains deferred until
+after Task 5 and is not claimed by the local proof above.
 
 Task 1 changed:
 

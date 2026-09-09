@@ -37,6 +37,7 @@ from system1.phase01.production import (
 from system1.phase01.runner import _build_runtime_diagnostics
 from system1.phase01.validation import (
     _validate_scene_partition_quality_report,
+    validate_phase01_package,
     validate_rows,
 )
 from system1.scenes import (
@@ -130,8 +131,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_9"
-    assert phase01["pipeline_id"] == "phase01_production_v1_9"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_10"
+    assert phase01["pipeline_id"] == "phase01_production_v1_10"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -211,6 +212,15 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
         "decision_contract_version": "scene_boundary_label_v2",
     }
     assert models["phase01"]["scene_summary"]["provider"] == "qwen_local"
+    assert models["phase01"]["scene_summary"]["prompt_versions"] == {
+        "speech_summary_vi": "scene_speech_summary_vi_v1",
+        "speech_summary_en": "scene_speech_summary_en_v1",
+        "visual_summary_vi": "scene_visual_summary_vi_v1",
+        "visual_summary_en": "scene_visual_summary_en_v1",
+        "audio_visual_relation": "scene_audio_visual_relation_v1",
+        "summary_vi": "scene_final_summary_vi_v1",
+        "summary_en": "scene_final_summary_en_v1",
+    }
     assert set(models["phase01"]["asr_providers"]) == {"faster_whisper", "nemo"}
 
     assert (
@@ -219,7 +229,7 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     )
     assert (
         phase01["schemas"]["scene_summaries"]
-        == "scene_summaries_v3"
+        == "scene_summaries_v4"
     )
     assert phase01["schemas"]["scenes"] == "scenes_v4"
     assert phase01["scene_grouping"]["speech_continuity"] == {
@@ -405,6 +415,38 @@ def test_speech_continuity_config_must_be_a_mapping() -> None:
     resolved.payload["phase01"]["scene_grouping"]["speech_continuity"] = []
 
     with pytest.raises(TypeError, match="speech_continuity must be a mapping"):
+        require_phase01_production_ready(resolved)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("contract_version", "legacy"),
+        ("image_sampling", "prefix"),
+        ("max_representative_images", 0),
+        ("max_shot_evidence_items", 0),
+        ("max_ocr_chars_per_shot", 0),
+        ("max_visual_evidence_chars", 0),
+        ("max_transcript_chars", 0),
+        ("visual_overflow_policy", "truncate_tail"),
+        ("relation_contract_version", "custom"),
+        ("no_reliable_speech_policy", "pretend_silence"),
+        ("max_total_evidence_chars", 1000),
+    ],
+)
+def test_adaptive_scene_summary_config_is_validated(
+    field: str,
+    value: object,
+) -> None:
+    resolved = resolve_phase01_config(
+        CONFIG_DIR,
+        user_settings=user_settings(),
+        phase00_release_id="canonical_release_v001",
+        environment="local",
+    )
+    resolved.payload["phase01"]["scene_summary"][field] = value
+
+    with pytest.raises((TypeError, ValueError), match=field):
         require_phase01_production_ready(resolved)
 
 
@@ -799,8 +841,8 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_9"
-    assert diagnostics["models_schema_version"] == "phase01_models_v1_6"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_10"
+    assert diagnostics["models_schema_version"] == "phase01_models_v1_7"
     assert diagnostics["asr"] == {
         "provider": "nemo",
         "model_id": "nvidia/parakeet-ctc-0.6b-vi",
@@ -927,7 +969,7 @@ def test_required_caption_rejects_none_sentinel() -> None:
         _normalize_required_text("<NONE>")
 
 
-def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
+def test_scene_summary_generates_adaptive_fields_in_dependency_order(
     tmp_path: Path,
 ) -> None:
     class RecordingClient:
@@ -936,20 +978,36 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
 
         def request_many(self, requests):
             self.batches.append(requests)
-            if requests[0].request_kind == "scene_summary_vi":
-                return [{
-                    "text": "Một người đang phát biểu.",
-                    "__provider": "qwen_local",
-                    "__model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
-                    "__model_revision": "qwen-revision",
-                }]
-            assert "VIETNAMESE_SUMMARY_REFERENCE:\nMột người đang phát biểu." in requests[0].prompt
-            return [{
-                "text": "A person is speaking.",
-                "__provider": "vintern_reasoning_local",
-                "__model_id": "5CD-AI/Vintern-3B-R-beta",
-                "__model_revision": "vintern-revision",
-            }]
+            outputs = {
+                "scene_visual_summary_vi": "Một người xuất hiện trong cảnh.",
+                "scene_speech_summary_vi": "Phần lời nói chào khán giả.",
+                "scene_audio_visual_relation": "COMPLEMENTARY",
+                "scene_final_summary_vi": "Một người xuất hiện trong khi lời nói chào khán giả.",
+                "scene_visual_summary_en": "A person appears in the scene.",
+                "scene_speech_summary_en": "The speech greets the audience.",
+                "scene_final_summary_en": "A person appears while the speech greets the audience.",
+            }
+            return [
+                {
+                    "text": outputs[request.request_kind],
+                    "__provider": (
+                        "vintern_reasoning_local"
+                        if request.request_kind == "scene_final_summary_en"
+                        else "qwen_local"
+                    ),
+                    "__model_id": (
+                        "5CD-AI/Vintern-3B-R-beta"
+                        if request.request_kind == "scene_final_summary_en"
+                        else "Qwen/Qwen2.5-VL-7B-Instruct"
+                    ),
+                    "__model_revision": (
+                        "vintern-revision"
+                        if request.request_kind == "scene_final_summary_en"
+                        else "qwen-revision"
+                    ),
+                }
+                for request in requests
+            ]
 
     stage_dir = tmp_path
     (stage_dir / "keyframes").mkdir()
@@ -960,6 +1018,7 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
     shots = [{"shot_id": shot_id, "start_sec": 0.0, "end_sec": 1.0}]
     scenes = [{
         "scene_id": scene_id,
+        "video_id": "L21_V001",
         "start_shot_id": shot_id,
         "end_shot_id": shot_id,
         "start_sec": 0.0,
@@ -991,7 +1050,6 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
     )
     client = RecordingClient()
     model_config = copy.deepcopy(resolved.payload["models"]["scene_summary"])
-    model_config["prompt_versions"]["summary_vi"] = "scene_summary_en_v2"
 
     rows = _build_scene_summaries(
         video_id="L21_V001",
@@ -1015,6 +1073,7 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
             "start_sec": 0.4,
             "end_sec": 0.7,
         }],
+        asr_status="pass",
         scene_links=[],
         stage_dir=stage_dir,
         client=client,
@@ -1022,25 +1081,39 @@ def test_scene_summary_generates_all_vi_before_en_and_en_references_vi(
         summary_config=resolved.payload["phase01"]["scene_summary"],
     )
 
-    assert [[request.request_kind for request in batch] for batch in client.batches] == [
-        ["scene_summary_vi"],
-        ["scene_summary_en"],
+    assert [batch[0].request_kind for batch in client.batches] == [
+        "scene_visual_summary_vi",
+        "scene_speech_summary_vi",
+        "scene_audio_visual_relation",
+        "scene_final_summary_vi",
+        "scene_visual_summary_en",
+        "scene_speech_summary_en",
+        "scene_final_summary_en",
     ]
-    assert client.batches[0][0].prompt_version == "scene_summary_en_v2"
-    assert rows[0]["summary_vi"] == "Một người đang phát biểu."
-    assert rows[0]["summary_en"] == "A person is speaking."
+    assert rows[0]["audio_visual_relation"] == "complementary"
+    assert rows[0]["summary_vi"] == (
+        "Một người xuất hiện trong khi lời nói chào khán giả."
+    )
+    assert rows[0]["summary_en"] == (
+        "A person appears while the speech greets the audience."
+    )
     assert rows[0]["provider"] == "mixed"
-    assert "SCENE_TRANSCRIPT:\nxin chào" in client.batches[0][0].prompt
+    assert "CANONICAL_TRANSCRIPT:\nxin chào" in client.batches[1][0].prompt
     provenance = (
         stage_dir / "scene_summary_field_provenance.jsonl"
     ).read_text(encoding="utf-8").splitlines()
-    assert len(provenance) == 2
+    assert len(provenance) == 7
+    provenance_rows = [json.loads(line) for line in provenance]
+    by_field = {row["field"]: row for row in provenance_rows}
+    assert by_field["summary_en"]["provider"] == "vintern_reasoning_local"
+    assert by_field["visual_summary_en"]["provider"] == "qwen_local"
+    assert by_field["summary_en"]["depends_on_fields"] == ["summary_vi"]
 
 
 @pytest.mark.parametrize(
     "provider", ["qwen_local", "vintern_reasoning_local", "mixed"]
 )
-def test_scene_summaries_v3_accepts_local_and_fallback_provenance(
+def test_scene_summaries_v4_accepts_local_and_fallback_provenance(
     provider: str,
 ) -> None:
     validate_rows(
@@ -1048,13 +1121,21 @@ def test_scene_summaries_v3_accepts_local_and_fallback_provenance(
         [{
             "scene_id": "L21_V001_SC00000",
             "video_id": "L21_V001",
+            "speech_evidence_status": "available",
+            "speech_evidence_fingerprint": "a" * 64,
+            "visual_evidence_fingerprint": "b" * 64,
+            "speech_summary_vi": "Lời nói",
+            "speech_summary_en": "Speech",
+            "visual_summary_vi": "Hình ảnh",
+            "visual_summary_en": "Visuals",
+            "audio_visual_relation": "aligned",
             "summary_vi": "Một cảnh",
             "summary_en": "A scene",
             "provider": provider,
             "model_name": "model",
             "model_version": "revision",
-            "prompt_version": "scene_summary_plain_text_v2",
-            "schema_version": "scene_summary_response_v1",
+            "prompt_version": "scene_summary_adaptive_plain_text_v1",
+            "schema_version": "scene_summary_response_v2",
             "confidence": None,
             "status": "pass",
         }],
@@ -1193,6 +1274,53 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
         boundary_hashes["scene_summaries"]
         == resolved.stage_config_hashes["scene_summaries"]
     )
+
+    summary_changed = copy.deepcopy(resolved.payload)
+    summary_changed["phase01"]["scene_summary"][
+        "max_visual_evidence_chars"
+    ] = 24000
+    summary_hashes = _stage_config_hashes(summary_changed)
+    assert (
+        summary_hashes["scene_summaries"]
+        != resolved.stage_config_hashes["scene_summaries"]
+    )
+    for stage in (
+        "shots",
+        "keyframes",
+        "asr",
+        "ocr",
+        "shot_captions",
+        "shot_transcript_links",
+        "scenes",
+        "scene_transcript_links",
+    ):
+        assert summary_hashes[stage] == resolved.stage_config_hashes[stage]
+
+    relation_changed = copy.deepcopy(resolved.payload)
+    relation_changed["phase01"]["scene_summary"][
+        "relation_contract_version"
+    ] = "audio_visual_relation_v999"
+    relation_hashes = _stage_config_hashes(relation_changed)
+    assert (
+        relation_hashes["scene_summaries"]
+        != resolved.stage_config_hashes["scene_summaries"]
+    )
+    assert relation_hashes["scenes"] == resolved.stage_config_hashes["scenes"]
+
+    summary_prompt_changed = copy.deepcopy(resolved.payload)
+    summary_prompt_changed["models"]["scene_summary"]["prompt_versions"][
+        "summary_vi"
+    ] = "scene_final_summary_vi_v999"
+    summary_prompt_hashes = _stage_config_hashes(summary_prompt_changed)
+    assert (
+        summary_prompt_hashes["scene_summaries"]
+        != resolved.stage_config_hashes["scene_summaries"]
+    )
+    for stage in ("asr", "shot_captions", "scenes"):
+        assert (
+            summary_prompt_hashes[stage]
+            == resolved.stage_config_hashes[stage]
+        )
 
     keyframe_changed = copy.deepcopy(resolved.payload)
     keyframe_changed["media"]["keyframe"]["semantic_sampling"][
@@ -1619,12 +1747,18 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
             "boundary_convention": "[start_frame, end_frame)", "status": "pass",
         }],
         "scene_summaries": [{
-            "scene_id": scene_id, "video_id": video_id, "summary_vi": "Một cảnh",
+            "scene_id": scene_id, "video_id": video_id,
+            "speech_evidence_status": "no_speech",
+            "speech_evidence_fingerprint": "a" * 64,
+            "visual_evidence_fingerprint": "b" * 64,
+            "speech_summary_vi": None, "speech_summary_en": None,
+            "visual_summary_vi": "Một cảnh", "visual_summary_en": "A scene",
+            "audio_visual_relation": "no_speech", "summary_vi": "Một cảnh",
             "summary_en": "A scene", "provider": "qwen_local",
             "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
             "model_version": "cc594898137f460bfe9f0759e9844b3ce807cfb5",
-            "prompt_version": "scene_summary_plain_text_v2",
-            "schema_version": "scene_summary_response_v1", "confidence": None,
+            "prompt_version": "scene_summary_adaptive_plain_text_v1",
+            "schema_version": "scene_summary_response_v2", "confidence": None,
             "status": "pass",
         }],
     }
@@ -1641,6 +1775,10 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
         )
     (stage / "scene_partition_quality.json").write_text(
         json.dumps(_passing_scene_quality_report(video_id)),
+        encoding="utf-8",
+    )
+    (stage / "asr_status.json").write_text(
+        json.dumps({"status": "no_speech"}),
         encoding="utf-8",
     )
     metadata = tmp_path / "metadata.json"
@@ -1665,6 +1803,35 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
     assert pd.read_parquet(artifact / "shots.parquet").iloc[0]["scene_id"] == scene_id
     assert pd.read_parquet(artifact / "scenes.parquet").iloc[0]["keyframe_count"] == 2
     assert (artifact / "diagnostics" / "scene_partition_quality.json").is_file()
+
+    summary_path = artifact / "scene_summaries.parquet"
+    valid_summary = pd.read_parquet(summary_path)
+    corruptions = (
+        {"audio_visual_relation": "aligned"},
+        {"speech_summary_vi": "Không được tồn tại"},
+        {"speech_evidence_status": "available"},
+        {"audio_visual_relation": "speech_unavailable"},
+        {"summary_vi": "Không phải visual summary"},
+    )
+    for changes in corruptions:
+        corrupted = valid_summary.copy()
+        for field, value in changes.items():
+            corrupted.loc[0, field] = value
+        corrupted.to_parquet(summary_path, index=False)
+        with pytest.raises(ValueError):
+            validate_phase01_package(artifact)
+    valid_summary.to_parquet(summary_path, index=False)
+    validate_phase01_package(artifact)
+
+    asr_status_path = artifact / "diagnostics" / "asr_status.json"
+    asr_status_path.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="aligned-word ownership"):
+        validate_phase01_package(artifact)
+    unavailable = valid_summary.copy()
+    unavailable.loc[0, "speech_evidence_status"] = "unavailable"
+    unavailable.loc[0, "audio_visual_relation"] = "speech_unavailable"
+    unavailable.to_parquet(summary_path, index=False)
+    validate_phase01_package(artifact)
 
 def test_shared_semantic_runtime_rejects_padding_side_drift() -> None:
     resolved = resolve_phase01_config(

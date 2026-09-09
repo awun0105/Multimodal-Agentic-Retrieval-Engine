@@ -22,7 +22,7 @@ Official videos + optional organizer metadata
 → one canonical bilingual shot-caption row per shot
 → transcript-shot/keyframe alignment
 → scene construction from shot captions + transcript + timeline
-→ bilingual scene summaries
+→ independent speech/visual summaries + audio-visual relation + final summaries
 → Gemini OCR / configured object detection / SigLIP + BEiT3 embeddings
 → artifact packaging
 → merge structural + feature artifacts
@@ -2228,6 +2228,14 @@ scene summaries.
 ```text
 scene_id
 video_id
+speech_evidence_status
+speech_evidence_fingerprint
+visual_evidence_fingerprint
+speech_summary_vi
+speech_summary_en
+visual_summary_vi
+visual_summary_en
+audio_visual_relation
 summary_vi
 summary_en
 provider
@@ -2239,18 +2247,23 @@ confidence
 status
 ```
 
-Phase01 creates one bilingual summary row only after the scene partition is
-fixed. Gemini receives:
+Phase01 creates one adaptive bilingual summary row only after the scene
+partition is accepted. The shared Qwen runtime first processes two isolated
+evidence paths:
 
 ```text
-ordered representative images
-bilingual shot captions
-ASR transcript evidence
-timeline
+canonical scene-owned ASR words -> speech_summary_vi
+ordered representative images + shot captions/actions + OCR
+                                -> visual_summary_vi
 ```
 
-and must return strict JSON with exactly `summary_vi` and `summary_en`.
-Persistent provider failure after bounded retry fails the video.
+The independent Vietnamese summaries then produce a strict relation label and
+relation-aware final summary. Missing reliable scene speech uses deterministic
+visual-only output and distinguishes established `no_speech` from
+`speech_unavailable`. Every generated semantic field is a separate plain-text
+request; Python assembles and validates `scene_summaries_v4`. Persistent model
+failure after the existing Qwen/Vintern fallback policy prevents stage
+promotion.
 
 ---
 

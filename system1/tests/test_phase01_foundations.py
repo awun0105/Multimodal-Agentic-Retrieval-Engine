@@ -555,6 +555,7 @@ def test_promoting_changed_upstream_invalidates_only_downstream(tmp_path: Path) 
         "package",
         "sync",
     }
+    assert downstream_stages("scene_summaries") == ("package", "sync")
 
 
 def test_failed_stage_invalidates_previously_complete_downstream(tmp_path: Path) -> None:

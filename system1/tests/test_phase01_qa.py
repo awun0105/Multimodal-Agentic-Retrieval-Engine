@@ -49,6 +49,14 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
         [
             {
                 "scene_id": "L21_V001_SC00000",
+                "speech_evidence_status": "no_speech",
+                "speech_evidence_fingerprint": "a" * 64,
+                "visual_evidence_fingerprint": "b" * 64,
+                "speech_summary_vi": None,
+                "speech_summary_en": None,
+                "visual_summary_vi": "Một cảnh",
+                "visual_summary_en": "One scene",
+                "audio_visual_relation": "no_speech",
                 "summary_vi": "Một cảnh",
                 "summary_en": "One scene",
             }
@@ -138,3 +146,15 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
     assert boundary["evidence"]["speech_shared_segment_crosses_gap"] is True
     assert boundary["evidence"]["speech_inter_word_gap_sec"] == 0.18
     assert "reason" not in boundary["evidence"]
+    summary = next(
+        row
+        for row in first_payload["samples"]
+        if row["review_kind"] == "scene_summary"
+    )
+    assert summary["evidence"]["speech_evidence_status"] == "no_speech"
+    assert summary["evidence"]["speech_summary_vi"] is None
+    assert summary["evidence"]["visual_summary_vi"] == "Một cảnh"
+    assert summary["evidence"]["audio_visual_relation"] == "no_speech"
+    assert summary["evidence"]["summary_vi"] == "Một cảnh"
+    assert summary["evidence"]["speech_evidence_fingerprint"] == "a" * 64
+    assert summary["evidence"]["visual_evidence_fingerprint"] == "b" * 64

@@ -1408,10 +1408,10 @@ def test_vintern_reasoning_reduces_patch_count_on_oom(
     image = tmp_path / "fallback.jpg"
     image.write_bytes(b"fixture")
     request = ModelRequest(
-        request_kind="scene_summary_vi",
+        request_kind="scene_visual_summary_vi",
         video_id="L21_V001",
         prompt="summarize",
-        prompt_version="scene_summary_vi_v2",
+        prompt_version="scene_visual_summary_vi_v1",
         response_schema_version="plain_text_response_v1",
         response_schema=TEXT_RESPONSE_SCHEMA,
         image_paths=(image,),
@@ -1441,16 +1441,15 @@ def test_vintern_fallback_uses_single_fallback_image(tmp_path: Path) -> None:
             received.append(request.image_paths)
             return {"text": "fallback"}
 
-    source_images = tuple(tmp_path / f"source-{index}.jpg" for index in range(3))
     fallback_image = tmp_path / "fallback.jpg"
     request = ModelRequest(
-        request_kind="scene_summary_vi",
+        request_kind="scene_speech_summary_vi",
         video_id="L21_V001",
         prompt="summarize",
-        prompt_version="scene_summary_vi_v2",
+        prompt_version="scene_speech_summary_vi_v1",
         response_schema_version="plain_text_response_v1",
         response_schema=TEXT_RESPONSE_SCHEMA,
-        image_paths=source_images,
+        image_paths=(),
         fallback_image_paths=(fallback_image,),
         response_mode="text",
     )

@@ -26,6 +26,7 @@ from system1.artifacts.store import ArtifactStore
 from system1.asr import (
     AsrAlignmentError,
     AsrResourceError,
+    assign_words_to_intervals,
     build_interval_transcripts,
     build_scene_transcript_links,
     build_shot_transcript_links,
@@ -55,12 +56,17 @@ from system1.phase01.review import (
 from system1.phase01.scheduler import plan_runtime_chunks
 from system1.phase01.validation import validate_phase01_package, validate_rows
 from system1.scenes import (
+    MODEL_AUDIO_VISUAL_RELATIONS,
     BoundaryDecision,
     SceneGroupingResult,
     ScenePartitionQuality,
     ScenePartitionQualityError,
+    build_speech_summary_evidence,
+    build_visual_summary_evidence,
     build_speech_gap_evidence,
     group_scenes,
+    normalize_audio_visual_relation,
+    validate_scene_summary_semantics,
 )
 from system1.scenes.vlm_judge import SemanticSceneBoundaryJudge
 from system1.shots import (
@@ -1022,6 +1028,9 @@ def _process_video_flow(
     )
     asr_rows = pd.read_parquet(asr_path).to_dict("records")
     asr_word_rows = pd.read_parquet(asr_words_path).to_dict("records")
+    asr_status = str(
+        json.loads(asr_status_path.read_text(encoding="utf-8"))["status"]
+    )
     asr_output_fingerprint = manager.stage_output_fingerprint("asr")
 
     # The decoded Phase00 timeline can be very large. Release it before this
@@ -1213,9 +1222,7 @@ def _process_video_flow(
                 asr_word_rows,
                 stage_dir,
                 shot_transcript_links=links,
-                asr_status=json.loads(
-                    asr_status_path.read_text(encoding="utf-8")
-                )["status"],
+                asr_status=asr_status,
                 speech_policy=phase01["scene_grouping"]["speech_continuity"],
             )
             judge = SemanticSceneBoundaryJudge(
@@ -1376,6 +1383,7 @@ def _process_video_flow(
             ocr_rows=ocr_rows,
             captions=captions,
             asr_words=asr_word_rows,
+            asr_status=asr_status,
             scene_links=scene_links,
             stage_dir=stage_dir,
             client=caption_client,
@@ -2342,6 +2350,7 @@ def _build_scene_summaries(
     ocr_rows,
     captions,
     asr_words,
+    asr_status,
     scene_links,
     stage_dir,
     client,
@@ -2351,78 +2360,58 @@ def _build_scene_summaries(
     bundle_version = str(model_config["prompt_bundle_version"])
     bundle = _configured_prompt_versions(
         model_config,
-        expected_fields={"summary_vi", "summary_en"},
+        expected_fields={
+            "speech_summary_vi",
+            "speech_summary_en",
+            "visual_summary_vi",
+            "visual_summary_en",
+            "audio_visual_relation",
+            "summary_vi",
+            "summary_en",
+        },
         bundle_version=bundle_version,
     )
-
     captions_by_shot = {str(row["shot_id"]): row for row in captions}
     ocr_by_keyframe = _ocr_text_by_keyframe(ocr_rows)
     representative = {
-        str(row["shot_id"]): row
-        for row in keyframes
-        if row["is_representative"]
+        str(row["shot_id"]): row for row in keyframes if row["is_representative"]
     }
     keyframes_by_shot: dict[str, list[dict[str, Any]]] = {}
     for row in keyframes:
         keyframes_by_shot.setdefault(str(row["shot_id"]), []).append(row)
-    transcripts_by_scene = build_interval_transcripts(
+    words_by_scene = assign_words_to_intervals(
         scenes,
         asr_words,
         entity_id_field="scene_id",
     )
+    placeholder = (
+        stage_dir
+        / "diagnostics"
+        / "scene_summary_requests"
+        / "text_only_fallback_placeholder.jpg"
+    )
+    _write_text_only_fallback_placeholder(placeholder)
     contexts: list[dict[str, Any]] = []
     for scene in scenes:
         scene_id = str(scene["scene_id"])
         scene_shots = _shots_for_scene(scene, shots)
-        image_shots = _evenly_sample(
-            scene_shots,
-            int(summary_config["max_representative_images"]),
+        speech_evidence = build_speech_summary_evidence(
+            scene=scene,
+            assigned_words=words_by_scene[scene_id],
+            asr_status=str(asr_status),
+            scene_links=scene_links,
+            policy=summary_config,
         )
-        image_paths = tuple(
-            stage_dir
-            / "keyframes"
-            / Path(str(representative[str(shot["shot_id"])]["keyframe_ref"])).name
-            for shot in image_shots
+        visual_evidence = build_visual_summary_evidence(
+            scene=scene,
+            scene_shots=scene_shots,
+            representative=representative,
+            keyframes_by_shot=keyframes_by_shot,
+            captions_by_shot=captions_by_shot,
+            ocr_by_keyframe=ocr_by_keyframe,
+            stage_dir=stage_dir,
+            policy=summary_config,
         )
-
-        evidence_blocks: list[str] = []
-        for shot in _evenly_sample(
-            scene_shots,
-            int(summary_config["max_shot_evidence_items"]),
-        ):
-            shot_id = str(shot["shot_id"])
-            caption = captions_by_shot[shot_id]
-            ocr_texts = [
-                ocr_by_keyframe[str(row["keyframe_id"])]
-                for row in keyframes_by_shot.get(shot_id, [])
-                if ocr_by_keyframe.get(str(row["keyframe_id"]))
-            ]
-            evidence_blocks.append(
-                _render_summary_shot_evidence(
-                    shot,
-                    caption,
-                    ocr_text=" ".join(ocr_texts),
-                    max_ocr_chars=int(summary_config["max_ocr_chars_per_shot"]),
-                )
-            )
-
-        transcript = transcripts_by_scene[scene_id]
-        transcript = _bounded_text(
-            transcript,
-            max_chars=int(summary_config["max_transcript_chars"]),
-        )
-        evidence_body = (
-            f"SCENE_ID: {scene_id}\n"
-            f"TIME: {float(scene['start_sec']):.3f}-{float(scene['end_sec']):.3f}\n\n"
-            + "\n\n".join(evidence_blocks)
-            + "\n\nSCENE_TRANSCRIPT:\n"
-            + (transcript or "<NONE>")
-        )
-        evidence_body = _bounded_text(
-            evidence_body,
-            max_chars=int(summary_config["max_total_evidence_chars"]),
-        )
-
         fallback_sheet = (
             stage_dir
             / "diagnostics"
@@ -2430,7 +2419,7 @@ def _build_scene_summaries(
             / f"{scene_id}_fallback.jpg"
         )
         _write_scene_summary_contact_sheet(
-            image_shots,
+            list(visual_evidence.image_shots),
             representative=representative,
             stage_dir=stage_dir,
             output=fallback_sheet,
@@ -2438,98 +2427,350 @@ def _build_scene_summaries(
         contexts.append(
             {
                 "scene": scene,
-                "image_paths": image_paths,
+                "speech": speech_evidence,
+                "visual": visual_evidence,
                 "fallback_sheet": fallback_sheet,
-                "evidence": evidence_body,
+                "text_placeholder": placeholder,
             }
         )
 
-    vi_requests = [
-        _scene_summary_request(
+    provenance_rows: list[dict[str, Any]] = []
+    responses_by_scene: dict[str, dict[str, Mapping[str, Any]]] = {
+        str(context["scene"]["scene_id"]): {} for context in contexts
+    }
+    values_by_scene: dict[str, dict[str, Any]] = {
+        str(context["scene"]["scene_id"]): {} for context in contexts
+    }
+
+    visual_vi_requests = [
+        _adaptive_scene_summary_request(
             video_id=video_id,
             context=context,
-            field="summary_vi",
-            prompt_version=str(bundle["summary_vi"]),
+            field="visual_summary_vi",
+            prompt_version=str(bundle["visual_summary_vi"]),
+            evidence=context["visual"].body,
+            image_paths=context["visual"].image_paths,
+            fallback_image_paths=(Path(context["fallback_sheet"]),),
         )
         for context in contexts
     ]
-    vi_responses = client.request_many(vi_requests)
-    if len(vi_responses) != len(contexts):
-        raise ValueError("scene summary client returned an invalid VI batch size")
+    _consume_scene_summary_phase(
+        requests=visual_vi_requests,
+        contexts=contexts,
+        client=client,
+        field="visual_summary_vi",
+        prompt_version=str(bundle["visual_summary_vi"]),
+        model_config=model_config,
+        values_by_scene=values_by_scene,
+        responses_by_scene=responses_by_scene,
+        provenance_rows=provenance_rows,
+        depends_on_fields=("visual_evidence_fingerprint",),
+    )
 
-    vi_by_scene: dict[str, str] = {}
-    response_by_scene: dict[str, dict[str, Mapping[str, Any]]] = {}
-    provenance_rows: list[dict[str, Any]] = []
-    for context, response in zip(contexts, vi_responses, strict=True):
+    available_contexts = [
+        context for context in contexts if context["speech"].status == "available"
+    ]
+    speech_vi_requests = [
+        _adaptive_scene_summary_request(
+            video_id=video_id,
+            context=context,
+            field="speech_summary_vi",
+            prompt_version=str(bundle["speech_summary_vi"]),
+            evidence=context["speech"].body,
+            fallback_image_paths=(Path(context["text_placeholder"]),),
+        )
+        for context in available_contexts
+    ]
+    _consume_scene_summary_phase(
+        requests=speech_vi_requests,
+        contexts=available_contexts,
+        client=client,
+        field="speech_summary_vi",
+        prompt_version=str(bundle["speech_summary_vi"]),
+        model_config=model_config,
+        values_by_scene=values_by_scene,
+        responses_by_scene=responses_by_scene,
+        provenance_rows=provenance_rows,
+        depends_on_fields=("speech_evidence_fingerprint",),
+    )
+
+    relation_requests = []
+    for context in available_contexts:
         scene_id = str(context["scene"]["scene_id"])
-        vi_by_scene[scene_id] = _normalize_required_text(str(response.get("text", "")))
-        response_by_scene[scene_id] = {"summary_vi": response}
+        relation_requests.append(
+            _adaptive_scene_summary_request(
+                video_id=video_id,
+                context=context,
+                field="audio_visual_relation",
+                prompt_version=str(bundle["audio_visual_relation"]),
+                evidence=(
+                    "SPEECH_SUMMARY_VI:\n"
+                    + values_by_scene[scene_id]["speech_summary_vi"]
+                    + "\n\nVISUAL_SUMMARY_VI:\n"
+                    + values_by_scene[scene_id]["visual_summary_vi"]
+                ),
+                fallback_image_paths=(Path(context["text_placeholder"]),),
+                allowed_text_values=tuple(
+                    relation.upper() for relation in MODEL_AUDIO_VISUAL_RELATIONS
+                ),
+            )
+        )
+    relation_responses = _request_scene_summary_batch(
+        client,
+        relation_requests,
+        phase="audio-visual relation",
+    )
+    for context, response in zip(
+        available_contexts,
+        relation_responses,
+        strict=True,
+    ):
+        scene_id = str(context["scene"]["scene_id"])
+        values_by_scene[scene_id]["audio_visual_relation"] = (
+            normalize_audio_visual_relation(response.get("text"))
+        )
+        responses_by_scene[scene_id]["audio_visual_relation"] = response
         provenance_rows.append(
             _summary_provenance_row(
                 video_id=video_id,
                 scene_id=scene_id,
-                field="summary_vi",
+                field="audio_visual_relation",
+                source_kind="model_generated",
                 response=response,
                 model_config=model_config,
-                prompt_version=str(bundle["summary_vi"]),
+                prompt_version=str(bundle["audio_visual_relation"]),
+                context=context,
+                depends_on_fields=("speech_summary_vi", "visual_summary_vi"),
             )
         )
 
-    en_requests = [
-        _scene_summary_request(
-            video_id=video_id,
-            context=context,
-            field="summary_en",
-            prompt_version=str(bundle["summary_en"]),
-            vi_summary=vi_by_scene[str(context["scene"]["scene_id"])],
+    final_vi_requests = []
+    for context in available_contexts:
+        scene_id = str(context["scene"]["scene_id"])
+        final_vi_requests.append(
+            _adaptive_scene_summary_request(
+                video_id=video_id,
+                context=context,
+                field="summary_vi",
+                prompt_version=str(bundle["summary_vi"]),
+                evidence=(
+                    "SPEECH_SUMMARY_VI:\n"
+                    + values_by_scene[scene_id]["speech_summary_vi"]
+                    + "\n\nVISUAL_SUMMARY_VI:\n"
+                    + values_by_scene[scene_id]["visual_summary_vi"]
+                    + "\n\nAUDIO_VISUAL_RELATION:\n"
+                    + values_by_scene[scene_id]["audio_visual_relation"].upper()
+                ),
+                fallback_image_paths=(Path(context["text_placeholder"]),),
+            )
         )
-        for context in contexts
-    ]
-    en_responses = client.request_many(en_requests)
-    if len(en_responses) != len(contexts):
-        raise ValueError("scene summary client returned an invalid EN batch size")
+    _consume_scene_summary_phase(
+        requests=final_vi_requests,
+        contexts=available_contexts,
+        client=client,
+        field="summary_vi",
+        prompt_version=str(bundle["summary_vi"]),
+        model_config=model_config,
+        values_by_scene=values_by_scene,
+        responses_by_scene=responses_by_scene,
+        provenance_rows=provenance_rows,
+        depends_on_fields=(
+            "speech_summary_vi",
+            "visual_summary_vi",
+            "audio_visual_relation",
+        ),
+    )
+
+    visual_en_requests = []
+    for context in contexts:
+        scene_id = str(context["scene"]["scene_id"])
+        visual_en_requests.append(
+            _adaptive_scene_summary_request(
+                video_id=video_id,
+                context=context,
+                field="visual_summary_en",
+                prompt_version=str(bundle["visual_summary_en"]),
+                evidence=(
+                    "REFERENCE_VIETNAMESE_VISUAL_SUMMARY:\n"
+                    + values_by_scene[scene_id]["visual_summary_vi"]
+                ),
+                fallback_image_paths=(Path(context["text_placeholder"]),),
+            )
+        )
+    _consume_scene_summary_phase(
+        requests=visual_en_requests,
+        contexts=contexts,
+        client=client,
+        field="visual_summary_en",
+        prompt_version=str(bundle["visual_summary_en"]),
+        model_config=model_config,
+        values_by_scene=values_by_scene,
+        responses_by_scene=responses_by_scene,
+        provenance_rows=provenance_rows,
+        depends_on_fields=("visual_summary_vi",),
+    )
+
+    speech_en_requests = []
+    for context in available_contexts:
+        scene_id = str(context["scene"]["scene_id"])
+        speech_en_requests.append(
+            _adaptive_scene_summary_request(
+                video_id=video_id,
+                context=context,
+                field="speech_summary_en",
+                prompt_version=str(bundle["speech_summary_en"]),
+                evidence=(
+                    "REFERENCE_VIETNAMESE_SPEECH_SUMMARY:\n"
+                    + values_by_scene[scene_id]["speech_summary_vi"]
+                ),
+                fallback_image_paths=(Path(context["text_placeholder"]),),
+            )
+        )
+    _consume_scene_summary_phase(
+        requests=speech_en_requests,
+        contexts=available_contexts,
+        client=client,
+        field="speech_summary_en",
+        prompt_version=str(bundle["speech_summary_en"]),
+        model_config=model_config,
+        values_by_scene=values_by_scene,
+        responses_by_scene=responses_by_scene,
+        provenance_rows=provenance_rows,
+        depends_on_fields=("speech_summary_vi",),
+    )
+
+    final_en_requests = []
+    for context in available_contexts:
+        scene_id = str(context["scene"]["scene_id"])
+        final_en_requests.append(
+            _adaptive_scene_summary_request(
+                video_id=video_id,
+                context=context,
+                field="summary_en",
+                prompt_version=str(bundle["summary_en"]),
+                evidence=(
+                    "REFERENCE_VIETNAMESE_FINAL_SUMMARY:\n"
+                    + values_by_scene[scene_id]["summary_vi"]
+                ),
+                fallback_image_paths=(Path(context["text_placeholder"]),),
+            )
+        )
+    _consume_scene_summary_phase(
+        requests=final_en_requests,
+        contexts=available_contexts,
+        client=client,
+        field="summary_en",
+        prompt_version=str(bundle["summary_en"]),
+        model_config=model_config,
+        values_by_scene=values_by_scene,
+        responses_by_scene=responses_by_scene,
+        provenance_rows=provenance_rows,
+        depends_on_fields=("summary_vi",),
+    )
 
     rows: list[dict[str, Any]] = []
-    for context, response in zip(contexts, en_responses, strict=True):
-        scene = context["scene"]
-        scene_id = str(scene["scene_id"])
-        response_by_scene[scene_id]["summary_en"] = response
-        provenance_rows.append(
-            _summary_provenance_row(
-                video_id=video_id,
-                scene_id=scene_id,
-                field="summary_en",
-                response=response,
-                model_config=model_config,
-                prompt_version=str(bundle["summary_en"]),
+    for context in contexts:
+        scene_id = str(context["scene"]["scene_id"])
+        speech_status = context["speech"].status
+        values = values_by_scene[scene_id]
+        if speech_status != "available":
+            relation = (
+                "no_speech"
+                if speech_status == "no_speech"
+                else "speech_unavailable"
             )
-        )
+            values.update(
+                {
+                    "speech_summary_vi": None,
+                    "speech_summary_en": None,
+                    "audio_visual_relation": relation,
+                    "summary_vi": values["visual_summary_vi"],
+                    "summary_en": values["visual_summary_en"],
+                }
+            )
+            provenance_rows.extend(
+                _deterministic_scene_summary_provenance(
+                    video_id=video_id,
+                    scene_id=scene_id,
+                    context=context,
+                )
+            )
         identities = [
-            _response_model_identity(field_response, model_config)
-            for field_response in response_by_scene[scene_id].values()
+            _response_model_identity(response, model_config)
+            for response in responses_by_scene[scene_id].values()
         ]
         provider, model_name, model_version = _aggregate_model_identity(identities)
-        rows.append(
-            {
-                "scene_id": scene_id,
-                "video_id": video_id,
-                "summary_vi": vi_by_scene[scene_id],
-                "summary_en": _normalize_required_text(
-                    str(response.get("text", ""))
-                ),
-                "provider": provider,
-                "model_name": model_name,
-                "model_version": model_version,
-                "prompt_version": bundle_version,
-                "schema_version": str(model_config["response_schema_version"]),
-                "confidence": None,
-                "status": "pass",
-            }
-        )
+        row = {
+            "scene_id": scene_id,
+            "video_id": video_id,
+            "speech_evidence_status": speech_status,
+            "speech_evidence_fingerprint": context["speech"].fingerprint,
+            "visual_evidence_fingerprint": context["visual"].fingerprint,
+            "speech_summary_vi": values["speech_summary_vi"],
+            "speech_summary_en": values["speech_summary_en"],
+            "visual_summary_vi": values["visual_summary_vi"],
+            "visual_summary_en": values["visual_summary_en"],
+            "audio_visual_relation": values["audio_visual_relation"],
+            "summary_vi": values["summary_vi"],
+            "summary_en": values["summary_en"],
+            "provider": provider,
+            "model_name": model_name,
+            "model_version": model_version,
+            "prompt_version": bundle_version,
+            "schema_version": str(model_config["response_schema_version"]),
+            "confidence": None,
+            "status": "pass",
+        }
+        validate_scene_summary_semantics(row)
+        rows.append(row)
 
     validate_rows("scene_summaries", rows)
     _write_jsonl(stage_dir / "scene_summary_field_provenance.jsonl", provenance_rows)
     return rows
+
+
+def _request_scene_summary_batch(client, requests, *, phase: str):
+    if not requests:
+        return []
+    responses = list(client.request_many(requests))
+    if len(responses) != len(requests):
+        raise ValueError(f"scene summary client returned an invalid {phase} batch size")
+    return responses
+
+
+def _consume_scene_summary_phase(
+    *,
+    requests,
+    contexts,
+    client,
+    field,
+    prompt_version,
+    model_config,
+    values_by_scene,
+    responses_by_scene,
+    provenance_rows,
+    depends_on_fields,
+):
+    responses = _request_scene_summary_batch(client, requests, phase=field)
+    for context, response in zip(contexts, responses, strict=True):
+        scene_id = str(context["scene"]["scene_id"])
+        values_by_scene[scene_id][field] = _normalize_required_text(
+            str(response.get("text", ""))
+        )
+        responses_by_scene[scene_id][field] = response
+        provenance_rows.append(
+            _summary_provenance_row(
+                video_id=str(context["scene"]["video_id"]),
+                scene_id=scene_id,
+                field=field,
+                source_kind="model_generated",
+                response=response,
+                model_config=model_config,
+                prompt_version=prompt_version,
+                context=context,
+                depends_on_fields=depends_on_fields,
+            )
+        )
 
 
 def _shots_for_scene(
@@ -2843,67 +3084,62 @@ def _emit_scene_partition_quality(
     )
 
 
-def _bounded_text(value: Any, *, max_chars: int) -> str:
-    if max_chars < 1:
-        raise ValueError("text evidence limit must be positive")
-    text = str(value or "").strip()
-    if len(text) <= max_chars:
-        return text
-    marker = "\n[TRUNCATED]"
-    return text[: max(0, max_chars - len(marker))].rstrip() + marker
-
-
-def _render_summary_shot_evidence(
-    shot: Mapping[str, Any],
-    caption: Mapping[str, Any],
-    *,
-    ocr_text: str,
-    max_ocr_chars: int,
-) -> str:
-    return "\n".join(
-        (
-            "--- SHOT ---",
-            f"SHOT_ID: {shot['shot_id']}",
-            f"TIME: {float(shot['start_sec']):.3f}-{float(shot['end_sec']):.3f}",
-            f"CAPTION_VI: {caption['caption_vi']}",
-            f"CAPTION_EN: {caption['caption_en']}",
-            "OBJECTS_VI: " + " | ".join(_string_list(caption, "objects_vi")),
-            "OBJECTS_EN: " + " | ".join(_string_list(caption, "objects_en")),
-            "ACTIONS_VI: " + " | ".join(_string_list(caption, "actions_vi")),
-            "ACTIONS_EN: " + " | ".join(_string_list(caption, "actions_en")),
-            "VISIBLE_TEXT_VI: "
-            + str(caption.get("visible_text_summary_vi", "")),
-            "VISIBLE_TEXT_EN: "
-            + str(caption.get("visible_text_summary_en", "")),
-            "OCR: " + (_bounded_text(ocr_text, max_chars=max_ocr_chars) or "<NONE>"),
-        )
-    )
-
-
-def _scene_summary_request(
+def _adaptive_scene_summary_request(
     *,
     video_id: str,
     context: Mapping[str, Any],
     field: str,
     prompt_version: str,
-    vi_summary: str | None = None,
+    evidence: str,
+    image_paths: tuple[Path, ...] = (),
+    fallback_image_paths: tuple[Path, ...],
+    allowed_text_values: tuple[str, ...] = (),
 ) -> ModelRequest:
     scene = context["scene"]
-    prompt = build_text_prompt(prompt_version)
-    if vi_summary is not None:
-        prompt += "\n\nVIETNAMESE_SUMMARY_REFERENCE:\n" + vi_summary
-    prompt += "\n\nBEGIN_EVIDENCE\n" + str(context["evidence"]) + "\nEND_EVIDENCE"
+    request_kind = {
+        "visual_summary_vi": "scene_visual_summary_vi",
+        "visual_summary_en": "scene_visual_summary_en",
+        "speech_summary_vi": "scene_speech_summary_vi",
+        "speech_summary_en": "scene_speech_summary_en",
+        "audio_visual_relation": "scene_audio_visual_relation",
+        "summary_vi": "scene_final_summary_vi",
+        "summary_en": "scene_final_summary_en",
+    }.get(field)
+    if request_kind is None:
+        raise ValueError(f"Unsupported adaptive scene-summary field: {field}")
+    identity = {
+        "scene_id": str(scene["scene_id"]),
+        "field": field,
+    }
+    if field in {"visual_summary_vi", "visual_summary_en"}:
+        identity["visual_evidence_fingerprint"] = context["visual"].fingerprint
+    elif field in {"speech_summary_vi", "speech_summary_en"}:
+        identity["speech_evidence_fingerprint"] = context["speech"].fingerprint
+    else:
+        identity.update(
+            {
+                "speech_evidence_fingerprint": context["speech"].fingerprint,
+                "visual_evidence_fingerprint": context["visual"].fingerprint,
+            }
+        )
+    prompt = (
+        build_text_prompt(prompt_version)
+        + "\n\nBEGIN_EVIDENCE\n"
+        + evidence
+        + "\nEND_EVIDENCE"
+    )
     return ModelRequest(
-        request_kind=f"scene_{field}",
+        request_kind=request_kind,
         video_id=video_id,
         prompt=prompt,
         prompt_version=prompt_version,
         response_schema_version="plain_text_response_v1",
         response_schema=TEXT_RESPONSE_SCHEMA,
-        image_paths=tuple(context["image_paths"]),
-        fallback_image_paths=(Path(context["fallback_sheet"]),),
-        identity={"scene_id": str(scene["scene_id"]), "field": field},
+        image_paths=image_paths,
+        fallback_image_paths=fallback_image_paths,
+        identity=identity,
         response_mode="text",
+        allowed_text_values=allowed_text_values,
     )
 
 
@@ -2912,22 +3148,91 @@ def _summary_provenance_row(
     video_id: str,
     scene_id: str,
     field: str,
-    response: Mapping[str, Any],
+    source_kind: str,
+    response: Mapping[str, Any] | None,
     model_config: Mapping[str, Any],
-    prompt_version: str,
+    prompt_version: str | None,
+    context: Mapping[str, Any],
+    depends_on_fields: tuple[str, ...],
 ) -> dict[str, Any]:
-    provider, model_id, model_revision = _response_model_identity(
-        response, model_config
-    )
+    if response is None:
+        provider = model_id = model_revision = None
+    else:
+        provider, model_id, model_revision = _response_model_identity(
+            response,
+            model_config,
+        )
     return {
         "video_id": video_id,
         "scene_id": scene_id,
         "field": field,
+        "source_kind": source_kind,
         "provider": provider,
         "model_id": model_id,
         "model_revision": model_revision,
         "prompt_version": prompt_version,
+        "speech_evidence_fingerprint": context["speech"].fingerprint,
+        "visual_evidence_fingerprint": context["visual"].fingerprint,
+        "depends_on_fields": list(depends_on_fields),
     }
+
+
+def _deterministic_scene_summary_provenance(
+    *,
+    video_id: str,
+    scene_id: str,
+    context: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    policy_version = "visual_only_v1"
+    return [
+        _summary_provenance_row(
+            video_id=video_id,
+            scene_id=scene_id,
+            field="audio_visual_relation",
+            source_kind="deterministic_policy",
+            response=None,
+            model_config={},
+            prompt_version=policy_version,
+            context=context,
+            depends_on_fields=("speech_evidence_status",),
+        ),
+        _summary_provenance_row(
+            video_id=video_id,
+            scene_id=scene_id,
+            field="summary_vi",
+            source_kind="derived_copy",
+            response=None,
+            model_config={},
+            prompt_version=policy_version,
+            context=context,
+            depends_on_fields=("visual_summary_vi", "audio_visual_relation"),
+        ),
+        _summary_provenance_row(
+            video_id=video_id,
+            scene_id=scene_id,
+            field="summary_en",
+            source_kind="derived_copy",
+            response=None,
+            model_config={},
+            prompt_version=policy_version,
+            context=context,
+            depends_on_fields=("visual_summary_en", "audio_visual_relation"),
+        ),
+    ]
+
+
+def _write_text_only_fallback_placeholder(output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.is_file():
+        return
+    Image.new("RGB", (448, 448), (128, 128, 128)).save(
+        output,
+        format="JPEG",
+        quality=95,
+        subsampling=0,
+        optimize=False,
+        progressive=False,
+    )
 
 
 def _write_scene_summary_contact_sheet(
@@ -2966,20 +3271,6 @@ def _write_scene_summary_contact_sheet(
         draw.text((x + 4, y + tile_height + 6), label, fill="white")
     output.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(output, format="JPEG", quality=90, subsampling=0)
-
-
-def _evenly_sample(rows: list[dict[str, Any]], maximum: int) -> list[dict[str, Any]]:
-    if maximum < 1:
-        raise ValueError("Scene summary image limit must be positive")
-    if len(rows) <= maximum:
-        return rows
-    indices = sorted(
-        {
-            round(position * (len(rows) - 1) / (maximum - 1))
-            for position in range(maximum)
-        }
-    ) if maximum > 1 else [len(rows) // 2]
-    return [rows[index] for index in indices]
 
 
 def _assemble_package(*, artifact_dir: Path, video_id: str, metadata_path: Path, stage_dir: Path, config: ResolvedPhase01Config):
