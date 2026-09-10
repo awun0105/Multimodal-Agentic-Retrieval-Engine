@@ -1,5 +1,5 @@
-schema_version: phase01_pipeline_v1_11
-pipeline_id: phase01_production_v1_11
+schema_version: phase01_pipeline_v1_12
+pipeline_id: phase01_production_v1_12
 
 execution:
   video_order: batch_manifest
@@ -124,7 +124,7 @@ shot_caption:
       policy: normalized_token_jaccard_v1
       min_jaccard_distance: 0.35
     source_selection_policy: meaningful_ordered_frames_v1
-    storyboard_policy: ordered_temporal_storyboard_v1
+    storyboard_policy: ordered_temporal_storyboard_v2
 
 scene_grouping:
   speech_continuity:

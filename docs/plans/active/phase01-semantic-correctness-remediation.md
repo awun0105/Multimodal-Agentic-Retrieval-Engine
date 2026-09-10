@@ -325,7 +325,7 @@ Focused acceptance cases:
 
 ### Task 5: Dynamic Shot Understanding
 
-Status: Implementation Complete - Review Pending
+Status: Closure Implementation Complete - Review Pending
 
 Depends on: Tasks 1-4 accepted.
 
@@ -520,6 +520,11 @@ Focused acceptance cases:
   package schemas remain unchanged. Upstream shots, keyframes, ASR, OCR, and
   shot-transcript links remain reusable; captions and their semantic downstream
   stages recompute.
+- 2026-09-10: The Task 5 closure replaces crop-to-fill storyboard tiles with
+  `ordered_temporal_storyboard_v2`: every canonical source frame is contained
+  without cropping or stretching, retains its aspect ratio, and is centered on
+  deterministic dark padding. Pipeline/production are v1.12; model, caption,
+  provenance, checkpoint, and package contracts remain unchanged.
 
 ## Validation
 
@@ -541,6 +546,23 @@ Task 5 local proof on 2026-09-10:
   import errors across Kaggle, MVP, and System1; no test assertion ran in that
   command;
 - Ruff over every Task 5 changed Python/test file, `python -m compileall`, and
+  `git diff --check`: passed;
+- real T4 / Parakeet / Qwen / Vintern validation: not run. Live dynamic-caption
+  quality and heterogeneous semantic acceptance remain the operator gate.
+
+Task 5 full-frame storyboard closure proof on 2026-09-10:
+
+- focused dynamic-shot tests: 31 passed, including landscape left/right-edge
+  and portrait top/bottom-edge preservation plus deterministic storyboard SHA;
+- production-contract tests: 87 passed, including isolated storyboard-policy
+  stage hashing;
+- Task 1-4 and ASR-link regression set: 139 passed;
+- complete Phase01 suite: 392 passed;
+- complete System1 suite: 599 passed and one pre-existing Notebook 00B
+  assertion failed because that notebook does not contain `monolith-mvp-app`;
+- repository-root `pytest -q` stopped during collection with 22 missing-runtime
+  import errors across Kaggle, MVP, and System1;
+- Ruff over every changed Python/test file, `python -m compileall`, and
   `git diff --check`: passed;
 - real T4 / Parakeet / Qwen / Vintern validation: not run. Live dynamic-caption
   quality and heterogeneous semantic acceptance remain the operator gate.
@@ -681,10 +703,11 @@ claiming live/provider acceptance; they no longer block Task 2 local closure.
 ## Result
 
 Active. Tasks 1-4 and the Task 1-3 correctness closure are accepted on local
-contract evidence. Task 5 is implementation-complete and awaits external code
-review. It adds deterministic adaptive shot evidence without changing the
-one-row-per-shot caption schema or adding ASR to visual captioning. Live/provider
-smoke remains pending and is not claimed by the local proof above.
+contract evidence. Task 5 and its full-frame storyboard closure are
+implementation-complete and await external code review. They add deterministic
+adaptive shot evidence without changing the one-row-per-shot caption schema or
+adding ASR to visual captioning. Live/provider smoke remains pending and is not
+claimed by the local proof above.
 
 Task 1 changed:
 
@@ -755,6 +778,9 @@ Task 5 changed:
 - `system1/src/system1/shots/understanding.py` adds deterministic eligibility,
   visual/OCR change signals, source selection, storyboard rendering, and
   evidence fingerprints;
+- `ordered_temporal_storyboard_v2` contains complete canonical source frames
+  with preserved aspect ratio and deterministic padding instead of cropping
+  them to fill tiles;
 - production uses the same representative image or storyboard for all eight
   caption fields and writes exact field-level provenance v2;
 - configuration, model prompt bundle, artifact declarations, stage hashing,

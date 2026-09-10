@@ -2387,7 +2387,11 @@ gate keeps static/simple shots on the representative image. When canonical
 supplemental evidence, or a long-enough shot with adjacent dHash/reliable OCR
 change, establishes meaningful within-shot change, it builds one bounded
 chronological storyboard from existing early/middle/late/supplemental frames.
-Duration by itself never enables storyboard mode. The VLM produces the eight
+Duration by itself never enables storyboard mode.
+`ordered_temporal_storyboard_v2` contains each complete source frame inside a
+fixed tile while preserving aspect ratio, then centers it on deterministic dark
+letterbox or pillarbox padding. It never crops canonical frame content or
+stretches geometry. The VLM produces the eight
 caption/object/action/visible-text fields through separate versioned plain-text
 requests; Python assembles the canonical row.
 

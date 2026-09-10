@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 from PIL import Image
+from typer.testing import CliRunner
+
 from system1.asr import AsrAlignmentError
 from system1.cli import app
 from system1.config import (
@@ -44,7 +46,6 @@ from system1.scenes import (
     ScenePartitionQuality,
     ScenePartitionQualityError,
 )
-from typer.testing import CliRunner
 
 SYSTEM1_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = SYSTEM1_ROOT / "configs"
@@ -131,8 +132,8 @@ def test_phase01_config_encodes_one_fixed_production_pipeline() -> None:
     models = configs["models"]
     storage = configs["storage"]
 
-    assert phase01["schema_version"] == "phase01_pipeline_v1_11"
-    assert phase01["pipeline_id"] == "phase01_production_v1_11"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_12"
+    assert phase01["pipeline_id"] == "phase01_production_v1_12"
     assert phase01["execution"]["max_concurrent_videos"] == 1
     assert phase01["execution"]["gpu_heavy_models_resident"] == 1
     assert phase01["execution"]["min_model_cache_free_gb"] == 25
@@ -841,7 +842,7 @@ def test_runtime_diagnostics_reflect_resolved_config_and_git_identity(
     assert diagnostics["git_commit_sha"] == "a" * 40
     assert diagnostics["git_branch_matches_expected"] is True
     assert diagnostics["config_hash"] == resolved.config_hash
-    assert diagnostics["pipeline_id"] == "phase01_production_v1_11"
+    assert diagnostics["pipeline_id"] == "phase01_production_v1_12"
     assert diagnostics["models_schema_version"] == "phase01_models_v1_8"
     assert diagnostics["asr"] == {
         "provider": "nemo",
@@ -1294,6 +1295,27 @@ def test_semantic_policies_change_only_relevant_stage_hashes() -> None:
         "scene_summaries",
     ):
         assert temporal_hashes[stage] == resolved.stage_config_hashes[stage]
+
+    storyboard_changed = copy.deepcopy(resolved.payload)
+    storyboard_changed["phase01"]["shot_caption"]["temporal_understanding"][
+        "storyboard_policy"
+    ] = "ordered_temporal_storyboard_test_only"
+    storyboard_hashes = _stage_config_hashes(storyboard_changed)
+    assert (
+        storyboard_hashes["shot_captions"]
+        != resolved.stage_config_hashes["shot_captions"]
+    )
+    for stage in (
+        "shots",
+        "keyframes",
+        "asr",
+        "ocr",
+        "shot_transcript_links",
+        "scenes",
+        "scene_transcript_links",
+        "scene_summaries",
+    ):
+        assert storyboard_hashes[stage] == resolved.stage_config_hashes[stage]
 
     quant_changed = copy.deepcopy(resolved.payload)
     quant_changed["models"]["shot_caption"]["quantization"][
@@ -1835,7 +1857,7 @@ def test_package_assembly_backfills_scene_ids_and_passes_strict_validation(
                 "shot_temporal_understanding_v1"
             ),
             "source_selection_policy": "meaningful_ordered_frames_v1",
-            "storyboard_policy": "ordered_temporal_storyboard_v1",
+            "storyboard_policy": "ordered_temporal_storyboard_v2",
             "storyboard_sha256": None,
             "representative_keyframe_id": f"{video_id}:0",
             "source_keyframe_ids": [f"{video_id}:0"],

@@ -106,7 +106,7 @@ def validate_temporal_understanding_policy(value: Any) -> None:
         "contract_version": "shot_temporal_understanding_v1",
         "mode_policy": "adaptive_representative_or_storyboard_v1",
         "source_selection_policy": "meaningful_ordered_frames_v1",
-        "storyboard_policy": "ordered_temporal_storyboard_v1",
+        "storyboard_policy": "ordered_temporal_storyboard_v2",
     }
     for key, expected_value in exact_values.items():
         if str(value[key]) != expected_value:
@@ -487,12 +487,23 @@ def _write_storyboard(output: Path, candidates: Sequence[_Candidate]) -> None:
         x = column * tile_width
         y = row * (tile_height + label_height)
         with Image.open(candidate.image_path) as source:
-            tile = ImageOps.fit(
+            contained = ImageOps.contain(
                 source.convert("RGB"),
                 (tile_width, tile_height),
                 method=Image.Resampling.LANCZOS,
-                centering=(0.5, 0.5),
             )
+        tile = Image.new(
+            "RGB",
+            (tile_width, tile_height),
+            color=(24, 24, 24),
+        )
+        tile.paste(
+            contained,
+            (
+                (tile_width - contained.width) // 2,
+                (tile_height - contained.height) // 2,
+            ),
+        )
         canvas.paste(tile, (x, y + label_height))
         role = str(candidate.row["keyframe_role"])
         label = f"#{index + 1} {role} {candidate.timestamp_sec:.3f}s"

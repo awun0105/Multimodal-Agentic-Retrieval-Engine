@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageStat
+
 from system1.artifacts.checkpoint import sha256_file
 from system1.config import (
     load_configs,
@@ -75,6 +76,36 @@ def _write_solid_image(path: Path, color: tuple[int, int, int]) -> None:
         format="JPEG",
         quality=95,
         subsampling=0,
+    )
+
+
+def _write_landscape_edge_markers(path: Path) -> None:
+    image = Image.new("RGB", (1600, 900), color=(8, 8, 8))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 127, 899), fill=(240, 12, 12))
+    draw.rectangle((1472, 0, 1599, 899), fill=(12, 12, 240))
+    image.save(path, format="JPEG", quality=95, subsampling=0)
+
+
+def _write_portrait_edge_markers(path: Path) -> None:
+    image = Image.new("RGB", (900, 1600), color=(8, 8, 8))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 899, 127), fill=(240, 12, 12))
+    draw.rectangle((0, 1472, 899, 1599), fill=(12, 12, 240))
+    image.save(path, format="JPEG", quality=95, subsampling=0)
+
+
+def _assert_channel_dominates(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    channel: int,
+) -> None:
+    means = ImageStat.Stat(image.crop(box)).mean
+    assert means[channel] >= 150
+    assert all(
+        means[channel] >= value + 80
+        for index, value in enumerate(means)
+        if index != channel
     )
 
 
@@ -339,6 +370,66 @@ def test_storyboard_tiles_follow_chronological_source_order(tmp_path: Path) -> N
         assert all(abs(channel - target) <= 5 for channel, target in zip(actual, expected, strict=True))
 
 
+def test_storyboard_preserves_landscape_left_and_right_edges(tmp_path: Path) -> None:
+    frames = [
+        _keyframe(0, timestamp=0.2, role="early", representative=True),
+        _keyframe(
+            1,
+            timestamp=2.0,
+            role="supplemental",
+            reason="visual_novelty",
+        ),
+    ]
+    stage = _stage(tmp_path, frames, reverse_ids={1})
+    _write_landscape_edge_markers(
+        stage / "keyframes" / Path(frames[0]["keyframe_ref"]).name
+    )
+
+    evidence = build_shot_caption_evidence(
+        shot=_shot(),
+        keyframes=frames,
+        ocr_rows=[_ocr(frame) for frame in frames],
+        stage_dir=stage,
+        policy=_policy(),
+    )
+
+    assert evidence.mode == "temporal_storyboard"
+    with Image.open(evidence.image_path) as storyboard:
+        _assert_channel_dominates(storyboard, (4, 120, 25, 260), 0)
+        _assert_channel_dominates(storyboard, (423, 120, 444, 260), 2)
+        assert all(abs(channel - 24) <= 5 for channel in storyboard.getpixel((224, 45)))
+
+
+def test_storyboard_preserves_portrait_top_and_bottom_edges(tmp_path: Path) -> None:
+    frames = [
+        _keyframe(0, timestamp=0.2, role="early", representative=True),
+        _keyframe(
+            1,
+            timestamp=2.0,
+            role="supplemental",
+            reason="visual_novelty",
+        ),
+    ]
+    stage = _stage(tmp_path, frames, reverse_ids={1})
+    _write_portrait_edge_markers(
+        stage / "keyframes" / Path(frames[0]["keyframe_ref"]).name
+    )
+
+    evidence = build_shot_caption_evidence(
+        shot=_shot(),
+        keyframes=frames,
+        ocr_rows=[_ocr(frame) for frame in frames],
+        stage_dir=stage,
+        policy=_policy(),
+    )
+
+    assert evidence.mode == "temporal_storyboard"
+    with Image.open(evidence.image_path) as storyboard:
+        _assert_channel_dominates(storyboard, (180, 34, 268, 52), 0)
+        _assert_channel_dominates(storyboard, (180, 332, 268, 350), 2)
+        assert all(abs(channel - 24) <= 5 for channel in storyboard.getpixel((50, 192)))
+
+
 @pytest.mark.parametrize(
     ("path", "value", "message"),
     [
@@ -357,7 +448,11 @@ def test_storyboard_tiles_follow_chronological_source_order(tmp_path: Path) -> N
         (("ocr_change", "policy"), "unknown", "ocr_change.policy"),
         (("ocr_change", "min_jaccard_distance"), -0.1, "min_jaccard_distance"),
         (("source_selection_policy",), "unknown", "source_selection_policy"),
-        (("storyboard_policy",), "unknown", "storyboard_policy"),
+        (
+            ("storyboard_policy",),
+            "ordered_temporal_storyboard_v1",
+            "storyboard_policy",
+        ),
     ],
 )
 def test_temporal_understanding_config_is_validated(
@@ -590,8 +685,12 @@ def test_task5_config_and_checkpoint_scope() -> None:
     models = configs["models"]
     artifacts = configs["artifact"]
     caption_model = models["phase01"]["shot_caption"]
-    assert phase01["schema_version"] == "phase01_pipeline_v1_11"
-    assert phase01["pipeline_id"] == "phase01_production_v1_11"
+    assert phase01["schema_version"] == "phase01_pipeline_v1_12"
+    assert phase01["pipeline_id"] == "phase01_production_v1_12"
+    assert (
+        phase01["shot_caption"]["temporal_understanding"]["storyboard_policy"]
+        == "ordered_temporal_storyboard_v2"
+    )
     assert models["schema_version"] == "phase01_models_v1_8"
     assert caption_model["prompt_bundle_version"] == (
         "shot_caption_temporal_plain_text_fields_v2"

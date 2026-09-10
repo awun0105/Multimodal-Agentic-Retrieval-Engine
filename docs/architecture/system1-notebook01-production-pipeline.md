@@ -398,6 +398,9 @@ dynamic shots use one deterministic chronological storyboard assembled from a
 bounded selection of canonical early/middle/late/supplemental keyframes. The
 same single image is supplied to Qwen and to the sticky Vintern fallback, so
 the existing eight-request-per-shot and OOM/fallback lifecycle is unchanged.
+`ordered_temporal_storyboard_v2` preserves every complete canonical source
+frame and its aspect ratio by containing it inside the fixed tile and centering
+it on deterministic dark padding; it never crops or stretches source imagery.
 The storyboard contains only system labels; per-frame OCR stays in the textual
 evidence block. Shot-caption prompts never receive ASR or transcript evidence.
 

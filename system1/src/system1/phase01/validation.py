@@ -435,7 +435,7 @@ def _validate_shot_caption_provenance(
             or reference["source_selection_policy"]
             != "meaningful_ordered_frames_v1"
             or reference["storyboard_policy"]
-            != "ordered_temporal_storyboard_v1"
+            != "ordered_temporal_storyboard_v2"
         ):
             raise ValueError("Unsupported shot-caption temporal evidence policy")
         source_ids = [str(value) for value in reference["source_keyframe_ids"]]
