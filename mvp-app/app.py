@@ -25,15 +25,19 @@ except ImportError:
     spaces = _LocalSpaces()  # type: ignore[assignment]
 
 import gradio as gr
+import numpy as np
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import squareform
 
 from clip import CLIPSearcher
 from clusterer import ImageIndexer
 from database_utils import RuntimePaths, prepare_runtime
-from db import SearchMechanism
+from db import GROUPING_ANCHOR, GROUPING_LINKAGE, SearchMechanism
 from frame_math import validate_frame
 from keyframe_details import detail_markdown as _detail_markdown
 from keyframe_details import detection_rows as _detection_rows
 from keyframe_details import timestamp as _timestamp
+from keyframe_details import watch_at as _watch_at
 from player import build_player, player_head_html
 from query_parser import parse_search_query
 from schemas import SearchFilters
@@ -66,12 +70,28 @@ body {
     overflow-x: visible !important;
 }
 
-/* Grid tự lấy chiều cao của 2 hàng */
+/* Grid tự lấy chiều cao theo số hàng đang cấu hình */
 #keyframe-gallery .grid-container {
     height: auto !important;
     max-height: none !important;
     overflow: visible !important;
     align-content: start !important;
+}
+
+/* the frame others were folded into — outlined so the kept side is visible too.
+   Gradio wraps thumbnails in a button or a div depending on the render path. */
+#keyframe-gallery .aiou-anchor,
+#cluster-gallery .aiou-anchor {
+    outline: 3px solid #a855f7 !important;
+    outline-offset: -3px;
+    border-radius: 4px;
+}
+
+#keyframe-gallery .aiou-grouped,
+#cluster-gallery .aiou-grouped {
+    outline: 2px dashed #c4b5fd !important;
+    outline-offset: -2px;
+    border-radius: 4px;
 }
 
 #selected-keyframe,
@@ -82,6 +102,71 @@ body {
 #selected-keyframe img,
 #trake-selected-keyframe img {
     object-fit: contain !important;
+}
+
+#selected-image-tools-heading {
+    margin-top: 0.75rem;
+}
+
+#neighbour-gallery {
+    margin-top: 0.5rem;
+    height: 190px !important;
+    max-height: 190px !important;
+}
+
+#neighbour-gallery .grid-wrap {
+    height: 150px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: thin;
+}
+
+#neighbour-gallery .grid-container {
+    display: grid !important;
+    grid-auto-flow: column !important;
+    grid-auto-columns: clamp(110px, 18vw, 150px) !important;
+    grid-template-columns: none !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    width: max-content !important;
+    min-width: 100% !important;
+    height: 140px !important;
+    max-height: 140px !important;
+}
+
+.keyframe-detail-layout {
+    align-items: flex-start !important;
+}
+
+.keyframe-media-column,
+.keyframe-metadata-column {
+    min-width: 0 !important;
+}
+
+.keyframe-metadata-column {
+    align-self: stretch !important;
+}
+
+.keyframe-metadata {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+}
+
+.keyframe-metadata-heading {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.keyframe-detections {
+    margin-top: 0.5rem !important;
+    height: 260px !important;
+    max-height: 260px !important;
+    overflow: auto !important;
 }
 
 @media (max-width: 600px) {
@@ -131,6 +216,112 @@ def _normalize_kis_pins(pinned: object) -> list[tuple[str, int]]:
     return normalized
 
 
+SHORTCUTS_HEAD = """
+<script>
+(function () {
+  // Typing in a box must stay typing: only fire when focus is outside an input.
+  function isTyping(target) {
+    if (!target) return false;
+    var tag = (target.tagName || '').toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+  }
+  function press(id) {
+    var el = document.getElementById(id);
+    var button = el && (el.tagName === 'BUTTON' ? el : el.querySelector('button'));
+    if (button && !button.disabled) { button.click(); return true; }
+    return false;
+  }
+  document.addEventListener('keydown', function (event) {
+    if (event.ctrlKey || event.altKey || event.metaKey) return;
+    if (isTyping(event.target)) return;
+    var handled = false;
+    switch (event.key) {
+      case 'ArrowLeft':  handled = press('prev-page-btn'); break;
+      case 'ArrowRight': handled = press('next-page-btn'); break;
+      case 's': case 'S': handled = press('similar-search-btn'); break;
+      case 'x': case 'X': handled = press('exclude-btn'); break;
+      case 'g': case 'G': handled = press('grouped-btn'); break;
+      case '/':
+        var box = document.querySelector('#component-0 textarea, textarea');
+        if (box) { box.focus(); handled = true; }
+        break;
+    }
+    if (handled) event.preventDefault();
+  });
+})();
+</script>
+<script>
+(function () {
+  // Gradio owns the gallery DOM and rebuilds it on every render, so the marker
+  // is re-derived from the caption text rather than set once.
+  var GALLERIES = ['#keyframe-gallery', '#cluster-gallery'];
+  function cellOf(node) {
+    // the caption sits beside the image button, so walk up to their shared cell
+    for (var el = node; el && el !== document.body; el = el.parentElement) {
+      if (el.classList && (el.classList.contains('thumbnail-item')
+          || el.classList.contains('gallery-item')
+          || el.tagName === 'BUTTON')) return el;
+    }
+    return node.parentElement;
+  }
+  function mark() {
+    GALLERIES.forEach(function (selector) {
+      var root = document.querySelector(selector);
+      if (!root) return;
+      root.querySelectorAll('.aiou-anchor, .aiou-grouped').forEach(function (el) {
+        el.classList.remove('aiou-anchor', 'aiou-grouped');
+      });
+      root.querySelectorAll('.caption-label, figcaption, .caption').forEach(function (label) {
+        var caption = label.textContent || '';
+        var cell = cellOf(label);
+        if (!cell) return;
+        if (caption.indexOf('[đại diện]') !== -1) cell.classList.add('aiou-anchor');
+        if (caption.indexOf('[gộp x') !== -1) cell.classList.add('aiou-grouped');
+      });
+    });
+  }
+  var pending = null;
+  new MutationObserver(function () {
+    if (pending) return;
+    pending = requestAnimationFrame(function () { pending = null; mark(); });
+  }).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('DOMContentLoaded', mark);
+  mark();
+})();
+</script>
+"""
+
+HISTORY_LIMIT = 10
+
+# len(restore_outputs): original_results_state + refine_outputs (12) + six refinement controls
+HISTORY_RESTORE_OUTPUTS = 19
+
+
+def _push_history(history: list, label: str, rows: list, limit: int = HISTORY_LIMIT) -> list:
+    """Prepend a search snapshot, newest first, replacing a repeat of the same query.
+
+    Returns a new list: gr.State only re-renders when the object identity changes.
+    """
+    label = (label or "").strip()
+    if not rows or not label:
+        return list(history or [])
+    kept = [entry for entry in (history or []) if entry.get("label") != label]
+    return [{"label": label, "rows": list(rows)}, *kept][:limit]
+
+
+def _handoff_text(details) -> str:
+    """One selectable line the searcher hands to the teammate verifying the answer."""
+    keyframe = details.keyframe
+    seconds = float(keyframe["pts_time_sec"])
+    parts = [
+        str(keyframe["video_id"]),
+        _timestamp(seconds),
+        f"frame {int(keyframe['frame_idx'])}",
+        _watch_at(str(details.video.get("watch_url") or ""), seconds),
+    ]
+    return " | ".join(part for part in parts if part)
+
+
 def _generate_preview_text(rows: list[dict], pinned: object = None):
     """Put ordered pins first, then preserve ranked keyframe candidates."""
     pinned_rows = _normalize_kis_pins(pinned)
@@ -161,22 +352,44 @@ class SearchController:
         self.search_mechanism = search_mechanism
         self.page_size = page_size
 
+    def set_mmr(self, enabled: bool, mode: str | None = None) -> None:
+        setattr(self.search_mechanism, "mmr_enabled", bool(enabled))
+        setattr(
+            self.search_mechanism,
+            "grouping_mode",
+            GROUPING_LINKAGE if mode == self.LINKAGE_MODE else GROUPING_ANCHOR,
+        )
+
     def page_payload(
         self,
         rows: list[dict],
         page: int,
         original_count: int | None = None,
+        excluded: set | None = None,
+        hide_excluded: bool = False,
     ):
         rows = rows or []
+        excluded = excluded or set()
+        if hide_excluded:
+            # drop before slicing, so pages stay full and the count label stays truthful
+            rows = [row for row in rows if row["keyframe_id"] not in excluded]
         total_pages = max(1, (len(rows) + self.page_size - 1) // self.page_size)
         page = max(0, min(int(page), total_pages - 1))
         start = page * self.page_size
         page_rows = rows[start : start + self.page_size]
         rendered_rows = [row for row in page_rows if Path(row["image_path"]).is_file()]
+        # a frame is a representative when others were demoted in its favour
+        anchors = {
+            row["similar_to"] for row in rows if row.get("similar_to") is not None
+        }
         gallery = [
             (
                 row["image_path"],
-                f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])} | {row['score']:.4f}",
+                ("[ĐÃ LOẠI] " if row["keyframe_id"] in excluded else "")
+                + ("[đại diện] " if row.get("vector_id") in anchors
+                   and not row.get("duplicates") else "")
+                + (f"[gộp x{row['duplicates']}] " if row.get("duplicates") else "")
+                + f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])} | {row['score']:.4f}",
             )
             for row in rendered_rows
         ]
@@ -302,6 +515,10 @@ class SearchController:
             translate_vietnamese=translate_vietnamese,
         )
         rows = [result.to_dict() for result in outcome.results]
+        for row in rows:
+            entry = outcome.duplicate_details.get(row["vector_id"]) or {}
+            row["duplicates"] = int(entry.get("duplicates", 0))
+            row["similar_to"] = entry.get("similar_to")
         if not outcome.query.translation_enabled:
             translation_status = "Off"
         elif outcome.query.warning:
@@ -521,6 +738,287 @@ class SearchController:
                 "Refine current Top K results | 0 results",
             )
 
+    def _repaint(self, rows, page, excluded, mode):
+        """Redraw one page with the current exclusion set and display mode."""
+        return self.page_payload(rows, page, None, excluded or set(), mode == "Ẩn hẳn")
+
+    CLUSTER_LINK_THRESHOLD = 0.94
+
+    def linkage_clusters(self, original_rows) -> list[list[dict]]:
+        """Group by complete linkage: every pair inside a cluster must clear the
+        threshold, not just one pair.
+
+        Resemblance is not transitive here — measured A-B 0.944, A-C 0.946,
+        B-C 0.853 among frames of the same pitch. Chaining off a single close
+        pair swells a cluster until unrelated scenes sit together; requiring the
+        whole cluster to agree cannot chain. Measured across eight queries:
+        0% mismatched pairs, against 24.5% for a drifting centroid.
+        """
+        rows = [row for row in (original_rows or []) if row.get("vector_id") is not None]
+        if len(rows) < 2:
+            return []
+        vectors = np.asarray(
+            self.search_mechanism.embeddings[[row["vector_id"] for row in rows]],
+            dtype=np.float32,
+        )
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        distances = np.clip(1.0 - vectors @ vectors.T, 0.0, None)
+        np.fill_diagonal(distances, 0.0)
+        labels = fcluster(
+            linkage(squareform(distances, checks=False), method="complete"),
+            t=1.0 - self.CLUSTER_LINK_THRESHOLD,
+            criterion="distance",
+        )
+        grouped: dict[int, list[dict]] = {}
+        for row, label in zip(rows, labels):
+            grouped.setdefault(int(label), []).append(row)
+        clusters = [members for members in grouped.values() if len(members) > 1]
+        clusters.sort(key=lambda members: (-len(members), members[0]["vector_id"]))
+        return clusters
+
+    @staticmethod
+    def duplicate_clusters(original_rows) -> list[list[dict]]:
+        """Group penalised frames under the representative that outranked them.
+
+        `similar_to` points at the frame kept at full score. A representative can
+        fall outside top_k once the widened pool is trimmed, so its cluster is
+        dropped rather than shown headless.
+        """
+        by_vector = {row["vector_id"]: row for row in (original_rows or [])}
+        clusters: dict[int, list[dict]] = {}
+        for row in original_rows or []:
+            anchor = row.get("similar_to")
+            if anchor is None or anchor not in by_vector:
+                continue
+            clusters.setdefault(int(anchor), []).append(row)
+        ordered = sorted(clusters.items(), key=lambda item: (-len(item[1]), item[0]))
+        return [[by_vector[anchor], *members] for anchor, members in ordered]
+
+    @staticmethod
+    def cluster_choices(clusters) -> list[str]:
+        return [f"Cụm {i + 1} ({len(c)} ảnh)" for i, c in enumerate(clusters)]
+
+    @staticmethod
+    def cluster_summary_text(clusters, total_rows: int) -> str:
+        if not clusters:
+            return "Lượt tìm này không có ảnh trùng nào bị gộp."
+        grouped = sum(len(c) - 1 for c in clusters)
+        return (
+            f"Trong {total_rows} kết quả: **{grouped} ảnh** bị gộp thành "
+            f"**{len(clusters)} cụm**. Ảnh đầu mỗi cụm là ảnh được giữ."
+        )
+
+    # Two readings of the same frames, neither strictly better: the anchor mode
+    # yields fewer near-identical clusters, complete linkage yields cleaner ones.
+    ANCHOR_MODE = "MMR"
+    LINKAGE_MODE = "Complete Linkage"
+    CLUSTER_MODES = [ANCHOR_MODE, LINKAGE_MODE]
+
+    def _clusters_for(self, original_rows, mode):
+        builders = {
+            self.ANCHOR_MODE: self.duplicate_clusters,
+            self.LINKAGE_MODE: self.linkage_clusters,
+        }
+        return builders.get(mode, self.duplicate_clusters)(original_rows)
+
+    def compare_modes_text(self, original_rows) -> str:
+        """Both counts at once — the modes disagree, and the gap is the point."""
+        parts = []
+        for label in self.CLUSTER_MODES:
+            clusters = self._clusters_for(original_rows, label)
+            grouped = sum(len(c) - 1 for c in clusters)
+            parts.append(f"{label}: **{len(clusters)} cụm** ({grouped} ảnh)")
+        return " · ".join(parts)
+
+    def refresh_clusters(self, original_rows, mode=None):
+        clusters = self._clusters_for(original_rows, mode)
+        choices = self.cluster_choices(clusters)
+        summary = self.cluster_summary_text(clusters, len(original_rows or []))
+        if clusters:
+            summary += "  \n" + self.compare_modes_text(original_rows)
+        shown = self._rendered(clusters[0]) if clusters else []
+        return (
+            summary,
+            gr.update(choices=choices, value=choices[0] if choices else None),
+            self._cluster_items(shown),
+            shown,
+        )
+
+    def reveal_cluster_of(self, original_rows, keyframe_id, mode=None):
+        """Jump the cluster view to whichever cluster holds the selected frame.
+
+        Answers the question a searcher actually has after clicking a result:
+        what else got folded in with this one. Leaves the view alone when the
+        frame was not grouped — there is nothing to show.
+        """
+        if not keyframe_id:
+            return gr.update(), gr.update(), gr.update()
+        clusters = self._clusters_for(original_rows, mode)
+        choices = self.cluster_choices(clusters)
+        for index, cluster in enumerate(clusters):
+            if any(row["keyframe_id"] == keyframe_id for row in cluster):
+                shown = self._rendered(cluster)
+                return (
+                    gr.update(value=choices[index]),
+                    self._cluster_items(shown),
+                    shown,
+                )
+        return gr.update(), gr.update(), gr.update()
+
+    def show_cluster(self, original_rows, choice, mode=None):
+        clusters = self._clusters_for(original_rows, mode)
+        if not choice or not clusters:
+            return [], []
+        try:
+            index = self.cluster_choices(clusters).index(choice)
+        except ValueError:
+            return [], []
+        shown = self._rendered(clusters[index])
+        return self._cluster_items(shown), shown
+
+    @staticmethod
+    def _rendered(cluster) -> list[dict]:
+        """Only the rows with a file on disk — the gallery and the row list that
+        drives selection have to agree on index."""
+        return [row for row in cluster if Path(row["image_path"]).is_file()]
+
+    @staticmethod
+    def _cluster_items(cluster) -> list[tuple[str, str]]:
+        items = []
+        for position, row in enumerate(cluster):
+            # same wording as the main gallery, so one marker rule covers both
+            tag = "[đại diện] " if position == 0 else f"[gộp x{row.get('duplicates', 1)}] "
+            items.append((row["image_path"], f"{tag}{row['keyframe_id']}"))
+        return items
+
+    def show_grouped_frames(self, original_rows, excluded, mode):
+        """List exactly the frames duplicate-grouping penalised, so a mis-group is visible.
+
+        Selected by the penalty flag, not by rank: a frame can sit last simply because it
+        scored low, which says nothing about grouping.
+        """
+        rows = [row for row in (original_rows or []) if row.get("duplicates")]
+        status = (
+            f"Đang xem {len(rows)} ảnh bị gán trọng số (gộp trùng). "
+            "Bấm 'Bỏ lọc trọng số' để xem lại toàn bộ."
+            if rows
+            else "Không có ảnh nào bị gán trọng số trong lượt tìm này."
+        )
+        return (*self._repaint(rows, 0, excluded, mode), status)
+
+    def show_all_frames(self, original_rows, excluded, mode):
+        rows = original_rows or []
+        return (
+            *self._repaint(rows, 0, excluded, mode),
+            f"Refine current Top K results | {len(rows)} results",
+        )
+
+    def toggle_excluded(self, excluded, selected_keyframe_id, rows, page, mode):
+        """Mark or unmark the selected frame so a rejected shot is not re-read on the next pass.
+
+        Keyed by keyframe id, not grid position: every repaint reshuffles the grid, so a
+        remembered index would toggle whichever frame later landed in that slot.
+        """
+        updated = set(excluded or set())
+        if selected_keyframe_id:
+            updated.symmetric_difference_update({str(selected_keyframe_id)})
+        return (updated, *self._repaint(rows, page, updated, mode))
+
+    def clear_excluded(self, rows, page, mode):
+        return (set(), *self._repaint(rows, page, set(), mode))
+
+    def restyle_excluded(self, excluded, rows, page, mode):
+        """Re-render when the user switches between marking and hiding."""
+        return self._repaint(rows, page, excluded, mode)
+
+    def record_history(self, query, rows, history):
+        """Snapshot a completed search so a worse follow-up query can be undone."""
+        updated = _push_history(history, query, rows)
+        labels = [entry["label"] for entry in updated]
+        return updated, gr.update(choices=labels, value=None)
+
+    def restore_history(self, history, label):
+        """Re-render a stored result set without re-running the search.
+
+        Refreshing the dropdown's choices after a search also fires `change` with an
+        empty value; restoring nothing there would wipe the results just found.
+        """
+        if not label:
+            return tuple(gr.update() for _ in range(HISTORY_RESTORE_OUTPUTS))
+        for entry in history or []:
+            if entry.get("label") == label:
+                return self.clear_all_refinements(entry["rows"])
+        return tuple(gr.update() for _ in range(HISTORY_RESTORE_OUTPUTS))
+
+    def _neighbour_rows(self, keyframe_id: str) -> list[dict]:
+        """Filmstrip around the selection: confirms a scene without opening the video."""
+        try:
+            rows = self.search_mechanism.get_temporal_window(keyframe_id)
+        except (KeyError, AttributeError):
+            return []
+        return [row for row in rows if Path(row["image_path"]).is_file()]
+
+    @staticmethod
+    def _neighbour_items(rows: list[dict]) -> list[tuple[str, str]]:
+        return [
+            (row["image_path"], f"{row['keyframe_id']} | {_timestamp(row['pts_time_sec'])}")
+            for row in rows
+        ]
+
+    def search_similar_images(self, page_rows, selected_keyframe_id, top_k):
+        """Re-rank around the selected frame's own embedding.
+
+        Duplicate grouping is suppressed for this one call: it penalises exactly the
+        near-identical frames this search exists to surface. Looked up by keyframe id
+        because every repaint reshuffles the grid a remembered index pointed into.
+        """
+        try:
+            source = next(
+                (row for row in page_rows or [] if row["keyframe_id"] == selected_keyframe_id),
+                None,
+            )
+            if source is None:
+                raise ValueError("Chọn một keyframe trước khi tìm ảnh giống.")
+            vector_id = int(source["vector_id"])
+            mechanism = self.search_mechanism
+            outcome = mechanism.search_by_vector(
+                mechanism.embeddings[vector_id], top_k=int(top_k), use_mmr=False
+            )
+            rows = [
+                result.to_dict()
+                for result in outcome.results
+                if int(result.vector_id) != vector_id
+            ]
+            gallery, page_rows_out, page, label, previous_update, next_update = (
+                self.page_payload(rows, 0)
+            )
+            collection_update, video_update, author_update = self._refinement_updates(rows)
+            status = (
+                f"Ảnh giống {source['keyframe_id']} | {len(rows)} kết quả | "
+                "Gộp ảnh trùng tạm tắt cho lượt này"
+            )
+            return (
+                gallery, rows, list(rows), page_rows_out, page, status, label,
+                previous_update, next_update, None,
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                "Select a keyframe to view metadata", [],
+                collection_update, video_update, author_update,
+                -1.0, "", "all",
+                f"Refine current Top K results | {len(rows)} results",
+            )
+        except Exception as exc:
+            logger.exception("Similar-image search failed")
+            empty_update = gr.update(choices=[], value=[])
+            return (
+                [], [], [], [], 0, f"Error: {exc}", "Page 1 / 1 | 0 results",
+                gr.update(interactive=False), gr.update(interactive=False), None,
+                "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                "Select a keyframe to view metadata", [],
+                empty_update, empty_update, empty_update,
+                -1.0, "", "all",
+                "Refine current Top K results | 0 results",
+            )
+
     def refine_results(
         self,
         original_rows,
@@ -600,6 +1098,9 @@ class SearchController:
             0,
         )
         return (
+            # first slot feeds original_results_state: restoring history must move the
+            # baseline too, or refine/clear/paging keep working on the previous search
+            rows,
             gallery,
             rows,
             page_rows,
@@ -636,12 +1137,20 @@ class SearchController:
                 [],
         )
 
+    @staticmethod
+    def _no_selection(metadata_message: str):
+        """Same shape as a successful selection, so all three branches stay aligned."""
+        return (None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>",
+                metadata_message, [],
+                gr.update(), gr.update(), gr.update(), "", "", [], [],
+                gr.update(), gr.update(), gr.update())
+
     def select_keyframe(self, page_rows, evt: gr.SelectData):
         if not page_rows or evt.index is None:
-            return None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>", "Select a keyframe to view metadata", []
+            return self._no_selection("Select a keyframe to view metadata")
         local_index = int(evt.index[0] if isinstance(evt.index, tuple) else evt.index)
         if local_index < 0 or local_index >= len(page_rows):
-            return None, "<p style='color: #666; font-style: italic;'>Select a keyframe to play video.</p>", "Selected result is no longer available", []
+            return self._no_selection("Selected result is no longer available")
         row = page_rows[local_index]
         details = self.search_mechanism.get_keyframe_details(row["keyframe_id"])
 
@@ -664,8 +1173,11 @@ class SearchController:
         )
 
         can_step_video = bool(video_path) or bool(watch_url)
+        neighbour_rows = self._neighbour_rows(row["keyframe_id"])
         return (row["image_path"], video_html, _detail_markdown(details), _detection_rows(details),
                 gr.update(interactive=can_step_video), gr.update(interactive=can_step_video), gr.update(interactive=True),
+                _handoff_text(details), row["keyframe_id"], self._neighbour_items(neighbour_rows),
+                neighbour_rows,
                 fps, video_id, frame_idx)
 
     def details_api(self, keyframe_id: str):
@@ -762,12 +1274,15 @@ def build_app(
     controller = SearchController(search_mechanism, page_size)
     _search_controller = controller
 
-    with gr.Blocks(css=APP_CSS, head=player_head_html()) as webui:
+    with gr.Blocks(css=APP_CSS, head=player_head_html() + SHORTCUTS_HEAD) as webui:
         gr.Markdown("## AIOU", elem_id="app-title")
         with gr.Tabs():
             with gr.Tab("Query Text"):
                 original_results_state = gr.State([])
                 visible_results_state = gr.State([])
+                selected_keyframe_state = gr.State("")
+                history_state = gr.State([])
+                excluded_state = gr.State(set())
                 page_rows_state = gr.State([])
                 page_state = gr.State(0)
 
@@ -799,8 +1314,18 @@ def build_app(
                             scale=2,
                         )
 
+                    history_dropdown = gr.Dropdown(
+                        label="Lịch sử truy vấn (10 gần nhất)",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        elem_id="history-dropdown",
+                    )
+
                     gr.Markdown(
-                        "*Bộ lọc (tuỳ chọn) — được áp dụng ngay khi bấm Search*"
+                        "*Bộ lọc (tuỳ chọn) — được áp dụng ngay khi bấm Search*  \n"
+                        "*Phím tắt (khi con trỏ không ở ô nhập): `←` `→` chuyển trang · "
+                        "`S` tìm ảnh giống · `X` loại ảnh · `G` xem ảnh bị gán trọng số · `/` về ô tìm*"
                     )
 
                     with gr.Row():
@@ -847,7 +1372,9 @@ def build_app(
                         publish_date_from = gr.Textbox(label="Published from", placeholder="YYYY-MM-DD")
                         publish_date_to = gr.Textbox(label="Published to", placeholder="YYYY-MM-DD")
 
-                    search_button = gr.Button("Search", variant="primary")
+                    search_button = gr.Button(
+                        "Search", variant="primary", elem_id="search-btn"
+                    )
                 status = gr.Textbox(label="Status", value="Ready", interactive=False)
 
                 with gr.Accordion("Refine current Top K results", open=False):
@@ -895,6 +1422,26 @@ def build_app(
                             scale=4,
                         )
                         clear_refinements_button = gr.Button("Clear all refinements", scale=1)
+                    with gr.Row(equal_height=True):
+                        with gr.Column(scale=4):
+                            mmr_checkbox = gr.Checkbox(
+                                label="Gộp ảnh trùng lặp",
+                                value=False,
+                                info="Tìm lại trên gấp đôi số ảnh rồi đẩy ảnh trùng xuống.",
+                            )
+                            cluster_mode = gr.Radio(
+                                choices=SearchController.CLUSTER_MODES,
+                                value=SearchController.ANCHOR_MODE,
+                                label="Cách gộp",
+                                info=(
+                                    "MMR: gom quanh ảnh mạnh nhất, ít cụm na ná nhau. "
+                                    "Complete Linkage: chỉ gom khi mọi ảnh đều giống nhau."
+                                ),
+                                elem_id="cluster-mode",
+                            )
+                        apply_mmr_button = gr.Button(
+                            "Áp dụng", variant="primary", scale=1, elem_id="apply-mmr-btn"
+                        )
 
                 gallery = gr.Gallery(
                     label="Keyframes",
@@ -908,16 +1455,80 @@ def build_app(
                     elem_id="keyframe-gallery",
                 )
                 with gr.Row():
-                    previous_button = gr.Button("Previous", interactive=False)
+                    previous_button = gr.Button(
+                        "Previous", interactive=False, elem_id="prev-page-btn"
+                    )
                     page_label = gr.Textbox(
                         value="Page 1 / 1 | 0 results",
                         show_label=False,
                         interactive=False,
                     )
-                    next_button = gr.Button("Next", interactive=False)
+                    next_button = gr.Button(
+                        "Next", interactive=False, elem_id="next-page-btn"
+                    )
 
-                with gr.Row(equal_height=False):
-                    with gr.Column(scale=3):
+                gr.Markdown(
+                    "### Làm việc với ảnh đang chọn",
+                    elem_id="selected-image-tools-heading",
+                )
+                handoff_box = gr.Textbox(
+                    label="Bàn giao (copy cho người kiểm tra)",
+                    value="",
+                    lines=1,
+                    interactive=False,
+                    show_copy_button=True,
+                    elem_id="handoff-box",
+                )
+                with gr.Row():
+                    similar_button = gr.Button(
+                        "Tìm ảnh giống thế này",
+                        elem_id="similar-search-btn",
+                    )
+                    exclude_button = gr.Button("Loại ảnh này", elem_id="exclude-btn")
+                    clear_excluded_button = gr.Button("Bỏ đánh dấu tất cả")
+                    exclude_mode = gr.Radio(
+                        choices=["Chỉ đánh dấu", "Ẩn hẳn"],
+                        value="Chỉ đánh dấu",
+                        label="Ảnh đã loại",
+                        elem_id="exclude-mode",
+                    )
+
+                gr.Markdown("---")
+                gr.Markdown("### Ảnh bị gộp trùng")
+                cluster_summary = gr.Markdown(
+                    "Lượt tìm này không có ảnh trùng nào bị gộp."
+                )
+                with gr.Row():
+                    cluster_dropdown = gr.Dropdown(
+                        label="Chọn cụm",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        elem_id="cluster-dropdown",
+                    )
+                    grouped_button = gr.Button(
+                        "Xem ảnh bị gộp trùng", elem_id="grouped-btn"
+                    )
+                    all_frames_button = gr.Button("Bỏ lọc, xem hết")
+                cluster_gallery = gr.Gallery(
+                    label="Ảnh trong cụm",
+                    columns=5,
+                    rows=1,
+                    height="auto",
+                    allow_preview=False,
+                    object_fit="contain",
+                    elem_id="cluster-gallery",
+                )
+                cluster_rows_state = gr.State([])
+
+                with gr.Row(
+                    equal_height=False,
+                    elem_classes=["keyframe-detail-layout"],
+                ):
+                    with gr.Column(
+                        scale=3,
+                        elem_classes=["keyframe-media-column"],
+                    ):
                         with gr.Tabs():
                             with gr.Tab("Image Details"):
                                 detail_image = gr.Image(
@@ -935,22 +1546,44 @@ def build_app(
                                     prev_btn = gr.Button("Prev Frame", interactive=False)
                                     next_btn = gr.Button("Next Frame", interactive=False)
                                     pin_btn = gr.Button(
-                                        "Chốt Frame (Đẩy lên Top)",
+                                        "Pin Frame",
                                         interactive=False,
                                         variant="primary",
                                         elem_id="query-text-pin-btn",
                                     )
                                     clear_pins_btn = gr.Button("Gỡ hết frame đã chốt")
+                                neighbour_gallery = gr.Gallery(
+                                    label="Khung lân cận cùng video",
+                                    columns=11,
+                                    rows=1,
+                                    height=190,
+                                    allow_preview=False,
+                                    object_fit="contain",
+                                    elem_id="neighbour-gallery",
+                                )
+                                neighbour_rows_state = gr.State([])
                                 pinned_frames_state = gr.State([])
-
-                    with gr.Column(scale=2):
-                        detail_metadata = gr.Markdown("Select a keyframe to view metadata")
-                detections = gr.Dataframe(
-                    headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
-                    datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
-                    label="Detected objects",
-                    interactive=False,
-                )
+                    with gr.Column(
+                        scale=2,
+                        elem_id="query-text-metadata-column",
+                        elem_classes=["keyframe-metadata-column"],
+                    ):
+                        gr.Markdown(
+                            "### Metadata & Object Detection",
+                            elem_classes=["keyframe-metadata-heading"],
+                        )
+                        detail_metadata = gr.Markdown(
+                            "Select a keyframe to view metadata",
+                            elem_classes=["keyframe-metadata"],
+                        )
+                        detections = gr.Dataframe(
+                            headers=["Object", "Score", "MID", "Label", "ymin", "xmin", "ymax", "xmax"],
+                            datatype=["str", "number", "str", "number", "number", "number", "number", "number"],
+                            label="Detected objects",
+                            interactive=False,
+                            elem_id="detections-table",
+                            elem_classes=["keyframe-detections"],
+                        )
 
                 with gr.Column(visible=False):
                     legacy_query_language = gr.Dropdown(
@@ -1040,15 +1673,73 @@ def build_app(
                     within_results_field,
                     refine_status,
                 ]
+                # history rides on .then() so search_inputs_v2 keeps its asserted arity
                 search_button.click(
                     fn=search_keyframes_gpu_v2,
                     inputs=search_inputs_v2,
                     outputs=search_outputs_v2,
                     api_name="search_keyframes_v2",
+                ).then(
+                    fn=controller.record_history,
+                    inputs=[query, original_results_state, history_state],
+                    outputs=[history_state, history_dropdown],
+                    api_name=False,
+                ).then(
+                    fn=controller.refresh_clusters,
+                    inputs=[original_results_state, cluster_mode],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery, cluster_rows_state],
+                    api_name=False,
                 )
                 query.submit(
                     fn=search_keyframes_gpu_v2,
                     inputs=search_inputs_v2,
+                    outputs=search_outputs_v2,
+                    api_name=False,
+                ).then(
+                    fn=controller.record_history,
+                    inputs=[query, original_results_state, history_state],
+                    outputs=[history_state, history_dropdown],
+                    api_name=False,
+                ).then(
+                    fn=controller.refresh_clusters,
+                    inputs=[original_results_state, cluster_mode],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery, cluster_rows_state],
+                    api_name=False,
+                )
+                # kept out of search_inputs_v2 on purpose: the endpoint parameter count is asserted.
+                # Applied on demand rather than on toggle: the first search stays raw so the
+                # grouped result can be compared against it.
+                apply_mmr_button.click(
+                    fn=controller.set_mmr,
+                    inputs=[mmr_checkbox, cluster_mode],
+                    outputs=[],
+                    api_name=False,
+                ).then(
+                    fn=search_keyframes_gpu_v2,
+                    inputs=search_inputs_v2,
+                    outputs=search_outputs_v2,
+                    api_name=False,
+                ).then(
+                    fn=controller.refresh_clusters,
+                    inputs=[original_results_state, cluster_mode],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery, cluster_rows_state],
+                    api_name=False,
+                )
+                cluster_mode.change(
+                    fn=controller.refresh_clusters,
+                    inputs=[original_results_state, cluster_mode],
+                    outputs=[cluster_summary, cluster_dropdown, cluster_gallery, cluster_rows_state],
+                    api_name=False,
+                )
+                cluster_dropdown.change(
+                    fn=controller.show_cluster,
+                    inputs=[original_results_state, cluster_dropdown, cluster_mode],
+                    outputs=[cluster_gallery, cluster_rows_state],
+                    api_name=False,
+                )
+                similar_button.click(
+                    fn=controller.search_similar_images,
+                    inputs=[page_rows_state, selected_keyframe_state, top_k],
                     outputs=search_outputs_v2,
                     api_name=False,
                 )
@@ -1156,18 +1847,27 @@ def build_app(
                     queue=False,
                     api_name=False,
                 )
+                restore_outputs = [
+                    original_results_state,
+                    *refine_outputs,
+                    within_results_query,
+                    within_results_field,
+                    refine_collections,
+                    refine_videos,
+                    refine_authors,
+                    minimum_result_score,
+                ]
                 clear_refinements_button.click(
                     controller.clear_all_refinements,
                     inputs=[original_results_state],
-                    outputs=[
-                        *refine_outputs,
-                        within_results_query,
-                        within_results_field,
-                        refine_collections,
-                        refine_videos,
-                        refine_authors,
-                        minimum_result_score,
-                    ],
+                    outputs=restore_outputs,
+                    queue=False,
+                    api_name=False,
+                )
+                history_dropdown.change(
+                    fn=controller.restore_history,
+                    inputs=[history_state, history_dropdown],
+                    outputs=restore_outputs,
                     queue=False,
                     api_name=False,
                 )
@@ -1184,6 +1884,53 @@ def build_app(
                     detail_metadata,
                     detections,
                 ]
+                # page_payload's own six outputs, without the detail panes _change_page resets
+                repaint_outputs = [
+                    gallery,
+                    page_rows_state,
+                    page_state,
+                    page_label,
+                    previous_button,
+                    next_button,
+                ]
+                exclude_button.click(
+                    fn=controller.toggle_excluded,
+                    inputs=[
+                        excluded_state, selected_keyframe_state,
+                        visible_results_state, page_state, exclude_mode,
+                    ],
+                    outputs=[excluded_state, *repaint_outputs],
+                    queue=False,
+                    api_name=False,
+                )
+                clear_excluded_button.click(
+                    fn=controller.clear_excluded,
+                    inputs=[visible_results_state, page_state, exclude_mode],
+                    outputs=[excluded_state, *repaint_outputs],
+                    queue=False,
+                    api_name=False,
+                )
+                exclude_mode.change(
+                    fn=controller.restyle_excluded,
+                    inputs=[excluded_state, visible_results_state, page_state, exclude_mode],
+                    outputs=repaint_outputs,
+                    queue=False,
+                    api_name=False,
+                )
+                grouped_button.click(
+                    fn=controller.show_grouped_frames,
+                    inputs=[original_results_state, excluded_state, exclude_mode],
+                    outputs=[*repaint_outputs, refine_status],
+                    queue=False,
+                    api_name=False,
+                )
+                all_frames_button.click(
+                    fn=controller.show_all_frames,
+                    inputs=[original_results_state, excluded_state, exclude_mode],
+                    outputs=[*repaint_outputs, refine_status],
+                    queue=False,
+                    api_name=False,
+                )
                 previous_button.click(
                     controller.previous_page,
                     inputs=[visible_results_state, original_results_state, page_state],
@@ -1203,7 +1950,39 @@ def build_app(
                     inputs=[page_rows_state],
                     outputs=[
                         detail_image, detail_video, detail_metadata, detections,
-                        prev_btn, next_btn, pin_btn,
+                        prev_btn, next_btn, pin_btn, handoff_box, selected_keyframe_state,
+                        neighbour_gallery, neighbour_rows_state,
+                        current_fps_box, current_video_id_box, current_kf_frame_box
+                    ],
+                    api_name=False,
+                ).then(
+                    # chained, not a second .select(): the selection id it reads
+                    # is written by the handler above
+                    fn=controller.reveal_cluster_of,
+                    inputs=[original_results_state, selected_keyframe_state, cluster_mode],
+                    outputs=[cluster_dropdown, cluster_gallery, cluster_rows_state],
+                    api_name=False,
+                )
+                # a cluster thumbnail promotes to the selection like any other frame
+                cluster_gallery.select(
+                    controller.select_keyframe,
+                    inputs=[cluster_rows_state],
+                    outputs=[
+                        detail_image, detail_video, detail_metadata, detections,
+                        prev_btn, next_btn, pin_btn, handoff_box, selected_keyframe_state,
+                        neighbour_gallery, neighbour_rows_state,
+                        current_fps_box, current_video_id_box, current_kf_frame_box
+                    ],
+                    api_name=False,
+                )
+                # the filmstrip feeds the same handler, driven by its own row list
+                neighbour_gallery.select(
+                    controller.select_keyframe,
+                    inputs=[neighbour_rows_state],
+                    outputs=[
+                        detail_image, detail_video, detail_metadata, detections,
+                        prev_btn, next_btn, pin_btn, handoff_box, selected_keyframe_state,
+                        neighbour_gallery, neighbour_rows_state,
                         current_fps_box, current_video_id_box, current_kf_frame_box
                     ],
                     api_name=False,

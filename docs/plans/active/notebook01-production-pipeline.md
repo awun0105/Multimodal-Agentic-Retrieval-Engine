@@ -54,8 +54,8 @@ In scope:
   verification.
 - TransNet V2 shots, mandatory search-band anchors plus bounded semantic-event
   supplemental keyframes, NVIDIA Vietnamese FastConformer ASR, gated Vintern
-  OCR, shared 4-bit Qwen2.5-VL caption/grouping/summaries, scoped Gemini
-  fallback, package, sync, and scratch cleanup.
+  OCR, shared 4-bit Qwen2.5-VL caption/grouping/summaries, exclusive sticky
+  Vintern-3B-R local fallback, package, sync, and scratch cleanup.
 - Focused, integration, recovery, and real-provider acceptance tests.
 
 Out of scope:
@@ -99,7 +99,8 @@ shots
 asr
 shots + asr -> shot_transcript_links
 shots + keyframes + ocr + shot_captions + shot_transcript_links -> scenes
-scenes + keyframes + ocr + shot_captions + shot_transcript_links -> scene_summaries
+scenes + asr -> scene_transcript_links
+scenes + scene_transcript_links + asr + keyframes + ocr + shot_captions -> scene_summaries
 all canonical stages -> package -> sync
 ```
 
@@ -177,14 +178,15 @@ state update have all succeeded.
    and detector-error frames still run Vintern, while confident no-text frames
    emit canonical empty OCR rows.
 3. Load Qwen2.5-VL-7B once per chunk in explicit bitsandbytes NF4 4-bit mode
-   after Vintern is released; reuse it for caption, boundary, and summary.
+   after OCR Vintern is released; reuse it for caption, boundary, and summary.
 4. Batch one-image local requests through `request_many`: OCR defaults to four
    requests and captions to two, with adaptive CUDA OOM reduction to one.
 5. Keep scene-boundary and scene-summary requests at one because each request
    contains larger multi-image/context evidence.
-6. Fall back only an isolated invalid/schema-failing request to Gemini. Open a
+6. Fall back only an isolated invalid response to Vintern-3B-R. Open a
    per-chunk Qwen circuit only for load failure, repeated batch-one OOM, or an
-   unusable local runtime; do not increase Gemini concurrency.
+   unusable local runtime; unload Qwen before activating the sticky local
+   fallback.
 7. Keep request-level cache in stage scratch; use the persistent completed
    stage itself as the cross-session cache to avoid per-request HF commits.
 
@@ -258,8 +260,9 @@ state update have all succeeded.
 ### Work Package 10: Local Structured-Output Recovery
 
 1. Version the OCR prompt without changing the canonical OCR response schema.
-2. Attach the exact JSON Schema contract to every local Vintern/Qwen request
-   and include the contract version in local request-cache identity.
+2. Attach the exact JSON Schema contract to OCR requests and the versioned
+   plain-text/label contract to semantic Qwen/Vintern requests; include the
+   relevant contract version in local request-cache identity.
 3. Emit bounded parse-failure samples so provider output can be diagnosed
    without flooding logs.
 4. Classify OCR health against actual Vintern requests and refuse checkpoint
@@ -267,23 +270,53 @@ state update have all succeeded.
 5. Preserve the OCR gate, batching, model revision, and image preprocessing;
    validate locally before any one-video real-provider smoke.
 
+### Work Package 11: Python 3.13 Qualification And Optional Real Smoke
+
+1. Add a lightweight `system1-phase01-qualify` entry point outside the eager
+   `system1.phase01` import chain. Compose its candidate manifest from the
+   union of base dependencies and `phase01-production`, replacing only the
+   candidate specifiers while preserving extras and markers.
+2. Run candidate installation and qualification in separate subprocesses and
+   emit `phase01_runtime_qualification_v1.json` on both success and failure.
+   Candidate NeMo 2.7.3 and 3.0.0 runs require separate fresh runtimes.
+3. Keep the production dependency contract unchanged until a fresh Colab
+   Python 3.13 qualification proves Parquet/CUDA plus real NeMo, Vintern-1B,
+   Vintern-3B, and Qwen inference. Then synchronize exact runtime-critical
+   versions across `pyproject.toml`, `models.yaml`, and `uv.lock`.
+4. Split runtime-only checks from the composite Phase01 preflight so the smoke
+   flow can validate the fresh process before restoring its deterministic
+   Phase00 fixture.
+5. Add explicit `computed`/`restored` execution provenance at each checkpoint
+   reuse decision. Require all eleven production stages through `sync` to be
+   computed in the real one-video smoke.
+6. Keep the smoke implementation package-owned, but expose it only through the
+   explicit `phase01-smoke` developer command and a Markdown block that can be
+   copied into a new Notebook code cell. Use isolated `_smoke/<run_id>`
+   release/checkpoint prefixes, quantitative GPU cleanup, sanitized reports,
+   and exact-file remote retention. Normal `process-batch` workers never run or
+   wait for smoke.
+
 ## Dependencies And Invalidation
 
 The minimum invalidation rules are:
 
 - `shots` change invalidates `keyframes`, `shot_captions`,
-  `shot_transcript_links`, `scenes`, `scene_summaries`, `package`, and `sync`.
-- `keyframes` change invalidates `shot_captions`, `scenes`, `scene_summaries`,
-  `package`, and `sync`.
-- `ocr` change invalidates `shot_captions`, `scenes`, `scene_summaries`,
-  `package`, and `sync`.
-- `asr` change invalidates `shot_transcript_links`, `scenes`,
+  `shot_transcript_links`, `scenes`, `scene_transcript_links`,
   `scene_summaries`, `package`, and `sync`.
-- `shot_captions` change invalidates `scenes`, `scene_summaries`, `package`, and
-  `sync`.
-- `shot_transcript_links` change invalidates `scenes`, `scene_summaries`,
+- `keyframes` change invalidates `shot_captions`, `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- `ocr` change invalidates `shot_captions`, `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- `asr` change invalidates `shot_transcript_links`, `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- `shot_captions` change invalidates `scenes`, `scene_transcript_links`,
+  `scene_summaries`, `package`, and `sync`.
+- `shot_transcript_links` change invalidates `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- `scenes` change invalidates `scene_transcript_links`, `scene_summaries`,
   `package`, and `sync`.
-- `scenes` change invalidates `scene_summaries`, `package`, and `sync`.
+- `scene_transcript_links` change invalidates `scene_summaries`, `package`, and
+  `sync`.
 - `scene_summaries` change invalidates `package` and `sync`.
 - `package` change invalidates only `sync`.
 
@@ -326,6 +359,31 @@ completed stage.
 - [x] Complete Work Package 8 production audit hardening.
 - [x] Complete Work Package 9 semantic-event keyframe recall.
 - [x] Complete Work Package 10 local structured-output recovery.
+- [ ] Complete Work Package 11 Python 3.13 qualification and optional real smoke.
+  - [x] Implement reproducible candidate composition, installer/worker process
+    split, sanitized qualification artifact, and fresh-runtime fallback guard.
+  - [x] Implement runtime-only preflight, checkpoint decision provenance,
+    isolated HF smoke runner, cleanup/reporting, smoke-only CLI, and thin
+    optional Notebook orchestration block.
+  - [x] Run Gate 1 on a fresh Colab Python 3.13 GPU, pin the qualified
+    production dependency tuple, and regenerate the complete lock.
+  - [ ] Run Gate 2 one-video full-pipeline smoke from the pinned production
+    commit before the heterogeneous batch proof.
+    - 2026-08-30 attempt `smoke_20260830T111234Z_73799aaa` completed shots,
+      keyframes, ASR, OCR, captions, and transcript links, then exposed retained
+      Qwen CUDA exception references during the exclusive Vintern fallback in
+      `scenes`; the subprocess was killed with SIGKILL before a smoke report.
+      Runtime cleanup now clears traceback-held model/tensor references before
+      closing Qwen and loading Vintern. A fresh Colab rerun remains required.
+    - 2026-08-30 attempt `20260830T152429Z_b2c3c0f6` completed all ten stages
+      from real providers with `source=computed`, package/sync completion, and
+      passing GPU cleanup. Acceptance stopped only while serializing a package
+      sample because a multi-value Parquet field was returned as a NumPy array.
+      Smoke sample serialization now preserves array fields as JSON lists; a
+      fresh acceptance rerun remains required before marking Gate 2 complete.
+      The patched inspector was also run against the retained HF package from
+      this exact namespace: ZIP validation, checksum comparison, all required
+      non-empty row counts, and ASR/OCR/caption/summary sample extraction pass.
 
 ## Decisions
 
@@ -345,7 +403,7 @@ completed stage.
   parity-verified artifact is produced.
 - 2026-08-13: Keyframe candidate decoding uses one sequential video pass and
   retains only one shot's candidate group, bounding peak RAM on Colab/Kaggle.
-- 2026-08-16: Gemini request caching is stage-local. Persistent resume
+- 2026-08-16: Semantic request caching is stage-local. Persistent resume
   authority is one atomic backend commit containing the stage outputs and
   matching complete state marker; resume revalidates every recorded checksum.
 - 2026-08-16: Phase00 restore is batch-scoped and checksum-resumable; unrelated
@@ -359,8 +417,8 @@ completed stage.
   video/stage/disk progress and verifies the remote Phase01 layout after a run.
 - 2026-08-25: NeMo/FastConformer Vietnamese is the ASR default. One shared
   Qwen2.5-VL-7B NF4 runtime is primary for caption, scene boundaries, and scene
-  summaries; Gemini is a request-scoped fallback unless a systemic local
-  failure opens the remainder-of-chunk circuit breaker.
+  summaries. The 2026-09-01 runtime amendment replaces scoped Gemini fallback
+  with exclusive Vintern-3B-R, which becomes sticky after systemic Qwen failure.
 - 2026-08-25: OCR runs a conservative config-hashed OpenCV text-presence gate
   before Vintern and maps confident no-text results to canonical `ocr_v2`
   `status=empty` rows without inventing a new status.
@@ -378,9 +436,64 @@ completed stage.
   probes alone use exact `pts_time`; only visual/text novelty may produce a
   bounded non-representative `supplemental` row, while captions and summary
   images stay representative-only.
-- 2026-08-25: Local Vintern/Qwen generation receives a versioned exact JSON
-  Schema contract. OCR may degrade per request, but a video with zero
-  successful Vintern responses must fail the OCR stage before promotion.
+- 2026-08-25: Local OCR generation receives a versioned exact JSON Schema;
+  semantic Qwen/Vintern generation uses versioned plain-text or strict-label
+  contracts. OCR may degrade per request, but a video with zero successful
+  Vintern responses must fail the OCR stage before promotion.
+- 2026-08-29: Runtime qualification is a separate lightweight console entry
+  point because the main CLI eagerly imports Phase01. Candidate manifests are
+  the union of base and production-extra direct dependencies and preserve
+  NeMo's `[asr]` extra and requirement markers.
+- 2026-08-29: Production dependency pins may change only after an isolated
+  fresh-Colab Python 3.13 qualification artifact passes. Candidate B may not
+  reuse candidate A's runtime.
+- 2026-08-29: An explicit smoke run performs runtime-only preflight, restores a
+  pinned one-video fixture, then runs composite preflight and the unchanged
+  production batch core. All required stages must record `computed` at the
+  actual reuse decision for the smoke report to pass.
+- 2026-08-30: Package implementation now provides
+  `system1-phase01-qualify`, `run_phase01_runtime_preflight()`,
+  `run_phase01_smoke()`, and `phase01-smoke`. Notebook 01 invokes production
+  `process-batch` directly; the smoke-only CLI appears in Markdown for a
+  developer to copy into a new code cell when one-time implementation proof is
+  wanted.
+- 2026-08-30: The isolated `py313-nemo273` candidate pins Transformers
+  `4.57.6`, the latest patch in the `~=4.57.0` minor required by NeMo 2.7.3
+  ASR.
+- 2026-08-30: Gate 1 run `20260830T061502Z_d6a7d17c` passed all checks on
+  Colab Python `3.13.15` with a Tesla T4 and set `ready_to_pin_production=true`.
+  Production now pins NumPy `2.1.3`, NeMo `2.7.3`, and Transformers `4.57.6`;
+  Torch `2.8.0`, TorchVision `0.23.0`, and TorchAudio `2.8.0` remain unchanged.
+- 2026-08-31: ASR accuracy hardening is in progress. The authorized contract is
+  Silero speech VAD on bounded audio blocks, natural speech-range merging with
+  a 30-second hard cap and overlap only for forced splits, one-segment-at-a-time
+  NeMo inference, and the model-card Flashlight/KenLM 4-gram decoder at beam 64.
+  Low-quality hypotheses stay in a diagnostics sidecar but are excluded from
+  canonical ASR rows. Decoder or resource failure is retryable and must never
+  fall back to greedy decoding. The project-owned CPython 3.13 Linux wheel is a
+  checksummed model artifact prepared once before production workers start.
+
+### Work Package 12: Speech-Aware ASR And Pinned Beam Decoder
+
+- [x] Add bounded-block Silero VAD, speech-range packing, forced-split overlap,
+  alignment quality metrics, and diagnostics-only rejection helpers.
+- [x] Replace the legacy silence/fixed-12-second NeMo path with streaming
+  Flashlight decoding and coordinated checkpoint invalidation.
+- [x] Add the deterministic Flashlight runtime-artifact builder, download and
+  ABI/checksum preflight, and Notebook 01 preparation command.
+- [x] Extend package/config/runtime qualification contracts and focused tests.
+- [x] Build and portability-check the CPython 3.13 Linux wheel.
+- [ ] Upload the wheel and manifest, then run fresh-Colab qualification and
+  one-video real-provider smoke evidence.
+
+Local build evidence is complete for the final item: the official
+`manylinux2014_x86_64` image produced a CPython 3.13 wheel, `auditwheel repair`
+bundled KenLM and required shared libraries, and a clean virtual environment
+plus a separate `python:3.13-slim` Debian container imported
+`flashlight.lib.text.decoder.KenLM`. The emitted manifest SHA-256 is
+`e00041b237090a1ad5638f4b3667b7f7eee2803ff4858a2ce68ee779d0ad9a1b`.
+HF upload and fresh-Colab provider evidence remain open because the local HF
+CLI has no authenticated account.
 
 ## Still Required Before A Production Run
 
@@ -406,10 +519,21 @@ the one-time official TransNet converter parity job. Before a production run:
   frame decoding, search-band selection, both ASR providers, OCR gate behavior,
   true/adaptive local batching, request/systemic fallback separation, shared
   Qwen residency, scene voting/review, strict package assembly, and QA sampling.
-- The complete local suite passes 356 tests. Scoped Ruff checks pass for all
-  undefined names and for import correctness across the new Phase01 surface.
-  Notebook 01 code cells compile; all YAML/JSON schemas parse; the lockfile is
-  current; and `git diff --check` passes.
+- The current local suite passes 396 tests. Notebook 01 code cells compile,
+  both new YAML contracts parse, both CLI help surfaces load, and
+  `git diff --check` and `uv lock --check` pass. The lock records the
+  qualification helper's `packaging` dependency and no longer advertises the
+  removed `google-genai[aiohttp]` production extra. Fresh-Colab Gate 1 run
+  `20260830T061502Z_d6a7d17c` subsequently passed the complete dependency,
+  CUDA, real-provider, and cleanup contract and selected the production tuple.
+- 2026-09-01 ASR hardening validation: all 97 ASR/config/preflight/runtime-
+  qualification/production-contract tests pass; the full System 1 suite passes
+  406 tests. Its sole remaining failure is an existing Notebook 00B assertion
+  for the unrelated `monolith-mvp-app` text; Notebook 00B has no diff in this
+  work package. Notebook 01 JSON and all eight code cells compile, both CLI
+  help surfaces load, Ruff passes on every changed Python file except the
+  separately reported pre-existing one-line style debt in `production.py`,
+  `uv lock --check` passes, and `git diff --check` passes.
 - Runtime-hardening tests prove one Qwen load/close per chunk across captions,
   scenes, and summaries; Vintern-before-Qwen release ordering; request/systemic
   fallback separation; RAM-aware 4/2/1 scheduling; pre-load RAM blocking;
@@ -420,7 +544,8 @@ the one-time official TransNet converter parity job. Before a production run:
   tests and 39 Phase01 production-contract tests. It proves that exact schemas
   reach both Vintern and Qwen, cache identity changes with the contract version,
   parse telemetry is bounded, and all-request Vintern failure cannot promote
-  the OCR checkpoint. Ruff F/E9/I and `uv lock --check` pass.
+  the OCR checkpoint. Ruff F/E9/I passed at that work-package checkpoint; Ruff
+  is not installed in the current local environment.
 - Real-provider one-video, heterogeneous-batch, disconnect-at-every-boundary,
   and Colab/Kaggle platform proof remain Work Package 6.
 
@@ -428,15 +553,18 @@ the one-time official TransNet converter parity job. Before a production run:
 
 Active. Work Packages 0-5, 7, and 8 are implemented locally. On 2026-08-25 the
 production defaults moved to NeMo/FastConformer ASR, gated Vintern OCR, and a
-shared 4-bit Qwen semantic runtime with scoped Gemini fallback. Phase01 now
+shared 4-bit Qwen semantic runtime with exclusive sticky Vintern-3B-R fallback.
+Phase01 now
 also preserves mandatory anchors while adding bounded visual/text-novel
 supplemental keyframes. These paths, checkpoint invalidation, lifecycle
 telemetry, RAM guards, batching isolation, supplemental evidence, and packaging
-are covered by the 356-test local suite. OCR and the shared Qwen runtime now
-receive the exact versioned JSON Schema in their prompts; OCR records bounded
-parse diagnostics and fails before checkpoint promotion when every Vintern
-request fails. The intentionally deferred gate is
+are covered by the local suite. OCR receives its versioned JSON contract while
+Qwen/Vintern semantic requests use versioned plain-text/label contracts; OCR
+records bounded parse diagnostics and fails before checkpoint promotion when
+every Vintern request fails. The intentionally deferred gate is
 operational proof: provision the parity-verified TransNet artifact/checksum,
 then run one real video, a heterogeneous small batch with manual review, and the
 target Colab/Kaggle batch. Until those observable runs pass, the implementation
-must not be described as production-validated.
+must not be described as production-validated. Work Package 11 code and local
+contracts are implemented; its live Python 3.13 qualification and real HF/GPU
+smoke acceptance remain pending.

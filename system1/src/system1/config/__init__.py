@@ -8,6 +8,7 @@ from .loader import (
     load_provider_plan,
     persist_resolved_phase01_config,
     require_phase01_production_ready,
+    rebuild_resolved_phase01_config,
     resolve_phase01_config,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "load_provider_plan",
     "persist_resolved_phase01_config",
     "require_phase01_production_ready",
+    "rebuild_resolved_phase01_config",
     "resolve_phase01_config",
 ]

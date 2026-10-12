@@ -4,7 +4,7 @@ Date: 2026-08-05
 
 ## Status
 
-Accepted
+Accepted. Provider/runtime selection was amended by ADR 0018.
 
 ## Context
 
@@ -35,6 +35,33 @@ production video; it does not trigger a silent semantic fallback.
 
 The complete canonical design is
 `docs/architecture/system1-scene-grouping.md`.
+
+Provider amendment, 2026-09-01: the Gemini adapter above records the initial
+implementation choice, not the current production runtime. ADR 0018 governs
+provider lifecycle. Current production uses Qwen2.5-VL as semantic primary and
+the pinned Vintern-3B-R local model as its exclusive sticky fallback. The
+scene-grouping algorithm and Python partition authority in this ADR are
+unchanged.
+
+Evidence amendment, 2026-09-08: scene grouping consumes canonical Task 2
+word-aligned shot transcripts plus deterministic `aligned_speech_continuity_v2`
+facts for every adjacent-shot gap. A segment crosses a gap only when it owns
+aligned words in both shots; segment time overlap alone remains provenance.
+Reliable speech close to both sides of a cut is strong semantic-continuity
+evidence, including across forced-split segment IDs, but it never changes a
+Python vote or forces `SAME_SCENE`. Continuous documentary/news voice-over may
+still accompany a genuine audiovisual boundary. Missing or low-confidence ASR
+is neutral rather than evidence of silence or discontinuity. Reliability is
+gap-local: even a video-level `pass` is neutral when either neighboring shot
+has no aligned word evidence.
+
+Review amendment, 2026-09-08: a partition that remains suspicious after
+bounded degenerate review is quarantined asynchronously instead of being
+classified as a terminal provider failure. The exact immutable candidate and
+diagnostics are persisted outside canonical outputs. Only an exact
+fingerprint-matching manual approval may resume promotion; rejection is a
+durable non-canonical disposition, and stale approvals cannot apply after an
+input or config change.
 
 ## Alternatives Considered
 
@@ -70,6 +97,7 @@ Tradeoffs:
 ## Follow-Up
 
 - Implement the scene-grouping modules and fake-judge unit tests in Phase01.
-- Select the exact Gemini model and runtime limits in production config.
+- Keep provider/runtime selection synchronized with ADR 0018 and production
+  config.
 - Validate costs, latency, retry behavior, and grouping quality on a Batch 1
   slice before full-dataset processing.

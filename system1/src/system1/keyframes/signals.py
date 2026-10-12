@@ -23,7 +23,7 @@ class TextSignal:
     region_count: int
 
 
-def difference_hash(frame: np.ndarray, *, hash_size: int) -> np.ndarray:
+def difference_hash(frame: Path | np.ndarray, *, hash_size: int) -> np.ndarray:
     if hash_size < 1:
         raise ValueError("dHash hash_size must be positive")
     grayscale = _grayscale(frame)

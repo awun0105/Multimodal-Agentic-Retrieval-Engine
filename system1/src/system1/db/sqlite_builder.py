@@ -13,6 +13,7 @@ TABLE_FILES = (
     "shots",
     "keyframes",
     "asr_segments",
+    "asr_words",
     "shot_transcript_links",
     "scene_transcript_links",
     "ocr",
@@ -38,7 +39,7 @@ def write_sqlite(sqlite_path: Path, tables: dict[str, pd.DataFrame]) -> None:
         sqlite_path.unlink()
     with sqlite3.connect(sqlite_path) as connection:
         runtime_table_names = {
-            "videos","scenes","shots","keyframes","asr_segments","shot_transcript_links","scene_transcript_links",
+            "videos","scenes","shots","keyframes","asr_segments","asr_words","shot_transcript_links","scene_transcript_links",
             "ocr","objects","shot_captions","scene_summaries",
             "embeddings_meta","text_documents","vector_map","feature_availability","release_capabilities",
         }

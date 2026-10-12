@@ -1,22 +1,36 @@
 from __future__ import annotations
 
-import re
+import gc
+import hashlib
 import subprocess
 import tempfile
-import wave
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from huggingface_hub import snapshot_download
 
-from .faster_whisper import (
-    AsrResult,
-    _is_retryable_local_error,
-    _release_gpu_memory,
-    _time_range_to_frames,
-    has_audio_stream,
+from .alignment import (
+    ALIGNMENT_METHOD,
+    ALIGNMENT_VERSION,
+    AsrAlignmentError,
+    align_nemo_hypothesis_words,
+    trim_aligned_word_prefix,
 )
+from .contracts import AsrResult
+from .quality import (
+    alignment_metrics,
+    evaluate_transcript,
+    low_information_text,
+    normalize_for_comparison,
+)
+from .runtime import has_audio_stream, is_retryable_local_error, release_gpu_memory
+from .timing import index_frame_timeline, time_range_to_frames
+from .vad import SpeechRange, detect_speech_ranges
+
+
+class AsrResourceError(RuntimeError):
+    """Retryable ASR resource failure that must not silently change decoding."""
 
 
 def transcribe_video(
@@ -28,13 +42,50 @@ def transcribe_video(
     model_factory: Callable[..., Any] | None = None,
     audio_present: bool | None = None,
     pre_load_callback: Callable[[str], None] | None = None,
+    speech_range_detector: Callable[..., list[SpeechRange]] | None = None,
 ) -> AsrResult:
     present = has_audio_stream(video_path) if audio_present is None else audio_present
     if not present:
-        return AsrResult("no_audio", [], None, 0, None)
-    if model_factory is None:
-        model_factory = _load_pinned_nemo_model
+        return AsrResult(
+            status="no_audio",
+            segment_rows=[],
+            word_rows=[],
+            compute_type=None,
+            attempts=0,
+            detected_language=None,
+            status_details={
+                "decoder": _decoder_identity(config),
+                **_alignment_status_details([], [], rejected=0),
+            },
+        )
 
+    video_path = Path(video_path)
+    duration = _media_duration(video_path) or _timeline_duration(frame_timeline)
+    detector = speech_range_detector or detect_speech_ranges
+    segmentation = _mapping(config, "segmentation")
+    ranges = detector(
+        video_path,
+        duration_seconds=duration,
+        config=segmentation,
+    )
+    if not ranges:
+        return AsrResult(
+            status="no_speech",
+            segment_rows=[],
+            word_rows=[],
+            compute_type=None,
+            attempts=0,
+            detected_language=str(config.get("language", "vi")),
+            status_details={
+                "decoder": _decoder_identity(config),
+                "speech_range_count": 0,
+                "accepted_segment_count": 0,
+                "rejected_segment_count": 0,
+                **_alignment_status_details([], [], rejected=0),
+            },
+        )
+
+    factory = model_factory or _load_pinned_nemo_model
     total_attempts = int(config.get("total_attempts", 2))
     last_error: Exception | None = None
     for attempt in range(1, total_attempts + 1):
@@ -42,94 +93,392 @@ def transcribe_video(
         try:
             device = _device()
             if pre_load_callback is not None:
-                pre_load_callback("nemo")
-            if model_factory is _load_pinned_nemo_model:
-                model = model_factory(str(config["model_id"]), config=config)
-            else:
-                model = model_factory(str(config["model_id"]))
+                pre_load_callback("nemo_flashlight_beam64")
+            model = factory(str(config["model_id"]), config=config)
             if hasattr(model, "to"):
                 model = model.to(device)
             if hasattr(model, "eval"):
                 model.eval()
-            rows = _transcribe_chunked(
+            segment_rows, word_rows, diagnostics = _transcribe_streaming(
                 model,
-                Path(video_path),
+                video_path,
+                ranges=ranges,
                 video_id=video_id,
                 frame_timeline=frame_timeline,
                 config=config,
             )
-            return AsrResult("pass" if rows else "no_speech", rows, str(device), attempt, str(config.get("language", "vi")))
+            rejected = sum(not bool(item["accepted"]) for item in diagnostics)
+            return AsrResult(
+                status="pass" if segment_rows else "low_confidence",
+                segment_rows=segment_rows,
+                word_rows=word_rows,
+                compute_type=str(device),
+                attempts=attempt,
+                detected_language=str(config.get("language", "vi")),
+                diagnostics=diagnostics,
+                status_details={
+                    "decoder": _decoder_identity(config),
+                    "speech_range_count": len(ranges),
+                    "accepted_segment_count": len(segment_rows),
+                    "rejected_segment_count": rejected,
+                    **_alignment_status_details(
+                        segment_rows, word_rows, rejected=rejected
+                    ),
+                },
+            )
+        except AsrAlignmentError:
+            raise
         except Exception as exc:
             last_error = exc
-            if not _is_retryable_local_error(exc):
+            if not is_retryable_local_error(exc):
                 raise
             if attempt >= total_attempts:
                 break
         finally:
             del model
-            _release_gpu_memory()
-    raise RuntimeError(f"NeMo ASR failed after {total_attempts} attempt(s): {last_error}") from last_error
+            release_gpu_memory()
+    raise AsrResourceError(
+        "NeMo Flashlight ASR resource failure after "
+        f"{total_attempts} attempt(s); greedy decoding is forbidden: {last_error}"
+    ) from last_error
 
 
-def _transcribe_chunked(
+def _transcribe_streaming(
     model: Any,
     video_path: Path,
     *,
+    ranges: list[SpeechRange],
     video_id: str,
     frame_timeline: list[dict[str, Any]],
     config: Mapping[str, Any],
-) -> list[dict[str, Any]]:
-    batch_size = int(config.get("batch_size", 16))
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    quality_config = _mapping(config, "quality_gate")
+    diagnostics: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    blank_index = _ctc_blank_index(model)
+    timeline_index = index_frame_timeline(frame_timeline)
+
     with tempfile.TemporaryDirectory(prefix="system1_nemo_asr_") as temporary:
         temp_dir = Path(temporary)
-        ranges = _segment_ranges(video_path, frame_timeline, config)
-        output_pattern = temp_dir / "chunk_%05d.wav"
-        _segment_audio(video_path, output_pattern, ranges)
-        chunk_paths = sorted(temp_dir.glob("chunk_*.wav"))
-        if not chunk_paths:
-            return []
-        transcriptions = model.transcribe([str(path) for path in chunk_paths], batch_size=batch_size)
-        return _normalize_transcriptions(
-            transcriptions,
-            ranges,
-            video_id=video_id,
-            frame_timeline=frame_timeline,
-            model_config=config,
+        for speech_range in ranges:
+            wav_path = temp_dir / f"segment_{speech_range.segment_index:05d}.wav"
+            _extract_audio_segment(
+                video_path,
+                wav_path,
+                start_sec=speech_range.start_sec,
+                duration_sec=speech_range.end_sec - speech_range.start_sec,
+            )
+            hypothesis: Any = None
+            try:
+                hypothesis = _transcribe_one(model, wav_path)
+                raw_text = _transcription_text(hypothesis)
+                text = raw_text
+                acoustic = alignment_metrics(hypothesis, blank_index=blank_index)
+                decision = evaluate_transcript(
+                    text,
+                    duration_seconds=speech_range.end_sec - speech_range.start_sec,
+                    acoustic_metrics=acoustic,
+                    config=quality_config,
+                )
+                diagnostic = {
+                    "segment_index": speech_range.segment_index,
+                    "start_sec": speech_range.start_sec,
+                    "end_sec": speech_range.end_sec,
+                    "forced_split": speech_range.forced_split,
+                    "overlap_seconds": speech_range.overlap_seconds,
+                    "text": text,
+                    "quality_text": raw_text,
+                    "quality_text_scope": "raw_decoded_before_overlap_removal",
+                    "accepted": decision.accepted,
+                    "reason_codes": list(decision.reason_codes),
+                    "metrics": decision.metrics,
+                    "alignment_status": "not_required",
+                    "alignment_method": ALIGNMENT_METHOD,
+                    "alignment_version": ALIGNMENT_VERSION,
+                    "alignment_frame_count": decision.metrics.get("alignment_frames"),
+                    "aligned_word_count": 0,
+                    "forced_overlap_trimmed_word_count": 0,
+                    "alignment_error": None,
+                }
+                segment_id = f"{video_id}_ASR{speech_range.segment_index:05d}"
+                aligned_words: list[dict[str, Any]] = []
+                if decision.accepted:
+                    raw_aligned_words = align_nemo_hypothesis_words(
+                        hypothesis,
+                        model,
+                        text=raw_text,
+                        segment_id=segment_id,
+                        video_id=video_id,
+                        segment_start_sec=float(speech_range.start_sec),
+                        segment_end_sec=float(speech_range.end_sec),
+                        frame_timeline=timeline_index,
+                        provider="nemo",
+                        model_name=str(config["model_id"]),
+                        model_version=str(config["model_revision"]),
+                    )
+                    aligned_words = raw_aligned_words
+                    diagnostic["alignment_status"] = "aligned"
+                    diagnostic["aligned_word_count"] = len(aligned_words)
+                diagnostics.append(diagnostic)
+                candidates.append(
+                    {
+                        "range": speech_range,
+                        "text": text,
+                        "accepted": decision.accepted,
+                        "diagnostic": diagnostic,
+                        "words": aligned_words,
+                    }
+                )
+            finally:
+                wav_path.unlink(missing_ok=True)
+                del hypothesis
+                gc.collect()
+
+    _apply_adjacent_repetition_gate(candidates, quality_config)
+    _deduplicate_retained_candidates(candidates)
+    rows: list[dict[str, Any]] = []
+    word_rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not candidate["accepted"]:
+            continue
+        speech_range = candidate["range"]
+        start_frame, end_frame = time_range_to_frames(
+            speech_range.start_sec,
+            speech_range.end_sec,
+            timeline_index,
         )
+        rows.append(
+            {
+                "asr_segment_id": (
+                    f"{video_id}_ASR{speech_range.segment_index:05d}"
+                ),
+                "video_id": video_id,
+                "start_sec": float(speech_range.start_sec),
+                "end_sec": float(speech_range.end_sec),
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+                "text": candidate["text"],
+                "language": str(config.get("language", "vi")),
+                "confidence": None,
+                "avg_logprob": None,
+                "no_speech_prob": None,
+                "provider": "nemo",
+                "model_name": str(config["model_id"]),
+                "model_version": str(config["model_revision"]),
+                "status": "pass",
+            }
+        )
+        word_rows.extend(candidate["words"])
+    return rows, word_rows, diagnostics
 
 
-def _load_pinned_nemo_model(model_id: str, *, config: Mapping[str, Any] | None = None) -> Any:
+def _transcribe_one(model: Any, wav_path: Path) -> Any:
+    try:
+        result = model.transcribe(
+            [str(wav_path)],
+            batch_size=1,
+            return_hypotheses=True,
+            verbose=False,
+        )
+    except TypeError as exc:
+        raise RuntimeError(
+            "Pinned NeMo runtime must support return_hypotheses for ASR quality gates"
+        ) from exc
+    return _first_hypothesis(result)
+
+
+def _first_hypothesis(result: Any) -> Any:
+    values = list(result)
+    if not values:
+        return ""
+    value = values[0]
+    hypotheses = getattr(value, "n_best_hypotheses", None)
+    if hypotheses:
+        return hypotheses[0]
+    return value
+
+
+def _load_pinned_nemo_model(
+    model_id: str,
+    *,
+    config: Mapping[str, Any] | None = None,
+) -> Any:
     try:
         import nemo.collections.asr as nemo_asr
+        from omegaconf import OmegaConf
     except ImportError as exc:  # pragma: no cover - production preflight
         raise RuntimeError("nemo_toolkit[asr] is required for NeMo Phase01 ASR") from exc
 
     model_config = config or {}
     revision = str(model_config.get("model_revision", "")).strip()
     model_file = str(model_config.get("model_file", "")).strip()
-    if revision and model_file:
-        snapshot_dir = Path(
-            snapshot_download(
-                repo_id=model_id,
-                revision=revision,
-                allow_patterns=[model_file],
-            )
+    decoder = _mapping(model_config, "decoder")
+    lm_file = str(decoder.get("language_model_file", "")).strip()
+    lexicon_file = str(decoder.get("lexicon_file", "")).strip()
+    if not revision or not model_file or not lm_file or not lexicon_file:
+        raise RuntimeError("Pinned NeMo model, language model, and lexicon are required")
+
+    snapshot_dir = Path(
+        snapshot_download(
+            repo_id=model_id,
+            revision=revision,
+            allow_patterns=[model_file, lm_file, lexicon_file],
         )
-        return nemo_asr.models.ASRModel.restore_from(str(snapshot_dir / model_file))
-    return nemo_asr.models.ASRModel.from_pretrained(model_id)
+    )
+    _verify_artifact(snapshot_dir / model_file, str(model_config["model_sha256"]))
+    _verify_artifact(snapshot_dir / lm_file, str(decoder["language_model_sha256"]))
+    _verify_artifact(snapshot_dir / lexicon_file, str(decoder["lexicon_sha256"]))
+    model = nemo_asr.models.ASRModel.restore_from(str(snapshot_dir / model_file))
+    _configure_flashlight_decoder(
+        model,
+        decoder,
+        lm_path=snapshot_dir / lm_file,
+        lexicon_path=snapshot_dir / lexicon_file,
+        omega_conf=OmegaConf,
+    )
+    return model
 
 
-def _segment_audio(
-    video_path: Path,
-    output_pattern: Path,
-    ranges: list[tuple[float, float, int]],
+def _configure_flashlight_decoder(
+    model: Any,
+    decoder: Mapping[str, Any],
+    *,
+    lm_path: Path,
+    lexicon_path: Path,
+    omega_conf: Any,
 ) -> None:
-    for start, end, segment_index in ranges:
-        duration = max(0.0, end - start)
-        if duration <= 0.0:
+    if str(decoder.get("strategy")) != "flashlight":
+        raise RuntimeError("Production NeMo ASR requires Flashlight decoding")
+    decoding_cfg = omega_conf.create(
+        {
+            "strategy": "flashlight",
+            "preserve_alignments": True,
+            "compute_timestamps": False,
+            "beam": {
+                "beam_size": int(decoder.get("beam_size", 64)),
+                "search_type": "flashlight",
+                "ngram_lm_model": str(lm_path),
+                "ngram_lm_alpha": float(decoder.get("beam_alpha", 0.3)),
+                "beam_beta": float(decoder.get("beam_beta", 0.5)),
+                "flashlight_cfg": {
+                    "lexicon_path": str(lexicon_path),
+                    "beam_size_token": int(decoder.get("beam_size_token", 32)),
+                    "beam_threshold": float(decoder.get("beam_threshold", 20.0)),
+                },
+            },
+        }
+    )
+    model.change_decoding_strategy(decoding_cfg)
+
+
+def _decoder_identity(config: Mapping[str, Any]) -> dict[str, Any]:
+    decoder = _mapping(config, "decoder")
+    return {
+        "strategy": decoder.get("strategy"),
+        "beam_size": decoder.get("beam_size"),
+        "beam_alpha": decoder.get("beam_alpha"),
+        "beam_beta": decoder.get("beam_beta"),
+        "beam_size_token": decoder.get("beam_size_token"),
+        "beam_threshold": decoder.get("beam_threshold"),
+        "language_model_sha256": decoder.get("language_model_sha256"),
+        "lexicon_sha256": decoder.get("lexicon_sha256"),
+    }
+
+
+def _apply_adjacent_repetition_gate(
+    candidates: list[dict[str, Any]],
+    config: Mapping[str, Any],
+) -> None:
+    threshold = int(config.get("max_adjacent_low_information_repeats", 2))
+    maximum_chars = int(config.get("low_information_max_chars", 12))
+    maximum_tokens = int(config.get("low_information_max_tokens", 3))
+    previous = ""
+    run: list[dict[str, Any]] = []
+    for candidate in candidates:
+        text = str(candidate["text"])
+        normalized = normalize_for_comparison(text)
+        is_low_information = low_information_text(
+            text,
+            max_chars=maximum_chars,
+            max_tokens=maximum_tokens,
+        )
+        if normalized and normalized == previous and is_low_information:
+            run.append(candidate)
+        else:
+            run = [candidate]
+            previous = normalized
+        if len(run) <= threshold:
             continue
-        output_path = Path(str(output_pattern) % segment_index)
-        _extract_audio_segment(video_path, output_path, start_sec=start, duration_sec=duration)
+        for repeated in run:
+            repeated["accepted"] = False
+            diagnostic = repeated["diagnostic"]
+            diagnostic["accepted"] = False
+            reasons = list(diagnostic["reason_codes"])
+            if "adjacent_low_information_repetition" not in reasons:
+                reasons.append("adjacent_low_information_repetition")
+            diagnostic["reason_codes"] = reasons
+
+
+def _deduplicate_retained_candidates(candidates: list[dict[str, Any]]) -> None:
+    """Deduplicate only after every rejection gate has settled ownership.
+
+    Quality gates inspect raw decoded speech. Rejected chunks break the chain:
+    they must never claim words from the next chunk. Alignment has already run
+    against each complete acoustic matrix, so trimming never changes timing.
+    """
+    previous: dict[str, Any] | None = None
+    for candidate in candidates:
+        if not candidate["accepted"]:
+            previous = None
+            continue
+        speech_range = candidate["range"]
+        if (
+            previous is not None
+            and speech_range.overlap_seconds > 0
+            and previous["range"].end_sec > speech_range.start_sec
+        ):
+            text, prefix = _remove_forced_overlap(previous["text"], candidate["text"])
+            if prefix:
+                diagnostic = candidate["diagnostic"]
+                original_words = candidate["words"]
+                if text:
+                    words = trim_aligned_word_prefix(
+                        original_words,
+                        removed_prefix_text=prefix,
+                        canonical_text=text,
+                        segment_id=str(original_words[0]["asr_segment_id"]),
+                    )
+                else:
+                    words = []
+                    candidate["accepted"] = False
+                    diagnostic["accepted"] = False
+                    diagnostic["reason_codes"].append("forced_overlap_only")
+                candidate["text"] = text
+                candidate["words"] = words
+                diagnostic["text"] = text
+                diagnostic["aligned_word_count"] = len(words)
+                diagnostic["forced_overlap_trimmed_word_count"] = len(original_words) - len(words)
+        # An entirely duplicated chunk owns no canonical speech itself.
+        previous = candidate if candidate["accepted"] else None
+
+
+def _remove_forced_overlap(previous_text: str, current_text: str) -> tuple[str, str]:
+    previous = previous_text.split()
+    current = current_text.split()
+    maximum = min(12, len(previous), len(current))
+    for count in range(maximum, 0, -1):
+        left = normalize_for_comparison(" ".join(previous[-count:]))
+        right = normalize_for_comparison(" ".join(current[:count]))
+        if left and left == right:
+            return (
+                " ".join(current[count:]).strip(),
+                " ".join(current[:count]).strip(),
+            )
+    return current_text.strip(), ""
 
 
 def _extract_audio_segment(
@@ -140,11 +489,12 @@ def _extract_audio_segment(
     duration_sec: float,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    subprocess.run(
+    result = subprocess.run(
         [
             "ffmpeg",
             "-y",
+            "-v",
+            "error",
             "-ss",
             f"{start_sec:.3f}",
             "-i",
@@ -161,145 +511,12 @@ def _extract_audio_segment(
             str(output_path),
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
-
-
-def _segment_ranges(
-    video_path: Path,
-    frame_timeline: list[dict[str, Any]],
-    config: Mapping[str, Any],
-) -> list[tuple[float, float, int]]:
-    total_duration = _media_duration(video_path) or _timeline_duration(frame_timeline)
-    if total_duration <= 0.0:
-        return []
-    max_segment_seconds = float(config.get("max_segment_seconds", config.get("chunk_seconds", 12.0)))
-    if str(config.get("segmentation", "ffmpeg_silence")) != "ffmpeg_silence":
-        return _bounded_ranges(0.0, total_duration, max_segment_seconds)
-    silences = _detect_silences(
-        video_path,
-        noise_db=float(config.get("silence_db", -35.0)),
-        min_silence_duration=float(config.get("min_silence_duration", 0.6)),
-    )
-    if not silences:
-        return _bounded_ranges(0.0, total_duration, max_segment_seconds)
-    pad = float(config.get("speech_pad_seconds", 0.2))
-    min_segment_seconds = float(config.get("min_segment_seconds", 0.4))
-    speech_ranges: list[tuple[float, float, int]] = []
-    cursor = 0.0
-    for silence_start, silence_end in silences:
-        speech_start = max(0.0, cursor - pad)
-        speech_end = min(total_duration, silence_start + pad)
-        if speech_end - speech_start >= min_segment_seconds:
-            speech_ranges.extend(_bounded_ranges(speech_start, speech_end, max_segment_seconds))
-        cursor = max(cursor, silence_end)
-    speech_start = max(0.0, cursor - pad)
-    if total_duration - speech_start >= min_segment_seconds:
-        speech_ranges.extend(_bounded_ranges(speech_start, total_duration, max_segment_seconds))
-    return [
-        (start, end, index)
-        for index, (start, end, _old_index) in enumerate(speech_ranges)
-    ] or _bounded_ranges(0.0, total_duration, max_segment_seconds)
-
-
-def _detect_silences(
-    video_path: Path,
-    *,
-    noise_db: float,
-    min_silence_duration: float,
-) -> list[tuple[float, float]]:
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-i",
-            str(video_path),
-            "-af",
-            f"silencedetect=noise={noise_db}dB:d={min_silence_duration}",
-            "-f",
-            "null",
-            "-",
-        ],
-        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
         check=False,
     )
     if result.returncode != 0:
-        return []
-    return _parse_silencedetect(result.stderr)
-
-
-def _parse_silencedetect(stderr: str) -> list[tuple[float, float]]:
-    silences: list[tuple[float, float]] = []
-    current_start: float | None = None
-    start_pattern = re.compile(r"silence_start:\s*([0-9.]+)")
-    end_pattern = re.compile(r"silence_end:\s*([0-9.]+)")
-    for line in stderr.splitlines():
-        start_match = start_pattern.search(line)
-        if start_match:
-            current_start = float(start_match.group(1))
-            continue
-        end_match = end_pattern.search(line)
-        if end_match and current_start is not None:
-            silence_end = float(end_match.group(1))
-            if silence_end > current_start:
-                silences.append((current_start, silence_end))
-            current_start = None
-    return silences
-
-
-def _bounded_ranges(
-    start: float,
-    end: float,
-    max_segment_seconds: float,
-) -> list[tuple[float, float, int]]:
-    if end <= start:
-        return []
-    max_duration = max(0.1, max_segment_seconds)
-    ranges: list[tuple[float, float, int]] = []
-    current = start
-    while current < end:
-        next_end = min(end, current + max_duration)
-        ranges.append((current, next_end, len(ranges)))
-        current = next_end
-    return ranges
-
-
-def _normalize_transcriptions(
-    transcriptions: Any,
-    ranges: list[tuple[float, float, int]],
-    *,
-    video_id: str,
-    frame_timeline: list[dict[str, Any]],
-    model_config: Mapping[str, Any],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for text_result, (start, end, chunk_index) in zip(list(transcriptions), ranges, strict=False):
-        text = _transcription_text(text_result)
-        if not text:
-            continue
-        start_frame, end_frame = _time_range_to_frames(start, end, frame_timeline)
-        rows.append(
-            {
-                "asr_segment_id": f"{video_id}_ASR{chunk_index:05d}",
-                "video_id": video_id,
-                "start_sec": float(start),
-                "end_sec": float(end),
-                "start_frame": start_frame,
-                "end_frame": end_frame,
-                "text": text,
-                "language": str(model_config.get("language", "vi")),
-                "confidence": None,
-                "avg_logprob": None,
-                "no_speech_prob": None,
-                "provider": "nemo",
-                "model_name": str(model_config["model_id"]),
-                "model_version": str(model_config["model_revision"]),
-                "status": "pass",
-            }
-        )
-    return rows
+        raise RuntimeError(f"FFmpeg ASR segment extraction failed: {result.stderr[-1000:]}")
 
 
 def _transcription_text(value: Any) -> str:
@@ -308,9 +525,53 @@ def _transcription_text(value: Any) -> str:
     return str(getattr(value, "text", "")).strip()
 
 
-def _wav_duration(wav_path: Path) -> float:
-    with wave.open(str(wav_path), "rb") as handle:
-        return handle.getnframes() / float(handle.getframerate())
+def _ctc_blank_index(model: Any) -> int | None:
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is not None:
+        vocabulary = getattr(tokenizer, "vocab", None)
+        if vocabulary is not None:
+            return len(vocabulary)
+    decoder = getattr(model, "decoder", None)
+    vocabulary = getattr(decoder, "vocabulary", None)
+    if vocabulary is not None:
+        return len(vocabulary)
+    return None
+
+
+def _alignment_status_details(
+    segment_rows: list[dict[str, Any]],
+    word_rows: list[dict[str, Any]],
+    *,
+    rejected: int,
+) -> dict[str, Any]:
+    accepted = len(segment_rows)
+    aligned = len({str(row["asr_segment_id"]) for row in word_rows})
+    return {
+        "accepted_segment_count": accepted,
+        "rejected_segment_count": rejected,
+        "word_count": len(word_rows),
+        "aligned_segment_count": aligned,
+        "alignment_failed_segment_count": 0,
+        "word_alignment_coverage": aligned / accepted if accepted else 1.0,
+        "alignment_method": ALIGNMENT_METHOD,
+        "alignment_version": ALIGNMENT_VERSION,
+    }
+
+
+def _verify_artifact(path: Path, expected_sha256: str) -> None:
+    if not path.is_file():
+        raise RuntimeError(f"Pinned ASR artifact is missing: {path.name}")
+    actual = _sha256_file(path)
+    if actual != expected_sha256:
+        raise RuntimeError(f"Pinned ASR artifact checksum mismatch: {path.name}")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _media_duration(video_path: Path) -> float | None:
@@ -352,3 +613,10 @@ def _device() -> str:
         return "cuda:0" if torch.cuda.is_available() else "cpu"
     except ImportError:
         return "cpu"
+
+
+def _mapping(config: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    value = config.get(key, {})
+    if not isinstance(value, Mapping):
+        raise TypeError(f"NeMo ASR {key} config must be a mapping")
+    return value

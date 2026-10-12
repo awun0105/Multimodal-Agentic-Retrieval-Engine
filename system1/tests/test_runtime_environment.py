@@ -1,15 +1,23 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 import pytest
 
-from system1.commands.common import release_dir
-from system1.runtime import RuntimeEnvironment, RuntimePaths, detect_environment, parse_bool, resolve_runtime_environment, resolve_runtime_paths
-from system1.ingest.pipeline import run_ingestion
 from system1.batch.writer import assign_batches
-from system1.structure.builder import process_structure_batch
+from system1.commands.common import release_dir
 from system1.features.builder import process_feature_batch
+from system1.ingest.pipeline import run_ingestion
 from system1.media.probe import VideoProbe, VideoProbeWithTimeline
+from system1.release.merge import _is_complete_status
+from system1.runtime import (
+    RuntimeEnvironment,
+    RuntimePaths,
+    detect_environment,
+    parse_bool,
+    resolve_runtime_environment,
+    resolve_runtime_paths,
+)
+from system1.structure.builder import process_structure_batch
 
 
 @pytest.fixture(autouse=True)
@@ -110,6 +118,16 @@ def test_parse_bool_handles_known_values():
     assert parse_bool(None, default=True) is True
     assert parse_bool("unknown", default=False) is False
     assert parse_bool("unknown", default=True) is True
+
+
+@pytest.mark.parametrize("status", ["pass", "complete", "complete_local"])
+def test_release_merge_accepts_all_complete_statuses(status: str) -> None:
+    assert _is_complete_status(status) is True
+
+
+@pytest.mark.parametrize("status", [None, "unknown", "failed", "partial"])
+def test_release_merge_rejects_incomplete_statuses(status: object) -> None:
+    assert _is_complete_status(status) is False
 
 
 def test_release_id_affects_release_dir_and_phase_outputs(tmp_path, monkeypatch):

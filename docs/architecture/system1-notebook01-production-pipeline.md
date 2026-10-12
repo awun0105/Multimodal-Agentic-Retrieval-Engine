@@ -44,17 +44,64 @@ official video
   -> deterministic representative-keyframe selection
   -> default pinned NeMo/Parakeet Vietnamese ASR, or Faster-Whisper Large-v3 override
   -> OpenCV text-presence gate, then Vintern OCR for uncertain/text frames
-  -> shared 4-bit Qwen strict shot-caption JSON, batched over representative frames
-  -> ASR-to-shot alignment
+  -> deterministic representative-only or ordered-storyboard shot evidence
+  -> shared 4-bit Qwen plain-text shot-caption fields, eight batched fields per shot
+  -> canonical ASR word alignment and deterministic ASR-to-shot attribution
   -> shared Qwen multimodal context-focus scene grouping
-  -> shared Qwen strict bilingual scene-summary JSON
-  -> scoped Gemini fallback for failed semantic requests/runtime
+  -> deterministic ASR-to-scene attribution
+  -> independent speech-only and ordered visual-only scene summaries
+  -> strict audio-visual relation classification and adaptive final summaries
+  -> exclusive sticky Vintern-3B-R fallback for failed semantic requests/runtime
   -> validated per-video structure ZIP
 ```
 
 Business logic, prompts, schemas, caching, retries, rate limiting, validation,
 and artifact writing live in package/CLI code. Notebook 01 remains a thin
 operator-facing orchestration surface.
+
+## Runtime Qualification And Worker Smoke Gate
+
+Dependency changes and normal worker execution have separate gates.
+
+The one-time dependency gate starts from a fresh Python 3.13 Colab runtime and
+installs base System1 only. `system1-phase01-qualify` composes the union of
+`project.dependencies` and `phase01-production`, preserves requirement extras
+and markers, applies the named candidate specifiers, installs the full direct
+contract in one subprocess, and runs checks in another fresh subprocess. The
+result is `phase01_runtime_qualification_v1.json`, including exact installed
+versions, ABI/Parquet checks, CUDA, owner-classified `pip check`, real NeMo
+restore/transcription, and real Vintern-1B, Vintern-3B, and Qwen inference.
+Production NumPy/NeMo/Transformers constraints may change only after that
+artifact passes. A fallback candidate must run in a different runtime identity.
+Gate 1 run `20260830T061502Z_d6a7d17c` satisfied this contract on Colab Python
+`3.13.15` and a Tesla T4. Production therefore pins NumPy `2.1.3`, NeMo `2.7.3`,
+and Transformers `4.57.6`; the PyTorch ABI tuple remains Torch `2.8.0`,
+TorchVision `0.23.0`, and TorchAudio `2.8.0`.
+
+Normal workers use `process-batch` directly and never repeat the real smoke as
+part of their assigned batch. The optional `phase01-smoke` developer command is
+run manually once when full-pipeline implementation evidence is needed.
+Runtime-only preflight runs before fixture restore. The package then downloads
+pinned `L30_V040` Phase00/raw evidence from Hugging Face, creates a one-row
+handoff, and calls the unchanged `process_production_batch()` core. Smoke
+release and checkpoint writes go only to configured test repositories under
+`_smoke/<run_id>`. A smoke pass requires all of these decision-point sources to
+be `computed`:
+
+```text
+shots, keyframes, asr, ocr, shot_captions, shot_transcript_links,
+scenes, scene_transcript_links, scene_summaries, package, sync
+```
+
+The smoke report records dependency/runtime identity, providers, timings,
+RAM/VRAM peaks, row counts, representative ASR segment/word, OCR, caption and
+summary rows, word-alignment coverage, unassigned/duplicate word counts,
+package validation, and remote checksum proof. Local fixture, output, checkpoint cache,
+and run scratch are removable while the shared model cache remains. Optional
+remote cleanup enumerates and validates each exact object and refuses deletion
+unless the repository and `_smoke/<run_id>` prefix match configured test
+authority. Smoke success or failure never starts or blocks an assigned
+production batch; production scheduling is a separate operator action.
 
 ## Notebook And Config Contract
 
@@ -64,6 +111,11 @@ storage/repository overrides, and secret-store lookups. If no release override
 is set, package code resolves the Phase00 release. Secrets come from the
 environment, Colab Secrets, or Kaggle Secrets and are neither displayed nor
 persisted.
+
+The notebook also contains a Markdown-only `OPTIONAL ONE-VIDEO FULL-PIPELINE
+SMOKE` block. A developer may copy that thin `phase01-smoke` invocation into a
+new code cell after environment/package setup. Markdown is not executed by Run
+All, so ordinary workers pay no smoke cost.
 
 Auto-resolution selects the unique completed Phase00 release with the latest
 `completed_at`. Missing timestamps or a latest-time tie fail explicitly. A
@@ -132,6 +184,12 @@ script enforces private storage only when run with `--require-private`.
 - Test/mock profiles may keep explicit fallback fixtures, but their manifests
   must identify them as non-production.
 - Shot ranges use `[start_frame, end_frame)` and decoded original frame IDs.
+- Shot time ranges use the decoded PTS partition. A non-final shot ends at the
+  PTS of its exclusive `end_frame`, which is exactly the next shot's start PTS;
+  individual frame-duration metadata cannot create gaps or overlaps there.
+  Only the final shot uses the final decoded frame's positive
+  `duration_time` to close the video interval. Missing or non-positive final
+  duration is a contract error, never an FPS-derived fallback.
 - Shot IDs remain `{video_id}_SH{shot_index:05d}`, zero-based in timeline order.
 
 ## Search-Band Keyframes
@@ -229,7 +287,8 @@ Accepted rows use `keyframe_role = supplemental`, are never representative, and
 are covered by `keyframes_v3`. OCR runs on them through the existing text gate;
 their OCR joins the shot's scene evidence, and focused scene review can include
 all supplemental images without role-key overwrite. Shot captioning and scene
-summary image sampling remain representative-only.
+scene-summary image sampling remains representative-only. Shot captioning may
+use these canonical frames through the bounded Task 5 storyboard policy below.
 
 `keyframe_diagnostics.jsonl` records candidate source, timestamp gap, quality,
 visual/text scores, triggered-signal count, keep/drop reason, temporal distance,
@@ -250,23 +309,74 @@ default provider = nemo
 default model = nvidia/parakeet-ctc-0.6b-vi
 default revision = b0493142b49458810324e3db8be9e8e07b4ebc17
 default model file = parakeet-ctc-0.6b-vi.nemo
-segmentation = FFmpeg silence detection with bounded max segment length
+segmentation = Silero VAD with a 30-second hard cap
+decoder = pinned 4-gram KenLM + lexicon through Flashlight beam search
 optional provider = faster_whisper
 optional model = Systran/faster-whisper-large-v3 at its configured revision
 ```
 
 ASR runs for every video.
 
+NeMo ASR first streams mono 16 kHz audio through the Silero ONNX VAD shipped by
+the pinned Faster-Whisper runtime. Detection is bounded to 120-second blocks
+with two seconds of overlap; only one decoded block is held in RAM. Speech
+ranges separated by at most 700 ms are merged and padded by 350 ms. Natural
+silence remains the primary boundary. A speech range longer than 30 seconds is
+split only as a hard resource cap, with 750 ms overlap so the forced cut does
+not discard a word. Fixed-duration chunks are not the normal segmentation
+path.
+
+Each speech range is extracted to one temporary WAV and transcribed with batch
+size one. The temporary file and hypothesis are released before the next range.
+The pinned 4-gram language model and lexicon are checksum-verified with the
+`.nemo` file and decoded using Flashlight beam search (`beam_size=64`). The
+project-owned CPython 3.13 Flashlight wheel is installed and verified before
+runtime preflight. Production does not fall back to greedy decoding. Missing or
+mismatched pinned artifacts fail preflight; transient decoder or resource
+failure receives the bounded video retry and then fails that video explicitly.
+
+Flashlight remains the sole canonical transcript authority. NeMo 2.7.3 retains
+the CTC acoustic matrix from that same inference; package code retokenizes the
+Flashlight text with the model tokenizer and performs deterministic CTC
+Viterbi forced alignment. Output timestep duration comes from the runtime
+preprocessor stride and encoder subsampling factor. There is no second greedy
+inference and `compute_timestamps` remains disabled for beam decoding. Every
+accepted segment must reconstruct from one or more canonical `asr_words_v1`
+rows or the ASR stage fails terminally.
+
+Forced-split cleanup happens after alignment: the full raw Flashlight text is
+aligned to the full overlapping acoustic matrix, then the duplicated aligned
+prefix is removed and the remaining canonical word IDs/indexes are rebuilt.
+This preserves the original acoustic timing of words after the overlap.
+Deduplication runs after both quality and adjacent-repetition rejection gates.
+Only a retained preceding chunk with temporal overlap can supply the prefix;
+rejected chunks break the deduplication chain. Raw quality text remains in
+diagnostics alongside the resulting canonical text. The versioned forced-overlap
+policy participates in the ASR checkpoint hash.
+
+CTC blank ratio, non-blank posterior, normalized entropy, text density,
+character rate, and repetition checks run after decoding. Rejected candidates
+remain in `asr_diagnostics.jsonl` with reason codes and acoustic metrics but do
+not enter canonical `asr_segments.parquet`. Conservative thresholds preserve
+short meaningful speech and lyrics; they are intended for calibration from
+real smoke evidence rather than semantic deletion by an LLM.
+
 - No audio stream: record video ASR status `no_audio`; emit an empty,
-  schema-valid `asr_segments.parquet` and empty
+  schema-valid `asr_segments.parquet`, `asr_words.parquet`, and empty
   `shot_transcript_links.parquet`; continue the video.
-- Audio exists but contains no speech after successful inference: record
-  `no_speech`; emit empty schema-valid ASR/link tables; continue.
+- Audio exists but VAD finds no speech: record `no_speech`; emit empty
+  schema-valid ASR/link tables; continue.
+- VAD finds speech but every decoded candidate fails the quality gate: record
+  `low_confidence`, retain all diagnostics, emit empty schema-valid ASR/link
+  tables, and continue.
 - Audio exists but extraction/model/inference fails after bounded retry: fail
   the video.
 - Every non-empty ASR row stores `asr_segment_id`, `video_id`, time range,
   decoded-frame range when resolvable, text, detected language, confidence when
   available, provider/model/version, and status.
+- Every accepted ASR segment has ordered canonical word rows with stable IDs,
+  word-local time/frame ranges, alignment method/version, and matching
+  provider/model identity. Rejected hypotheses never fabricate word rows.
 
 ## OCR And Canonical Shot Captions
 
@@ -277,11 +387,26 @@ canonical `ocr_v2` row with empty text, `status=empty`, and gate provenance;
 gate counts and failures stay in diagnostics. Thresholds are versioned in
 `phase01.yaml` and participate in the OCR stage fingerprint.
 
-Each shot has exactly one caption row generated from its selected
-representative keyframe. Qwen2.5-VL-7B-Instruct is primary and must return
-strict `shot_caption_response_v3` JSON including bilingual captions,
-objects/actions, visible-text summary, and scene type. The caption rows retain
-the canonical `shot_captions_v3` contract.
+Each shot still has exactly one canonical caption row. A deterministic CPU gate
+selects `representative_only` for short/static evidence and
+`temporal_storyboard` when canonical supplemental evidence, or a sufficiently
+long shot plus adjacent dHash/OCR change, establishes meaningful within-shot
+change. Duration alone never enables temporal mode.
+
+Representative-only requests use the canonical representative image. Eligible
+dynamic shots use one deterministic chronological storyboard assembled from a
+bounded selection of canonical early/middle/late/supplemental keyframes. The
+same single image is supplied to Qwen and to the sticky Vintern fallback, so
+the existing eight-request-per-shot and OOM/fallback lifecycle is unchanged.
+`ordered_temporal_storyboard_v2` preserves every complete canonical source
+frame and its aspect ratio by containing it inside the fixed tile and centering
+it on deterministic dark padding; it never crops or stretches source imagery.
+The storyboard contains only system labels; per-frame OCR stays in the textual
+evidence block. Shot-caption prompts never receive ASR or transcript evidence.
+
+Qwen2.5-VL-7B-Instruct remains primary and generates each caption field as
+plain text using the v2 prompt-version mapping in `models.yaml`. The caption
+rows retain the canonical `shot_captions_v4` contract.
 
 ```json
 {
@@ -296,9 +421,16 @@ the canonical `shot_captions_v3` contract.
 }
 ```
 
-Both fields are non-empty strings in a successful production row. The provider
-adapter validates the response schema and rejects extra/missing/wrongly typed
-fields according to the versioned contract.
+The two captions are non-empty strings in a successful production row; object,
+action, and visible-text fields retain their existing list/optional-text
+semantics. Python validates each plain-text field and assembles the row.
+
+`diagnostics/shot_caption_field_provenance.jsonl` is an authoritative sidecar
+with exactly eight records per shot. It records caption mode, all source
+keyframe/frame IDs, timestamps, roles and selection reasons, trigger metrics,
+the temporal/storyboard policies, the evidence fingerprint, and field-level
+model/fallback identity. Thus the row remains one-per-shot while its exact
+visual evidence stays auditable.
 
 Canonical `shot_captions.parquet` is one row per shot:
 
@@ -334,13 +466,17 @@ fields belong in Parquet.
 Caption requests require per-request content-addressed caching, bounded retry,
 resumability, exact model/version, prompt version, response-schema version, and
 non-secret diagnostics. Local requests use true processor/model tensor
-batching, not thread concurrency. Invalid JSON/schema for one request falls
-back only that request to Gemini; systemic local-runtime failure opens the
-chunk circuit and sends the remaining semantic work to Gemini.
+batching, not thread concurrency. An invalid response for one request falls
+back only that request to Vintern-3B-R; systemic local-runtime failure unloads
+Qwen, opens the chunk circuit, and sends remaining semantic work to the sticky
+local fallback.
 
 ## Transcript-Shot Alignment
 
-`shot_transcript_links.parquet` links ASR segments to every overlapping shot.
+`shot_transcript_links.parquet` links ASR segments to every overlapping shot
+for provenance. Text attribution is separate: aligned words are assigned to
+exactly one half-open shot interval by maximum temporal overlap, with midpoint
+and right-boundary ownership as deterministic tie breakers.
 It contains at least:
 
 ```text
@@ -348,9 +484,12 @@ video_id
 shot_id
 asr_segment_id
 coverage
+assigned_word_count
 ```
 
-Coverage is derived deterministically from time overlap. Empty `no_audio` or
+The v2 contract also carries overlap start/end/duration plus explicit segment
+and entity coverage; `coverage` remains a compatibility alias for segment
+coverage. Empty `no_audio` or
 `no_speech` ASR produces an empty schema-valid link table, not fabricated text.
 
 ## Scene Grouping
@@ -360,16 +499,37 @@ The authoritative algorithm is
 
 Its inputs are ordered shots, representative images, optional
 early/late/supplemental images for focused review, bilingual shot captions,
-caption objects/actions, canonical OCR, ASR transcript evidence, and the
-timeline. It does not use organizer support artifacts, embeddings, or organizer
-metadata as boundary evidence.
+caption objects/actions, canonical OCR, temporally attributed word-level shot
+transcript evidence, deterministic aligned-speech facts for each adjacent-shot
+gap, and the timeline. It does not use organizer support artifacts, embeddings,
+or organizer metadata as boundary evidence.
 
-The configured structured client returns only strict Boolean adjacent-shot
-boundary judgements. Qwen is primary and Gemini is fallback. Package
-code owns overlap voting, ambiguity review, consistency review, deterministic
-scene partitioning, IDs, ranges, mappings, and validation. Every shot belongs
-to exactly one scene; scenes cannot overlap, leave a shot-order gap, or reorder
-shots.
+The gap facts distinguish segment provenance from word ownership. They record
+whether the same accepted ASR segment owns words on both sides of the cut and
+whether reliable speech is temporally close to both sides of the boundary.
+They are rendered for primary, focused, consistency, and degenerate review.
+Continuous speech is strong continuity evidence but never changes a Python
+vote or label directly: documentary/news narration may span a genuine event,
+topic, setting, or time transition, and unreliable or missing ASR remains
+neutral.
+
+The configured semantic client returns one strict `BOUNDARY | SAME_SCENE`
+adjacent-shot label per request. Qwen is primary and the existing sticky local
+fallback is Vintern-3B-R. Package code owns overlap voting, ambiguity review,
+bounded consistency review, deterministic scene partitioning, IDs, ranges,
+mappings, and validation. Every shot belongs to exactly one scene; scenes
+cannot overlap, leave a shot-order gap, or reorder shots.
+
+Before promotion, `scene_grouping_v4` computes partition-level boundary-density
+and one-shot-scene metrics. A suspicious result receives one configured bounded
+degenerate semantic review. If the rebuilt partition remains suspicious, the
+video is quarantined as `review_required`: its exact candidate, quality report,
+and gap diagnostics are persisted outside canonical stage outputs; scenes and
+all downstream stages remain pending while other videos continue. An immutable
+exact-candidate approval resumes and promotes it as
+`pass_after_manual_review`; rejection becomes a durable `review_rejected`
+outcome. Successful package validation accepts normal non-suspicious reports or
+an exact embedded manual approval, never a stale or free-form override.
 
 A valid all-false boundary result creates one successful scene. Failure of both
 the local primary and configured fallback after bounded retry fails the video;
@@ -377,23 +537,55 @@ production does not turn an unresolved result into one fabricated scene.
 
 ## Bilingual Scene Summaries
 
-Only after scene boundaries are fixed, the same shared Qwen runtime receives
-the scene's sampled representative images, bilingual shot captions,
-objects/actions, OCR, ASR transcript evidence, and timeline. Gemini receives
-the same request only when fallback is required. Both return strict JSON:
+Only after scene boundaries are accepted, `scene_summaries_v4` prepares two
+independent evidence paths inside the existing `scene_summaries` checkpoint
+stage:
 
-```json
-{
-  "summary_vi": "...",
-  "summary_en": "..."
-}
+```text
+canonical scene-owned ASR words -> speech_summary_vi
+ordered shots + representative images + captions/actions/OCR
+                                -> visual_summary_vi
+speech_summary_vi + visual_summary_vi
+                                -> audio_visual_relation
+both summaries + relation       -> summary_vi -> summary_en
 ```
+
+The speech request contains only scene ID/time and a transcript assembled from
+Task 2 canonical words. The visual request contains only ordered visual,
+caption, action, visible-text, and OCR evidence. Segment links remain
+provenance and never become text ownership. English modality summaries are
+faithful translations of their Vietnamese counterparts; they do not receive
+raw evidence again.
+
+The canonical relation is one of `aligned`, `complementary`, `partial`,
+`b_roll`, `unrelated`, or `contradictory` when reliable speech exists.
+`no_audio` and `no_speech` deterministically produce `no_speech`;
+low-confidence ASR or a pass-status scene with zero aligned words produces
+`speech_unavailable`. Both missing-speech states skip relation/fusion requests
+and copy the visual summaries into the final retrieval-facing fields. Zero
+scene words therefore never imply silence.
+
+Speech and visual text have separate limits. Speech retains complete ordered
+words up to its own budget. Visual overflow reduces complete shot blocks with
+deterministic even temporal sampling so early, middle, and late scene evidence
+remain represented. Each path persists a deterministic SHA-256 fingerprint of
+the exact bounded evidence consumed. Qwen receives no image for text-only
+passes; Vintern's image-required fallback receives a neutral technical image
+with no scene semantics, preserving modality isolation.
 
 Canonical `scene_summaries.parquet` is one row per scene:
 
 ```text
 scene_id
 video_id
+speech_evidence_status
+speech_evidence_fingerprint
+visual_evidence_fingerprint
+speech_summary_vi
+speech_summary_en
+visual_summary_vi
+visual_summary_en
+audio_visual_relation
 summary_vi
 summary_en
 provider
@@ -405,10 +597,11 @@ confidence
 status
 ```
 
-Summary calls use the same cache/retry/rate-limit/resume/provenance rules as
-caption calls. Persistent summary failure fails the video. Earlier
-`scene_summary_initial` / `scene_summary_enriched` fields are retired; one
-canonical bilingual summary row is produced after the final scene partition.
+All semantic fields use separate plain-text requests and field-level
+provenance. Qwen remains primary and sticky Vintern-3B-R remains the sole local
+fallback without model reloads between passes. Persistent required-field
+failure prevents atomic stage promotion. Earlier `scene_summary_initial`,
+`scene_summary_enriched`, and direct `scene_summaries_v3` fusion are retired.
 
 ## Structure Artifact Contract
 
@@ -422,6 +615,7 @@ The per-video structure package is:
 |-- ocr.parquet
 |-- shot_captions.parquet
 |-- asr_segments.parquet
+|-- asr_words.parquet
 |-- shot_transcript_links.parquet
 |-- scenes.parquet
 |-- scene_transcript_links.parquet
@@ -430,7 +624,10 @@ The per-video structure package is:
 |-- thumbnails/
 |-- diagnostics/
 |   |-- keyframe_diagnostics.jsonl
+|   |-- shot_caption_field_provenance.jsonl
 |   |-- scene_boundary_diagnostics.jsonl
+|   |-- scene_partition_quality.json
+|   |-- scene_summary_field_provenance.jsonl
 |   |-- transnet_predictions.json
 |   |-- asr_status.json
 |   `-- ocr_status.json
@@ -441,10 +638,10 @@ The per-video structure package is:
 `-- errors.jsonl
 ```
 
-`scene_transcript_links.parquet` is retained even though it was omitted from
-the proposed list. It is the canonical direct mapping from scene context to ASR
-segments used by System 2 and is already part of the repository data contract.
-It is derived after the scene partition is fixed.
+`scene_transcript_links.parquet` is the canonical segment-level provenance map
+for scenes. It is derived in its own checkpoint stage after the scene partition
+is accepted. Scene-specific text is assembled from `asr_words.parquet`, not by
+copying the full text of every overlapping segment.
 
 Contact sheets, raw provider responses, retry logs, and request caches are
 intermediate/checkpoint data and are not canonical runtime tables.
@@ -498,8 +695,11 @@ independent retrieval indexes.
 - Model/decode/inference/API failure after bounded retry fails the video at the
   responsible stage.
 - The checkpoint key is `release_id + video_id + stage`. Stages are `shots`,
-  `keyframes`, `asr`, `shot_captions`, `shot_transcript_links`, `scenes`,
-  `scene_summaries`, `package`, and `sync`.
+  `keyframes`, `asr`, `ocr`, `shot_captions`, `shot_transcript_links`, `scenes`,
+  `scene_transcript_links`, `scene_summaries`, `package`, and `sync`.
+- The scenes stage directly depends on ASR as well as shot transcript links,
+  because per-gap reliability reads the persisted ASR status. A change to ASR
+  therefore invalidates scene evidence through an explicit DAG edge.
 - Each stage stores status, input fingerprint, relevant config hash,
   model/revision, prompt version when applicable, schema version, output
   checksums, and completion time.
@@ -509,8 +709,10 @@ independent retrieval indexes.
 - A rerun reuses only complete stages whose persistent outputs, checksums,
   upstream fingerprints, and relevant versions still match. Dependency changes
   invalidate only downstream stages.
-- Worker reports and `errors.jsonl` distinguish failed, no-audio/no-speech, and
-  successful-empty states.
+- Worker reports distinguish complete, `review_required`, `review_rejected`,
+  technical failures, no-audio/no-speech, and successful-empty states.
+  Review dispositions are not written to `errors.jsonl`; a quarantined video
+  does not abort the batch or consume a retry slot.
 
 Notebook 01 processes a resource-aware chunk of videos while preserving one
 heavy local VLM resident at a time. Vintern serves OCR and is released before
@@ -533,13 +735,14 @@ to two and reduce on CUDA OOM until one. OCR batches default to four, but
 Vintern uses batches only when its model exposes a safe native API. Scene
 boundary and summary requests stay at one because they carry multi-image
 context. Repeated batch-one OOM or an unusable local runtime opens a per-chunk
-circuit breaker; isolated JSON/schema errors fall back per request without
-disabling Qwen. Gemini concurrency is unchanged.
+circuit breaker; isolated response-contract errors fall back per request
+without disabling Qwen. Systemic failure unloads Qwen before the exclusive
+Vintern-3B-R fallback becomes sticky for the remainder of the chunk.
 
 Structured request-level content-addressed cache entries live in the current
 video's stage scratch. The completed canonical stage is the persistent cache
 and is promoted to the configured writable checkpoint repository, which may be
-public or private. This avoids one Hugging Face commit per Gemini request while
+public or private. This avoids one Hugging Face commit per semantic request while
 preserving stage-level resume semantics.
 All output files belonging to one checkpoint stage and the matching
 `state.json` completion marker are uploaded in one atomic backend commit. A

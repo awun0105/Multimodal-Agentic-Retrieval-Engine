@@ -44,4 +44,3 @@ secrets:
   accepted_environment_names:
     - HF_TOKEN
     - AIC_HF_TOKEN
-    - GEMINI_API_KEY

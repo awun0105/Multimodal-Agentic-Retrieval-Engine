@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "asr_words_v1",
+  "type": "object",
+  "required": ["asr_word_id", "asr_segment_id", "video_id", "word_index", "text", "start_sec", "end_sec", "start_frame", "end_frame", "confidence", "alignment_method", "alignment_version", "provider", "model_name", "model_version", "status"],
+  "properties": {
+    "asr_word_id": {"type": "string", "minLength": 1},
+    "asr_segment_id": {"type": "string", "minLength": 1},
+    "video_id": {"type": "string", "minLength": 1},
+    "word_index": {"type": "integer", "minimum": 0},
+    "text": {"type": "string", "minLength": 1},
+    "start_sec": {"type": "number", "minimum": 0},
+    "end_sec": {"type": "number", "exclusiveMinimum": 0},
+    "start_frame": {"type": ["integer", "null"], "minimum": 0},
+    "end_frame": {"type": ["integer", "null"], "minimum": 1},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "alignment_method": {"enum": ["ctc_forced_alignment", "provider_word_timestamps"]},
+    "alignment_version": {"const": "ctc_word_alignment_v1"},
+    "provider": {"enum": ["faster_whisper", "nemo"]},
+    "model_name": {"type": "string", "minLength": 1},
+    "model_version": {"type": "string", "minLength": 1},
+    "status": {"const": "pass"}
+  },
+  "additionalProperties": false
+}

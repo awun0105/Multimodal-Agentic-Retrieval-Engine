@@ -362,7 +362,7 @@ Machine-specific tuning such as `temp_store` or `mmap_size` is allowed but must 
 | `shots` | One row per TransNet V2 shot; a successful no-cut result is one valid full-video shot. Stores `shot_id`, `video_id`, final `scene_id`, frame/time ranges, detection method, and status. Production model/inference failure is not converted into a fallback shot. |
 | `scenes` | Deterministic contiguous partitions of ordered shots. Production Phase01 uses the multimodal context-focus boundary design in `docs/architecture/system1-scene-grouping.md`; package code derives IDs, ranges, counts, mappings, status, and provenance. |
 | `keyframes` | One row per keyframe; stores `keyframe_id`, `video_id`, `frame_id`, `shot_id`, `scene_id`, role/representative metadata, `time_seconds` or `timestamp_sec`, `pts_time`, `duration_time`, `frame_id_method`, `keyframe_ref`, `thumbnail_ref`. |
-| `shot_captions` | Canonical shot-level caption evidence. Production Phase01 creates exactly one bilingual row per shot from the representative keyframe, with `caption_vi` and `caption_en`. |
+| `shot_captions` | Canonical shot-level caption evidence. Production Phase01 creates exactly one bilingual row per shot. Static/simple shots use the representative image; eligible changing shots use a bounded ordered storyboard. Exact source frames and evidence identity live in the field-provenance sidecar. |
 | `scene_summaries` | Exactly one bilingual row per final Phase01 scene, with `summary_vi` and `summary_en`, built from ordered representative images, shot captions, transcript evidence, and timeline. |
 | `ocr` | OCR evidence mapped to `keyframe_id`, with optional boxes/confidence. |
 | `asr_segments` | Transcript segments mapped to `video_id` and time range. |
@@ -486,7 +486,9 @@ Required checks:
   the correct `index_name`.
 - Every `vector_map.keyframe_id` exists in `keyframes`.
 - Every shot has exactly one successful `shot_captions` row with non-empty
-  `caption_vi` and `caption_en`, resolving to its representative keyframe.
+  `caption_vi` and `caption_en`, retaining its canonical representative ID.
+  Its eight provenance rows identify either that representative alone or an
+  ordered canonical source-frame set used for temporal storyboard evidence.
 - Every scene has exactly one successful `scene_summaries` row with non-empty
   `summary_vi` and `summary_en`.
 - Every OCR/object row points to an existing keyframe.

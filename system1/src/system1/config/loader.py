@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,6 @@ _PHASE01_USER_SETTING_KEYS = {
 _PHASE01_REQUIRED_USER_SETTINGS = {"batch_id", "worker_id"}
 _SECRET_SETTING_KEYS = {
     "aic_hf_token",
-    "gemini_api_key",
     "hf_token",
     "huggingface_hub_token",
 }
@@ -225,9 +225,10 @@ def resolve_phase01_config(
                 target[key] = value
     if normalized_settings.get("scratch_dir") is not None:
         storage["scratch"]["root_override"] = str(normalized_settings["scratch_dir"])
-    # The project-owned TransNet bundle lives in the checkpoint repository by
-    # default. A repository/revision override must therefore move both stores;
-    # their independent prefixes remain versioned in storage.yaml.
+    # Project-owned TransNet and Flashlight runtime artifacts live in the
+    # checkpoint repository by default. A repository/revision override must
+    # therefore move both stores; their independent prefixes remain versioned
+    # in storage.yaml.
     for key, setting in (
         ("repo_id", "hf_checkpoint_repo"),
         ("repo_type", "hf_repo_type"),
@@ -279,6 +280,35 @@ def require_phase01_production_ready(config: ResolvedPhase01Config) -> None:
     _validate_phase01_runtime_invariants(config.payload)
 
 
+def rebuild_resolved_phase01_config(
+    payload: dict[str, Any],
+) -> ResolvedPhase01Config:
+    """Recompute deterministic identity after a controlled config clone.
+
+    Runtime launchers use this after applying isolated execution storage.  It
+    deliberately repeats the production-readiness calculation so no caller can
+    retain a stale config or stage hash after changing a store prefix.
+    """
+
+    cloned = copy.deepcopy(payload)
+    required_paths = cloned["phase01"].get("production_readiness", {}).get(
+        "required_non_null_paths", []
+    )
+    unresolved = tuple(
+        sorted(
+            path
+            for path in required_paths
+            if _value_at_path(cloned, str(path)) is None
+        )
+    )
+    return ResolvedPhase01Config(
+        payload=cloned,
+        config_hash=_sha256_json(cloned),
+        stage_config_hashes=_stage_config_hashes(cloned),
+        unresolved_required_fields=unresolved,
+    )
+
+
 def persist_resolved_phase01_config(config: ResolvedPhase01Config, path: Path | str) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -311,6 +341,10 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
     phase01 = payload["phase01"]
     models = payload["models"]
     schemas = phase01["schemas"]
+    asr_stage_policy = copy.deepcopy(phase01["asr"])
+    interval_assignment = asr_stage_policy["alignment"].pop(
+        "interval_assignment"
+    )
     stage_payloads: dict[str, Any] = {
         "shots": {
             "model": models["shot_detection"],
@@ -323,9 +357,9 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
         },
         "asr": {
             "model": models["asr"],
-            "policy": phase01["asr"],
+            "policy": asr_stage_policy,
             "retry": phase01["retry"],
-            "schema": schemas["asr_segments"],
+            "schemas": [schemas["asr_segments"], schemas["asr_words"]],
         },
         "ocr": {
             "model": models["ocr"],
@@ -338,10 +372,12 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "ocr_model": models["ocr"],
             "api": phase01["api"],
             "retry": phase01["retry"],
+            "policy": phase01["shot_caption"],
             "schema": schemas["shot_captions"],
         },
         "shot_transcript_links": {
             "schema": schemas["shot_transcript_links"],
+            "assignment": interval_assignment,
         },
         "scenes": {
             "model": _resolved_semantic_model(models, "scene_boundary"),
@@ -350,7 +386,11 @@ def _stage_config_hashes(payload: dict[str, Any]) -> dict[str, str]:
             "api": phase01["api"],
             "retry": phase01["retry"],
             "grouping": phase01["scene_grouping"],
-            "schemas": [schemas["scenes"], schemas["scene_transcript_links"]],
+            "schema": schemas["scenes"],
+        },
+        "scene_transcript_links": {
+            "schema": schemas["scene_transcript_links"],
+            "assignment": interval_assignment,
         },
         "scene_summaries": {
             "model": _resolved_semantic_model(models, "scene_summary"),
@@ -422,10 +462,67 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
             )
 
     _validate_semantic_sampling_policy(payload)
+    _validate_phase01_stage_graph(payload)
+    _validate_shot_detection_policy(payload)
+    _validate_shot_caption_policy(payload)
+    _validate_scene_grouping_policy(payload)
+    _validate_scene_summary_policy(payload)
+    _validate_asr_alignment_policy(payload)
 
     models = payload["models"]
+    
+    caption_model = _resolved_semantic_model(
+        models,
+        "shot_caption",
+    )
+
+    if (
+        str(caption_model.get("provider"))
+        != "qwen_local"
+    ):
+        raise ValueError(
+            "Phase01 semantic primary must be qwen_local"
+        )
+
+    fallbacks = caption_model.get(
+        "fallbacks",
+        [],
+    )
+
+    if (
+        not isinstance(fallbacks, list)
+        or len(fallbacks) != 1
+    ):
+        raise ValueError(
+            "Phase01 semantic runtime requires "
+            "exactly one local fallback"
+        )
+
+    fallback = fallbacks[0]
+
+    if (
+        str(fallback.get("provider"))
+        != "vintern_reasoning_local"
+    ):
+        raise ValueError(
+            "Phase01 semantic fallback must be "
+            "vintern_reasoning_local"
+        )
+
+    for field in (
+        "model_id",
+        "model_revision",
+    ):
+        if not str(
+            fallback.get(field, "")
+        ).strip():
+            raise ValueError(
+                "Phase01 semantic fallback "
+                f"requires {field}"
+            )
+
     caption_signature = _semantic_runtime_signature(
-        _resolved_semantic_model(models, "shot_caption")
+        caption_model
     )
     for stage_key in ("scene_boundary", "scene_summary"):
         signature = _semantic_runtime_signature(
@@ -436,6 +533,66 @@ def _validate_phase01_runtime_invariants(payload: dict[str, Any]) -> None:
                 "Phase01 shared semantic runtime mismatch: "
                 f"shot_caption and {stage_key} must use the same primary/fallback "
                 "client chain"
+            )
+
+
+def _validate_asr_alignment_policy(payload: dict[str, Any]) -> None:
+    policy = payload["phase01"]["asr"].get("alignment")
+    if not isinstance(policy, dict):
+        raise TypeError("Phase01 asr.alignment must be a mapping")
+    if policy.get("required_for_accepted_segments") is not True:
+        raise ValueError(
+            "Phase01 asr.alignment.required_for_accepted_segments must be true"
+        )
+    if str(policy.get("policy")) != "ctc_word_alignment_v1":
+        raise ValueError("Unsupported Phase01 asr.alignment.policy")
+    if policy.get("forced_overlap_policy") != "retained_after_quality_v2":
+        raise ValueError("Unsupported Phase01 asr.alignment.forced_overlap_policy")
+    interval = policy.get("interval_assignment")
+    if not isinstance(interval, dict):
+        raise TypeError("Phase01 asr.alignment.interval_assignment must be a mapping")
+    if str(interval.get("policy")) != "max_overlap_midpoint_v1":
+        raise ValueError("Unsupported Phase01 ASR interval assignment policy")
+    if str(interval.get("interval_convention")) != "[start_sec, end_sec)":
+        raise ValueError("Unsupported Phase01 ASR interval convention")
+    reconstruction = policy.get("text_reconstruction")
+    if not isinstance(reconstruction, dict) or str(
+        reconstruction.get("normalization")
+    ) != "unicode_word_v1":
+        raise ValueError("Unsupported Phase01 ASR text reconstruction policy")
+    asr_model = payload["models"]["asr"]
+    if str(asr_model.get("provider")) == "faster_whisper" and asr_model.get(
+        "word_timestamps"
+    ) is not True:
+        raise ValueError(
+            "Phase01 faster_whisper ASR requires word_timestamps=true"
+        )
+
+
+def _validate_shot_detection_policy(payload: dict[str, Any]) -> None:
+    policy = payload["phase01"].get("shot_detection")
+    if not isinstance(policy, dict):
+        raise TypeError("Phase01 shot_detection must be a mapping")
+    if policy.get("time_boundary_policy") != "next_shot_start_pts_v1":
+        raise ValueError("Unsupported Phase01 shot_detection.time_boundary_policy")
+
+
+def _validate_phase01_stage_graph(payload: dict[str, Any]) -> None:
+    from system1.phase01.checkpoint import STAGE_DEPENDENCIES, STAGES
+
+    graph = payload["phase01"].get("stages")
+    if not isinstance(graph, dict):
+        raise TypeError("Phase01 stages must be a mapping")
+    if graph.get("order") != list(STAGES):
+        raise ValueError("Phase01 stage order does not match checkpoint authority")
+    dependencies = graph.get("dependencies")
+    if not isinstance(dependencies, dict) or set(dependencies) != set(STAGES):
+        raise ValueError("Phase01 stage dependencies have an invalid stage set")
+    for stage, expected in STAGE_DEPENDENCIES.items():
+        actual = dependencies.get(stage)
+        if not isinstance(actual, list) or tuple(actual) != expected:
+            raise ValueError(
+                f"Phase01 stage dependencies for {stage} do not match checkpoint authority"
             )
 
 
@@ -516,6 +673,91 @@ def _validate_semantic_sampling_policy(payload: dict[str, Any]) -> None:
             )
 
 
+def _validate_scene_grouping_policy(payload: dict[str, Any]) -> None:
+    from system1.scenes.speech import validate_speech_policy
+
+    grouping = payload["phase01"]["scene_grouping"]
+    validate_speech_policy(grouping.get("speech_continuity"))
+    non_boundary = float(grouping.get("non_boundary_threshold", -1))
+    boundary = float(grouping.get("boundary_threshold", -1))
+    if not 0 <= non_boundary < boundary <= 1:
+        raise ValueError(
+            "Phase01 scene_grouping thresholds must satisfy "
+            "0 <= non_boundary_threshold < boundary_threshold <= 1"
+        )
+    if int(grouping.get("max_consistency_review_rounds", -1)) < 0:
+        raise ValueError(
+            "Phase01 scene_grouping.max_consistency_review_rounds must be "
+            "non-negative"
+        )
+
+    quality = grouping.get("quality_guard")
+    if not isinstance(quality, dict):
+        raise TypeError("Phase01 scene_grouping.quality_guard must be a mapping")
+    if type(quality.get("enabled")) is not bool:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.enabled must be bool"
+        )
+    if int(quality.get("min_shot_count", 0)) < 2:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.min_shot_count must be >= 2"
+        )
+    for field in (
+        "suspicious_boundary_density",
+        "suspicious_one_shot_scene_rate",
+    ):
+        value = float(quality.get(field, 0))
+        if not 0 < value <= 1:
+            raise ValueError(
+                f"Phase01 scene_grouping.quality_guard.{field} must be in (0, 1]"
+            )
+    if str(quality.get("unresolved_action")) != "review_required":
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.unresolved_action must be "
+            "review_required"
+        )
+
+    review = quality.get("degenerate_review")
+    if not isinstance(review, dict):
+        raise TypeError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review must be a mapping"
+        )
+    if type(review.get("enabled")) is not bool:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review.enabled must be bool"
+        )
+    if int(review.get("focus_gap_count", 0)) < 1:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review."
+            "focus_gap_count must be positive"
+        )
+    if int(review.get("context_shots_each_side", -1)) < 0:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review."
+            "context_shots_each_side must be non-negative"
+        )
+    if int(review.get("max_rounds", -1)) < 0:
+        raise ValueError(
+            "Phase01 scene_grouping.quality_guard.degenerate_review.max_rounds "
+            "must be non-negative"
+        )
+
+
+def _validate_scene_summary_policy(payload: dict[str, Any]) -> None:
+    from system1.scenes.summary import validate_scene_summary_policy
+
+    validate_scene_summary_policy(payload["phase01"].get("scene_summary"))
+
+
+def _validate_shot_caption_policy(payload: dict[str, Any]) -> None:
+    from system1.shots.understanding import validate_temporal_understanding_policy
+
+    policy = payload["phase01"].get("shot_caption")
+    if not isinstance(policy, Mapping):
+        raise TypeError("phase01.shot_caption must be a mapping")
+    validate_temporal_understanding_policy(policy.get("temporal_understanding"))
+
+
 def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:
     runtime_keys = (
         "provider",
@@ -533,7 +775,16 @@ def _semantic_runtime_signature(model: dict[str, Any]) -> dict[str, Any]:
         "use_fast_tokenizer",
         "use_flash_attn",
         "max_new_tokens",
+        "image_size",
+        "max_dynamic_patches",
+        "use_thumbnail",
+        "do_sample",
+        "num_beams",
+        "repetition_penalty",
     )
+    # Note: generation_contract_version is intentionally excluded. It is a
+    # task/output contract that legitimately differs between shot_caption and
+    # scene_summary; it must not participate in the shared-runtime invariant.
 
     def client_signature(config: dict[str, Any]) -> dict[str, Any]:
         return {

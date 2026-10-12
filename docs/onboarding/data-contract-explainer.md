@@ -659,21 +659,24 @@ Ví dụ một dòng:
 
 #### Quan hệ `shot_captions`
 
-System 1 v1.1 dùng `shot_captions` làm caption canonical. Mỗi shot có đúng một
-hàng song ngữ được Gemini tạo từ `representative_keyframe_id`; mọi
-keyframe/frame trong cùng shot dùng hàng này qua join
+System 1 dùng `shot_captions` làm caption canonical. Mỗi shot có đúng một hàng
+song ngữ. Shot tĩnh/đơn giản dùng representative image; shot thay đổi đủ điều
+kiện dùng một ordered storyboard có giới hạn từ canonical keyframes. Shared
+Qwen/Vintern runtime tạo tám field plain-text và Python assemble hàng canonical;
+`shot_caption_field_provenance.jsonl` lưu đúng source frames. Mọi
+keyframe/frame trong cùng shot dùng hàng caption qua join
 `keyframes.shot_id -> shot_captions.shot_id`.
 
 | Thuộc tính | Ý nghĩa | Ví dụ |
 | --- | --- | --- |
 | `shot_caption_id` | ID dòng caption | `L01_V028_SH00042_caption` |
 | `shot_id` | shot được mô tả | `L01_V028_SH00042` |
-| `representative_keyframe_id` | keyframe đại diện dùng để tạo caption | `L01_V028:25300` |
+| `representative_keyframe_id` | keyframe đại diện canonical; luôn được giữ dù evidence có thêm storyboard | `L01_V028:25300` |
 | `caption_vi` | nội dung tiếng Việt | `Một xe buýt đỏ trên đường mưa.` |
 | `caption_en` | nội dung tiếng Anh | `A red bus on a rainy street.` |
-| `provider` | provider caption | `gemini` |
+| `provider` | provider caption | `qwen_local` hoặc `mixed` khi có fallback |
 | `model_name` / version fields | model, prompt, response schema provenance | giá trị từ config/manifest |
-| `confidence` | độ tin cậy nếu có | `0.82` |
+| `confidence` | để `null` vì current caption contract không tạo confidence | `null` |
 
 Ví dụ một dòng:
 
@@ -684,11 +687,11 @@ Ví dụ một dòng:
   "representative_keyframe_id": "L01_V028:25300",
   "caption_vi": "Một xe buýt đỏ trên đường mưa.",
   "caption_en": "A red bus on a rainy street.",
-  "provider": "gemini",
-  "model_name": "<configured-gemini-model>",
-  "prompt_version": "shot_caption_v1",
-  "schema_version": "1.0.0",
-  "confidence": 0.82
+  "provider": "qwen_local",
+  "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "prompt_version": "shot_caption_temporal_plain_text_fields_v2",
+  "schema_version": "shot_caption_response_v3",
+  "confidence": null
 }
 ```
 

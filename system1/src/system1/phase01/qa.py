@@ -26,7 +26,28 @@ def write_manual_review_report(
         "scene_boundary": [],
         "scene_summary": [],
     }
+    partition_reviews: list[dict[str, Any]] = []
     for result in video_results:
+        if result.get("status") in {"review_required", "review_rejected"}:
+            partition_reviews.append(
+                {
+                    key: result.get(key)
+                    for key in (
+                        "video_id",
+                        "status",
+                        "review_status",
+                        "candidate_fingerprint",
+                        "candidate_ref",
+                        "review_candidate_ref",
+                        "diagnostics_ref",
+                        "decision_ref",
+                        "manual_review_decision",
+                        "reviewer",
+                        "reviewed_at",
+                    )
+                    if result.get(key) is not None
+                }
+            )
         if not str(result.get("status", "")).startswith("complete"):
             continue
         artifact = Path(str(result["artifact"]))
@@ -36,7 +57,12 @@ def write_manual_review_report(
         "schema_version": "phase01_manual_review_v1",
         "batch_id": batch_id,
         "worker_id": worker_id,
-        "status": "pending_manual_review" if selected else "not_available",
+        "status": (
+            "pending_manual_review"
+            if selected
+            or any(row["status"] == "review_required" for row in partition_reviews)
+            else "not_available"
+        ),
         "sample_size_requested": sample_size,
         "sample_size_actual": len(selected),
         "created_at": utc_now(),
@@ -45,6 +71,10 @@ def write_manual_review_report(
             "and bilingual fidelity. Fill reviewer fields without changing canonical artifacts."
         ),
         "samples": selected,
+        "scene_partition_reviews": sorted(
+            partition_reviews,
+            key=lambda row: (str(row["video_id"]), str(row["status"])),
+        ),
     }
     path = (
         release_dir
@@ -73,6 +103,18 @@ def _collect_artifact_candidates(
         captions = _read_parquet(archive, f"{video_id}/shot_captions.parquet")
         scenes = _read_parquet(archive, f"{video_id}/scenes.parquet")
         summaries = _read_parquet(archive, f"{video_id}/scene_summaries.parquet")
+        caption_provenance = _read_jsonl(
+            archive,
+            f"{video_id}/diagnostics/shot_caption_field_provenance.jsonl",
+        )
+        caption_evidence_by_shot: dict[str, dict[str, Any]] = {}
+        for provenance in caption_provenance:
+            caption_evidence_by_shot.setdefault(
+                str(provenance["shot_id"]), provenance
+            )
+        keyframe_by_id = {
+            str(row["keyframe_id"]): row for row in keyframes.to_dict("records")
+        }
         representative = {
             str(row["shot_id"]): row
             for row in keyframes.to_dict("records")
@@ -85,6 +127,8 @@ def _collect_artifact_candidates(
         }
         for row in captions.to_dict("records"):
             frame = representative[str(row["shot_id"])]
+            temporal = caption_evidence_by_shot[str(row["shot_id"])]
+            source_ids = [str(value) for value in temporal["source_keyframe_ids"]]
             candidates["shot_caption"].append(
                 _review_row(
                     kind="shot_caption",
@@ -103,6 +147,32 @@ def _collect_artifact_candidates(
                         "visible_text_summary_en": row.get("visible_text_summary_en", ""),
                         "ocr_text": ocr_by_keyframe.get(str(frame["keyframe_id"]), ""),
                         "quality_score": float(frame["quality_score"]),
+                        "caption_mode": temporal["caption_mode"],
+                        "caption_evidence_fingerprint": temporal[
+                            "caption_evidence_fingerprint"
+                        ],
+                        "trigger_reasons": temporal["trigger_reasons"],
+                        "source_keyframe_ids": source_ids,
+                        "source_frame_ids": temporal["source_frame_ids"],
+                        "source_timestamps_sec": temporal[
+                            "source_timestamps_sec"
+                        ],
+                        "source_keyframe_roles": temporal[
+                            "source_keyframe_roles"
+                        ],
+                        "source_selection_reasons": temporal[
+                            "source_selection_reasons"
+                        ],
+                        "source_keyframe_refs": [
+                            keyframe_by_id[keyframe_id]["keyframe_ref"]
+                            for keyframe_id in source_ids
+                        ],
+                        "max_visual_change_score": temporal[
+                            "max_visual_change_score"
+                        ],
+                        "max_ocr_change_score": temporal[
+                            "max_ocr_change_score"
+                        ],
                     },
                 )
             )
@@ -122,12 +192,47 @@ def _collect_artifact_candidates(
                     evidence={
                         "start_sec": float(row["start_sec"]),
                         "end_sec": float(row["end_sec"]),
+                        "speech_evidence_status": summary[
+                            "speech_evidence_status"
+                        ],
+                        "speech_evidence_fingerprint": summary[
+                            "speech_evidence_fingerprint"
+                        ],
+                        "visual_evidence_fingerprint": summary[
+                            "visual_evidence_fingerprint"
+                        ],
+                        "speech_summary_vi": summary["speech_summary_vi"],
+                        "speech_summary_en": summary["speech_summary_en"],
+                        "visual_summary_vi": summary["visual_summary_vi"],
+                        "visual_summary_en": summary["visual_summary_en"],
+                        "audio_visual_relation": summary[
+                            "audio_visual_relation"
+                        ],
                         "summary_vi": summary["summary_vi"],
                         "summary_en": summary["summary_en"],
                     },
                 )
             )
         diagnostics_name = f"{video_id}/diagnostics/scene_boundary_diagnostics.jsonl"
+        quality_name = f"{video_id}/diagnostics/scene_partition_quality.json"
+        quality_context: dict[str, Any] = {}
+        if quality_name in archive.namelist():
+            quality = json.loads(archive.read(quality_name).decode("utf-8"))
+            final = quality.get("final", {})
+            quality_context = {
+                "partition_status": quality.get("status"),
+                "final_boundary_density": final.get("boundary_density"),
+                "final_one_shot_scene_rate": final.get("one_shot_scene_rate"),
+                "final_mean_scene_duration_sec": final.get(
+                    "mean_scene_duration_sec"
+                ),
+                "final_median_scene_duration_sec": final.get(
+                    "median_scene_duration_sec"
+                ),
+                "partition_degenerate_review_triggered": quality.get(
+                    "degenerate_review_triggered"
+                ),
+            }
         if diagnostics_name in archive.namelist():
             diagnostics = [
                 json.loads(line)
@@ -146,10 +251,36 @@ def _collect_artifact_candidates(
                             "primary_boundary_score": float(
                                 row["primary_boundary_score"]
                             ),
+                            "vote_count": int(row["vote_count"]),
+                            "true_vote_weight": float(row["true_vote_weight"]),
+                            "false_vote_weight": float(row["false_vote_weight"]),
                             "review_route": row["review_route"],
-                            "reason": row.get("reason"),
-                            "confidence": row.get("confidence"),
-                            "evidence_used": row.get("evidence_used", []),
+                            "consistency_review_triggered": bool(
+                                row.get("consistency_review_triggered", False)
+                            ),
+                            "consistency_review_round": row.get(
+                                "consistency_review_round"
+                            ),
+                            "degenerate_review_triggered": bool(
+                                row.get("degenerate_review_triggered", False)
+                            ),
+                            "provider": row.get("provider"),
+                            "model_name": row.get("model_name"),
+                            "model_version": row.get("model_version"),
+                            **{
+                                key: row.get(key)
+                                for key in (
+                                    "speech_evidence_reliable",
+                                    "speech_reliability_reason",
+                                    "speech_near_boundary_continuity",
+                                    "speech_shared_segment_crosses_gap",
+                                    "speech_shared_segment_ids",
+                                    "speech_inter_word_gap_sec",
+                                    "speech_left_word_distance_to_boundary_sec",
+                                    "speech_right_word_distance_to_boundary_sec",
+                                )
+                            },
+                            **quality_context,
                         },
                     )
                 )
@@ -163,6 +294,14 @@ def _read_parquet_optional(archive: zipfile.ZipFile, name: str) -> pd.DataFrame:
     if name not in archive.namelist():
         return pd.DataFrame()
     return _read_parquet(archive, name)
+
+
+def _read_jsonl(archive: zipfile.ZipFile, name: str) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in archive.read(name).decode("utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def _string_values(value: Any) -> list[str]:

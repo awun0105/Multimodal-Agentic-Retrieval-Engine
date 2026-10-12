@@ -5,7 +5,6 @@ import zipfile
 from pathlib import Path
 
 import pandas as pd
-
 from system1.phase01.qa import write_manual_review_report
 
 
@@ -49,6 +48,14 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
         [
             {
                 "scene_id": "L21_V001_SC00000",
+                "speech_evidence_status": "no_speech",
+                "speech_evidence_fingerprint": "a" * 64,
+                "visual_evidence_fingerprint": "b" * 64,
+                "speech_summary_vi": None,
+                "speech_summary_en": None,
+                "visual_summary_vi": "Một cảnh",
+                "visual_summary_en": "One scene",
+                "audio_visual_relation": "no_speech",
                 "summary_vi": "Một cảnh",
                 "summary_en": "One scene",
             }
@@ -60,7 +67,58 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
                 "after_shot_id": "L21_V001_SH00000",
                 "is_boundary": False,
                 "primary_boundary_score": 0.1,
+                "vote_count": 2,
+                "true_vote_weight": 0.2,
+                "false_vote_weight": 1.8,
                 "review_route": "primary",
+                "consistency_review_triggered": False,
+                "consistency_review_round": None,
+                "degenerate_review_triggered": False,
+                "speech_evidence_reliable": True,
+                "speech_near_boundary_continuity": True,
+                "speech_shared_segment_crosses_gap": True,
+                "speech_shared_segment_ids": ["L21_V001_ASR00000"],
+                "speech_inter_word_gap_sec": 0.18,
+                "speech_left_word_distance_to_boundary_sec": 0.10,
+                "speech_right_word_distance_to_boundary_sec": 0.08,
+                "provider": "qwen_local",
+                "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
+                "model_version": "revision",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "diagnostics" / "scene_partition_quality.json").write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "degenerate_review_triggered": False,
+                "final": {
+                    "boundary_density": 0.0,
+                    "one_shot_scene_rate": 1.0,
+                    "mean_scene_duration_sec": 2.0,
+                    "median_scene_duration_sec": 2.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "diagnostics" / "shot_caption_field_provenance.jsonl").write_text(
+        json.dumps(
+            {
+                "shot_id": "L21_V001_SH00000",
+                "caption_mode": "representative_only",
+                "caption_evidence_fingerprint": "c" * 64,
+                "trigger_reasons": [],
+                "source_keyframe_ids": ["L21_V001:2"],
+                "source_frame_ids": [2],
+                "source_timestamps_sec": [0.5],
+                "source_keyframe_roles": ["middle"],
+                "source_selection_reasons": ["middle_within_quality_ratio"],
+                "source_image_sha256s": ["d" * 64],
+                "max_visual_change_score": None,
+                "max_ocr_change_score": None,
             }
         )
         + "\n",
@@ -94,3 +152,39 @@ def test_manual_review_report_is_deterministic_and_stratified(tmp_path: Path) ->
     }
     assert first_payload["sample_size_actual"] == 3
     assert first_payload["samples"] == second_payload["samples"]
+    boundary = next(
+        row
+        for row in first_payload["samples"]
+        if row["review_kind"] == "scene_boundary"
+    )
+    assert boundary["evidence"]["vote_count"] == 2
+    assert boundary["evidence"]["partition_status"] == "pass"
+    assert boundary["evidence"]["final_mean_scene_duration_sec"] == 2.0
+    assert boundary["evidence"]["speech_evidence_reliable"] is True
+    assert boundary["evidence"]["speech_near_boundary_continuity"] is True
+    assert boundary["evidence"]["speech_shared_segment_crosses_gap"] is True
+    assert boundary["evidence"]["speech_inter_word_gap_sec"] == 0.18
+    assert "reason" not in boundary["evidence"]
+    caption = next(
+        row
+        for row in first_payload["samples"]
+        if row["review_kind"] == "shot_caption"
+    )
+    assert caption["evidence"]["caption_mode"] == "representative_only"
+    assert caption["evidence"]["source_keyframe_ids"] == ["L21_V001:2"]
+    assert caption["evidence"]["source_keyframe_refs"] == [
+        "media://keyframes/L21_V001/L21_V001_f0000002.jpg"
+    ]
+    assert caption["evidence"]["caption_evidence_fingerprint"] == "c" * 64
+    summary = next(
+        row
+        for row in first_payload["samples"]
+        if row["review_kind"] == "scene_summary"
+    )
+    assert summary["evidence"]["speech_evidence_status"] == "no_speech"
+    assert summary["evidence"]["speech_summary_vi"] is None
+    assert summary["evidence"]["visual_summary_vi"] == "Một cảnh"
+    assert summary["evidence"]["audio_visual_relation"] == "no_speech"
+    assert summary["evidence"]["summary_vi"] == "Một cảnh"
+    assert summary["evidence"]["speech_evidence_fingerprint"] == "a" * 64
+    assert summary["evidence"]["visual_evidence_fingerprint"] == "b" * 64

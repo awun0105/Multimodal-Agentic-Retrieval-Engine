@@ -21,6 +21,7 @@ STAGES = (
     "shot_captions",
     "shot_transcript_links",
     "scenes",
+    "scene_transcript_links",
     "scene_summaries",
     "package",
     "sync",
@@ -30,10 +31,25 @@ STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "keyframes": ("shots",),
     "asr": (),
     "ocr": ("keyframes",),
-    "shot_captions": ("keyframes", "ocr"),
+    "shot_captions": ("shots", "keyframes", "ocr"),
     "shot_transcript_links": ("shots", "asr"),
-    "scenes": ("shots", "keyframes", "ocr", "shot_captions", "shot_transcript_links"),
-    "scene_summaries": ("scenes", "keyframes", "ocr", "shot_captions", "shot_transcript_links"),
+    "scenes": (
+        "shots",
+        "keyframes",
+        "asr",
+        "ocr",
+        "shot_captions",
+        "shot_transcript_links",
+    ),
+    "scene_transcript_links": ("scenes", "asr"),
+    "scene_summaries": (
+        "scenes",
+        "scene_transcript_links",
+        "asr",
+        "keyframes",
+        "ocr",
+        "shot_captions",
+    ),
     "package": (
         "shots",
         "keyframes",
@@ -42,6 +58,7 @@ STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
         "shot_captions",
         "shot_transcript_links",
         "scenes",
+        "scene_transcript_links",
         "scene_summaries",
     ),
     "sync": ("package",),
@@ -66,6 +83,8 @@ class CheckpointStore(Protocol):
     def read_json(self, relative_path: str | Path) -> dict[str, Any]: ...
 
     def write_json(self, relative_path: str | Path, payload: dict[str, Any]) -> Path: ...
+
+    def list_files(self, prefix: str | Path = "") -> list[Path]: ...
 
 
 def checkpoint_root(
@@ -141,9 +160,12 @@ class CheckpointManager:
         if not self.store.exists(self.state_path):
             self._state_cache = self._empty_state()
             return copy.deepcopy(self._state_cache)
-        payload = self.store.read_json(self.state_path)
+        raw_payload = self.store.read_json(self.state_path)
+        payload, migrated = self._migrate_state(raw_payload)
         _validate_checkpoint_state(payload)
         self._validate_state_identity(payload)
+        if migrated:
+            self.store.write_json(self.state_path, payload)
         self._state_cache = payload
         return copy.deepcopy(payload)
 
@@ -311,9 +333,65 @@ class CheckpointManager:
         self.store.write_json(self.state_path, state)
         self._state_cache = copy.deepcopy(state)
 
+    def persist_failure_diagnostics(
+        self,
+        stage: str,
+        *,
+        input_fingerprint: str,
+        outputs: Iterable[Path],
+    ) -> str:
+        """Persist inspectable evidence without completing a canonical stage."""
+
+        if stage not in STAGES:
+            raise ValueError(f"Unknown Phase01 stage: {stage}")
+        if not input_fingerprint or Path(input_fingerprint).name != input_fingerprint:
+            raise ValueError("Failure diagnostic fingerprint must be a safe basename")
+        files = [Path(path) for path in outputs]
+        if not files or any(not path.is_file() for path in files):
+            raise FileNotFoundError(
+                "Every failure diagnostic output must be an existing file"
+            )
+        if len({path.name for path in files}) != len(files):
+            raise ValueError("Failure diagnostic basenames must be unique")
+
+        source_checksums = {
+            source.name: sha256_file(source)
+            for source in files
+        }
+        diagnostic_fingerprint = compute_fingerprint(source_checksums)
+        failure_root = (
+            self.root
+            / "failures"
+            / stage
+            / input_fingerprint
+            / diagnostic_fingerprint
+        )
+        uploads = [(source, failure_root / source.name) for source in files]
+        self.store.upload_files(
+            uploads,
+            commit_message=(
+                f"Persist Phase01 {stage} failure diagnostics "
+                f"for {self.release_id}/{self.video_id}"
+            ),
+            num_threads=min(2, len(uploads)),
+        )
+        if self.verify_remote_checksum:
+            for source, remote_path in uploads:
+                with tempfile.TemporaryDirectory(
+                    prefix="phase01_failure_diagnostics_"
+                ) as tmp:
+                    downloaded = Path(tmp) / source.name
+                    self.store.download_file(remote_path, downloaded)
+                    actual = sha256_file(downloaded)
+                if actual != source_checksums[source.name]:
+                    raise ValueError(
+                        f"Remote failure diagnostic checksum mismatch: {remote_path}"
+                    )
+        return failure_root.as_posix()
+
     def _empty_state(self) -> dict[str, Any]:
         return {
-            "schema_version": "phase01_checkpoint_state_v1",
+            "schema_version": "phase01_checkpoint_state_v2",
             "release_id": self.release_id,
             "video_id": self.video_id,
             "config_hash": self.config_hash,
@@ -337,13 +415,36 @@ class CheckpointManager:
         }
 
     def _validate_state_identity(self, payload: Mapping[str, Any]) -> None:
-        if payload.get("schema_version") != "phase01_checkpoint_state_v1":
+        if payload.get("schema_version") != "phase01_checkpoint_state_v2":
             raise ValueError("Unsupported Phase01 checkpoint schema")
         if payload.get("release_id") != self.release_id or payload.get("video_id") != self.video_id:
             raise ValueError("Checkpoint identity does not match requested release/video")
         stages = payload.get("stages")
         if not isinstance(stages, dict) or set(stages) != set(STAGES):
             raise ValueError("Checkpoint state has an invalid stage set")
+
+    def _migrate_state(
+        self, payload: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
+        version = payload.get("schema_version")
+        if version == "phase01_checkpoint_state_v2":
+            return copy.deepcopy(dict(payload)), False
+        if version != "phase01_checkpoint_state_v1":
+            raise ValueError("Unsupported Phase01 checkpoint schema")
+        migrated = copy.deepcopy(dict(payload))
+        stages = migrated.get("stages")
+        if not isinstance(stages, dict):
+            raise TypeError("Checkpoint state has an invalid stage set")
+        expected_v1 = set(STAGES) - {"scene_transcript_links"}
+        if set(stages) != expected_v1:
+            raise ValueError("Phase01 v1 checkpoint state has an invalid stage set")
+        stages["scene_transcript_links"] = self._empty_stage(
+            "scene_transcript_links"
+        )
+        migrated["schema_version"] = "phase01_checkpoint_state_v2"
+        migrated["status"] = self._video_status(migrated)
+        migrated["updated_at"] = utc_now()
+        return migrated, True
 
     def _invalidate_stage(self, stage: str, state: dict[str, Any]) -> None:
         state["stages"][stage].update(self._empty_stage(stage, status="invalidated"))
@@ -361,7 +462,7 @@ class CheckpointManager:
     @staticmethod
     def _video_status(state: Mapping[str, Any]) -> str:
         statuses = [record["status"] for record in state["stages"].values()]
-        if statuses[-1] == "complete":
+        if statuses and all(status == "complete" for status in statuses):
             return "complete"
         if "failed_terminal" in statuses:
             return "failed_terminal"

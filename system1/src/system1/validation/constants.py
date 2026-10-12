@@ -7,6 +7,7 @@ REQUIRED_FILES = {
     "indexes/index_version.json",
     "tables/videos.parquet",
     "tables/asr_segments.parquet",
+    "tables/asr_words.parquet",
     "tables/shots.parquet",
     "tables/scenes.parquet",
     "tables/keyframes.parquet",

@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-
 from system1.validation.table_schema import validate_release_tables
 
 
@@ -70,7 +69,7 @@ def write_valid_schema_release(release_dir: Path) -> None:
             "end_sec": 0.04,
             "shot_count": 1,
             "grouping_method": "multimodal_context_focus",
-            "grouping_version": "scene_grouping_v1",
+            "grouping_version": "scene_grouping_v4",
             "status": "pass",
         }],
     )
@@ -97,12 +96,53 @@ def write_valid_schema_release(release_dir: Path) -> None:
         ],
     )
     write_table(
+        release_dir / "tables" / "asr_words.parquet",
+        [
+            {
+                "asr_word_id": "L21_V001_ASR00000_W00000",
+                "asr_segment_id": "L21_V001_ASR00000",
+                "video_id": "L21_V001",
+                "word_index": 0,
+                "text": "sample",
+                "start_sec": 0.0,
+                "end_sec": 0.02,
+                "start_frame": 0,
+                "end_frame": 1,
+                "confidence": 0.9,
+                "alignment_method": "provider_word_timestamps",
+                "alignment_version": "ctc_word_alignment_v1",
+                "provider": "faster_whisper",
+                "model_name": "fixture-asr",
+                "model_version": "fixture",
+                "status": "pass",
+            },
+            {
+                "asr_word_id": "L21_V001_ASR00000_W00001",
+                "asr_segment_id": "L21_V001_ASR00000",
+                "video_id": "L21_V001",
+                "word_index": 1,
+                "text": "transcript",
+                "start_sec": 0.02,
+                "end_sec": 0.04,
+                "start_frame": 0,
+                "end_frame": 1,
+                "confidence": 0.9,
+                "alignment_method": "provider_word_timestamps",
+                "alignment_version": "ctc_word_alignment_v1",
+                "provider": "faster_whisper",
+                "model_name": "fixture-asr",
+                "model_version": "fixture",
+                "status": "pass",
+            },
+        ],
+    )
+    write_table(
         release_dir / "tables" / "shot_transcript_links.parquet",
-        [{"shot_id": "L21_V001_SH00000", "asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "coverage": 1.0}],
+        [{"shot_id": "L21_V001_SH00000", "asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "overlap_start_sec": 0.0, "overlap_end_sec": 0.04, "overlap_sec": 0.04, "segment_coverage": 1.0, "entity_coverage": 1.0, "coverage": 1.0, "assigned_word_count": 2}],
     )
     write_table(
         release_dir / "tables" / "scene_transcript_links.parquet",
-        [{"scene_id": "L21_V001_SC00000", "asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "coverage": 1.0}],
+        [{"scene_id": "L21_V001_SC00000", "asr_segment_id": "L21_V001_ASR00000", "video_id": "L21_V001", "overlap_start_sec": 0.0, "overlap_end_sec": 0.04, "overlap_sec": 0.04, "segment_coverage": 1.0, "entity_coverage": 1.0, "coverage": 1.0, "assigned_word_count": 2}],
     )
     write_table(
         release_dir / "tables" / "shot_captions.parquet",
@@ -124,7 +164,7 @@ def write_valid_schema_release(release_dir: Path) -> None:
                 "provider": "qwen_local",
                 "model_name": "fixture-qwen",
                 "model_version": "fixture",
-                "prompt_version": "shot_caption_v2",
+                "prompt_version": "shot_caption_temporal_plain_text_fields_v2",
                 "schema_version": "shot_caption_response_v3",
                 "confidence": None,
                 "status": "pass",
@@ -136,13 +176,22 @@ def write_valid_schema_release(release_dir: Path) -> None:
         [{
             "scene_id": "L21_V001_SC00000",
             "video_id": "L21_V001",
+            "speech_evidence_status": "available",
+            "speech_evidence_fingerprint": "a" * 64,
+            "visual_evidence_fingerprint": "b" * 64,
+            "speech_summary_vi": "nội dung lời nói mẫu",
+            "speech_summary_en": "sample speech content",
+            "visual_summary_vi": "mô tả hình ảnh mẫu",
+            "visual_summary_en": "sample visual description",
+            "audio_visual_relation": "aligned",
             "summary_vi": "tóm tắt cảnh mẫu",
             "summary_en": "sample scene summary",
-            "provider": "gemini",
-            "model_name": "fixture-gemini",
+            "provider": "vintern_reasoning_local",
+            "model_name": "fixture-vintern-reasoning",
             "model_version": "fixture",
-            "prompt_version": "scene_summary_v1",
-            "schema_version": "1.0.0",
+            "prompt_version": "scene_summary_adaptive_plain_text_v1",
+            "schema_version": "scene_summary_response_v2",
+            "confidence": None,
             "status": "pass",
         }],
     )
@@ -281,6 +330,22 @@ def test_schema_validation_catches_empty_bilingual_text(tmp_path):
 
     assert result.status == "fail"
     assert any("scene_summaries.summary_en has 1 empty text values" in error for error in result.errors)
+
+
+def test_schema_validation_catches_unknown_scene_summary_relation(tmp_path):
+    release_dir = tmp_path / "release"
+    write_valid_schema_release(release_dir)
+    summaries = pd.read_parquet(release_dir / "tables" / "scene_summaries.parquet")
+    summaries.loc[0, "audio_visual_relation"] = "maybe_related"
+    summaries.to_parquet(
+        release_dir / "tables" / "scene_summaries.parquet",
+        index=False,
+    )
+
+    result = validate_release_tables(release_dir)
+
+    assert result.status == "fail"
+    assert any("audio_visual_relation" in error for error in result.errors)
 
 
 def test_schema_validation_catches_invalid_asr_provider_and_status(tmp_path):

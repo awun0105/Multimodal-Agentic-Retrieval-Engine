@@ -803,7 +803,9 @@ Nguyên tắc:
 
 ```text
 - canonical shot captioning thuộc Phase01
-- chỉ caption representative keyframe của mỗi shot
+- static/simple shot dùng representative keyframe; shot có thay đổi có ý nghĩa
+  dùng một ordered storyboard được chọn deterministic từ canonical keyframes
+- vẫn giữ đúng 8 field requests và một canonical caption row cho mỗi shot
 - output phải có model version
 ```
 
@@ -1190,11 +1192,15 @@ Notebook này làm:
 - extract các frame gần 20%/50%/80% của mỗi shot
 - tạo thumbnails nếu cần
 - chọn middle làm representative, rồi early/late nếu quality check thất bại
-- tạo đúng 1 hàng caption song ngữ/shot bằng Gemini từ representative keyframe
+- tạo đúng 1 hàng caption song ngữ/shot bằng shared Qwen/Vintern runtime; shot
+  tĩnh dùng representative image, shot dynamic đủ điều kiện dùng ordered
+  storyboard và lưu source-frame provenance
 - chạy faster-whisper large-v3 với language auto và VAD
 - link transcript vào shot
 - construct scenes từ images, shot captions, transcript, và timeline
-- tạo scene_summaries.parquet song ngữ bằng Gemini sau khi boundary cố định
+- tạo `scene_summaries_v4` bằng các pass speech/visual tách biệt, relation và
+  adaptive final summary qua shared Qwen/Vintern runtime sau khi boundary được
+  chấp nhận
 - tạo structure artifact ZIP
 - ghi local artifact to artifacts/structure/{video_id}_structure.zip
 - ghi local runtime report to manifests/worker_reports/structure_{batch_id}_{worker_id}.json

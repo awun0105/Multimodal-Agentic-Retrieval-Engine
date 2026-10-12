@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scene_partition_manual_review_v1",
+  "type": "object",
+  "required": ["schema_version", "release_id", "video_id", "candidate_fingerprint", "decision", "reviewer", "reviewed_at", "notes"],
+  "properties": {
+    "schema_version": {"const": "scene_partition_manual_review_v1"},
+    "release_id": {"type": "string", "minLength": 1},
+    "video_id": {"type": "string", "minLength": 1},
+    "candidate_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "decision": {"enum": ["approve", "reject"]},
+    "reviewer": {"type": "string", "minLength": 1},
+    "reviewed_at": {"type": "string", "format": "date-time"},
+    "notes": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -25,6 +26,7 @@ from system1.text.builder import metadata_text
 
 STRUCTURE_PARQUET_FILES = (
     "asr_segments.parquet",
+    "asr_words.parquet",
     "shots.parquet",
     "scenes.parquet",
     "keyframes.parquet",
@@ -53,8 +55,22 @@ PARQUET_COLUMNS: dict[str, list[str]] = {
         "model_version",
         "status",
     ],
-    "shot_transcript_links": ["shot_id", "asr_segment_id", "video_id", "coverage"],
-    "scene_transcript_links": ["scene_id", "asr_segment_id", "video_id", "coverage"],
+    "asr_words": [
+        "asr_word_id", "asr_segment_id", "video_id", "word_index", "text",
+        "start_sec", "end_sec", "start_frame", "end_frame", "confidence",
+        "alignment_method", "alignment_version", "provider", "model_name",
+        "model_version", "status",
+    ],
+    "shot_transcript_links": [
+        "video_id", "shot_id", "asr_segment_id", "overlap_start_sec",
+        "overlap_end_sec", "overlap_sec", "segment_coverage", "entity_coverage",
+        "coverage", "assigned_word_count",
+    ],
+    "scene_transcript_links": [
+        "video_id", "scene_id", "asr_segment_id", "overlap_start_sec",
+        "overlap_end_sec", "overlap_sec", "segment_coverage", "entity_coverage",
+        "coverage", "assigned_word_count",
+    ],
     "ocr": [
         "ocr_id",
         "video_id",
@@ -242,13 +258,39 @@ def _write_video_structure_artifact(
     shot_caption_status = "empty" if not shot_caption_text else "pass"
     scene_summary_text = _summarize_scene(
         scene_id,
-        _join_text([normalized_text, asr_text, shot_caption_text]),
+        _join_text([shot_caption_text, ocr_text]),
         text_provider,
         provider_plan,
         errors,
         video_id,
     )
     scene_summary_status = "empty" if not scene_summary_text else "pass"
+    speech_evidence_status = "unavailable" if asr_text else "no_speech"
+    audio_visual_relation = (
+        "speech_unavailable"
+        if speech_evidence_status == "unavailable"
+        else "no_speech"
+    )
+    speech_evidence_fingerprint = _debug_evidence_fingerprint(
+        {
+            "contract_version": "adaptive_scene_summary_v1",
+            "scene_id": scene_id,
+            "speech_evidence_status": speech_evidence_status,
+            "asr_text_available_without_word_alignment": bool(asr_text),
+            "asr_word_ids": [],
+        }
+    )
+    visual_evidence_fingerprint = _debug_evidence_fingerprint(
+        {
+            "contract_version": "adaptive_scene_summary_v1",
+            "scene_id": scene_id,
+            "shot_id": shot_id,
+            "keyframe_id": keyframe_id,
+            "shot_caption": shot_caption_text,
+            "ocr": ocr_text,
+            "bounded_visual_summary": scene_summary_text,
+        }
+    )
     asr_rows = _legacy_asr_rows(
         video_id=video_id,
         asr_segment_id=asr_segment_id,
@@ -257,13 +299,24 @@ def _write_video_structure_artifact(
         end_frame=shot.end_frame,
         provider=provider_plan.asr,
     )
+    legacy_link = {
+        "video_id": video_id,
+        "asr_segment_id": asr_segment_id,
+        "overlap_start_sec": float(shot.start_seconds),
+        "overlap_end_sec": float(shot.end_seconds),
+        "overlap_sec": float(shot.end_seconds - shot.start_seconds),
+        "segment_coverage": 1.0,
+        "entity_coverage": 1.0,
+        "coverage": 1.0,
+        "assigned_word_count": 0,
+    }
     shot_transcript_links = (
-        [{"shot_id": shot_id, "asr_segment_id": asr_segment_id, "video_id": video_id, "coverage": 1.0}]
+        [{**legacy_link, "shot_id": shot_id}]
         if asr_rows
         else []
     )
     scene_transcript_links = (
-        [{"scene_id": scene_id, "asr_segment_id": asr_segment_id, "video_id": video_id, "coverage": 1.0}]
+        [{**legacy_link, "scene_id": scene_id}]
         if asr_rows
         else []
     )
@@ -280,6 +333,9 @@ def _write_video_structure_artifact(
     )
     tables = {
         "asr_segments": asr_rows,
+        # This legacy/debug builder has no acoustic alignment evidence. It emits
+        # an explicitly empty sibling table instead of fabricating word timing.
+        "asr_words": [],
         "shots": [{
             "shot_id": shot_id,
             "video_id": video_id,
@@ -389,14 +445,22 @@ def _write_video_structure_artifact(
         "scene_summaries": [{
             "scene_id": scene_id,
             "video_id": video_id,
+            "speech_evidence_status": speech_evidence_status,
+            "speech_evidence_fingerprint": speech_evidence_fingerprint,
+            "visual_evidence_fingerprint": visual_evidence_fingerprint,
+            "speech_summary_vi": None,
+            "speech_summary_en": None,
+            "visual_summary_vi": scene_summary_text,
+            "visual_summary_en": scene_summary_text,
+            "audio_visual_relation": audio_visual_relation,
             "summary_vi": scene_summary_text,
             "summary_en": scene_summary_text,
             "provider": provider_plan.scene_summary,
             "model_name": provider_plan.scene_summary,
             "model_version": "debug",
-            "prompt_version": "debug_scene_summary_v1",
-            "schema_version": "1.0.0",
-            "confidence": 0.0,
+            "prompt_version": "scene_summary_adaptive_plain_text_v1",
+            "schema_version": "scene_summary_response_v2",
+            "confidence": None,
             "status": scene_summary_status,
         }],
     }
@@ -648,6 +712,16 @@ def _summarize_scene(
 
 def _join_text(values: list[str]) -> str:
     return "\n".join(value for value in values if value)
+
+
+def _debug_evidence_fingerprint(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _extract_media(video_path: Path, keyframe_path: Path, thumbnail_path: Path, errors: list[dict[str, Any]], video_id: str) -> str:

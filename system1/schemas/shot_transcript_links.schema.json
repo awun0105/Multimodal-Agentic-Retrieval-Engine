@@ -1,13 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "shot_transcript_links_v1",
+  "title": "shot_transcript_links_v2",
   "type": "object",
-  "required": ["video_id", "shot_id", "asr_segment_id", "coverage"],
+  "required": ["video_id", "shot_id", "asr_segment_id", "overlap_start_sec", "overlap_end_sec", "overlap_sec", "segment_coverage", "entity_coverage", "coverage", "assigned_word_count"],
   "properties": {
     "video_id": {"type": "string", "minLength": 1},
     "shot_id": {"type": "string", "minLength": 1},
     "asr_segment_id": {"type": "string", "minLength": 1},
-    "coverage": {"type": "number", "minimum": 0, "maximum": 1}
+    "overlap_start_sec": {"type": "number", "minimum": 0},
+    "overlap_end_sec": {"type": "number", "exclusiveMinimum": 0},
+    "overlap_sec": {"type": "number", "exclusiveMinimum": 0},
+    "segment_coverage": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "entity_coverage": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "coverage": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "assigned_word_count": {"type": "integer", "minimum": 0}
   },
   "additionalProperties": false
 }

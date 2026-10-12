@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -8,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from system1.artifacts.checkpoint import sha256_file
+
+TIME_BOUNDARY_POLICY = "next_shot_start_pts_v1"
+TIMELINE_EPSILON = 1e-9
 
 
 @dataclass(frozen=True)
@@ -126,10 +130,15 @@ def scenes_to_shot_rows(
     video_id: str,
     scenes_inclusive: list[list[int]],
     frame_timeline: list[dict[str, Any]],
+    time_boundary_policy: str = TIME_BOUNDARY_POLICY,
 ) -> list[dict[str, Any]]:
+    if time_boundary_policy != TIME_BOUNDARY_POLICY:
+        raise ValueError("Unsupported shot time boundary policy")
     if not frame_timeline:
         raise ValueError("Decoded frame timeline is required for shot construction")
     by_frame = {int(row["frame_id"]): row for row in frame_timeline}
+    if sorted(by_frame) != list(range(len(frame_timeline))):
+        raise ValueError("Decoded frame timeline must have contiguous zero-based frame IDs")
     rows: list[dict[str, Any]] = []
     for shot_index, scene in enumerate(scenes_inclusive):
         if len(scene) != 2:
@@ -140,13 +149,16 @@ def scenes_to_shot_rows(
             raise ValueError(f"TransNet scene is outside decoded frame timeline: {scene}")
         start_time = float(by_frame[start_frame]["pts_time"])
         end_row = by_frame[inclusive_end]
-        duration = end_row.get("duration_time")
-        if duration is None:
-            if end_frame in by_frame:
-                end_time = float(by_frame[end_frame]["pts_time"])
-            else:
-                raise ValueError("Final decoded frame has no duration_time")
+        if end_frame in by_frame:
+            end_time = float(by_frame[end_frame]["pts_time"])
         else:
+            duration = end_row.get("duration_time")
+            if (
+                duration is None
+                or not math.isfinite(float(duration))
+                or float(duration) <= 0
+            ):
+                raise ValueError("Final decoded frame has no positive duration_time")
             end_time = float(end_row["pts_time"]) + float(duration)
         rows.append(
             {
@@ -158,14 +170,18 @@ def scenes_to_shot_rows(
                 "end_frame": end_frame,
                 "start_sec": start_time,
                 "end_sec": end_time,
-                "duration_sec": max(0.0, end_time - start_time),
+                "duration_sec": end_time - start_time,
                 "frame_count": end_frame - start_frame,
                 "boundary_convention": "[start_frame, end_frame)",
                 "detection_method": "transnet_v2",
                 "status": "transnet_v2_no_cut" if len(scenes_inclusive) == 1 else "pass",
             }
         )
-    _validate_shot_partition(rows, frame_count=len(frame_timeline))
+    _validate_shot_partition(
+        rows,
+        frame_count=len(frame_timeline),
+        frame_timeline=frame_timeline,
+    )
     return rows
 
 
@@ -195,11 +211,42 @@ def _validate_prediction_payload(
         raise ValueError("TransNet scene ranges do not cover all decoded frames")
 
 
-def _validate_shot_partition(rows: list[dict[str, Any]], *, frame_count: int) -> None:
+def _validate_shot_partition(
+    rows: list[dict[str, Any]],
+    *,
+    frame_count: int,
+    frame_timeline: list[dict[str, Any]],
+) -> None:
+    timeline_by_frame = {
+        int(row["frame_id"]): row for row in frame_timeline
+    }
     expected_start = 0
-    for row in rows:
+    previous_end_sec: float | None = None
+    for index, row in enumerate(rows):
         if row["start_frame"] != expected_start or row["end_frame"] <= row["start_frame"]:
             raise ValueError("Shot rows do not form a contiguous decoded-frame partition")
+        start_sec = float(row["start_sec"])
+        end_sec = float(row["end_sec"])
+        if not math.isfinite(start_sec) or not math.isfinite(end_sec) or end_sec <= start_sec:
+            raise ValueError("Shot rows must have positive time ranges")
+        if previous_end_sec is not None and abs(start_sec - previous_end_sec) > TIMELINE_EPSILON:
+            raise ValueError("Shot rows do not form a contiguous decoded-time partition")
+        if int(row["frame_count"]) != int(row["end_frame"]) - int(row["start_frame"]):
+            raise ValueError("Shot frame_count does not match its frame range")
+        if abs(float(row["duration_sec"]) - (end_sec - start_sec)) > TIMELINE_EPSILON:
+            raise ValueError("Shot duration_sec does not match its time range")
+        expected_start_sec = float(
+            timeline_by_frame[int(row["start_frame"])]["pts_time"]
+        )
+        if abs(start_sec - expected_start_sec) > TIMELINE_EPSILON:
+            raise ValueError("Shot start_sec does not match decoded frame PTS")
+        if index + 1 < len(rows):
+            expected_end_sec = float(
+                timeline_by_frame[int(row["end_frame"])]["pts_time"]
+            )
+            if abs(end_sec - expected_end_sec) > TIMELINE_EPSILON:
+                raise ValueError("Non-final shot end_sec must equal next-shot start PTS")
         expected_start = int(row["end_frame"])
+        previous_end_sec = end_sec
     if expected_start != frame_count:
         raise ValueError("Shot rows do not cover the Phase00 decoded frame timeline")

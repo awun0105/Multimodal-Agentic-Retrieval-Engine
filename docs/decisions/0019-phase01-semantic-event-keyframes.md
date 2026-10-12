@@ -49,8 +49,11 @@ bound cost deterministically.
 Accepted rows use `keyframes_v3` role `supplemental` and are always
 non-representative. OCR processes them through its existing gate, all their OCR
 joins scene evidence, and focused scene review may show every supplemental
-image. Shot captioning remains one representative image per shot; scene-summary
-image sampling also remains representative-only. Semantic sampling stays in
+image. ADR 0019's original representative-only caption rule is amended by the
+Task 5 temporal-understanding contract: static/simple shots remain
+representative-only, while eligible changing shots use one bounded ordered
+storyboard derived solely from these canonical keyframes. Scene-summary image
+sampling remains representative-only. Semantic sampling stays in
 the `keyframes` checkpoint stage and its versioned media config participates in
 that stage fingerprint.
 
