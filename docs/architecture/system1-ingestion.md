@@ -1,5 +1,10 @@
 # System 1: Ingestion And Preprocessing
 
+> **Being superseded (2026-10-25).** Parts of this document describe the System 1
+> pipeline before ADRs 0021 to 0024. Where it conflicts with those ADRs or
+> `docs/plans/active/system1-pipeline-simplification.md`, the ADRs and the plan
+> win. This document is updated per stage during implementation.
+
 ## Status
 
 Canonical for offline preprocessing. System 1 produces the app-ready contract in `docs/architecture/data-contracts.md` and never serves live user queries.

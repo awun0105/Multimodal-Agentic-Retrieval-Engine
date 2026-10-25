@@ -1,5 +1,9 @@
 # System 1 Phase01 Scene Grouping
 
+> **Superseded (2026-10-25)** by ADR 0021: Phase01 no longer groups scenes or
+> writes scene summaries. Kept for history until the implementation removes the
+> code; then this file is deleted.
+
 Date: 2026-09-08
 
 ## Status

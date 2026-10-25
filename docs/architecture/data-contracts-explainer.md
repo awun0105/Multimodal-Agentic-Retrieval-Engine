@@ -1,5 +1,10 @@
 # Giải Thích Data Contract Và Luồng Dữ Liệu Retrieval
 
+> **Being superseded (2026-10-25).** Parts of this document describe the System 1
+> pipeline before ADRs 0021 to 0024. Where it conflicts with those ADRs or
+> `docs/plans/active/system1-pipeline-simplification.md`, the ADRs and the plan
+> win. This document is updated per stage during implementation.
+
 ## Trạng thái
 
 Đây là tài liệu giải thích bằng tiếng Việt, viết để đọc và kiểm tra lại logic chương trình. Nội dung dựa trên các canonical docs hiện tại. Mỗi câu trả lời đều có phần `Evidence` để bạn mở tài liệu gốc ra đối chiếu.

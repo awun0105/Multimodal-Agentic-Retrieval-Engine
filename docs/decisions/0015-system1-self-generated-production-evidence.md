@@ -4,7 +4,10 @@ Date: 2026-08-05
 
 ## Status
 
-Accepted
+Accepted; amended 2026-10-25. The self-generated evidence principle remains.
+The Notebook 01 stage list and model choices are superseded by ADR 0021
+(no scene grouping) and ADR 0023 (model stack). Bilingual captions are no
+longer required.
 
 ## Context
 

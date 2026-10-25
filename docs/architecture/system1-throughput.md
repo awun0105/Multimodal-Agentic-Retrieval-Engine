@@ -1,5 +1,10 @@
 # System 1 Throughput Plan
 
+> **Being superseded (2026-10-25).** Parts of this document describe the System 1
+> pipeline before ADRs 0021 to 0024. Where it conflicts with those ADRs or
+> `docs/plans/active/system1-pipeline-simplification.md`, the ADRs and the plan
+> win. This document is updated per stage during implementation.
+
 Tài liệu này mô tả cách vận hành **System 1 preprocessing pipeline** để xử lý dataset video nhanh, ổn định, dễ chia việc cho nhiều teammate, và dễ khôi phục khi một session Kaggle/Colab bị lỗi.
 
 `docs/architecture/system1-spec.md` là tài liệu mô tả **System 1 phải tạo ra data gì**.

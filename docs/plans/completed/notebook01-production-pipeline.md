@@ -4,7 +4,8 @@ Date: 2026-08-13
 
 ## Status
 
-Active
+Superseded on 2026-10-25 by `docs/plans/active/system1-pipeline-simplification.md`.
+Not completed; kept as history of the 2026-08 and 2026-09 work.
 
 ## Outcome
 

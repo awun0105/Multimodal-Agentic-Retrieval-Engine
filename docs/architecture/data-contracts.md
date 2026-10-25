@@ -1,5 +1,10 @@
 # App-ready Data Contract
 
+> **Being superseded (2026-10-25).** Parts of this document describe the System 1
+> pipeline before ADRs 0021 to 0024. Where it conflicts with those ADRs or
+> `docs/plans/active/system1-pipeline-simplification.md`, the ADRs and the plan
+> win. This document is updated per stage during implementation.
+
 ## Status
 
 Canonical. This document is the source of truth for the app-ready data contract; the earlier root draft has been archived.

@@ -4,7 +4,8 @@ Date: 2026-08-25
 
 ## Status
 
-Accepted; fallback provider amended 2026-09-01.
+Superseded by ADR 0023 on 2026-10-25 (scene stages removed by ADR 0021).
+Fallback provider was previously amended 2026-09-01.
 
 ## Context
 

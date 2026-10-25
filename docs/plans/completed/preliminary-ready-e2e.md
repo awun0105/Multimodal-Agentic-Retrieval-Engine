@@ -4,7 +4,8 @@ Date: 2026-08-05
 
 ## Status
 
-Active
+Superseded on 2026-10-25 by `docs/plans/active/system1-pipeline-simplification.md`.
+Not completed; kept as history of the 2026-08 and 2026-09 work.
 
 ## Outcome
 
@@ -27,7 +28,7 @@ answer export.
 - Notebook 01 production pipeline:
   `docs/architecture/system1-notebook01-production-pipeline.md`.
 - Notebook 01 implementation plan:
-  `docs/plans/active/notebook01-production-pipeline.md`.
+  `docs/plans/completed/notebook01-production-pipeline.md`.
 - System 2 API shape: `docs/product/api-contracts.md`.
 - Current implementation status: `docs/product/current-state.md`.
 - Validation tracker: `docs/validation/test-matrix.md`.

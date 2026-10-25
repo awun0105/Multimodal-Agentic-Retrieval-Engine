@@ -44,7 +44,7 @@ Hard rules:
 | Product scope, competition rules, acceptance | `docs/product/requirements-truth-set.md`, `docs/product/rules-2026.md`, `docs/product/acceptance-criteria.md`, `docs/product/official/` |
 | What is implemented and verified | `docs/product/current-state.md`, `docs/validation/test-matrix.md` |
 | IDs, schemas, artifact and storage layout | `docs/architecture/data-contracts.md`, `system1/schemas/` |
-| System 1 pipeline behavior | `docs/architecture/system1-*.md` |
+| System 1 pipeline behavior | `docs/architecture/system1-target.md`, ADRs 0021 to 0024, and `docs/plans/active/system1-pipeline-simplification.md` first; other `docs/architecture/system1-*.md` are partly outdated until the plan completes |
 | System 2 runtime, API, UI | `docs/architecture/system2-retrieval.md`, `docs/product/api-contracts.md`, `docs/product/ui-implementation.md` |
 | Lasting decisions | `docs/decisions/` |
 | Work in progress | `docs/plans/active/` |
@@ -57,14 +57,23 @@ Hard rules:
 Run the tests for each component you change:
 
 ```bash
-# system1
-cd system1 && uv run pytest -q
+# system1, base install (no torch/NeMo)
+cd system1 && uv run pytest -q --ignore=tests/test_phase01_vlm_client.py
 cd system1 && uv run pytest -q tests/<test_file>.py   # focused
+
+# system1, full suite (installs torch, NeMo, transformers)
+cd system1 && uv run --extra phase01-production pytest -q
 
 # mvp-app (installs torch and model dependencies on first setup)
 cd mvp-app && make setup && uv pip install --python .venv/bin/python -r requirements-dev.txt
 cd mvp-app && .venv/bin/python -m pytest -q
 ```
+
+Known failures on the base install (2026-10-25): three tests in
+`tests/test_phase01_asr_alignment.py` need NeMo, and
+`tests/test_smoke.py::test_notebooks_are_operator_ready_thin_orchestration_shells`
+expects a stale `monolith-mvp-app` string. Report new failures separately from
+these.
 
 No linter is configured for the repository yet. Do not reformat existing code.
 

@@ -4,7 +4,8 @@ Date: 2026-08-25
 
 ## Status
 
-Accepted
+Accepted; amended 2026-10-25 by ADR 0022, which removes per-shot keyframe
+count limits in favor of content-adaptive sampling and sub-shots.
 
 ## Context
 

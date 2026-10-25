@@ -4,7 +4,8 @@ Date: 2026-08-31
 
 ## Status
 
-Accepted
+Superseded by ADR 0023 on 2026-10-25. The Parakeet and Flashlight decoding
+graph is replaced after Kaggle trials.
 
 ## Context
 

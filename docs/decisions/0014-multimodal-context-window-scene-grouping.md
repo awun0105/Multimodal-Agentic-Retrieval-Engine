@@ -4,7 +4,8 @@ Date: 2026-08-05
 
 ## Status
 
-Accepted. Provider/runtime selection was amended by ADR 0018.
+Superseded by ADR 0021 on 2026-10-25. Provider/runtime selection was
+previously amended by ADR 0018.
 
 ## Context
 
