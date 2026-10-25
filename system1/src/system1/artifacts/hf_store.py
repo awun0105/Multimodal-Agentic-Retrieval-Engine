@@ -4,8 +4,9 @@ import json
 import os
 import shutil
 import tempfile
-from collections.abc import Sequence
-from dataclasses import dataclass
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -50,6 +51,32 @@ HF_EXPECTED_ERRORS = (
 )
 
 
+RETRY_DELAYS_SEC = (2, 4, 8)
+
+
+def _connection_errors() -> tuple[type[BaseException], ...]:
+    """Connection and timeout errors of the HTTP client huggingface_hub uses (requests before 1.0, httpx after)."""
+
+    errors: list[type[BaseException]] = [ConnectionError, TimeoutError]
+    for module_name, names in (("requests", ("ConnectionError", "Timeout")),
+                               ("httpx", ("TransportError", "TimeoutException"))):
+        try:
+            module = __import__(module_name)
+        except ImportError:
+            continue
+        errors += [getattr(module, name) for name in names]
+    return tuple(errors)
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """5xx, 429, and connection errors are retried; 404 and other client errors are not."""
+
+    if isinstance(exc, HfHubHTTPError):
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        return status is not None and (status >= 500 or status == 429)
+    return isinstance(exc, _connection_errors())
+
+
 def _normalize_relative_path(relative_path: str | Path) -> str:
     path = PurePosixPath(str(relative_path))
     if path.is_absolute():
@@ -71,6 +98,17 @@ class HuggingFaceDatasetArtifactStore:
     token: str | None = None
     prefix: str = ""
     cache_dir: Path | str | None = None
+    sleep: Callable[[float], None] = field(default=time.sleep, repr=False, compare=False)
+
+    def _retry(self, call: Callable[[], object]) -> object:
+        for delay in (*RETRY_DELAYS_SEC, None):
+            try:
+                return call()
+            except Exception as exc:
+                if delay is None or not _is_transient(exc):
+                    raise
+                self.sleep(delay)
+        raise AssertionError("unreachable")
 
     def __post_init__(self) -> None:
         _normalize_relative_path(self.prefix)
@@ -121,14 +159,14 @@ class HuggingFaceDatasetArtifactStore:
         if not source.is_file():
             raise ValueError(f"Source must be a file: {source}")
         remote_path = self._remote_path(relative_path)
-        HfApi(token=self.token).upload_file(
+        self._retry(lambda: HfApi(token=self.token).upload_file(
             path_or_fileobj=str(source),
             path_in_repo=remote_path,
             repo_id=self.repo_id,
             repo_type=self.repo_type,
             revision=self.revision,
             commit_message=f"Upload artifact {remote_path}",
-        )
+        ))
         return self.path(relative_path)
 
     def upload_files(
@@ -208,7 +246,7 @@ class HuggingFaceDatasetArtifactStore:
         remote_path = self._remote_path(relative_path)
         effective_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         try:
-            cached_path = hf_hub_download(
+            cached_path = self._retry(lambda: hf_hub_download(
                 repo_id=self.repo_id,
                 repo_type=self.repo_type,
                 revision=self.revision,
@@ -219,7 +257,7 @@ class HuggingFaceDatasetArtifactStore:
                     if effective_cache_dir is not None
                     else None
                 ),
-            )
+            ))
         except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
             raise FileNotFoundError(remote_path) from exc
         target.parent.mkdir(parents=True, exist_ok=True)

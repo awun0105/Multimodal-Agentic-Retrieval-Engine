@@ -14,7 +14,7 @@ import yaml
 from system1.artifacts.package import validate_artifact_zip
 from system1.shots.transnet import scenes_to_shot_rows
 from system1.text.evidence import AsrSegment
-from system1.worker.package import PackageError, validate_package
+from system1.worker.package import PackageError, representative_keyframes, validate_package
 from system1.worker.video import VideoInput, WorkerModels, process_video
 
 CONFIG = yaml.safe_load((Path(__file__).parents[1] / "configs" / "worker.yaml").read_text())
@@ -249,3 +249,38 @@ def test_validator_rejects_a_schema_violation(video, tmp_path) -> None:
     shots.to_parquet(package_dir / "shots.parquet", index=False)
     with pytest.raises(PackageError, match="shots.schema.json at shot_id"):
         validate_package(package_dir, video_id="V1")
+
+
+def test_image_vectors_come_from_one_embed_call_per_cut_segment(video, tmp_path) -> None:
+    calls = Calls()
+    zip_path = _run(video, tmp_path, _models(calls))
+
+    keyframes = _table(zip_path, "keyframes.parquet")
+    with zipfile.ZipFile(zip_path) as archive:
+        image_vectors = np.load(archive.open("V1/image_vectors.npy"))
+        manifest = json.loads(archive.read("V1/manifest.json"))
+    assert image_vectors.shape[0] == len(keyframes)
+    assert calls.count["image"] == len(_table(zip_path, "cut_segments.parquet")) == 2
+    assert calls.count["image"] < len(keyframes)
+    assert "blurred_dropped" in manifest["stages"]["keyframes"]
+
+
+def test_representative_is_the_keyframe_nearest_the_shot_centroid(video, tmp_path) -> None:
+    zip_path = _run(video, tmp_path, _models(Calls()))
+    keyframes = _table(zip_path, "keyframes.parquet")
+    with zipfile.ZipFile(zip_path) as archive:
+        vectors = np.load(archive.open("V1/image_vectors.npy"))
+
+    for shot_id, group in keyframes.groupby("shot_id"):
+        rows = vectors[group.index]
+        rows = rows / np.linalg.norm(rows, axis=1, keepdims=True)
+        expected = group["keyframe_id"].iloc[int(np.argmax(rows @ rows.mean(axis=0)))]
+        assert group.loc[group["is_representative"], "keyframe_id"].tolist() == [expected]
+
+
+def test_representative_uses_vectors_over_the_middle_rule() -> None:
+    keyframes = pd.DataFrame({"shot_id": ["S"] * 3, "keyframe_id": ["a", "b", "c"]})
+    vectors = np.array([[1, 0], [0, 1], [1, 0.1]], dtype=np.float32)
+
+    assert representative_keyframes(keyframes)["keyframe_id"].tolist() == ["b"]
+    assert representative_keyframes(keyframes, vectors)["keyframe_id"].tolist() in (["a"], ["c"])

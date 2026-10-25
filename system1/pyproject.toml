@@ -55,6 +55,12 @@ worker = [
     "xgrammar>=0.2",
 ]
 
+# Release build and bucket publish (ADR 0025). The Storage Bucket API needs
+# huggingface_hub 1.x, which the old phase01-production extra cannot use.
+release = [
+    "huggingface_hub>=1.27,<2",
+]
+
 [project.scripts]
 system1 = "system1.cli:main"
 system1-phase01-qualify = "system1.phase01_qualification_cli:main"
@@ -68,3 +74,8 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+conflicts = [
+    [{ extra = "release" }, { extra = "phase01-production" }],
+]

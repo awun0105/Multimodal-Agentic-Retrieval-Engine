@@ -43,6 +43,18 @@ def difference_hash_distance(left: np.ndarray, right: np.ndarray) -> float:
     return float(np.count_nonzero(left != right) / left.size)
 
 
+def laplacian_variance(frame_rgb: np.ndarray) -> float:
+    """Variance of the 3x3 Laplacian of the grayscale frame; low values mean blur or a fade."""
+
+    frame = np.asarray(frame_rgb, dtype=np.float32)
+    gray = frame[..., :3] @ np.array([0.299, 0.587, 0.114], dtype=np.float32) if frame.ndim == 3 else frame
+    if gray.shape[0] < 3 or gray.shape[1] < 3:
+        return 0.0
+    laplacian = (gray[:-2, 1:-1] + gray[2:, 1:-1] + gray[1:-1, :-2] + gray[1:-1, 2:]
+                 - 4.0 * gray[1:-1, 1:-1])
+    return float(laplacian.var())
+
+
 def analyze_text_regions(
     image: Path | np.ndarray,
     config: Mapping[str, Any],

@@ -88,10 +88,21 @@ def validate_table(name: str, table: pd.DataFrame) -> None:
             raise PackageError(f"{name} row {index} violates {name}.schema.json at {path}: {error.message}")
 
 
-def representative_keyframes(keyframes: pd.DataFrame) -> pd.DataFrame:
-    """The middle keyframe of each shot, in time order. The keyframe captioned for the shot."""
+def representative_keyframes(keyframes: pd.DataFrame, vectors: np.ndarray | None = None) -> pd.DataFrame:
+    """One keyframe per shot, in time order. The keyframe captioned for the shot.
 
-    picks = [group.iloc[len(group) // 2] for _, group in keyframes.groupby("shot_id", sort=False)]
+    With `vectors` (one row per keyframe row) it is the keyframe closest by
+    cosine to the mean vector of the shot's keyframes; without them, the middle one.
+    """
+
+    picks = []
+    for _, group in keyframes.groupby("shot_id", sort=False):
+        if vectors is None:
+            picks.append(group.iloc[len(group) // 2])
+            continue
+        rows = np.asarray(vectors, dtype=np.float32)[keyframes.index.get_indexer(group.index)]
+        rows = rows / np.maximum(np.linalg.norm(rows, axis=1, keepdims=True), 1e-12)
+        picks.append(group.iloc[int(np.argmax(rows @ rows.mean(axis=0)))])
     return pd.DataFrame(picks).reset_index(drop=True)
 
 

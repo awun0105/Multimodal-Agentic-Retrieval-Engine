@@ -266,3 +266,100 @@ def test_path_traversal_rejected(tmp_path: Path) -> None:
     store = HuggingFaceDatasetArtifactStore(repo_id="org/repo")
     with pytest.raises(ValueError):
         store.path("../evil.txt")
+
+
+class _Response:
+    def __init__(self, status: int) -> None:
+        self.status_code = status
+        self.headers: dict = {}
+
+
+def _http_error(status: int):
+    from huggingface_hub.utils import HfHubHTTPError
+
+    error = HfHubHTTPError.__new__(HfHubHTTPError)
+    Exception.__init__(error, f"status {status}")
+    error.response = _Response(status)
+    return error
+
+
+def test_upload_file_retries_transient_errors_with_backoff(monkeypatch, tmp_path: Path) -> None:
+    failures = [_http_error(503), ConnectionError("reset")]
+    calls = []
+
+    class FakeApi:
+        def __init__(self, token=None):
+            pass
+
+        def upload_file(self, **kwargs):
+            calls.append(kwargs["path_in_repo"])
+            if failures:
+                raise failures.pop(0)
+            return "ok"
+
+    monkeypatch.setattr("system1.artifacts.hf_store.HfApi", FakeApi)
+    sleeps: list[float] = []
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo", sleep=sleeps.append)
+    source = tmp_path / "artifact.zip"
+    source.write_bytes(b"zip")
+
+    store.upload_file(source, "worker/a.zip")
+
+    assert calls == ["worker/a.zip"] * 3
+    assert sleeps == [2, 4]
+
+
+def test_download_file_retries_rate_limit_then_succeeds(monkeypatch, tmp_path: Path) -> None:
+    cached = tmp_path / "cached.bin"
+    cached.write_bytes(b"payload")
+    failures = [_http_error(429), _http_error(500)]
+
+    def fake_download(**kwargs):
+        if failures:
+            raise failures.pop(0)
+        return str(cached)
+
+    monkeypatch.setattr("system1.artifacts.hf_store.hf_hub_download", fake_download)
+    sleeps: list[float] = []
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo", sleep=sleeps.append)
+
+    target = store.download_file("a.bin", tmp_path / "out" / "a.bin")
+
+    assert target.read_bytes() == b"payload"
+    assert sleeps == [2, 4]
+
+
+def test_upload_file_gives_up_after_three_retries(monkeypatch, tmp_path: Path) -> None:
+    class FakeApi:
+        def __init__(self, token=None):
+            pass
+
+        def upload_file(self, **kwargs):
+            raise _http_error(502)
+
+    monkeypatch.setattr("system1.artifacts.hf_store.HfApi", FakeApi)
+    sleeps: list[float] = []
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo", sleep=sleeps.append)
+    source = tmp_path / "artifact.zip"
+    source.write_bytes(b"zip")
+
+    with pytest.raises(HF_EXPECTED_ERRORS):
+        store.upload_file(source, "worker/a.zip")
+    assert sleeps == [2, 4, 8]
+
+
+def test_not_found_is_not_retried(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+
+    def fake_download(**kwargs):
+        calls.append(kwargs["filename"])
+        raise _http_error(404)
+
+    monkeypatch.setattr("system1.artifacts.hf_store.hf_hub_download", fake_download)
+    sleeps: list[float] = []
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo", sleep=sleeps.append)
+
+    with pytest.raises(HF_EXPECTED_ERRORS):
+        store.download_file("missing.bin", tmp_path / "missing.bin")
+    assert calls == ["missing.bin"]
+    assert sleeps == []

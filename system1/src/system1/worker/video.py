@@ -107,24 +107,27 @@ def process_video(
         pd.DataFrame(cuts, columns=CUT_COLUMNS).to_parquet(package / "cut_segments.parquet", index=False)
         return {**report, "cut_segments": len(cuts)}
 
+    vectors_path = root / "scratch" / "keyframe_vectors.npy"
+
     def keyframes_stage():
-        shots, keyframes, empty = _split_shots(video, pd.read_parquet(package / "cut_segments.parquet"),
-                                               config["keyframes"], package)
+        shots, keyframes, vectors, report = _split_shots(
+            video, pd.read_parquet(package / "cut_segments.parquet"), config["keyframes"], package, models.image)
         if not keyframes:
             raise ValueError(f"no usable keyframe in {video_id}")
         # scene_id is null in worker packages; the release sets it (ADR 0026).
         pd.DataFrame(shots, columns=SHOT_COLUMNS).astype({"scene_id": "string"}).to_parquet(
             package / "shots.parquet", index=False)
         keyframes = pd.DataFrame(keyframes)
-        representatives = set(representative_keyframes(keyframes)["keyframe_id"])
+        representatives = set(representative_keyframes(keyframes, vectors)["keyframe_id"])
         keyframes["is_representative"] = keyframes["keyframe_id"].isin(representatives)
         keyframes.to_parquet(package / "keyframes.parquet", index=False)
-        return {"status": "pass", "shots": len(shots), "keyframes": len(keyframes),
-                "cut_segments_without_keyframe": empty}
+        # The image_vectors stage writes these to the package; no JPEG is re-read.
+        np.save(vectors_path, vectors)
+        return {"status": "pass", "shots": len(shots), "keyframes": len(keyframes), **report}
 
     def image_stage():
-        vectors = models.image.embed_images(_images(package, _keyframes(package)["keyframe_ref"]))
-        np.save(package / "image_vectors.npy", np.asarray(vectors, dtype="float32"))
+        vectors = np.load(vectors_path)
+        np.save(package / "image_vectors.npy", vectors)
         return {"status": "pass", "vectors": len(vectors)}
 
     def asr_stage():
@@ -178,7 +181,9 @@ def process_video(
     # ASR runs first, while the most GPU memory is free.
     runner.run("asr", config=model_config["asr"], upstream=[], fn=asr_stage, degrade=True)
     runner.run("cuts", config=model_config["shot_detection"], upstream=[], fn=cuts_stage)
-    runner.run("keyframes", config=config["keyframes"], upstream=["cuts"], fn=keyframes_stage)
+    # The keyframes stage embeds candidates, so the image model is part of its fingerprint.
+    runner.run("keyframes", config={**config["keyframes"], "image_embedding": model_config["image_embedding"]},
+               upstream=["cuts"], fn=keyframes_stage)
     runner.run("image_vectors", config=model_config["image_embedding"], upstream=["keyframes"], fn=image_stage)
     runner.run("ocr", config=model_config["ocr"], upstream=["keyframes"], fn=ocr_stage, degrade=True)
     runner.run("text_documents", config=text_config, upstream=["keyframes", "asr", "ocr"],
@@ -211,9 +216,14 @@ def _whole_video_segment(timeline_rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _split_shots(
-    video: VideoInput, cuts: pd.DataFrame, settings: Mapping[str, Any], package: Path
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
-    """Split cut segments into shots, write keyframe images, and return shot and keyframe rows."""
+    video: VideoInput, cuts: pd.DataFrame, settings: Mapping[str, Any], package: Path, embedder: ImageEmbedder
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], np.ndarray, dict[str, int]]:
+    """Split cut segments into shots, write keyframe images, and return shot rows,
+    keyframe rows, keyframe image vectors aligned to the rows, and a stage report.
+
+    The usable candidates of each cut segment are embedded in one call; the
+    shot split uses the vectors (plan Step 5c item 4).
+    """
 
     policy = AdaptiveKeyframePolicy(
         candidate_interval_sec=float(settings["candidate_interval_sec"]),
@@ -221,7 +231,12 @@ def _split_shots(
         shot_drift=float(settings["shot_drift"]),
         max_shot_sec=float(settings["max_shot_sec"]),
         edge_margin_frames=int(settings["edge_margin_frames"]),
+        min_sharpness_ratio=float(settings.get("min_sharpness_ratio", 0.3)),
     )
+
+    def embed(frames: list[np.ndarray]) -> np.ndarray:
+        return embedder.embed_images([Image.fromarray(frame) for frame in frames])
+
     timeline = sorted(video.timeline_rows, key=lambda row: int(row["frame_id"]))
     pts = [float(row["pts_time"]) for row in timeline]
     video_end = pts[-1] + float(timeline[-1].get("duration_time") or 0.0)
@@ -230,11 +245,12 @@ def _split_shots(
     video_id = video.video_id
     shots: list[dict[str, Any]] = []
     keyframes: list[dict[str, Any]] = []
-    empty = 0
+    vectors: list[np.ndarray] = []
+    report = {"cut_segments_without_keyframe": 0, "blurred_dropped": 0}
     for cut, plan, frames in zip(cuts.itertuples(), plans, iter_decode_frame_groups(video.video_path, plans)):
         kept = select_adaptive_keyframes([(frame, pts[frame], frames.get(frame)) for frame in plan],
-                                         policy=policy)
-        empty += not kept
+                                         policy=policy, embed=embed, report=report)
+        report["cut_segments_without_keyframe"] += not kept
         starts = {item.shot_index: item.frame_id for item in kept if item.reason == "shot_start"}
         bounds = [int(cut.start_frame)] + [starts[index] for index in sorted(starts) if index > 0]
         bounds.append(int(cut.end_frame))
@@ -258,7 +274,8 @@ def _split_shots(
                               "shot_id": shot_ids[item.shot_index], "cut_segment_id": cut.cut_segment_id,
                               "selection_reason": item.reason, "keyframe_ref": keyframe_ref,
                               "thumbnail_ref": thumbnail_ref})
-    return shots, keyframes, empty
+            vectors.append(item.vector)
+    return shots, keyframes, np.asarray(vectors, dtype="float32"), report
 
 
 def _text_documents(video_id: str, package: Path, settings: Mapping[str, Any]) -> list[dict[str, Any]]:

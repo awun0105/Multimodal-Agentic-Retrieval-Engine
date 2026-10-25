@@ -587,15 +587,27 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
     `tests/test_caption_pass.py`. Reads worker ZIP members in place (Step 5f
     item 13). Kaggle time per shot not yet recorded.
   - [ ] 3. vLLM versus transformers caption throughput trial on T4.
-  - [ ] 4. Release merges optional caption packages.
+  - [x] 4. Release merges optional caption packages (code, 2026-10-26):
+    `release/build.py` streams one worker ZIP at a time, verifies the caption
+    package `worker_package_sha256`, lists `videos_with_captions`.
   - [ ] 5. Scene grouping and text-only scene summaries; boundary precision
     and recall on 3 hand-labelled videos. Done 2026-10-26: pure grouping in
     `scenes/deterministic.py` (`ShotEvidence`, `SceneParams.from_config`,
     `continuity_score`, `group_scenes`, `scene_ids_for_shots`), `worker.yaml`
     section `scenes`, `tests/test_scene_deterministic.py` (7 tests). Not done:
     wiring into `release/build.py`, scene summaries, hand-labelled check.
-  - [ ] 6. WebP keyframes in the release; contract, schema, validator updated.
-  - [ ] 7. Bucket publish (`publish-release`); 5-video release round trip.
+  - [x] 6. WebP keyframes in the release (code, 2026-10-26): quality 80,
+    `.webp` refs, `videos` and `vector_map` tables, `release_v2` manifest with
+    `schema_sha256` and `peak_rss_mb`, SQLite WAL and foreign_keys pragmas.
+    `scene_builder` hook present, default null scenes.
+  - [ ] 7. Bucket publish (code, 2026-10-26): `release/publish.py`
+    (`publish_release`, `BucketClient`, `media_sink_for`), batched and resumable,
+    `READY.json` last; CLI is `build-release --publish --bucket-id
+    --bucket-prefix --persist-dir` (no separate `publish-release` command);
+    `build_release.ipynb` installs `system1[release]` (huggingface_hub 1.x for
+    the bucket API; `[tool.uv] conflicts` keeps it apart from
+    `phase01-production`). Not done: 5-video round trip against the real bucket;
+    skip of videos whose media is already in the bucket.
 - [ ] Step 5c (algorithm backlog, group A): items 1, 2, 3 coded 2026-10-26
   (`providers/ocr.py`: `frame_text_hashes`, `should_rerun_ocr`, `CropCache`,
   `EasyVietOcr.read(image, cache)`; `text/evidence.py`:
@@ -606,13 +618,24 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   survive; fragments like "Vập" are left to the repeat and length filters.
   Plan checks (OCR lines before/after, cache hit rate, 200 dropped lines
   reviewed) wait for the next Kaggle run; the stage report now records
-  `reused_from_shot` and `crop_cache_hits`.
+  `reused_from_shot` and `crop_cache_hits`. Items 4, 5, 6 coded 2026-10-26:
+  shot split by SigLIP cosine distance (`shot_drift 0.25`), one embed call per
+  cut segment, `image_vectors` written from the keyframe pass without
+  re-reading JPEGs; representative keyframe = nearest to the shot mean vector;
+  blur filter `min_sharpness_ratio 0.3` with `blurred_dropped` in the stage
+  report; keyframes checkpoint includes the image model config. Thresholds not
+  tuned on real video.
 - [ ] Step 5d (data contract): audit, `schemas/v2/`, and `data-contracts.md`
   rewrite done 2026-10-26; validator and `videos`/`vector_map` code not
   started.
-- [ ] Step 5f (efficiency): review done 2026-10-26; no code started.
-  Blocking items: 1 (streaming release build), 2 (CPU kernel for the build),
-  7 (HF retry), 9 (report per video).
+- [ ] Step 5f (efficiency): items 1 (streaming build), 2 (CPU kernel noted in
+  the notebook), 6, 7 (HF retry with backoff, client-agnostic), 9 (report per
+  video in worker and caption batch via `--persist-dir`, build report), 13
+  (caption pass reads ZIP members) coded 2026-10-26. Open: 3, 4, 5, 10, 11.
+  New known failure: `test_phase01_runtime_qualification.py::
+  test_qualified_python313_production_tuple_is_pinned_in_project_and_lock`
+  (lockfile now has two resolutions because of the `release` extra); the test
+  belongs to the old qualification module removed in Step 6.
 - [ ] Step 5e (notebooks): `worker_batch` verified at `93c7723`;
   `caption_batch`, publish step, notebook tests, runbook, renames not started.
 - [ ] Step 6: End-to-end run and cleanup.

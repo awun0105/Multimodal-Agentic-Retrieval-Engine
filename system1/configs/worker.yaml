@@ -6,7 +6,12 @@ schema_version: worker_v1
 keyframes:
   candidate_interval_sec: 2.0
   min_change: 0.15
-  shot_drift: 0.35
+  # Cosine distance between SigLIP vectors of a candidate and the shot start
+  # that starts a new shot (plan Step 5c item 4).
+  shot_drift: 0.25
+  # Drop a candidate whose Laplacian variance is below this fraction of the
+  # cut segment median (blur or transition); 0 disables.
+  min_sharpness_ratio: 0.3
   max_shot_sec: 12.0
   edge_margin_frames: 2
   jpeg_long_side: 1280
@@ -18,6 +23,8 @@ storage:
   raw_repo: 1thesudden/AIOU26_raw
   source_repo: 1thesudden/AIOU26_release  # Phase00 batch manifests and raw mapping (read only)
   output_repo: 1thesudden/AIOU26_release_test  # production runs pass --output-repo explicitly
+  bucket_id: 1thesudden/aiou-app-storage  # runtime release bucket (ADR 0025)
+  bucket_prefix: releases_test  # production passes --bucket-prefix releases
 
 model_artifacts:
   backend: hf_dataset

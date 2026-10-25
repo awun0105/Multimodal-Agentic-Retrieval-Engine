@@ -107,3 +107,54 @@ def test_policy_rejects_impossible_values() -> None:
             max_shot_sec=12.0,
             edge_margin_frames=2,
         )
+
+
+def _blurred(frame: np.ndarray) -> np.ndarray:
+    # Flat frame with a soft horizontal ramp: not blank, almost no Laplacian energy.
+    ramp = np.linspace(40, 200, frame.shape[1], dtype=np.float32)
+    return np.broadcast_to(ramp[None, :, None], frame.shape).astype(np.uint8)
+
+
+def test_blurred_candidate_is_dropped_and_counted() -> None:
+    candidates = [(0, 0.0, _frame(1)), (50, 2.0, _blurred(_frame(2))), (100, 4.0, _frame(3))]
+    report: dict[str, int] = {}
+
+    kept = select_adaptive_keyframes(candidates, policy=POLICY, report=report)
+
+    assert [item.frame_id for item in kept] == [0, 100]
+    assert report["blurred_dropped"] == 1
+
+
+def test_segment_where_every_candidate_is_blurred_keeps_the_sharpest() -> None:
+    soft = _blurred(_frame(1))
+    sharper = soft.copy()
+    sharper[10:20, 10:20] = 0
+    candidates = [(0, 0.0, soft), (50, 2.0, sharper)]
+    policy = AdaptiveKeyframePolicy(candidate_interval_sec=2.0, min_change=0.15, shot_drift=0.35,
+                                    max_shot_sec=12.0, edge_margin_frames=2, min_sharpness_ratio=1.0)
+    report: dict[str, int] = {}
+
+    kept = select_adaptive_keyframes(candidates, policy=policy, report=report)
+
+    assert [item.frame_id for item in kept] == [50]
+    assert report["blurred_dropped"] == 1
+
+
+def test_shot_split_follows_vector_drift_not_dhash() -> None:
+    # Four distinct frames (large dHash distance); vectors say 0-1 and 2-3 are the same shot.
+    candidates = [(frame_id, frame_id / 25.0, _frame(frame_id)) for frame_id in (0, 50, 100, 150)]
+    fake = np.array([[1, 0], [0.95, 0.05], [0, 1], [0.05, 0.95]], dtype=np.float32)
+    calls = []
+
+    def embed(frames):
+        calls.append(len(frames))
+        return fake[: len(frames)]
+
+    policy = AdaptiveKeyframePolicy(candidate_interval_sec=2.0, min_change=0.15, shot_drift=0.25,
+                                    max_shot_sec=12.0, edge_margin_frames=2, min_sharpness_ratio=0.0)
+    kept = select_adaptive_keyframes(candidates, policy=policy, embed=embed)
+
+    assert calls == [4]
+    assert [(item.frame_id, item.shot_index, item.reason) for item in kept] == [
+        (0, 0, "shot_start"), (50, 0, "visual_change"), (100, 1, "shot_start"), (150, 1, "visual_change")]
+    assert np.allclose(kept[2].vector, fake[2])

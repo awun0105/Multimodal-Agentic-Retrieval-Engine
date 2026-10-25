@@ -23,7 +23,7 @@ from PIL import Image
 
 from system1.artifacts.package import validate_artifact_zip, write_artifact_zip
 from system1.text.evidence import unaccent
-from system1.worker.package import PackageError, representative_keyframes, validate_table
+from system1.worker.package import PackageError, validate_table
 
 CAPTION_COLUMNS = ["shot_id", "keyframe_id", "caption", "objects", "actions", "visible_text", "problems"]
 DOCUMENT_COLUMNS = ["doc_id", "video_id", "evidence_type", "start_sec", "end_sec", "shot_ids",
@@ -56,7 +56,7 @@ def caption_video(
             raise PackageError(f"worker manifest is for {worker_manifest.get('video_id')}, not {video_id}")
         keyframes = pd.read_parquet(io.BytesIO(archive.read(f"{video_id}/keyframes.parquet")))
         shots = pd.read_parquet(io.BytesIO(archive.read(f"{video_id}/shots.parquet")))
-        picks = representative_keyframes(keyframes)
+        picks = keyframes[keyframes["is_representative"].astype(bool)].reset_index(drop=True)
         images = [Image.open(io.BytesIO(archive.read(f"{video_id}/{ref}"))).convert("RGB")
                   for ref in picks["keyframe_ref"]]
     if set(picks["shot_id"]) != set(shots["shot_id"]):
