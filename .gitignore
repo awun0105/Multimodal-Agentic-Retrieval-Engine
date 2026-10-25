@@ -259,3 +259,7 @@ scripts/bin/harness.exe
 
 # Local Harness installer backups; recovery history is kept in Git.
 .harness-backup/
+
+# Local code indexes; regenerate with `codegraph init` and `graphify update .`
+.codegraph/
+graphify-out/
