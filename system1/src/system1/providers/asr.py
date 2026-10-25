@@ -19,8 +19,10 @@ def audio_extract_command(video_path: Path, wav_path: Path) -> list[str]:
 
 class ChunkFormerAsr:
     def __init__(self, config: Mapping[str, Any], device: str = "cuda") -> None:
+        import torch
         from chunkformer import ChunkFormerModel
 
+        self._torch = torch
         self.config = config
         # endless_decode runs on the device of the model parameters (CPU by default).
         self.model = ChunkFormerModel.from_pretrained(
@@ -28,6 +30,8 @@ class ChunkFormerAsr:
 
     def transcribe(self, video_path: Path, wav_path: Path) -> list[AsrSegment]:
         subprocess.run(audio_extract_command(video_path, wav_path), check=True)
+        if self._torch.cuda.is_available():
+            self._torch.cuda.empty_cache()
         raw = self.model.endless_decode(
             audio_path=str(wav_path),
             chunk_size=int(self.config["chunk_size"]),

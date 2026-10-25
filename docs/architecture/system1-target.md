@@ -35,13 +35,13 @@ Phase00  Ingest (unchanged)                          Notebook 00B/00C
   │
   ▼
 Phase01  Per-video worker                             Notebook 01 (one batch per worker)
-  1 shots            TransNetV2 cut detection
-  2 keyframes        content-adaptive sampling, sub-shots
-  3 image vectors    image embedding model(s)
-  4 ASR              speech to text with timestamps, 10-30 s chunks
-  5 OCR              text detection gate → OCR → dedup and logo filter
-  6 captions         one constrained JSON call per shot or sub-shot (optional)
-  7 text vectors     text embedding for caption and ASR chunk documents
+  1 ASR              speech to text with timestamps (runs first, most GPU memory free)
+  2 cuts             TransNetV2 cut segments
+  3 shots, keyframes split cut segments into shots by visual change; keyframes
+  4 image vectors    one vector per keyframe
+  5 OCR              per keyframe, noise and logo filter
+  6 captions         one constrained JSON call per shot (optional)
+  7 text documents   ASR chunks (10-30 s), OCR, captions; text vectors
   8 package          per-video ZIP + output validation
   9 sync             → HF AIOU26_release/phase01/artifacts/{batch_id}/{video_id}.zip
   │
@@ -72,14 +72,18 @@ One worker processes one assigned batch. Videos run one at a time; each stage
 has a checkpoint so a restarted Kaggle session resumes at the first unfinished
 stage of the first unfinished video.
 
+Terms: a **shot** is a run of near-identical frames; a new shot starts at a
+cut or when the content changes too much. A **cut segment** is the frame range
+between two TransNetV2 cuts and may contain several shots (ADR 0022).
+
 | # | Stage | Input | Output | Model | Status |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Shots | video, frame timeline | `shots` | TransNetV2 | Decided (kept) |
-| 2 | Keyframes | video, shots, timeline | `keyframes`, keyframe JPEGs, thumbnails, `sub_shot_id` | none (difference hash or image vector distance) | Decided (ADR 0022); thresholds Pending trial |
+| 1 | Cuts | video, frame timeline | `cut_segments` | TransNetV2 | Decided (kept) |
+| 2 | Shots and keyframes | video, cut segments, timeline | `shots`, `keyframes`, keyframe JPEGs, thumbnails | none (difference hash) | Decided (ADR 0022); thresholds Pending trial |
 | 3 | Image vectors | keyframe JPEGs | one vector file | SigLIP2 so400m-patch14-384 | Decided (ADR 0023) |
 | 4 | ASR | 16 kHz mono audio | `asr_segments` (segment timestamps), `asr_chunks` (10-30 s, mapped to shots) | ChunkFormer-large-vie | Decided (ADR 0023) |
 | 5 | OCR | keyframe JPEGs | `ocr` (text per keyframe, after noise, dedup, and logo filter) | EasyOCR detection + VietOCR recognition | Decided (ADR 0023) |
-| 6 | Captions | representative keyframe per shot or sub-shot | `captions` (caption, objects, actions, visible_text; Vietnamese) | Qwen3-VL-4B, xgrammar constrained, batch 8 | Decided model; kept only if evaluation shows gain |
+| 6 | Captions | middle keyframe of each shot | `captions` (caption, objects, actions, visible_text; Vietnamese) | Qwen3-VL-4B, xgrammar constrained, batch 16, 512 px | Decided model; kept only if evaluation shows gain |
 | 7 | Text vectors | caption and ASR chunk documents | one text vector file | multilingual-e5-large | Decided (ADR 0023) |
 | 8 | Package | stage outputs | per-video ZIP with manifest and checksums | none | Decided (ADR 0024 validator) |
 | 9 | Sync | per-video ZIP | HF upload, receipt | none | Proposed layout |
@@ -89,14 +93,18 @@ summaries, scene review, and the scene quality guard.
 
 ### Keyframe sampling (stage 2)
 
-1. Candidates at least every N seconds across each shot (N initially 1 to 2).
+1. Candidates at least every N seconds across each cut segment (N initially 1
+   to 2).
 2. Keep a candidate when it differs enough from the last kept keyframe.
-3. Start a new sub-shot when content drifts past a threshold or the sub-shot
-   reaches its maximum length (initially 10 to 15 seconds).
-4. No keyframe crosses a TransNetV2 cut or sits on a transition frame.
-5. A shot or sub-shot with no valid candidate is skipped and logged.
+3. Start a new shot when content drifts past a threshold or the shot reaches
+   its maximum length (initially 10 to 15 seconds). Shots tile their cut
+   segment without gaps.
+4. No keyframe or shot crosses a TransNetV2 cut; keyframes avoid transition
+   frames.
+5. A cut segment with no valid candidate is skipped and logged.
 
-A one-shot video therefore gets keyframes across its whole length.
+A video recorded in one take therefore gets shots and keyframes across its
+whole length.
 
 ### Failure behavior (ADR 0024)
 
@@ -132,7 +140,7 @@ release/
     videos                      video_id, metadata, duration, fps
     shots                       shot_id, video_id, frame and time range
     keyframes                   keyframe_id, video_id, frame_id, time_sec,
-                                shot_id, sub_shot_id, image and thumbnail refs
+                                shot_id, cut_segment_id, image and thumbnail refs
     text_documents              doc_id, video_id, start/end time and frame,
                                 shot_id, evidence_type (asr | ocr | caption),
                                 text, text_unaccented
@@ -167,7 +175,7 @@ Test runs write only to `AIOU26_release_test` and `AIOU26_checkpoints_test`.
 
 | Item | Resolved by |
 | --- | --- |
-| Keyframe interval, dedup and sub-shot thresholds | Plan Step 3 trial and first batch |
+| Keyframe interval, dedup, and shot-split thresholds | Plan Step 3 trial and first batch |
 | Keep or drop captions | Evaluation set |
 | GPU time per video and total for 873 videos | Plan Step 6 run |
 | Exact table columns and Parquet schemas | Implementation, with `system1/schemas/` |

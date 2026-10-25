@@ -56,6 +56,8 @@ class EasyVietOcr:
 
         import numpy as np
 
+        image = image.copy()
+        image.thumbnail((int(self.config["max_image_side"]),) * 2)
         horizontal, free = self.detector.detect(np.asarray(image))
         boxes = [[[x0, y0], [x1, y0], [x1, y1], [x0, y1]] for x0, x1, y0, y1 in horizontal[0]]
         boxes += [list(polygon) for polygon in free[0]]

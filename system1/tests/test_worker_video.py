@@ -20,7 +20,7 @@ from system1.worker.video import VideoInput, WorkerModels, process_video
 
 CONFIG = yaml.safe_load((Path(__file__).parents[1] / "configs" / "worker.yaml").read_text())
 FPS = 25
-FRAMES = 150  # 6 seconds, two shots
+FRAMES = 150  # 6 seconds, two cut segments, new content every second
 
 
 def _make_video(path: Path) -> None:
@@ -48,10 +48,11 @@ class Calls:
 
 
 def _models(calls: Calls, *, asr_error: bool = False) -> WorkerModels:
-    def shots(video_path, timeline_rows, work_dir):
-        calls.hit("shots")
-        return scenes_to_shot_rows(video_id="V1", scenes_inclusive=[[0, 74], [75, 149]],
+    def cuts(video_path, timeline_rows, work_dir):
+        calls.hit("cuts")
+        rows = scenes_to_shot_rows(video_id="V1", scenes_inclusive=[[0, 74], [75, 149]],
                                    frame_timeline=timeline_rows)
+        return [{key: row[key] for key in ("start_frame", "end_frame", "start_sec", "end_sec")} for row in rows]
 
     class Image:
         def embed_images(self, images):
@@ -83,7 +84,7 @@ def _models(calls: Calls, *, asr_error: bool = False) -> WorkerModels:
             calls.hit("text")
             return np.random.default_rng(2).normal(size=(len(texts), 4)).astype("float32")
 
-    return WorkerModels(shots=shots, image=Image(), asr=Asr(), ocr=Ocr(), captioner=Captioner(),
+    return WorkerModels(cuts=cuts, image=Image(), asr=Asr(), ocr=Ocr(), captioner=Captioner(),
                         text=Text())
 
 
@@ -122,6 +123,22 @@ def test_video_is_packaged_with_aligned_tables_and_vectors(video, tmp_path) -> N
     assert text_vectors.shape[0] == len(documents)
     assert manifest["stages"]["asr"]["status"] == "pass"
     assert all("seconds" in report for report in manifest["stages"].values())
+
+
+def test_cut_segments_with_changing_content_split_into_shots(video, tmp_path) -> None:
+    zip_path = _run(video, tmp_path, _models(Calls()))
+
+    cuts = _table(zip_path, "cut_segments.parquet")
+    shots = _table(zip_path, "shots.parquet")
+    keyframes = _table(zip_path, "keyframes.parquet")
+    assert len(cuts) == 2
+    assert len(shots) > len(cuts)
+    assert set(keyframes["shot_id"]) == set(shots["shot_id"])
+    for cut in cuts.itertuples():
+        inside = shots[shots["cut_segment_id"] == cut.cut_segment_id].sort_values("start_frame")
+        assert inside["start_frame"].iloc[0] == cut.start_frame
+        assert inside["end_frame"].iloc[-1] == cut.end_frame
+        assert (inside["start_frame"].iloc[1:].values == inside["end_frame"].iloc[:-1].values).all()
 
 
 def test_logo_repeated_on_every_keyframe_is_not_indexed(video, tmp_path) -> None:

@@ -19,20 +19,25 @@ that are not near a sampled keyframe cannot be retrieved.
 
 ## Decision
 
-Keyframe density follows visual change, not the number of shots:
+Terms (amended 2026-10-25 to match the project's definition): a **shot** is a
+run of near-identical frames. A new shot starts at a hard cut or when the
+content changes too much. A **cut segment** is the frame range between two
+cuts found by TransNetV2; it can contain several shots.
+
+Keyframe density follows visual change, not the number of cuts:
 
 1. Generate candidates at a minimum rate of one per N seconds across every
-   shot (N is configuration, initially 1 to 2 seconds).
+   cut segment (N is configuration, initially 1 to 2 seconds).
 2. Keep a candidate only when it differs enough from the last kept keyframe
    (difference hash or image embedding distance). Static content keeps few
    keyframes; changing content keeps many.
-3. Split long shots into sub-shots when content drifts past a threshold from
-   the sub-shot start or a maximum length is reached (initially 10 to 15
-   seconds). Captions and OCR run per sub-shot.
-4. TransNetV2 shot boundaries remain: no keyframe spans a cut, and keyframes
-   avoid transition frames.
-5. A shot or sub-shot that yields no valid candidate is skipped and logged. It
-   does not fail the video.
+3. Split each cut segment into shots when content drifts past a threshold from
+   the shot start or a maximum shot length is reached (initially 10 to 15
+   seconds). Shots tile their cut segment without gaps. Captions run once per
+   shot; OCR and image vectors run per keyframe.
+4. No keyframe or shot spans a cut, and keyframes avoid transition frames.
+5. A cut segment that yields no valid candidate is skipped and logged. It does
+   not fail the video.
 
 ## Alternatives Considered
 

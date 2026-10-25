@@ -1,9 +1,13 @@
 """Process one video into a packaged, validated artifact ZIP.
 
-Stages: shots, keyframes, image vectors, ASR, OCR, captions, text documents,
-text vectors, package. Each stage has a checkpoint (`stages.StageRunner`).
-Shots, keyframes, and image vectors are required; ASR, OCR, and captions
-degrade to empty output and a failed status (ADR 0024).
+Terms: a cut segment is the frame range between two hard cuts (TransNetV2). A
+shot is a run of near-identical frames: each cut segment is split into shots
+where the content changes too much (ADR 0022). Captions and search use shots.
+
+Stages: cuts, keyframes (and shots), image vectors, ASR, OCR, captions, text
+documents, text vectors, package. Each stage has a checkpoint
+(`stages.StageRunner`). Cuts, keyframes, and image vectors are required; ASR,
+OCR, and captions degrade to empty output and a failed status (ADR 0024).
 """
 
 from __future__ import annotations
@@ -32,7 +36,8 @@ from system1.text.evidence import (
 from system1.worker.package import validate_package
 from system1.worker.stages import StageRunner
 
-SHOT_COLUMNS = ["shot_id", "video_id", "shot_index", "start_frame", "end_frame", "start_sec", "end_sec"]
+CUT_COLUMNS = ["cut_segment_id", "video_id", "start_frame", "end_frame", "start_sec", "end_sec"]
+SHOT_COLUMNS = ["shot_id", "video_id", "cut_segment_id", "start_frame", "end_frame", "start_sec", "end_sec"]
 DOCUMENT_COLUMNS = ["doc_id", "video_id", "evidence_type", "start_sec", "end_sec", "shot_ids",
                     "keyframe_id", "text", "text_unaccented"]
 
@@ -66,7 +71,7 @@ class VideoInput:
 
 @dataclass
 class WorkerModels:
-    shots: Callable[[Path, list[dict[str, Any]], Path], list[dict[str, Any]]]
+    cuts: Callable[[Path, list[dict[str, Any]], Path], list[dict[str, Any]]]
     image: ImageEmbedder
     asr: SpeechRecognizer
     ocr: TextReader
@@ -92,18 +97,22 @@ def process_video(
     model_config = config["models"]
     text_config = config["text"]
 
-    def shots_stage():
-        rows = models.shots(video.video_path, video.timeline_rows, root / "scratch")
-        pd.DataFrame(rows)[SHOT_COLUMNS].to_parquet(package / "shots.parquet", index=False)
-        return {"status": "pass", "shots": len(rows)}
+    def cuts_stage():
+        rows = models.cuts(video.video_path, video.timeline_rows, root / "scratch")
+        cuts = [{"cut_segment_id": f"{video_id}_CS{index:05d}", "video_id": video_id, **row}
+                for index, row in enumerate(rows)]
+        pd.DataFrame(cuts, columns=CUT_COLUMNS).to_parquet(package / "cut_segments.parquet", index=False)
+        return {"status": "pass", "cut_segments": len(cuts)}
 
     def keyframes_stage():
-        rows, empty = _write_keyframes(video, pd.read_parquet(package / "shots.parquet"),
-                                       config["keyframes"], package)
-        if not rows:
+        shots, keyframes, empty = _split_shots(video, pd.read_parquet(package / "cut_segments.parquet"),
+                                               config["keyframes"], package)
+        if not keyframes:
             raise ValueError(f"no usable keyframe in {video_id}")
-        pd.DataFrame(rows).to_parquet(package / "keyframes.parquet", index=False)
-        return {"status": "pass", "keyframes": len(rows), "shots_without_keyframe": empty}
+        pd.DataFrame(shots, columns=SHOT_COLUMNS).to_parquet(package / "shots.parquet", index=False)
+        pd.DataFrame(keyframes).to_parquet(package / "keyframes.parquet", index=False)
+        return {"status": "pass", "shots": len(shots), "keyframes": len(keyframes),
+                "cut_segments_without_keyframe": empty}
 
     def image_stage():
         vectors = models.image.embed_images(_images(package, _keyframes(package)["keyframe_ref"]))
@@ -111,11 +120,12 @@ def process_video(
         return {"status": "pass", "vectors": len(vectors)}
 
     def asr_stage():
-        _save_rows(package / "asr_segments.parquet", [], ["video_id", "start_sec", "end_sec", "text"])
+        columns = ["video_id", "start_sec", "end_sec", "text"]
+        _save_rows(package / "asr_segments.parquet", [], columns)
         segments = models.asr.transcribe(video.video_path, root / "scratch" / f"{video_id}.wav")
         _save_rows(package / "asr_segments.parquet",
                    [{"video_id": video_id, "start_sec": s.start_sec, "end_sec": s.end_sec, "text": s.text}
-                    for s in segments], ["video_id", "start_sec", "end_sec", "text"])
+                    for s in segments], columns)
         return {"status": "pass" if segments else "empty", "segments": len(segments)}
 
     def ocr_stage():
@@ -129,7 +139,7 @@ def process_video(
         return {"status": "pass", "keyframes_with_text": sum(bool(row["lines"]) for row in rows)}
 
     def captions_stage():
-        columns = ["sub_shot_id", "keyframe_id", "caption", "objects", "actions", "visible_text", "problems"]
+        columns = ["shot_id", "keyframe_id", "caption", "objects", "actions", "visible_text", "problems"]
         _save_rows(package / "captions.parquet", [], columns)
         if models.captioner is None:
             return {"status": "skipped"}
@@ -138,7 +148,7 @@ def process_video(
         rows = []
         for pick, result in zip(picks.itertuples(), results):
             payload = result.payload or {}
-            rows.append({"sub_shot_id": pick.sub_shot_id, "keyframe_id": pick.keyframe_id,
+            rows.append({"shot_id": pick.shot_id, "keyframe_id": pick.keyframe_id,
                          "caption": payload.get("caption", ""), "objects": list(payload.get("objects", [])),
                          "actions": list(payload.get("actions", [])),
                          "visible_text": payload.get("visible_text", ""), "problems": list(result.problems)})
@@ -147,26 +157,26 @@ def process_video(
                 "rejected": sum(bool(row["problems"]) for row in rows)}
 
     def documents_stage():
-        documents = _text_documents(video, package, text_config)
+        documents = _text_documents(video_id, package, text_config)
         pd.DataFrame(documents, columns=DOCUMENT_COLUMNS).to_parquet(
             package / "text_documents.parquet", index=False)
         return {"status": "pass", "documents": len(documents)}
 
     def text_vectors_stage():
-        documents = pd.read_parquet(package / "text_documents.parquet")
-        texts = documents["text"].tolist()
+        texts = pd.read_parquet(package / "text_documents.parquet")["text"].tolist()
         vectors = models.text.embed_passages(texts) if texts else np.zeros((0, 0), dtype="float32")
         np.save(package / "text_vectors.npy", np.asarray(vectors, dtype="float32"))
         return {"status": "pass", "vectors": len(texts)}
 
-    runner.run("shots", config=model_config["shot_detection"], upstream=[], fn=shots_stage)
-    runner.run("keyframes", config=config["keyframes"], upstream=["shots"], fn=keyframes_stage)
-    runner.run("image_vectors", config=model_config["image_embedding"], upstream=["keyframes"], fn=image_stage)
+    # ASR runs first, while the most GPU memory is free.
     runner.run("asr", config=model_config["asr"], upstream=[], fn=asr_stage, degrade=True)
+    runner.run("cuts", config=model_config["shot_detection"], upstream=[], fn=cuts_stage)
+    runner.run("keyframes", config=config["keyframes"], upstream=["cuts"], fn=keyframes_stage)
+    runner.run("image_vectors", config=model_config["image_embedding"], upstream=["keyframes"], fn=image_stage)
     runner.run("ocr", config=model_config["ocr"], upstream=["keyframes"], fn=ocr_stage, degrade=True)
     runner.run("captions", config=model_config["captions"] if models.captioner else None,
                upstream=["keyframes"], fn=captions_stage, degrade=True)
-    runner.run("text_documents", config=text_config, upstream=["shots", "asr", "ocr", "captions"],
+    runner.run("text_documents", config=text_config, upstream=["keyframes", "asr", "ocr", "captions"],
                fn=documents_stage)
     runner.run("text_vectors", config=model_config["text_embedding"], upstream=["text_documents"],
                fn=text_vectors_stage)
@@ -175,8 +185,8 @@ def process_video(
         "schema_version": "worker_package_v1",
         "video_id": video_id,
         "config_schema_version": config["schema_version"],
-        "models": {name: {key: value for key, value in section.items() if key in ("model_id", "revision",
-                                                                                  "model_revision")}
+        "models": {name: {key: value for key, value in section.items()
+                          if key in ("model_id", "revision", "model_revision")}
                    for name, section in model_config.items()},
         "stages": runner.reports,
     }
@@ -188,25 +198,41 @@ def process_video(
                               status="partial" if failed else "complete")
 
 
-def _write_keyframes(
-    video: VideoInput, shots: pd.DataFrame, settings: Mapping[str, Any], package: Path
-) -> tuple[list[dict[str, Any]], int]:
+def _split_shots(
+    video: VideoInput, cuts: pd.DataFrame, settings: Mapping[str, Any], package: Path
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """Split cut segments into shots, write keyframe images, and return shot and keyframe rows."""
+
     policy = AdaptiveKeyframePolicy(
         candidate_interval_sec=float(settings["candidate_interval_sec"]),
         min_change=float(settings["min_change"]),
-        subshot_drift=float(settings["subshot_drift"]),
-        max_subshot_sec=float(settings["max_subshot_sec"]),
+        shot_drift=float(settings["shot_drift"]),
+        max_shot_sec=float(settings["max_shot_sec"]),
         edge_margin_frames=int(settings["edge_margin_frames"]),
     )
-    pts = [float(row["pts_time"]) for row in sorted(video.timeline_rows, key=lambda row: int(row["frame_id"]))]
-    plans = [plan_candidate_frames(start_frame=int(shot.start_frame), end_frame=int(shot.end_frame),
-                                   pts=pts, policy=policy) for shot in shots.itertuples()]
-    rows: list[dict[str, Any]] = []
-    empty = 0
+    timeline = sorted(video.timeline_rows, key=lambda row: int(row["frame_id"]))
+    pts = [float(row["pts_time"]) for row in timeline]
+    video_end = pts[-1] + float(timeline[-1].get("duration_time") or 0.0)
+    plans = [plan_candidate_frames(start_frame=int(cut.start_frame), end_frame=int(cut.end_frame),
+                                   pts=pts, policy=policy) for cut in cuts.itertuples()]
     video_id = video.video_id
-    for shot, plan, frames in zip(shots.itertuples(), plans, iter_decode_frame_groups(video.video_path, plans)):
-        kept = select_adaptive_keyframes([(frame, pts[frame], frames.get(frame)) for frame in plan], policy=policy)
+    shots: list[dict[str, Any]] = []
+    keyframes: list[dict[str, Any]] = []
+    empty = 0
+    for cut, plan, frames in zip(cuts.itertuples(), plans, iter_decode_frame_groups(video.video_path, plans)):
+        kept = select_adaptive_keyframes([(frame, pts[frame], frames.get(frame)) for frame in plan],
+                                         policy=policy)
         empty += not kept
+        starts = {item.shot_index: item.frame_id for item in kept if item.reason == "shot_start"}
+        bounds = [int(cut.start_frame)] + [starts[index] for index in sorted(starts) if index > 0]
+        bounds.append(int(cut.end_frame))
+        shot_ids = {}
+        for index in sorted(starts):
+            start, end = bounds[index], bounds[index + 1]
+            shot_ids[index] = f"{video_id}_SH{len(shots):05d}"
+            shots.append({"shot_id": shot_ids[index], "video_id": video_id,
+                          "cut_segment_id": cut.cut_segment_id, "start_frame": start, "end_frame": end,
+                          "start_sec": pts[start], "end_sec": pts[end] if end < len(pts) else video_end})
         for item in kept:
             keyframe_ref = f"keyframes/{video_id}/{video_id}_f{item.frame_id:07d}.jpg"
             thumbnail_ref = f"thumbnails/{video_id}/{video_id}_f{item.frame_id:07d}.webp"
@@ -215,28 +241,28 @@ def _write_keyframes(
                                   keyframe_long_side=int(settings["jpeg_long_side"]),
                                   jpeg_quality=int(settings["jpeg_quality"]),
                                   thumbnail_width=int(settings["thumbnail_width"]))
-            rows.append({"keyframe_id": f"{video_id}:{item.frame_id}", "video_id": video_id,
-                         "frame_id": item.frame_id, "timestamp_sec": item.timestamp_sec,
-                         "shot_id": shot.shot_id, "sub_shot_id": f"{shot.shot_id}_SS{item.sub_shot_index:03d}",
-                         "selection_reason": item.reason, "keyframe_ref": keyframe_ref,
-                         "thumbnail_ref": thumbnail_ref})
-    return rows, empty
+            keyframes.append({"keyframe_id": f"{video_id}:{item.frame_id}", "video_id": video_id,
+                              "frame_id": item.frame_id, "timestamp_sec": item.timestamp_sec,
+                              "shot_id": shot_ids[item.shot_index], "cut_segment_id": cut.cut_segment_id,
+                              "selection_reason": item.reason, "keyframe_ref": keyframe_ref,
+                              "thumbnail_ref": thumbnail_ref})
+    return shots, keyframes, empty
 
 
-def _text_documents(video: VideoInput, package: Path, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
-    video_id = video.video_id
+def _text_documents(video_id: str, package: Path, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
     shots = pd.read_parquet(package / "shots.parquet")
     spans = list(zip(shots["shot_id"], shots["start_sec"], shots["end_sec"]))
     keyframes = _keyframes(package).set_index("keyframe_id")
     documents: list[dict[str, Any]] = []
 
-    def add(kind: str, start: float, end: float, text: str, keyframe_id: str | None = None) -> None:
+    def add(kind: str, start: float, end: float, text: str, keyframe_id: str | None = None,
+            shot_ids: str | None = None) -> None:
         text = " ".join(text.split())
         if text:
             documents.append({
                 "doc_id": f"{video_id}:{kind}:{len(documents):05d}", "video_id": video_id, "evidence_type": kind,
                 "start_sec": float(start), "end_sec": float(end),
-                "shot_ids": ",".join(shots_for_interval(start, max(end, start + 1e-6), spans)),
+                "shot_ids": shot_ids or ",".join(shots_for_interval(start, max(end, start + 1e-6), spans)),
                 "keyframe_id": keyframe_id, "text": text, "text_unaccented": unaccent(text),
             })
 
@@ -252,22 +278,22 @@ def _text_documents(video: VideoInput, package: Path, settings: Mapping[str, Any
     for keyframe_id, text in strip_video_wide_repeats(
             texts, min_fraction=float(settings["ocr_repeat_min_fraction"])).items():
         timestamp = float(keyframes.loc[keyframe_id, "timestamp_sec"])
-        add("ocr", timestamp, timestamp, text, keyframe_id)
+        add("ocr", timestamp, timestamp, text, keyframe_id, keyframes.loc[keyframe_id, "shot_id"])
 
     for row in pd.read_parquet(package / "captions.parquet").itertuples():
         if row.problems is not None and len(row.problems):
             continue
         timestamp = float(keyframes.loc[row.keyframe_id, "timestamp_sec"])
-        add("caption", timestamp, timestamp,
-            " ".join([row.caption, *list(row.objects), *list(row.actions)]), row.keyframe_id)
-        add("visible_text", timestamp, timestamp, row.visible_text, row.keyframe_id)
+        add("caption", timestamp, timestamp, " ".join([row.caption, *list(row.objects), *list(row.actions)]),
+            row.keyframe_id, row.shot_id)
+        add("visible_text", timestamp, timestamp, row.visible_text, row.keyframe_id, row.shot_id)
     return documents
 
 
 def _representatives(keyframes: pd.DataFrame) -> pd.DataFrame:
-    """The middle keyframe of each sub-shot, in time order."""
+    """The middle keyframe of each shot, in time order."""
 
-    picks = [group.iloc[len(group) // 2] for _, group in keyframes.groupby("sub_shot_id", sort=False)]
+    picks = [group.iloc[len(group) // 2] for _, group in keyframes.groupby("shot_id", sort=False)]
     return pd.DataFrame(picks).reset_index(drop=True)
 
 

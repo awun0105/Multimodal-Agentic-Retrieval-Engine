@@ -14,7 +14,7 @@ import pandas as pd
 
 EVIDENCE_TYPES = {"asr", "ocr", "caption", "visible_text"}
 REQUIRED_FILES = (
-    "manifest.json", "shots.parquet", "keyframes.parquet", "image_vectors.npy",
+    "manifest.json", "cut_segments.parquet", "shots.parquet", "keyframes.parquet", "image_vectors.npy",
     "asr_segments.parquet", "ocr.parquet", "captions.parquet", "text_documents.parquet",
     "text_vectors.npy",
 )
@@ -29,12 +29,21 @@ def validate_package(package_dir: Path, *, video_id: str) -> None:
     if missing:
         raise PackageError(f"missing package files: {missing}")
 
+    cuts = pd.read_parquet(package_dir / "cut_segments.parquet")
     shots = pd.read_parquet(package_dir / "shots.parquet")
     keyframes = pd.read_parquet(package_dir / "keyframes.parquet")
     documents = pd.read_parquet(package_dir / "text_documents.parquet")
     _check(not keyframes.empty, "keyframes.parquet is empty")
-    for name, table in (("shots", shots), ("keyframes", keyframes), ("text_documents", documents)):
+    for name, table in (("cut_segments", cuts), ("shots", shots), ("keyframes", keyframes),
+                        ("text_documents", documents)):
         _check(table.empty or set(table["video_id"]) == {video_id}, f"{name} has rows for another video")
+
+    cut_ranges = cuts.set_index("cut_segment_id")[["start_frame", "end_frame"]]
+    for row in shots.itertuples():
+        _check(row.cut_segment_id in cut_ranges.index, f"shot {row.shot_id} has unknown cut segment")
+        start, end = cut_ranges.loc[row.cut_segment_id]
+        _check(start <= row.start_frame < row.end_frame <= end,
+               f"shot {row.shot_id} is outside cut segment {row.cut_segment_id}")
 
     _check(keyframes["keyframe_id"].is_unique, "keyframe_id is not unique")
     expected_ids = [f"{video_id}:{frame}" for frame in keyframes["frame_id"]]

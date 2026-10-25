@@ -6,8 +6,8 @@ schema_version: worker_v1
 keyframes:
   candidate_interval_sec: 2.0
   min_change: 0.15
-  subshot_drift: 0.35
-  max_subshot_sec: 12.0
+  shot_drift: 0.35
+  max_shot_sec: 12.0
   edge_margin_frames: 2
   jpeg_long_side: 1280
   jpeg_quality: 90
@@ -44,7 +44,7 @@ models:
     chunk_size: 64
     left_context_size: 128
     right_context_size: 128
-    total_batch_duration_sec: 1800  # 14400 ran out of T4 memory on a 38-minute video
+    total_batch_duration_sec: 600  # 14400 and 1800 ran out of T4 memory on a 38-minute video
   ocr:
     detector: easyocr
     detector_languages: [vi]
@@ -52,12 +52,13 @@ models:
     crop_padding_px: 4
     min_crop_px: 8
     batch_size: 32
+    max_image_side: 960
   captions:
     model_id: Qwen/Qwen3-VL-4B-Instruct
     revision: ebb281ec70b05090aa6165b016eac8ec08e71b17
-    batch_size: 8
+    batch_size: 16
     max_new_tokens: 700
-    max_image_side: 768
+    max_image_side: 512
 
 text:
   asr_chunk_min_sec: 10.0
