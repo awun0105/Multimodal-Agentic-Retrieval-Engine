@@ -169,7 +169,12 @@ contract, `docs/validation/test-matrix.md`).
     `tests/test_vector_index.py`; `faiss-cpu` added to `system1` dependencies.
   - [x] `tests/test_smoke.py` no longer depends on host free disk
     (`ignore_host_free_disk` fixture).
-  - [ ] Embedding, ASR, OCR, and caption providers.
+  - [x] Embedding, ASR, OCR, and caption providers (`system1/providers/`,
+    `configs/worker.yaml`, `worker` extra). Kaggle check at commit `007882b`
+    (`research/phase01_trials/providers/`): all five run; SigLIP2 0.087 s/image,
+    ChunkFormer on GPU 4.1 s (`L30_V030`) and 18.1 s (`L25_V085`), OCR 0.37
+    s/image, captions 4.1 s/image with 32/32 valid JSON. Open: OCR logo variants
+    ("tuổi trerv", "tucitrery") are not caught by exact-match repeat filtering.
   - [ ] Per-video worker wiring, packaging validator, release step.
 - [ ] Step 6: End-to-end run and cleanup.
 

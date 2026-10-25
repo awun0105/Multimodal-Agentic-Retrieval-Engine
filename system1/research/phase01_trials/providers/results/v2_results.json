@@ -1,0 +1,95 @@
+{
+  "timings_sec": {
+    "image_embedding": 60.2,
+    "text_embedding": 26.2,
+    "asr": 27.8,
+    "ocr": 34.3,
+    "captions": 197.7
+  },
+  "errors": {},
+  "checks": {
+    "image_embedding": {
+      "shape": [
+        32,
+        1152
+      ],
+      "seconds_per_image": 0.0867
+    },
+    "text_embedding": {
+      "dim": 1024
+    },
+    "asr": {
+      "L30_V030": {
+        "seconds": 4.1,
+        "segments": 86,
+        "first": [
+          "khi tham gia chương trình gia sư hố xanh á của a thành phố hồ chí minh",
+          "là cái kỳ là kỳ hè hai không hai mươi hai không hai mươi ba",
+          "thì"
+        ]
+      },
+      "L25_V085": {
+        "seconds": 18.1,
+        "segments": 777,
+        "first": [
+          "xin chào các em",
+          "chào mừng các em đến với",
+          "phần môn tập"
+        ]
+      }
+    },
+    "ocr": {
+      "seconds_per_image": 0.372,
+      "with_text": 24,
+      "samples": [
+        [
+          "tuổi trerv",
+          "tv.tuoitre.vn"
+        ],
+        [
+          "tuổi trérv",
+          "Thấp sáng tương lai",
+          "i bằng 0",
+          "con chữ"
+        ],
+        [
+          "tuổi trery",
+          "764"
+        ],
+        [
+          "tuổi trérv",
+          "LỚPH",
+          "I SÁN",
+          "PHƯỜI"
+        ],
+        [
+          "tucitrery"
+        ],
+        [
+          "tucitrery"
+        ]
+      ]
+    },
+    "captions": {
+      "seconds_per_image": 4.13,
+      "valid": 32,
+      "total": 32,
+      "problems": [],
+      "samples": [
+        "Logo của Tuổi Trẻ TV hiển thị trên nền trắng, với chữ 'tuổi trẻ' màu đỏ và 'TV' màu xanh dương, cùng địa chỉ web 'tv.tuoitre.vn' dưới đó.",
+        "Một bàn tay đang viết phép tính cộng 764 + 146 trên bảng xanh, với dòng chữ hướng dẫn 'Thấp sáng tương lai bằng con chữ' ở dưới cùng.",
+        "Một bàn tay đang viết phép cộng 764 + 146 trên bảng xanh, kết quả là 910.",
+        "Một đứa trẻ đang đọc truyện tranh màu sắc trên bàn học, tay cầm sách, bên cạnh có hộp bút màu hồng và sách ABC."
+      ]
+    }
+  },
+  "env": {
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]",
+    "torch": "2.11.0+cu128",
+    "commit": "007882b4c3a3b438ad8e9c99cae80bd8486127bc",
+    "gpus": [
+      "Tesla T4",
+      "Tesla T4"
+    ]
+  }
+}
