@@ -591,7 +591,14 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   - [x] 2. Caption pass (code, 2026-10-26): `captions/{video,batch,models}.py`,
     CLI `caption-batch --persist-dir`, `notebooks/caption_batch.ipynb`,
     `tests/test_caption_pass.py`. Reads worker ZIP members in place (Step 5f
-    item 13). Kaggle time per shot not yet recorded.
+    item 13). Kaggle run at commit `2224257` (`quanlam/mare-caption-batch`,
+    T4, transformers, same 5 videos): 5 completed, 0 failed, 1511 shots in
+    5184 s (3.43 s/shot; 86.4 min for 70.3 min of video, 1.23x). Per video:
+    `L21_V014` 401 shots 1381 s, `L22_V004` 503 shots 1813 s, `L22_V010` 407
+    shots 1463 s, `L23_V004` 107 shots 297 s, `L23_V010` 93 shots 231 s.
+    Valid JSON 1485/1511 (98.3%); all 26 rejects are `repetition_loop`.
+    Captions still cost about 2x the worker; item 3 (vLLM) decides whether
+    the pass stays on transformers.
   - [ ] 3. vLLM versus transformers caption throughput trial on T4.
   - [x] 4. Release merges optional caption packages (code, 2026-10-26):
     `release/build.py` streams one worker ZIP at a time, verifies the caption
