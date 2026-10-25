@@ -191,7 +191,18 @@ contract, `docs/validation/test-matrix.md`).
     writes SQLite tables with FTS5 (`unicode61 remove_diacritics 0` over
     `text` and `text_unaccented`), image and text inner-product indexes with
     vector maps, copied media, and a manifest listing degraded stages.
-  - [ ] Batch runner with Hugging Face sync; new Notebook 01 and 02.
+  - [x] Batch runner (`worker/batch.py`, `tests/test_worker_batch.py`): reads
+    Phase00 batch manifests and raw mapping, skips videos already uploaded,
+    records failed videos and continues, uploads one package per video and a
+    batch report, removes local files after each video. CLI `worker-batch` and
+    `build-release` (`commands/worker.py`), model factory `worker/models.py`,
+    `storage` section in `worker.yaml` (output defaults to
+    `AIOU26_release_test`). New notebooks `notebooks/worker_batch.ipynb` and
+    `notebooks/build_release.ipynb`; old notebooks remain until Step 6.
+  - [ ] Kaggle run of `worker_batch.ipynb` on 5 to 10 videos into
+    `AIOU26_release_test`, then `build_release.ipynb`.
+  - Open: how the built release is published (hundreds of thousands of media
+    files for 873 videos).
 - [ ] Step 6: End-to-end run and cleanup.
 
 ## Trial Results

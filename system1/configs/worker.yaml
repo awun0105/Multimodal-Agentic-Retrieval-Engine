@@ -13,6 +13,12 @@ keyframes:
   jpeg_quality: 90
   thumbnail_width: 320
 
+storage:
+  repo_type: dataset
+  raw_repo: 1thesudden/AIOU26_raw
+  source_repo: 1thesudden/AIOU26_release  # Phase00 batch manifests and raw mapping (read only)
+  output_repo: 1thesudden/AIOU26_release_test  # production runs pass --output-repo explicitly
+
 model_artifacts:
   backend: hf_dataset
   repo_id: 1thesudden/AIOU26_checkpoints
