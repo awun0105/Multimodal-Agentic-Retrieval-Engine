@@ -13,7 +13,22 @@ keyframes:
   jpeg_quality: 90
   thumbnail_width: 320
 
+model_artifacts:
+  backend: hf_dataset
+  repo_id: 1thesudden/AIOU26_checkpoints
+  repo_type: dataset
+  revision: main
+  prefix: model_artifacts
+
 models:
+  shot_detection:
+    model_revision: 85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed
+    source_sha256: f7c1d437465579a8ec28a5add19853d2cb2755248ea4a4207678210a609428e1
+    weights_sha256: 834b10f25ae9e1b4e4f2652fe2843bd2b1388057a435d68b7c52635578fcc04d
+    artifact_subdir: transnetv2/85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed
+    conversion_verified: false
+    threshold: 0.5
+    transition_run_boundary: midpoint
   image_embedding:
     model_id: google/siglip2-so400m-patch14-384
     revision: e8e487298228002f3d8a82e0cd5c8ea9c567f57f
