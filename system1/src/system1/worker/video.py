@@ -4,10 +4,11 @@ Terms: a cut segment is the frame range between two hard cuts (TransNetV2). A
 shot is a run of near-identical frames: each cut segment is split into shots
 where the content changes too much (ADR 0022). Captions and search use shots.
 
-Stages: cuts, keyframes (and shots), image vectors, ASR, OCR, captions, text
-documents, text vectors, package. Each stage has a checkpoint
-(`stages.StageRunner`). Cuts, keyframes, and image vectors are required; ASR,
-OCR, and captions degrade to empty output and a failed status (ADR 0024).
+Stages: cuts, keyframes (and shots), image vectors, ASR, OCR, text documents,
+text vectors, package. Each stage has a checkpoint (`stages.StageRunner`).
+Cuts, keyframes, and image vectors are required; ASR and OCR degrade to empty
+output and a failed status (ADR 0024). Captions run in a separate pass
+(`system1.captions`, ADR 0025).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from PIL import Image
 from system1.artifacts.package import write_artifact_zip
 from system1.keyframes.adaptive import AdaptiveKeyframePolicy, plan_candidate_frames, select_adaptive_keyframes
 from system1.keyframes.builder import iter_decode_frame_groups, write_keyframe_images
-from system1.providers.ocr import clean_ocr_lines
+from system1.providers.ocr import CropCache, clean_ocr_lines, frame_text_hashes, should_rerun_ocr
 from system1.text.evidence import (
     AsrSegment,
     chunk_asr_segments,
@@ -33,11 +34,12 @@ from system1.text.evidence import (
     strip_video_wide_repeats,
     unaccent,
 )
-from system1.worker.package import validate_package
+from system1.worker.package import representative_keyframes, validate_package
 from system1.worker.stages import StageRunner
 
 CUT_COLUMNS = ["cut_segment_id", "video_id", "start_frame", "end_frame", "start_sec", "end_sec"]
-SHOT_COLUMNS = ["shot_id", "video_id", "cut_segment_id", "start_frame", "end_frame", "start_sec", "end_sec"]
+SHOT_COLUMNS = ["shot_id", "video_id", "cut_segment_id", "scene_id", "start_frame", "end_frame", "start_sec",
+                "end_sec"]
 DOCUMENT_COLUMNS = ["doc_id", "video_id", "evidence_type", "start_sec", "end_sec", "shot_ids",
                     "keyframe_id", "text", "text_unaccented"]
 
@@ -51,11 +53,7 @@ class SpeechRecognizer(Protocol):
 
 
 class TextReader(Protocol):
-    def read(self, image: Image.Image) -> list[str]: ...
-
-
-class Captioner(Protocol):
-    def caption(self, images: Sequence[Image.Image]) -> list[Any]: ...
+    def read(self, image: Image.Image, cache: CropCache | None = None) -> list[str]: ...
 
 
 class TextEmbedder(Protocol):
@@ -75,7 +73,6 @@ class WorkerModels:
     image: ImageEmbedder
     asr: SpeechRecognizer
     ocr: TextReader
-    captioner: Captioner | None
     text: TextEmbedder
 
 
@@ -115,8 +112,13 @@ def process_video(
                                                config["keyframes"], package)
         if not keyframes:
             raise ValueError(f"no usable keyframe in {video_id}")
-        pd.DataFrame(shots, columns=SHOT_COLUMNS).to_parquet(package / "shots.parquet", index=False)
-        pd.DataFrame(keyframes).to_parquet(package / "keyframes.parquet", index=False)
+        # scene_id is null in worker packages; the release sets it (ADR 0026).
+        pd.DataFrame(shots, columns=SHOT_COLUMNS).astype({"scene_id": "string"}).to_parquet(
+            package / "shots.parquet", index=False)
+        keyframes = pd.DataFrame(keyframes)
+        representatives = set(representative_keyframes(keyframes)["keyframe_id"])
+        keyframes["is_representative"] = keyframes["keyframe_id"].isin(representatives)
+        keyframes.to_parquet(package / "keyframes.parquet", index=False)
         return {"status": "pass", "shots": len(shots), "keyframes": len(keyframes),
                 "cut_segments_without_keyframe": empty}
 
@@ -138,33 +140,32 @@ def process_video(
         _save_rows(package / "ocr.parquet", [], ["keyframe_id", "lines"])
         keyframes = _keyframes(package)
         min_chars = int(text_config["ocr_min_line_chars"])
-        rows = [{"keyframe_id": keyframe_id, "lines": clean_ocr_lines(models.ocr.read(image), min_chars=min_chars)}
-                for keyframe_id, image in zip(keyframes["keyframe_id"],
-                                              _images(package, keyframes["keyframe_ref"]))]
+        min_ratio = float(text_config.get("ocr_min_syllable_ratio", 0.0))
+        min_change = float(model_config["ocr"].get("rerun_min_change", 0.0))
+        cache = CropCache()
+        rows, reused = [], 0
+        # One OCR run per shot start; later keyframes in the shot run again only
+        # when the frame or its lower third changed (plan Step 5c items 1 and 2).
+        for _, group in keyframes.groupby("shot_id", sort=False):
+            previous, lines = None, []
+            for keyframe_id, image in zip(group["keyframe_id"], _images(package, group["keyframe_ref"])):
+                hashes = frame_text_hashes(image)
+                if should_rerun_ocr(previous, hashes, min_change=min_change):
+                    lines = clean_ocr_lines(models.ocr.read(image, cache), min_chars=min_chars,
+                                            min_syllable_ratio=min_ratio)
+                    previous = hashes
+                else:
+                    reused += 1
+                rows.append({"keyframe_id": keyframe_id, "lines": lines})
+        rows.sort(key=lambda row: keyframes.index[keyframes["keyframe_id"] == row["keyframe_id"]][0])
         _save_rows(package / "ocr.parquet", rows, ["keyframe_id", "lines"])
-        return {"status": "pass", "keyframes_with_text": sum(bool(row["lines"]) for row in rows)}
-
-    def captions_stage():
-        columns = ["shot_id", "keyframe_id", "caption", "objects", "actions", "visible_text", "problems"]
-        _save_rows(package / "captions.parquet", [], columns)
-        if models.captioner is None:
-            return {"status": "skipped"}
-        picks = _representatives(_keyframes(package))
-        results = models.captioner.caption(_images(package, picks["keyframe_ref"]))
-        rows = []
-        for pick, result in zip(picks.itertuples(), results):
-            payload = result.payload or {}
-            rows.append({"shot_id": pick.shot_id, "keyframe_id": pick.keyframe_id,
-                         "caption": payload.get("caption", ""), "objects": list(payload.get("objects", [])),
-                         "actions": list(payload.get("actions", [])),
-                         "visible_text": payload.get("visible_text", ""), "problems": list(result.problems)})
-        _save_rows(package / "captions.parquet", rows, columns)
-        return {"status": "pass", "captions": sum(not row["problems"] for row in rows),
-                "rejected": sum(bool(row["problems"]) for row in rows)}
+        return {"status": "pass", "keyframes_with_text": sum(bool(row["lines"]) for row in rows),
+                "reused_from_shot": reused, "crop_cache_hits": cache.hits}
 
     def documents_stage():
         documents = _text_documents(video_id, package, text_config)
-        pd.DataFrame(documents, columns=DOCUMENT_COLUMNS).to_parquet(
+        # keyframe_id is null for asr rows; a string column keeps it null, not NaN.
+        pd.DataFrame(documents, columns=DOCUMENT_COLUMNS).astype({"keyframe_id": "string"}).to_parquet(
             package / "text_documents.parquet", index=False)
         return {"status": "pass", "documents": len(documents)}
 
@@ -180,15 +181,13 @@ def process_video(
     runner.run("keyframes", config=config["keyframes"], upstream=["cuts"], fn=keyframes_stage)
     runner.run("image_vectors", config=model_config["image_embedding"], upstream=["keyframes"], fn=image_stage)
     runner.run("ocr", config=model_config["ocr"], upstream=["keyframes"], fn=ocr_stage, degrade=True)
-    runner.run("captions", config=model_config["captions"] if models.captioner else None,
-               upstream=["keyframes"], fn=captions_stage, degrade=True)
-    runner.run("text_documents", config=text_config, upstream=["keyframes", "asr", "ocr", "captions"],
+    runner.run("text_documents", config=text_config, upstream=["keyframes", "asr", "ocr"],
                fn=documents_stage)
     runner.run("text_vectors", config=model_config["text_embedding"], upstream=["text_documents"],
                fn=text_vectors_stage)
 
     manifest = {
-        "schema_version": "worker_package_v1",
+        "schema_version": "worker_package_v2",
         "video_id": video_id,
         "config_schema_version": config["schema_version"],
         "models": {name: {key: value for key, value in section.items()
@@ -293,21 +292,7 @@ def _text_documents(video_id: str, package: Path, settings: Mapping[str, Any]) -
         timestamp = float(keyframes.loc[keyframe_id, "timestamp_sec"])
         add("ocr", timestamp, timestamp, text, keyframe_id, keyframes.loc[keyframe_id, "shot_id"])
 
-    for row in pd.read_parquet(package / "captions.parquet").itertuples():
-        if row.problems is not None and len(row.problems):
-            continue
-        timestamp = float(keyframes.loc[row.keyframe_id, "timestamp_sec"])
-        add("caption", timestamp, timestamp, " ".join([row.caption, *list(row.objects), *list(row.actions)]),
-            row.keyframe_id, row.shot_id)
-        add("visible_text", timestamp, timestamp, row.visible_text, row.keyframe_id, row.shot_id)
     return documents
-
-
-def _representatives(keyframes: pd.DataFrame) -> pd.DataFrame:
-    """The middle keyframe of each shot, in time order."""
-
-    picks = [group.iloc[len(group) // 2] for _, group in keyframes.groupby("shot_id", sort=False)]
-    return pd.DataFrame(picks).reset_index(drop=True)
 
 
 def _keyframes(package: Path) -> pd.DataFrame:

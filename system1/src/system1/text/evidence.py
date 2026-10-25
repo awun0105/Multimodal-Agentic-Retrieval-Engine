@@ -15,6 +15,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 PLACEHOLDER = re.compile(r"^<[^<>]{1,80}>$")
+TONE_MARKS = {"\u0300", "\u0301", "\u0303", "\u0309", "\u0323"}
+SYLLABLE = re.compile(
+    r"^(ngh|ng|nh|kh|th|tr|ch|ph|gi|qu|gh|[bcdđghklmnprstvx])?"
+    r"[aăâeêioôơuưy]{1,3}"
+    r"(ch|ng|nh|[cmnpt])?$"
+)
 
 
 @dataclass(frozen=True)
@@ -105,6 +111,50 @@ def strip_video_wide_repeats(texts: Mapping[str, str], *, min_fraction: float) -
     repeated = {line for line, count in counts.items() if count >= limit}
     return {key: "\n".join(line for line in _lines(text) if line not in repeated)
             for key, text in texts.items()}
+
+
+def is_vietnamese_syllable(token: str) -> bool:
+    """Rule check: optional onset, 1 to 3 Vietnamese vowels, optional coda, at most one tone mark."""
+
+    decomposed = unicodedata.normalize("NFD", token.lower())
+    if sum(char in TONE_MARKS for char in decomposed) > 1:
+        return False
+    base = unicodedata.normalize("NFC", "".join(char for char in decomposed if char not in TONE_MARKS))
+    return bool(SYLLABLE.match(base))
+
+
+def _is_acceptable_token(token: str) -> bool:
+    """Digits, times, dates, percentages (all contain a digit) and 2 to 6 letter uppercase acronyms."""
+
+    if any(char.isdigit() for char in token):
+        return True
+    return 2 <= len(token) <= 6 and token.isalpha() and token.isupper()
+
+
+def vietnamese_syllable_ratio(line: str) -> float:
+    """Share of whitespace tokens that are Vietnamese syllables or acceptable tokens.
+
+    Punctuation at token edges is ignored; tokens of punctuation only are not
+    counted. A single valid syllable ("Vập", "Máp") scores 1.0: it is
+    phonotactically valid and one-word headlines ("Thời sự") must survive, so
+    such fragments are left to the repeat and length filters.
+    """
+
+    tokens = [_strip_edges(token) for token in line.split()]
+    tokens = [token for token in tokens if token]
+    if not tokens:
+        return 0.0
+    valid = sum(_is_acceptable_token(token) or is_vietnamese_syllable(token) for token in tokens)
+    return valid / len(tokens)
+
+
+def _strip_edges(token: str) -> str:
+    start, end = 0, len(token)
+    while start < end and not token[start].isalnum():
+        start += 1
+    while end > start and not token[end - 1].isalnum():
+        end -= 1
+    return token[start:end]
 
 
 def _lines(text: str) -> list[str]:

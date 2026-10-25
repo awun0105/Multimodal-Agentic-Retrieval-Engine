@@ -43,6 +43,7 @@
       "items": {
         "enum": [
           "invalid_json",
+          "invalid_fields",
           "prompt_echo",
           "repetition_loop",
           "empty",

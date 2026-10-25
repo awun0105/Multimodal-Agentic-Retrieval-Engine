@@ -12,7 +12,6 @@ import pytest
 import yaml
 
 from system1.artifacts.package import validate_artifact_zip
-from system1.providers.captions import CaptionResult
 from system1.shots.transnet import scenes_to_shot_rows
 from system1.text.evidence import AsrSegment
 from system1.worker.package import PackageError, validate_package
@@ -67,25 +66,17 @@ def _models(calls: Calls, *, asr_error: bool = False) -> WorkerModels:
             return [AsrSegment(0.5, 2.5, "xin chào các em"), AsrSegment(3.0, 5.5, "hôm nay học vật lý")]
 
     class Ocr:
-        def read(self, image):
+        def read(self, image, cache=None):
             calls.hit("ocr")
             # The logo is on every keyframe; the name caption only on the first.
             return ["tuoitreTV", "Thầy Lê Tấn Phát"] if calls.count["ocr"] == 1 else ["tuoitreTV"]
-
-    class Captioner:
-        def caption(self, images):
-            calls.hit("captions")
-            payload = {"caption": "Một thầy giáo đứng trước bảng xanh trong lớp học.",
-                       "objects": ["bảng xanh"], "actions": ["giảng bài"], "visible_text": ""}
-            return [CaptionResult(payload, ()) for _ in images]
 
     class Text:
         def embed_passages(self, texts):
             calls.hit("text")
             return np.random.default_rng(2).normal(size=(len(texts), 4)).astype("float32")
 
-    return WorkerModels(cuts=cuts, image=Image(), asr=Asr(), ocr=Ocr(), captioner=Captioner(),
-                        text=Text())
+    return WorkerModels(cuts=cuts, image=Image(), asr=Asr(), ocr=Ocr(), text=Text())
 
 
 @pytest.fixture
@@ -114,13 +105,15 @@ def test_video_is_packaged_with_aligned_tables_and_vectors(video, tmp_path) -> N
     documents = _table(zip_path, "text_documents.parquet")
     assert len(keyframes) >= 2
     assert all(kf == f"V1:{frame}" for kf, frame in zip(keyframes["keyframe_id"], keyframes["frame_id"]))
-    assert set(documents["evidence_type"]) == {"asr", "ocr", "caption"}
+    assert set(documents["evidence_type"]) == {"asr", "ocr"}
     with zipfile.ZipFile(zip_path) as archive:
         image_vectors = np.load(archive.open("V1/image_vectors.npy"))
         text_vectors = np.load(archive.open("V1/text_vectors.npy"))
         manifest = json.loads(archive.read("V1/manifest.json"))
     assert image_vectors.shape[0] == len(keyframes)
     assert text_vectors.shape[0] == len(documents)
+    assert manifest["schema_version"] == "worker_package_v2"
+    assert "captions" not in manifest["stages"] and "captions" not in manifest["models"]
     assert manifest["stages"]["asr"]["status"] == "pass"
     assert all("seconds" in report for report in manifest["stages"].values())
 
@@ -216,4 +209,43 @@ def test_validator_rejects_vectors_that_do_not_match_keyframes(video, tmp_path) 
     np.save(package_dir / "image_vectors.npy", np.zeros((1, 8), dtype="float32"))
 
     with pytest.raises(PackageError, match="image_vectors"):
+        validate_package(package_dir, video_id="V1")
+
+
+def test_asr_documents_have_null_keyframe_id(video, tmp_path) -> None:
+    import pyarrow.parquet as pq
+
+    zip_path = _run(video, tmp_path, _models(Calls()))
+    with zipfile.ZipFile(zip_path) as archive:
+        table = pq.read_table(archive.open("V1/text_documents.parquet"))
+
+    assert str(table.schema.field("keyframe_id").type) in ("string", "large_string")
+    rows = table.to_pylist()
+    assert [row["keyframe_id"] for row in rows if row["evidence_type"] == "asr"] == [None]
+    assert all(row["keyframe_id"] for row in rows if row["evidence_type"] == "ocr")
+
+
+def test_package_satisfies_v2_schemas_with_null_scene_and_one_representative(video, tmp_path) -> None:
+    zip_path = _run(video, tmp_path, _models(Calls()))
+
+    shots = _table(zip_path, "shots.parquet")
+    keyframes = _table(zip_path, "keyframes.parquet")
+    assert shots["scene_id"].isna().all()
+    assert (keyframes.groupby("shot_id")["is_representative"].sum() == 1).all()
+
+
+def test_validator_rejects_a_schema_violation(video, tmp_path) -> None:
+    _run(video, tmp_path, _models(Calls()))
+    package_dir = tmp_path / "work" / "V1" / "package"
+    shots = pd.read_parquet(package_dir / "shots.parquet")
+    shots.loc[0, "start_sec"] = float("nan")
+    shots.to_parquet(package_dir / "shots.parquet", index=False)
+
+    with pytest.raises(PackageError, match="shots row 0"):
+        validate_package(package_dir, video_id="V1")
+
+    shots.loc[0, "start_sec"] = 0.0
+    shots.loc[0, "shot_id"] = "V1_shot_zero"
+    shots.to_parquet(package_dir / "shots.parquet", index=False)
+    with pytest.raises(PackageError, match="shots.schema.json at shot_id"):
         validate_package(package_dir, video_id="V1")

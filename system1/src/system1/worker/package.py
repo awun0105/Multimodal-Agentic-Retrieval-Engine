@@ -1,22 +1,28 @@
 """Packaging-time output validator for one video (ADR 0024).
 
 This is the single place that rejects corrupted output. Missing or weak evidence
-(no speech, no text, failed captions) is not an error here; it is recorded in
-the manifest stage reports.
+(no speech, no text) is not an error here; it is recorded in the manifest stage
+reports. Every table is also checked against its JSON schema in
+`system1/schemas/v2/` (docs/architecture/data-contracts.md).
 """
 
 from __future__ import annotations
 
+import json
+import math
+from functools import cache
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
+from jsonschema import Draft202012Validator
 
-EVIDENCE_TYPES = {"asr", "ocr", "caption", "visible_text"}
+SCHEMA_DIR = Path(__file__).resolve().parents[3] / "schemas" / "v2"
+EVIDENCE_TYPES = {"asr", "ocr"}
+TABLES = ("cut_segments", "shots", "keyframes", "asr_segments", "ocr", "text_documents")
 REQUIRED_FILES = (
-    "manifest.json", "cut_segments.parquet", "shots.parquet", "keyframes.parquet", "image_vectors.npy",
-    "asr_segments.parquet", "ocr.parquet", "captions.parquet", "text_documents.parquet",
-    "text_vectors.npy",
+    "manifest.json", *(f"{name}.parquet" for name in TABLES), "image_vectors.npy", "text_vectors.npy",
 )
 
 
@@ -28,6 +34,8 @@ def validate_package(package_dir: Path, *, video_id: str) -> None:
     missing = [name for name in REQUIRED_FILES if not (package_dir / name).is_file()]
     if missing:
         raise PackageError(f"missing package files: {missing}")
+    for name in TABLES:
+        validate_table(name, pd.read_parquet(package_dir / f"{name}.parquet"))
 
     cuts = pd.read_parquet(package_dir / "cut_segments.parquet")
     shots = pd.read_parquet(package_dir / "shots.parquet")
@@ -48,6 +56,8 @@ def validate_package(package_dir: Path, *, video_id: str) -> None:
     _check(keyframes["keyframe_id"].is_unique, "keyframe_id is not unique")
     expected_ids = [f"{video_id}:{frame}" for frame in keyframes["frame_id"]]
     _check(keyframes["keyframe_id"].tolist() == expected_ids, "keyframe_id is not {video_id}:{frame_id}")
+    _check((keyframes.groupby("shot_id")["is_representative"].sum() == 1).all(),
+           "every shot needs exactly one representative keyframe")
     ranges = shots.set_index("shot_id")[["start_frame", "end_frame"]]
     for row in keyframes.itertuples():
         _check(row.shot_id in ranges.index, f"keyframe {row.keyframe_id} has unknown shot {row.shot_id}")
@@ -61,6 +71,48 @@ def validate_package(package_dir: Path, *, video_id: str) -> None:
     _check(set(documents["evidence_type"]) <= EVIDENCE_TYPES, "unknown evidence_type in text_documents")
     _check(documents.empty or documents["text"].str.strip().astype(bool).all(), "empty text document")
     _check_vectors(package_dir / "text_vectors.npy", len(documents), "text_vectors")
+
+
+def validate_table(name: str, table: pd.DataFrame) -> None:
+    """Check every row of `table` against `schemas/v2/{name}.schema.json`."""
+
+    validator = _validator(name)
+    for index, row in enumerate(table.to_dict("records")):
+        try:
+            record = {key: _python(value) for key, value in row.items()}
+        except ValueError as exc:
+            raise PackageError(f"{name} row {index}: {exc}") from exc
+        error = next(iter(validator.iter_errors(record)), None)
+        if error is not None:
+            path = "/".join(str(part) for part in error.absolute_path) or "row"
+            raise PackageError(f"{name} row {index} violates {name}.schema.json at {path}: {error.message}")
+
+
+def representative_keyframes(keyframes: pd.DataFrame) -> pd.DataFrame:
+    """The middle keyframe of each shot, in time order. The keyframe captioned for the shot."""
+
+    picks = [group.iloc[len(group) // 2] for _, group in keyframes.groupby("shot_id", sort=False)]
+    return pd.DataFrame(picks).reset_index(drop=True)
+
+
+@cache
+def _validator(name: str) -> Draft202012Validator:
+    schema = json.loads((SCHEMA_DIR / f"{name}.schema.json").read_text(encoding="utf-8"))
+    return Draft202012Validator(schema)
+
+
+def _python(value: Any) -> Any:
+    """Convert numpy and pandas values to JSON-schema values; NaN is an error."""
+
+    if isinstance(value, np.ndarray | list | tuple):
+        return [_python(item) for item in value]
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and math.isnan(value):
+        raise ValueError("NaN value")
+    return value
 
 
 def _check_vectors(path: Path, rows: int, name: str) -> None:

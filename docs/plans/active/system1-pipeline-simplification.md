@@ -577,16 +577,36 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
     published to a Hugging Face Storage Bucket with WebP keyframes re-encoded
     at release time. Scenes return as a deterministic grouping (ADR 0026).
 - [ ] Step 5b (ADR 0025, ADR 0026):
-  - [ ] 1. Worker without captions; Kaggle time per video recorded.
-  - [ ] 2. Caption pass (`caption-batch`, `caption_batch.ipynb`); Kaggle time
-    per shot recorded.
+  - [x] 1. Worker without captions (code, 2026-10-26): `worker/video.py` has
+    no caption stage, manifest `worker_package_v2`, `shots.scene_id` null,
+    `keyframes.is_representative`, nullable `text_documents.keyframe_id`;
+    `validate_package` checks every table against `schemas/v2`. Kaggle time
+    per video not yet recorded.
+  - [x] 2. Caption pass (code, 2026-10-26): `captions/{video,batch,models}.py`,
+    CLI `caption-batch --persist-dir`, `notebooks/caption_batch.ipynb`,
+    `tests/test_caption_pass.py`. Reads worker ZIP members in place (Step 5f
+    item 13). Kaggle time per shot not yet recorded.
   - [ ] 3. vLLM versus transformers caption throughput trial on T4.
   - [ ] 4. Release merges optional caption packages.
   - [ ] 5. Scene grouping and text-only scene summaries; boundary precision
-    and recall on 3 hand-labelled videos.
+    and recall on 3 hand-labelled videos. Done 2026-10-26: pure grouping in
+    `scenes/deterministic.py` (`ShotEvidence`, `SceneParams.from_config`,
+    `continuity_score`, `group_scenes`, `scene_ids_for_shots`), `worker.yaml`
+    section `scenes`, `tests/test_scene_deterministic.py` (7 tests). Not done:
+    wiring into `release/build.py`, scene summaries, hand-labelled check.
   - [ ] 6. WebP keyframes in the release; contract, schema, validator updated.
   - [ ] 7. Bucket publish (`publish-release`); 5-video release round trip.
-- [ ] Step 5c (algorithm backlog, group A): none started.
+- [ ] Step 5c (algorithm backlog, group A): items 1, 2, 3 coded 2026-10-26
+  (`providers/ocr.py`: `frame_text_hashes`, `should_rerun_ocr`, `CropCache`,
+  `EasyVietOcr.read(image, cache)`; `text/evidence.py`:
+  `vietnamese_syllable_ratio`; `clean_ocr_lines(min_syllable_ratio)`; wired
+  into `ocr_stage` per shot with one `CropCache` per video; config
+  `models.ocr.rerun_min_change 0.15`, `text.ocr_min_syllable_ratio 0.6`).
+  Decision: a single valid syllable is not penalized, so one-word headlines
+  survive; fragments like "Vập" are left to the repeat and length filters.
+  Plan checks (OCR lines before/after, cache hit rate, 200 dropped lines
+  reviewed) wait for the next Kaggle run; the stage report now records
+  `reused_from_shot` and `crop_cache_hits`.
 - [ ] Step 5d (data contract): audit, `schemas/v2/`, and `data-contracts.md`
   rewrite done 2026-10-26; validator and `videos`/`vector_map` code not
   started.

@@ -12,6 +12,7 @@ from system1.text.evidence import (
     shots_for_interval,
     strip_video_wide_repeats,
     unaccent,
+    vietnamese_syllable_ratio,
 )
 
 
@@ -89,3 +90,24 @@ def test_text_repeated_across_most_keyframes_is_removed() -> None:
     assert cleaned["k0"] == ""
     assert cleaned["k8"] == "Thầy LÊ TẤN PHÁT"
     assert cleaned["k9"] == ""
+
+
+@pytest.mark.parametrize("line", ["tucitrery", "Vxp Mqz", "lorem ipsum dolor"])
+def test_non_vietnamese_fragments_score_low(line: str) -> None:
+    assert vietnamese_syllable_ratio(line) < 0.6
+
+
+@pytest.mark.parametrize("line", ["Vập", "Thời sự", "Hà Nội"])
+def test_single_valid_syllables_score_high(line: str) -> None:
+    assert vietnamese_syllable_ratio(line) >= 0.6
+
+
+@pytest.mark.parametrize(
+    "line", ["Nhiều điểm sáng trong phát triển kinh tế xã hội", "06:32:58", "VTV1", "Hà Nội 25°C"]
+)
+def test_real_ocr_lines_score_high(line: str) -> None:
+    assert vietnamese_syllable_ratio(line) == 1.0
+
+
+def test_mixed_line_scores_the_share_of_valid_tokens() -> None:
+    assert vietnamese_syllable_ratio("Tin tức fwzq xyzk") == 0.5

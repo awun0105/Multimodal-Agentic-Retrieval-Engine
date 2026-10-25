@@ -59,16 +59,31 @@ models:
     min_crop_px: 8
     batch_size: 32
     max_image_side: 960
-  captions:
-    model_id: Qwen/Qwen3-VL-4B-Instruct
-    revision: ebb281ec70b05090aa6165b016eac8ec08e71b17
-    batch_size: 16
-    max_new_tokens: 700
-    max_image_side: 512
+    rerun_min_change: 0.15  # later keyframes in a shot rerun OCR only past this dHash change (frame or lower third)
+
+# Caption pass (`caption-batch`, ADR 0025); not loaded by the worker.
+captions:
+  model_id: Qwen/Qwen3-VL-4B-Instruct
+  revision: ebb281ec70b05090aa6165b016eac8ec08e71b17
+  batch_size: 16
+  max_new_tokens: 700
+  max_image_side: 512
 
 text:
   asr_chunk_min_sec: 10.0
   asr_chunk_max_sec: 30.0
   asr_chunk_max_gap_sec: 2.0
   ocr_min_line_chars: 3
+  ocr_min_syllable_ratio: 0.6
   ocr_repeat_min_fraction: 0.5
+
+scenes:  # ADR 0026 initial parameters, to be tuned on hand-labelled videos
+  w_img: 0.4
+  w_cap: 0.3
+  w_asr: 0.2
+  w_sil: 0.2
+  w_ocr: 0.1
+  scene_threshold: 0.55
+  silence_sec: 2.0
+  min_scene_sec: 2.0
+  max_scene_sec: 90

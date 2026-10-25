@@ -6,7 +6,13 @@ import json
 
 from system1.providers.asr import audio_extract_command
 from system1.providers.captions import CAPTION_PROMPT, has_repetition_loop, parse_caption
-from system1.providers.ocr import clean_ocr_lines, reading_order_rects
+from system1.providers.ocr import (
+    CropCache,
+    clean_ocr_lines,
+    frame_text_hashes,
+    reading_order_rects,
+    should_rerun_ocr,
+)
 from system1.providers.text_embedding import e5_passages, e5_queries
 
 GOOD = {
@@ -92,3 +98,43 @@ def test_audio_is_extracted_as_16k_mono_wav(tmp_path) -> None:
     assert ["-ac", "1"] == command[command.index("-ac"):command.index("-ac") + 2]
     assert ["-ar", "16000"] == command[command.index("-ar"):command.index("-ar") + 2]
     assert command[-1] == str(tmp_path / "v.wav")
+
+
+def _frame(band_seed: int | None = None):
+    import numpy as np
+    from PIL import Image
+
+    pixels = np.random.default_rng(0).integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    if band_seed is not None:
+        pixels[160:] = np.random.default_rng(band_seed).integers(0, 255, (80, 320, 3), dtype=np.uint8)
+    return Image.fromarray(pixels)
+
+
+def test_frame_text_hashes_detect_a_changed_lower_band() -> None:
+    first, again, changed = frame_text_hashes(_frame()), frame_text_hashes(_frame()), frame_text_hashes(_frame(7))
+    assert first == again
+    assert bin(first[1] ^ changed[1]).count("1") / 64 >= 0.3
+
+
+def test_ocr_reruns_on_first_keyframe_and_band_change_only() -> None:
+    first, changed = frame_text_hashes(_frame()), frame_text_hashes(_frame(7))
+    assert should_rerun_ocr(None, first, min_change=0.15)
+    assert should_rerun_ocr(first, changed, min_change=0.15)
+    assert not should_rerun_ocr(first, first, min_change=0.15)
+
+
+def test_crop_cache_reuses_text_for_an_identical_crop() -> None:
+    cache = CropCache()
+    crop, other = _frame().crop((0, 0, 120, 30)), _frame(7).crop((0, 200, 120, 230))
+    assert cache.get(crop) is None
+    cache.put(crop, "THỜI SỰ")
+    assert cache.get(crop.copy()) == "THỜI SỰ"
+    assert cache.get(other) is None
+    assert (cache.hits, cache.misses) == (1, 2)
+
+
+def test_ocr_lines_with_few_vietnamese_syllables_are_dropped() -> None:
+    lines = ["tucitrery", "lorem ipsum dolor", "Nhiều điểm sáng trong phát triển kinh tế xã hội",
+             "06:32:58", "VTV1", "Hà Nội 25°C", "Thời sự"]
+    assert clean_ocr_lines(lines, min_chars=3, min_syllable_ratio=0.6) == lines[2:]
+    assert clean_ocr_lines(lines, min_chars=3) == lines

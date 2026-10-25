@@ -1,4 +1,4 @@
-"""CLI for the simplified pipeline: `worker-batch` and `build-release`."""
+"""CLI for the simplified pipeline: `worker-batch`, `caption-batch`, and `build-release`."""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ def register(app: typer.Typer) -> None:
         output_repo: str | None = typer.Option(None, "--output-repo",
                                                help="Defaults to storage.output_repo (the test repo)."),
         limit: int | None = typer.Option(None, "--limit", help="Process only the first N videos."),
-        captions: bool = typer.Option(True, "--captions/--no-captions"),
         work_root: Path = typer.Option(Path("worker_runtime"), "--work-root"),
     ) -> None:
         """Run one Phase00 batch through the worker and upload one package per video."""
@@ -33,7 +32,7 @@ def register(app: typer.Typer) -> None:
 
         config = _worker_config()
         storage = config["storage"]
-        models = load_worker_models(config, work_root, captions=captions)
+        models = load_worker_models(config, work_root)
         report = run_batch(
             BatchPaths(release_id=release_id, batch_id=batch_id, worker_id=worker_id),
             config=config, models=models,
@@ -41,6 +40,38 @@ def register(app: typer.Typer) -> None:
             source_store=_store(storage["source_repo"], storage, work_root / "job" / ".hf_cache"),
             output_store=_store(output_repo or storage["output_repo"], storage, work_root / "job" / ".hf_cache"),
             work_root=work_root / "job", limit=limit,
+        )
+        typer.echo(json.dumps({key: report[key] for key in ("completed", "skipped", "failed")}, ensure_ascii=False))
+
+    @app.command("caption-batch")
+    def caption_batch(
+        batch_id: str = typer.Option(..., "--batch-id"),
+        worker_id: str = typer.Option("worker_000", "--worker-id"),
+        release_id: str = typer.Option(DEFAULT_RELEASE_ID, "--release-id"),
+        source_repo: str | None = typer.Option(None, "--source-repo",
+                                               help="Repo holding worker packages; defaults to storage.output_repo."),
+        output_repo: str | None = typer.Option(None, "--output-repo",
+                                               help="Defaults to storage.output_repo (the test repo)."),
+        limit: int | None = typer.Option(None, "--limit", help="Caption only the first N videos."),
+        work_root: Path = typer.Option(Path("caption_runtime"), "--work-root"),
+        persist_dir: Path | None = typer.Option(None, "--persist-dir",
+                                                help="Also write report.json here after every video."),
+    ) -> None:
+        """Caption every worker package of one batch and upload one caption package per video."""
+
+        from system1.captions.batch import CaptionPaths, run_caption_batch
+        from system1.captions.models import load_caption_models
+
+        config = _worker_config()
+        storage = config["storage"]
+        captioner, text_embedder = load_caption_models(config)
+        cache = work_root / "job" / ".hf_cache"
+        report = run_caption_batch(
+            CaptionPaths(release_id=release_id, batch_id=batch_id, worker_id=worker_id),
+            config=config, captioner=captioner, text_embedder=text_embedder,
+            worker_store=_store(source_repo or storage["output_repo"], storage, cache),
+            output_store=_store(output_repo or storage["output_repo"], storage, cache),
+            work_root=work_root / "job", limit=limit, persist_dir=persist_dir,
         )
         typer.echo(json.dumps({key: report[key] for key in ("completed", "skipped", "failed")}, ensure_ascii=False))
 
