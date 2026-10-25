@@ -12,8 +12,8 @@ files after actual product domains, such as `overview.md`, `billing.md`,
 
 No consumer-specific product contract is shipped in this generic directory.
 The upstream `repository-harness` contract lives in the root README, current
-workflow and architecture documents, lasting decisions, optional orchestration
-contract, implementation, and executable tests.
+workflow and architecture documents, lasting decisions, implementation, and
+executable tests.
 
 ## Update Rule
 
@@ -25,5 +25,4 @@ When behavior changes:
    product, architecture, data, security, compatibility, or validation choice.
 4. Add or update executable proof that exercises the behavior.
 
-Bounded changes do not require a story packet, proof-matrix row, or Harness CLI
-mutation.
+Bounded changes do not require a parallel lifecycle record.

@@ -1,8 +1,7 @@
 # Test Matrix
 
 This Markdown file is the durable behavior-to-proof index. It records
-implementation evidence and accepted future scope; it is not derived from a
-SQLite Harness database.
+implementation evidence and accepted future scope.
 
 ## Status Values
 
@@ -21,7 +20,7 @@ SQLite Harness database.
 
 | Story | Contract | Unit | Integration | E2E | Platform | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| MVP-0 | Canonical docs and accepted decisions define the repository contract | no | no | no | no | implemented | `docs/onboarding/doc-conflicts.md`, `docs/decisions/` |
+| MVP-0 | Canonical docs and accepted decisions define the repository contract | no | no | no | no | implemented | `docs/validation/doc-conflicts.md`, `docs/decisions/` |
 | MVP-0.5 | App-ready Data Contract defines video plus optional organizer metadata input, required canonical per-video metadata, canonical IDs/refs, bilingual evidence, SQLite/FTS5, separate SigLIP/BEiT3 FAISS boundaries, and validation rules | partial | yes | no | no | changed | ADR 0016 plus metadata/timeline package tests cover the Phase00 contract. Production Phase01 providers, dual indexes, final runtime artifacts, and live full-dataset proof remain pending. |
 | MVP-0.6 | System 1 builds app-ready seed artifacts from official videos and optional metadata while generating its own derived evidence | yes | yes | no | no | partial | Phase00 plus the production Phase01 stage/config/checkpoint/package implementations have automated proof. Real TransNet/faster-whisper/Gemini one-video and heterogeneous-batch execution remain pending, as do Phase02 dual indexes and final runtime artifacts. |
 | MVP-1 | System 1 builds validated runtime SQLite/FTS5/FAISS artifacts for System 2 | yes | yes | no | no | partial | The debug/mock path builds and validates `app.sqlite`, FTS5, one legacy debug visual index, vector map, and smoke report. The accepted production SigLIP/BEiT3 dual-index path remains unimplemented. |

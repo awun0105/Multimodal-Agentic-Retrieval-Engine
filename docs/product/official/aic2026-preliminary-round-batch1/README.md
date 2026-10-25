@@ -7,7 +7,7 @@ planning and Batch 1 data acquisition.
 
 These files are source inputs. Canonical project behavior still lives in the
 derived product and architecture docs under `docs/product/`,
-`docs/architecture/`, `docs/decisions/`, `docs/stories/`, and
+`docs/architecture/`, `docs/decisions/`, and
 `docs/validation/`.
 
 ## Files
@@ -17,6 +17,7 @@ derived product and architecture docs under `docs/product/`,
 | `preliminary-round-info.pdf` | Original organizer PDF. |
 | `preliminary-round-info.md` | Markdown extraction of the organizer PDF for search and review. |
 | `batch1-downloads.csv` | Batch 1 download listing exported from the organizer spreadsheet. |
+| `submission-guide.md` | Snapshot of the organizer submission guide from `https://sotuyenaic.oj.io.vn/`. |
 
 ## Use
 

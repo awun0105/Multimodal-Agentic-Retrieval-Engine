@@ -75,7 +75,6 @@ ${REPO_ROOT}/
     frontend/
   docs/
   scripts/
-  docs/archived/
   ui-ideas/
 
 ${AIC_DATA_ROOT}/

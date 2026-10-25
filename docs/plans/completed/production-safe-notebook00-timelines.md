@@ -19,8 +19,8 @@ or remote artifacts.
   exact frame/time mapping while preserving canonical metadata schema 1.0.
 - `docs/architecture/system1-ingestion.md` requires production Phase01 to fail
   rather than silently fall back when decoded timelines are missing.
-- `docs/stories/system1/SYS1-HR-001-production-safe-notebook00/` is the current
-  Notebook 00 behavior and validation authority.
+- The `SYS1-HR-001` row in `docs/validation/test-matrix.md` records the current
+  Notebook 00 behavior and validation status.
 - The current worktree already contains the prefix-specific progress filename
   fix; this work preserves and extends it.
 

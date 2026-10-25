@@ -128,6 +128,37 @@ The current task or frozen evaluation prompt defines run scope, not durable
 repository authority. A new rule supported only by that prompt is **Decision
 required** unless the user explicitly adopts it as repository policy.
 
+### 2a. Compare documented invariants with executable checks
+
+During the read-only proposal pass, compare accepted architecture, reliability,
+security, and quality invariants with the repository's checked-in validation.
+This is an inventory, not authority to edit or enforce.
+
+Use one row per invariant or check:
+
+| Documented invariant or executable check | Authority and source | Validation owner and command | Local coverage | CI discovery | Finding |
+| --- | --- | --- | --- | --- | --- |
+
+Classify findings precisely:
+
+- **Enforced:** accepted authority and a mechanical check cover the same scope.
+- **Partially enforced:** the check covers only part of the accepted scope.
+- **Unenforced rule:** accepted authority exists, but no matching check was found.
+- **Check lacking authority:** a check exists, but no accepted source establishes
+  its policy. Code, tests, conventions, and defaults cannot fill this gap.
+- **Unknown:** available evidence cannot establish the relationship.
+
+Inspect the native validation owner and checked-in CI invocation separately. A
+local command, an optional hook, CI configuration, and external branch
+protection are different enforcement levels; do not infer one from another.
+
+Do not add, edit, delete, enable, or execute a guard during onboarding. Do not
+install hooks or mutate CI, merge, or branch-protection settings. Report the
+mismatch with evidence and propose the smallest next step: encode an accepted
+rule, obtain a missing decision, or investigate an unknown. Any later edit or
+enforcement still requires exact user approval and the repository authority
+gate.
+
 ### 3. Trace one complete operational path
 
 Prefer one already-documented local happy path over a broad architecture
@@ -296,6 +327,11 @@ current runbook guidance to a generic, historical, or future-contract document
 when a maintained operations guide exists. Never put an **Unknown** sentence in
 a patch preview; keep it in the gap report until authority or a user decision
 exists.
+
+When no maintained operational guide exists, use
+`docs/templates/application-runbook.md` only to structure a proposed
+consumer-owned guide. The template supplies headings, not commands or authority:
+omit unsupported instructions from the patch and retain them as unknowns.
 
 Prefer a correction to an existing repository-owned document over a new
 framework. Do not propose generic adapters, hooks, state markers, databases, or

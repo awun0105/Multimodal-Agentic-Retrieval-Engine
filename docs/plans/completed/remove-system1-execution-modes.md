@@ -16,7 +16,7 @@ documentation no longer depend on an execution-mode selector.
 
 - `docs/architecture/system1-notebook01-production-pipeline.md` defines one
   production pipeline and keeps mocks only for tests and development.
-- `docs/onboarding/throughput-plan.md` already says the legacy quality modes are
+- `docs/architecture/system1-throughput.md` already says the legacy quality modes are
   not part of the production notebook contract.
 - `system1/src/system1/commands/` still requires `--mode`, and mode values still
   affect reports and capability status in feature and release builders.

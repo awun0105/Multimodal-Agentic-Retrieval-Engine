@@ -724,7 +724,7 @@ Task 1 changed:
   `system1/tests/test_table_schema_validation.py`;
 - current docs: `docs/architecture/system1-scene-grouping.md`,
   `docs/architecture/system1-notebook01-production-pipeline.md`, and the
-  current-version example in `docs/onboarding/system1_spec.md`.
+  current-version example in `docs/architecture/system1-spec.md`.
 
 The closure patch additionally changes `system1/src/system1/phase01/checkpoint.py`,
 adds long-sequence/no-promote/failure-persistence/duration proof, and syncs ADR
