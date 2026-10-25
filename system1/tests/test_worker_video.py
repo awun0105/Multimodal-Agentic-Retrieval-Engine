@@ -121,6 +121,7 @@ def test_video_is_packaged_with_aligned_tables_and_vectors(video, tmp_path) -> N
     assert image_vectors.shape[0] == len(keyframes)
     assert text_vectors.shape[0] == len(documents)
     assert manifest["stages"]["asr"]["status"] == "pass"
+    assert all("seconds" in report for report in manifest["stages"].values())
 
 
 def test_logo_repeated_on_every_keyframe_is_not_indexed(video, tmp_path) -> None:

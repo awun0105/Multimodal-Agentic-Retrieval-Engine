@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -45,12 +46,14 @@ class StageRunner:
             saved = json.loads(marker.read_text(encoding="utf-8"))
             if saved["fingerprint"] == fingerprint and saved["report"]["status"] != "failed":
                 return self._remember(name, fingerprint, saved["report"])
+        start = time.monotonic()
         try:
             report = fn()
         except Exception as exc:
             if not degrade:
                 raise
             report = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500]}
+        report["seconds"] = round(time.monotonic() - start, 1)
         marker.write_text(json.dumps({"fingerprint": fingerprint, "report": report},
                                      ensure_ascii=False, indent=1), encoding="utf-8")
         return self._remember(name, fingerprint, report)

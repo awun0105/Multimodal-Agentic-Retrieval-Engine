@@ -99,7 +99,9 @@ class QwenCaptioner:
             inputs = self.processor.apply_chat_template(
                 conversations, tokenize=True, add_generation_prompt=True, padding=True,
                 return_dict=True, return_tensors="pt").to(self.model.device)
-            with self._torch.no_grad():
+            # xgrammar's Triton bitmask kernel runs on the current CUDA device,
+            # which must be the model's device when the model is not on cuda:0.
+            with self._torch.no_grad(), self._torch.cuda.device(self.model.device):
                 output = self.model.generate(
                     **inputs, max_new_tokens=int(self.config["max_new_tokens"]), do_sample=False,
                     logits_processor=[self._xgr.contrib.hf.LogitsProcessor(self.grammar)])

@@ -44,7 +44,7 @@ models:
     chunk_size: 64
     left_context_size: 128
     right_context_size: 128
-    total_batch_duration_sec: 14400
+    total_batch_duration_sec: 1800  # 14400 ran out of T4 memory on a 38-minute video
   ocr:
     detector: easyocr
     detector_languages: [vi]
