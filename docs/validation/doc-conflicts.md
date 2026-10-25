@@ -89,3 +89,20 @@ organizer metadata tree. Unknown organizer scalar values remain `null`,
 `keywords` remains an empty list, and organizer values must not be fabricated.
 Implementation and executable proof are still pending, so this resolution must
 not be read as current code readiness.
+
+## Conflict 9: Runtime Tables Before And After ADR 0021 to 0026
+
+- `data-contracts.md` before 2026-10-26 listed 23 runtime tables (`shot_captions`,
+  `scene_summaries`, `*_transcript_links`, `objects`, `embeddings_meta`,
+  `feature_availability`, query and agent state tables) and schemas under
+  `system1/schemas/*.schema.json` matched that pipeline.
+- The worker and release code since commit `93c7723` write `cut_segments`,
+  `shots`, `keyframes`, `text_documents` and FAISS vector maps as Parquet.
+
+Resolved 2026-10-26. `data-contracts.md` now describes `release_v2`
+(`videos`, `cut_segments`, `shots`, `scenes`, `keyframes`, `text_documents`,
+`text_documents_fts`, `vector_map`) with schemas in `system1/schemas/v2/`.
+Query and agent state tables are System 2 runtime state
+(`system2-retrieval.md`). Old schemas and the modules that read them are
+removed in plan Step 6. Until plan Step 5b and 5d code lands, worker packages
+still lack `scene_id` and `is_representative`; the plan records this gap.

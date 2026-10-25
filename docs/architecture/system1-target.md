@@ -40,15 +40,20 @@ Phase01  Per-video worker                             Notebook 01 (one batch per
   3 shots, keyframes split cut segments into shots by visual change; keyframes
   4 image vectors    one vector per keyframe
   5 OCR              per keyframe, noise and logo filter
-  6 captions         one constrained JSON call per shot (optional)
-  7 text documents   ASR chunks (10-30 s), OCR, captions; text vectors
-  8 package          per-video ZIP + output validation
-  9 sync             → HF AIOU26_release/phase01/artifacts/{batch_id}/{video_id}.zip
+  6 text documents   ASR chunks (10-30 s), OCR; text vectors
+  7 package          per-video ZIP + output validation
+  8 sync             → HF AIOU26_release/{release_id}/worker/artifacts/{batch_id}/{video_id}.zip
   │
   ▼
-Release  Merge, index, validate                       Notebook 02
-  restore all per-video ZIPs → merge tables → SQLite + FTS5
-  → FAISS image index(es) + text index → release validation → publish
+Caption pass  Per-video, over worker packages (ADR 0025)   caption_batch notebook
+  one constrained JSON call per shot → captions, visible_text documents, text vectors
+  → HF AIOU26_release/{release_id}/captions/artifacts/{batch_id}/{video_id}.zip
+  │
+  ▼
+Release  Merge, group, index, validate, publish        build_release notebook
+  restore worker (+ caption) ZIPs → merge tables → scenes (ADR 0026)
+  → scene summaries (text-only) → SQLite + FTS5 → FAISS image + text indexes
+  → WebP keyframes → release validation → HF Storage Bucket releases/{release_id}/
   │
   ▼
 Runtime contract → System 2 (search, temporal window, fusion, UI)
@@ -83,13 +88,34 @@ between two TransNetV2 cuts and may contain several shots (ADR 0022).
 | 3 | Image vectors | keyframe JPEGs | one vector file | SigLIP2 so400m-patch14-384 | Decided (ADR 0023) |
 | 4 | ASR | 16 kHz mono audio | `asr_segments` (segment timestamps), `asr_chunks` (10-30 s, mapped to shots) | ChunkFormer-large-vie | Decided (ADR 0023) |
 | 5 | OCR | keyframe JPEGs | `ocr` (text per keyframe, after noise, dedup, and logo filter) | EasyOCR detection + VietOCR recognition | Decided (ADR 0023) |
-| 6 | Captions | middle keyframe of each shot | `captions` (caption, objects, actions, visible_text; Vietnamese) | Qwen3-VL-4B, xgrammar constrained, batch 16, 512 px | Decided model; kept only if evaluation shows gain |
-| 7 | Text vectors | caption and ASR chunk documents | one text vector file | multilingual-e5-large | Decided (ADR 0023) |
+| 6 | Text vectors | ASR chunk and OCR documents | one text vector file | multilingual-e5-large | Decided (ADR 0023) |
 | 8 | Package | stage outputs | per-video ZIP with manifest and checksums | none | Decided (ADR 0024 validator) |
 | 9 | Sync | per-video ZIP | HF upload, receipt | none | Proposed layout |
 
-Removed from Phase01 (ADR 0021): scene grouping, scene transcript links, scene
-summaries, scene review, and the scene quality guard.
+Captions are not a worker stage (ADR 0025). Measured on the first 5 videos of
+`batch_000`: captions took 63% of worker time (3.4 s per shot, about 400 shots
+per 20-minute news video), so one batch did not fit a 12-hour Kaggle session.
+
+Removed from Phase01 (ADR 0021): VLM scene grouping, scene transcript links, VLM
+scene summaries, scene review, and the scene quality guard. Deterministic scene
+grouping returns in the release step (ADR 0026).
+
+## Caption Pass (Decided, ADR 0025)
+
+Runs after the worker, on any number of Kaggle accounts, one batch per session.
+
+| Step | Input | Output | Model |
+| --- | --- | --- | --- |
+| Restore | worker ZIP of one video | keyframes, `shots.parquet`, `keyframes.parquet` | none |
+| Caption | middle keyframe of each shot | `captions.parquet` (caption, objects, actions, visible_text; Vietnamese) | Qwen3-VL-4B, xgrammar constrained, 512 px, batch 16 |
+| Documents | captions | caption and `visible_text` text documents with `text_unaccented`, text vectors | multilingual-e5-large |
+| Package | step outputs | caption ZIP with manifest and checksums | none |
+| Sync | caption ZIP | `AIOU26_release/{release_id}/captions/artifacts/{batch_id}/{video_id}.zip` | none |
+
+Videos whose caption package already exists are skipped. Rejected captions
+(prompt echo, repetition loop, invalid JSON) are recorded and the shot has no
+caption document. Throughput work (vLLM structured outputs on T4) is measured
+in the plan before it replaces transformers `generate`.
 
 ### Keyframe sampling (stage 2)
 
@@ -119,17 +145,30 @@ whole length.
   generic captions.
 - Preflight checks only credentials, write access, and required executables.
 
-## Release Step: Merge, Index, Validate (Proposed)
+## Release Step: Merge, Group, Index, Validate, Publish (Decided, ADR 0025 and 0026)
 
-Notebook 02 (replaces current Notebooks 02 and 03):
+`build-release` (CLI) driven by `build_release.ipynb`; replaces Notebooks 02
+and 03:
 
-1. Restore every per-video ZIP for the release from Hugging Face.
-2. Merge per-video tables into release tables.
-3. Build SQLite with FTS5 over text documents, with a diacritic-free column.
-4. Build FAISS inner-product index(es) over L2-normalized image vectors and one
-   over text vectors, each with a vector map.
-5. Validate the release (IDs, mappings, counts, schema) and publish it to
-   `AIOU26_release/{release_id}/release/`.
+1. Restore every worker ZIP and every available caption ZIP for the release
+   from `AIOU26_release`.
+2. Merge per-video tables into release tables. Videos without a caption
+   package are included and marked in the manifest.
+3. Group shots into scenes (ADR 0026) from SigLIP vectors, caption vectors,
+   ASR timing, and OCR overlap; write `scenes` and `shots.scene_id`.
+4. Summarize each multi-shot scene with one text-only constrained call over its
+   shot captions, `visible_text`, and ASR; single-shot scenes reuse the shot
+   caption. Write `scene` text documents with text vectors.
+5. Build SQLite with FTS5 over text documents (`unicode61 remove_diacritics 0`
+   over `text` and `text_unaccented`).
+6. Build FAISS inner-product indexes over L2-normalized image vectors and text
+   vectors, each with a vector map.
+7. Re-encode keyframes to WebP quality 80 at native resolution; copy
+   thumbnails.
+8. Validate the release (IDs, mappings, counts, schema).
+9. Upload to the Hugging Face Storage Bucket `releases/{release_id}/`:
+   `db/`, `indexes/`, `manifest.json`, media, then `READY.json` last. Batched
+   and resumable. Test builds go to `releases_test/`.
 
 ## Runtime Contract For System 2 (Proposed)
 
@@ -140,44 +179,61 @@ release/
   manifest.json                 release ID, models, counts, checksums
   db/app.sqlite
     videos                      video_id, metadata, duration, fps
-    shots                       shot_id, video_id, frame and time range
+    cut_segments                cut_segment_id, video_id, frame and time range
+    shots                       shot_id, video_id, scene_id, frame and time range
+    scenes                      scene_id, video_id, start/end shot, frame and
+                                time range, shot_count (ADR 0026)
     keyframes                   keyframe_id, video_id, frame_id, time_sec,
-                                shot_id, cut_segment_id, image and thumbnail refs
+                                shot_id, cut_segment_id, image (.webp) and
+                                thumbnail refs
     text_documents              doc_id, video_id, start/end time and frame,
-                                shot_id, evidence_type (asr | ocr | caption),
-                                text, text_unaccented
+                                shot_ids, evidence_type (asr | ocr | caption |
+                                visible_text | scene), text, text_unaccented
     text_documents_fts          FTS5 over text and text_unaccented
   indexes/
-    image_siglip2.faiss         image index
-    image_vector_map.parquet    (index_name, vector_id) → keyframe_id
-    text.faiss
-    text_vector_map.parquet     vector_id → doc_id
-  media/keyframes/, media/thumbnails/
+    image_siglip2.faiss                   image index
+    image_siglip2_vector_map.parquet      vector_id → keyframe_id
+    text_e5.faiss
+    text_e5_vector_map.parquet            vector_id → doc_id
+  media/keyframes/{video_id}/*.webp, media/thumbnails/{video_id}/*.webp
+  READY.json                    written last; marks a complete upload
 ```
+
+System 2 downloads the release with `hf buckets sync` from the bucket prefix
+`releases/{release_id}/` and serves media from the local copy.
 
 System 2 searches image vectors, text vectors, and FTS5; fuses ranked lists
 with Reciprocal Rank Fusion; then applies the query-time temporal window
 (ADR 0021).
 
-## Hugging Face Layout (Proposed)
+## Hugging Face Layout (Decided, ADR 0025)
 
 ```text
-AIOU26_raw/canonical_raw_v001/            unchanged (Phase00)
-AIOU26_release/{release_id}/
-  phase00_ingestion/                      unchanged
-  phase01/artifacts/{batch_id}/{video_id}.zip
-  phase01/worker_reports/
-  release/                                runtime contract above
-AIOU26_checkpoints/phase01_checkpoints/{release_id}/{video_id}/
+AIOU26_raw/canonical_raw_v001/                     dataset repo, unchanged (Phase00)
+AIOU26_release/{release_id}/                       dataset repo
+  phase00_ingestion/                               unchanged
+  worker/artifacts/{batch_id}/{video_id}.zip       worker packages (immutable)
+  worker/reports/{batch_id}_{worker_id}.json
+  captions/artifacts/{batch_id}/{video_id}.zip     caption packages (immutable)
+  captions/reports/{batch_id}_{worker_id}.json
+Storage Bucket 1thesudden/aiou-app-storage
+  releases/{release_id}/                           runtime contract above
 ```
 
-Test runs write only to `AIOU26_release_test` and `AIOU26_checkpoints_test`.
+Three layers, three policies: raw data is written once; worker and caption
+packages are immutable and keep Git history for reruns; the runtime release is
+rebuilt and overwritten in the bucket, which has no small-file limit.
+
+Test runs write only to `AIOU26_release_test` and the bucket prefix
+`releases_test/`.
 
 ## Open Items
 
 | Item | Resolved by |
 | --- | --- |
 | Keyframe interval, dedup, and shot-split thresholds | Plan Step 3 trial and first batch |
-| Keep or drop captions | Evaluation set |
+| Keep or drop captions | Evaluation set; the caption pass can be skipped without changing the worker |
+| Caption throughput (vLLM on T4) | Plan Step 5 item 6 trial |
+| Scene grouping weights and threshold | Hand-labelled boundaries on 3 videos (ADR 0026) |
 | GPU time per video and total for 873 videos | Plan Step 6 run |
 | Exact table columns and Parquet schemas | Implementation, with `system1/schemas/` |

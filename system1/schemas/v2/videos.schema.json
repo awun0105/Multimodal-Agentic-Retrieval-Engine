@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "videos_v2",
+  "type": "object",
+  "required": [
+    "video_id",
+    "video_ref",
+    "duration_sec",
+    "fps",
+    "frame_count",
+    "width",
+    "height",
+    "organizer_metadata_present"
+  ],
+  "properties": {
+    "video_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "video_ref": {
+      "type": "string",
+      "pattern": "^raw_videos/[^/]+\\.mp4$"
+    },
+    "duration_sec": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "fps": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "frame_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "organizer_metadata_present": {
+      "type": "boolean"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "author": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "channel_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "channel_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "keywords": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "length": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "publish_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "thumbnail_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "watch_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "description": "One row per video in the release, from Phase00 canonical metadata (ADR 0016). duration_sec, fps, frame_count come from the decoded frame timeline; organizer fields stay null when the organizer gave none (never fabricated)."
+}

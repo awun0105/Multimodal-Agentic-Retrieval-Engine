@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "shots_v2",
+  "type": "object",
+  "required": [
+    "shot_id",
+    "video_id",
+    "cut_segment_id",
+    "scene_id",
+    "start_frame",
+    "end_frame",
+    "start_sec",
+    "end_sec"
+  ],
+  "properties": {
+    "shot_id": {
+      "type": "string",
+      "pattern": "^.+_SH[0-9]{5}$"
+    },
+    "video_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cut_segment_id": {
+      "type": "string",
+      "pattern": "^.+_CS[0-9]{5}$"
+    },
+    "scene_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^.+_SC[0-9]{5}$"
+    },
+    "start_frame": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "end_frame": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "start_sec": {
+      "type": "number",
+      "minimum": 0
+    },
+    "end_sec": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "description": "A run of near-identical frames, [start_frame, end_frame). A new shot starts at a cut or when content drifts past the shot threshold (ADR 0022). Shots tile their cut segment. scene_id is null in worker packages and set in the release (ADR 0026)."
+}

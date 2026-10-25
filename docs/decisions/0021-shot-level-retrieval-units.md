@@ -4,7 +4,9 @@ Date: 2026-10-25
 
 ## Status
 
-Accepted
+Accepted. Decision 3 amended by ADR 0026 (2026-10-26): scenes return as a
+deterministic grouping of shots with a text-only summary; decisions 1 and 2
+stand.
 
 Supersedes ADR 0014 and the scene-grouping and scene-summary parts of ADR 0015
 and ADR 0018.

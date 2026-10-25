@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cut_segments_v1",
+  "type": "object",
+  "required": [
+    "cut_segment_id",
+    "video_id",
+    "start_frame",
+    "end_frame",
+    "start_sec",
+    "end_sec"
+  ],
+  "properties": {
+    "cut_segment_id": {
+      "type": "string",
+      "pattern": "^.+_CS[0-9]{5}$"
+    },
+    "video_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "start_frame": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "end_frame": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "start_sec": {
+      "type": "number",
+      "minimum": 0
+    },
+    "end_sec": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "description": "Frame range between two TransNetV2 cuts, [start_frame, end_frame). A video whose cut detection failed or found no cut has one segment covering every frame (stage status fallback or pass)."
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ocr_v2",
+  "type": "object",
+  "required": [
+    "keyframe_id",
+    "lines"
+  ],
+  "properties": {
+    "keyframe_id": {
+      "type": "string",
+      "pattern": "^.+:[0-9]+$"
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "additionalProperties": false,
+  "description": "Cleaned OCR lines per keyframe in reading order, after noise and video-wide repeat filtering. One row per keyframe; lines may be empty."
+}

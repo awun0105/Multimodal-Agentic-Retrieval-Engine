@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vector_map_v2",
+  "type": "object",
+  "required": [
+    "index_name",
+    "vector_id",
+    "item_id"
+  ],
+  "properties": {
+    "index_name": {
+      "enum": [
+        "image_siglip2",
+        "text_e5"
+      ]
+    },
+    "vector_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "keyframe_id for image indexes, doc_id for text indexes."
+    }
+  },
+  "additionalProperties": false,
+  "description": "FAISS row to item. Stored as indexes/{index_name}_vector_map.parquet beside each index and as the SQLite table vector_map; both hold the same rows."
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scenes_v2",
+  "type": "object",
+  "required": [
+    "scene_id",
+    "video_id",
+    "start_shot_id",
+    "end_shot_id",
+    "start_frame",
+    "end_frame",
+    "start_sec",
+    "end_sec",
+    "shot_count"
+  ],
+  "properties": {
+    "scene_id": {
+      "type": "string",
+      "pattern": "^.+_SC[0-9]{5}$"
+    },
+    "video_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "start_shot_id": {
+      "type": "string",
+      "pattern": "^.+_SH[0-9]{5}$"
+    },
+    "end_shot_id": {
+      "type": "string",
+      "pattern": "^.+_SH[0-9]{5}$"
+    },
+    "start_frame": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "end_frame": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "start_sec": {
+      "type": "number",
+      "minimum": 0
+    },
+    "end_sec": {
+      "type": "number",
+      "minimum": 0
+    },
+    "shot_count": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false,
+  "description": "Consecutive shots of one situation, grouped deterministically at release time (ADR 0026). Scenes tile the video's shots."
+}

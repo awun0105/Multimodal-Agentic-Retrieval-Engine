@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "text_documents_v2",
+  "type": "object",
+  "required": [
+    "doc_id",
+    "video_id",
+    "evidence_type",
+    "start_sec",
+    "end_sec",
+    "shot_ids",
+    "keyframe_id",
+    "text",
+    "text_unaccented"
+  ],
+  "properties": {
+    "doc_id": {
+      "type": "string",
+      "pattern": "^.+:(asr|ocr|caption|visible_text|scene):[0-9]{5}$"
+    },
+    "video_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_type": {
+      "enum": [
+        "asr",
+        "ocr",
+        "caption",
+        "visible_text",
+        "scene"
+      ]
+    },
+    "start_sec": {
+      "type": "number",
+      "minimum": 0
+    },
+    "end_sec": {
+      "type": "number",
+      "minimum": 0
+    },
+    "shot_ids": {
+      "type": "string",
+      "description": "Comma-separated shot_id list covering [start_sec, end_sec]; may be empty when no shot overlaps."
+    },
+    "keyframe_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Set for ocr, caption, visible_text; null for asr and scene."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "text_unaccented": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false,
+  "description": "Global text-search rows. asr rows are 10-30 s chunks; ocr rows are one keyframe's lines joined; caption and visible_text come from the caption pass; scene rows are scene summaries (ADR 0026). text_vectors.npy row i is the E5 vector of row i."
+}

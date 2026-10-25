@@ -4,7 +4,8 @@ Date: 2026-10-25
 
 ## Status
 
-Accepted. Models fixed on 2026-10-25 from the Kaggle trials recorded in
+Accepted. Amended by ADR 0025 (2026-10-26): captions run in a separate pass
+over worker packages, not inside the worker. Models fixed on 2026-10-25 from the Kaggle trials recorded in
 `docs/plans/active/system1-pipeline-simplification.md` (Trial Results):
 
 | Stage | Model |

@@ -11,6 +11,13 @@ documents here as real choices are accepted, then index them in this file.
 
 ## Recent Accepted Decisions
 
+- `0026-deterministic-scene-grouping.md`: scenes return as a deterministic,
+  model-free grouping of consecutive shots from SigLIP, caption, ASR, and OCR
+  evidence, with a text-only scene summary. Amends 0021 decision 3.
+- `0025-caption-pass-and-release-storage.md`: captions run in a separate pass
+  over worker packages; the runtime release is published to a Hugging Face
+  Storage Bucket with WebP keyframes re-encoded at release time. Amends 0023
+  and the target doc layout.
 - `0024-pipeline-validation-policy.md`: fail fast on corrupted data, degrade and
   record on missing evidence, check output content instead of environment
   exactness, and test behavior instead of configuration constants.
@@ -21,8 +28,9 @@ documents here as real choices are accepted, then index them in this file.
   ChunkFormer, EasyOCR + VietOCR, Qwen3-VL-4B. Supersedes 0018 and 0020.
 - `0022-content-adaptive-keyframe-sampling.md`: keyframe density follows
   visual change with sub-shots for long shots. Amends 0019.
-- `0021-shot-level-retrieval-units.md`: no scene grouping or scene summaries;
-  multi-shot context is computed at query time. Supersedes 0014.
+- `0021-shot-level-retrieval-units.md` (decision 3 amended by 0026): no VLM
+  scene grouping or VLM scene summaries; multi-shot context is computed at
+  query time. Supersedes 0014.
 
 Earlier decisions (superseded or amended ones are marked):
 

@@ -17,8 +17,11 @@ video, and rejects the output defects observed in the 2026-08-27 run.
 ## Context
 
 - Target design: `docs/architecture/system1-target.md`.
-- Decisions: ADR 0021 (no scene grouping), ADR 0022 (content-adaptive
-  keyframes), ADR 0023 (model stack), ADR 0024 (validation policy). ADR 0015
+- Decisions: ADR 0021 (shot-level units, query-time window), ADR 0022
+  (content-adaptive keyframes), ADR 0023 (model stack), ADR 0024 (validation
+  policy), ADR 0025 (separate caption pass, bucket release storage, WebP at
+  release time), ADR 0026 (deterministic scene grouping and text-only scene
+  summary). ADR 0015
   keeps the self-generated evidence principle; ADR 0016 and ADR 0017 (Phase00
   metadata and timelines) are unchanged.
 - Supersedes the active plans `notebook01-production-pipeline.md`,
@@ -134,6 +137,349 @@ caption parsing, embedding normalization and vector map consistency, Notebook
 Each commit updates the docs for the stage it changes (architecture, data
 contract, `docs/validation/test-matrix.md`).
 
+### Step 5b: Caption pass, release publishing, scenes (ADR 0025, ADR 0026)
+
+Added 2026-10-26 after the first end-to-end run (Progress, Step 5 item 11).
+
+1. Remove captions from the worker: `worker/video.py` drops the `captions`
+   stage and the caption and `visible_text` documents; `worker/models.py` no
+   longer loads Qwen; `worker.yaml` moves `models.captions` under a `captions`
+   section. Check: `test_worker_video.py` passes without a captioner; a Kaggle
+   run of `batch_000` videos 1 to 5 stays under 10 GPU minutes per video.
+2. Caption pass: `captions/video.py` (restore worker ZIP, caption the middle
+   keyframe of each shot, build caption and `visible_text` documents with
+   `text_unaccented` and E5 vectors, package with manifest and checksums),
+   `captions/batch.py` (skip videos whose caption package exists, report), CLI
+   `caption-batch`, notebook `caption_batch.ipynb`. Check: behavior tests with
+   a fake captioner; Kaggle run on the same 5 videos; time per shot recorded.
+3. Caption throughput trial: vLLM with structured outputs on Kaggle T4 against
+   transformers `generate` at batch 16, same 5 videos. Keep the faster path
+   that installs beside the other models. Check: valid-JSON rate and seconds
+   per shot in this plan.
+4. Release merge of caption packages: `release/build.py` accepts optional
+   caption ZIPs, adds caption and `visible_text` documents and vectors, and
+   records per-video caption presence in the manifest. Check:
+   `test_release_build.py` covers a release with and without captions.
+5. Scenes: `scenes/grouping.py` as a pure function over shot evidence with the
+   ADR 0026 signals and parameters from `worker.yaml` section `scenes`;
+   `release/build.py` writes `scenes` and `shots.scene_id`; scene summaries via
+   one text-only constrained call per multi-shot scene, `scene` documents with
+   vectors. Check: behavior tests on synthetic shots (two angles of one
+   situation join; silence plus visual change splits; `max_scene_sec` splits;
+   short single-shot scene merges); hand-labelled boundaries on 3 videos with
+   precision and recall recorded here.
+6. Release media: `release/build.py` re-encodes keyframes to WebP quality 80
+   and writes `.webp` refs; `data-contracts.md`, `schemas/`, and the package
+   validator change together. Check: `test_release_build.py` asserts `.webp`
+   refs and decodable files.
+7. Release upload: `release/publish.py` uploads `db/`, `indexes/`,
+   `manifest.json`, media, then `READY.json` to the bucket prefix
+   `releases/{release_id}/` (test: `releases_test/`), batched and resumable,
+   following `mvp-app/tools/upload_release.py`; CLI `publish-release`;
+   `build_release.ipynb` calls build then publish. Check: upload of the 5-video
+   release to `releases_test/`, `hf buckets sync` round trip, file count equals
+   manifest counts.
+
+### Step 5c: Algorithm improvements backlog
+
+Added 2026-10-26. Each item names the stage, the current behavior, the change,
+the expected effect, and the check that decides whether it stays. Items in
+group A reduce worker time or fix observed output defects and run before the
+full batch. Items in group B change retrieval quality and wait for the
+evaluation set, because their effect cannot be measured without it. None of
+these items changes a contract on its own; an item that does updates
+`data-contracts.md`, `schemas/`, and the validator together.
+
+**Group A: before the full run**
+
+1. OCR per shot with region change detection (stage 5). Current: every
+   keyframe runs detection and recognition (519 s for 500 keyframes in
+   `L21_V014`, 24% of worker time). Change: run OCR on the first keyframe of
+   each shot; for later keyframes in the same shot run OCR only when the
+   difference hash of the lower third of the frame (ticker and subtitle band)
+   or of the whole frame changes past `min_change`. Expected: about one third
+   fewer OCR calls on news video. Check: OCR lines per video before and after on
+   the 5 test videos; lines lost must be repeats of lines already found in the
+   shot.
+2. OCR crop cache (stage 5). Current: the same logo, ticker, and caption box is
+   recognized hundreds of times per video. Change: hash each detected text box
+   crop (difference hash at 16x16) and reuse the recognized string for a
+   repeated hash inside the video. Expected: large cut in VietOCR calls on
+   static overlays. Check: cache hit rate and recognition time per video.
+3. OCR lexical filter (stage 5). Current: `clean_ocr_lines` filters by length
+   and character class only; fragments such as "Vập", "Máp" reach FTS5.
+   Change: score each line by the share of tokens that are valid Vietnamese
+   syllables (syllable table or `pyvi`), keep lines above a threshold, keep
+   digits, times, and all-caps acronyms. Expected: fewer noise documents.
+   Check: sample of 200 dropped lines reviewed by hand; no real headline
+   dropped.
+4. Shot split by image vector instead of difference hash (stage 3). Current:
+   `shot_drift 0.35` on a 64-bit difference hash; misses color changes and
+   small changes inside text regions, and over-splits on camera motion.
+   Change: compute SigLIP vectors for candidate frames first (the embedder
+   runs at 0.087 s per image, the same frames are embedded anyway), then split
+   when `cos(candidate, shot_start) < drift_threshold`; keep the difference
+   hash only as the cheap candidate filter. Expected: fewer false splits on
+   pans, more true splits on content change. Check: shot count and boundary
+   agreement against hand-labelled shots on 3 videos; worker time unchanged
+   within 10%.
+5. Representative keyframe per shot (stage 3 and caption pass). Current: the
+   middle keyframe. Change: the keyframe whose vector is closest to the mean
+   vector of the shot's keyframes, after dropping frames with low variance of
+   Laplacian (blur or transition). Expected: fewer captions of blurred or
+   transitional frames. Check: rejected caption rate on the 5 test videos.
+6. Blur and transition filter for keyframe candidates (stage 3). Current: only
+   `edge_margin_frames` around cuts. Change: drop a candidate whose variance of
+   Laplacian is below a fraction of the shot median. Expected: fewer unusable
+   keyframes. Check: count of dropped candidates and visual sample.
+7. ASR chunks on sentence and silence boundaries (stage 6). Current: 10 to 30
+   s windows cut by time. Change: cut at ChunkFormer segment boundaries where
+   the gap exceeds 0.6 s or the text ends with sentence punctuation, then pack
+   to the 10 to 30 s range. Expected: chunks that do not cut sentences. Check:
+   share of chunk boundaries that fall inside a segment.
+8. Overlapping ASR windows (stage 6). Current: disjoint chunks. Change: add a
+   second document set of 20 s windows stepped by 10 s, `evidence_type asr`,
+   flagged `window = true` so System 2 can dedupe. Expected: queries that fall
+   on a chunk boundary still match. Check: FTS and vector hits for 20 boundary
+   queries on the 5 test videos.
+
+**Group B: after the evaluation set**
+
+9. BM25 ranking in FTS5 (release). Current: FTS5 default order. Change: order
+   by `bm25(text_documents_fts)` with column weights for `text` over
+   `text_unaccented`. Check: evaluation set MRR.
+10. Generic keyframe flag (release). Current: intros, station logos, and
+    weather maps repeat across videos and dominate image search. Change: cluster
+    image vectors across the release (cosine above 0.97 across at least 5
+    videos), set `keyframes.is_generic`, and let System 2 down-weight them.
+    Check: evaluation set R@10; count of flagged keyframes.
+11. Maximal Marginal Relevance at query time (System 2, noted here because it
+    decides how many keyframes per shot the release must keep). Check:
+    evaluation set with per-shot diversity.
+12. Multi-frame captions for long shots (caption pass). Current: one keyframe
+    per shot. Change: shots longer than 8 s send 2 to 4 keyframes in one call so
+    the caption describes motion. Check: caption quality sample; seconds per
+    shot.
+13. Scene boundaries by local minima instead of a fixed threshold (release,
+    ADR 0026). Change: TextTiling-style depth score on the continuity series;
+    split where the depth exceeds `mean - k * std`. Check: boundary precision and
+    recall against the same hand-labelled videos as ADR 0026.
+14. Approximate image index (release). Current: `IndexFlatIP`, about 1.5 GB
+    for 340,000 vectors of 1152 dimensions. Change only if the System 2 host
+    lacks RAM: `IndexHNSWFlat` with a recall check against the flat index.
+    Check: recall at 10 above 0.98 on 1,000 queries.
+
+Order inside group A: 1 and 2 (worker time), then 4 and 5 (keyframe quality),
+then 3, 7, 8 (text quality). Each item is one commit with its check recorded in
+Progress.
+
+### Step 5d: Data contract audit and alignment
+
+Added 2026-10-26. Findings from comparing `docs/architecture/data-contracts.md`,
+`system1/schemas/`, and the worker and release code at commit `93c7723`:
+
+| Item | Contract today | Code today | Resolution |
+| --- | --- | --- | --- |
+| Runtime tables | 23 tables incl. `shot_captions`, `scene_summaries`, `shot_transcript_links`, `scene_transcript_links`, `objects`, `embeddings_meta`, `feature_availability`, `release_capabilities`, query and agent state tables | `cut_segments`, `shots`, `keyframes`, `text_documents`, `text_documents_fts` | Contract lists the release tables of `system1-target.md` plus `videos` and `scenes` (ADR 0026). Query and agent state tables move to `system2-retrieval.md`; they are runtime state, not release content. Removed tables are listed as superseded. |
+| `videos` table | required | not written | `build-release` writes `videos` from Phase00 canonical metadata (`video_id`, duration, fps, frame count, width, height, organizer fields or null). System 2 needs duration and fps for the temporal window. |
+| `shots.schema.json` | `scene_id`, `shot_index`, `detection_method: transnet_v2`, `status`, `boundary_convention` | `shot_id`, `video_id`, `cut_segment_id`, `start_frame`, `end_frame`, `start_sec`, `end_sec` | New `shots_v2` schema with the code columns plus `scene_id` (nullable until ADR 0026 lands). `boundary_convention` stays `[start_frame, end_frame)` as a documented rule, not a column. |
+| `cut_segments` | no schema | written by the worker | New `cut_segments_v1` schema. |
+| `keyframes.schema.json` | `keyframe_role`, `quality_score`, `is_representative`, `scene_id`, `status` | `keyframe_id`, `video_id`, `frame_id`, `timestamp_sec`, `shot_id`, `cut_segment_id`, `selection_reason`, `keyframe_ref`, `thumbnail_ref` | New `keyframes_v4` schema with the code columns; `selection_reason` enum `shot_start`, `visual_change`. Representative keyframe is a column `is_representative` once Step 5c item 5 lands. |
+| `text_documents.schema.json` | `document_id`, `entity_id`, `normalized_text`, `language` | `doc_id`, `video_id`, `evidence_type`, `start_sec`, `end_sec`, `shot_ids`, `keyframe_id`, `text`, `text_unaccented` | New `text_documents_v2` schema; `evidence_type` enum `asr`, `ocr`, `caption`, `visible_text`, `scene`. |
+| `asr_segments.schema.json` | `asr_segment_id`, words, confidence fields | `video_id`, `start_sec`, `end_sec`, `text` | New `asr_segments_v2` schema. |
+| `vector_map` | mandatory SQLite table `(index_name, vector_id) -> keyframe_id` | `indexes/{name}_vector_map.parquet` per index | Keep Parquet beside each FAISS file (one index, one map, no join at load time) and add the same rows as SQLite table `vector_map(index_name, vector_id, item_id)` so the doc rule "FAISS resolves through SQLite" still holds. The release validator checks both agree. |
+| Keyframe ref extension | `.jpg` | `.jpg` in packages | `.jpg` in worker packages, `.webp` in the release (ADR 0025; already written into the doc). |
+| Package validation | schemas under `system1/schemas/` validate tables | `validate_package` checks columns and relations in code only | `validate_package` and `build_release` validate every Parquet table against its JSON schema (`jsonschema` is already a dependency). Schema version is recorded in the package manifest. |
+| Hugging Face layout | `phase01_structure/artifacts/{batch}/{video}_structure.zip`, `releases/{release_id}/` in the dataset repo | `worker/artifacts/{batch}/{video}.zip`; release not uploaded | Doc follows ADR 0025 layout (already written into `system1-target.md`; `data-contracts.md` section "Hugging Face Storage Contract" is rewritten to match). |
+| `pts_time`, `duration_time`, `frame_id_method` on keyframes | required | not written | Dropped. `frame_id` comes from the decoded timeline (ADR 0017) and `timestamp_sec` is its `pts_time`; one time column is enough. |
+
+Done 2026-10-26 (docs only, no code): `system1/schemas/v2/` holds
+`cut_segments`, `shots`, `keyframes`, `asr_segments`, `ocr`, `captions`,
+`text_documents`, `scenes`, `videos`, `vector_map`; `data-contracts.md` is
+rewritten for `release_v2`; `doc-conflicts.md` records the change. Checked the
+new schemas against the real `L21_V014` worker package from Kaggle:
+`cut_segments`, `asr_segments`, `ocr`, `captions` pass; `shots` lacks
+`scene_id` and `keyframes` lacks `is_representative` (added by Step 5b item 5
+and Step 5c item 5; until then the validator accepts their absence);
+`text_documents.keyframe_id` holds `NaN` instead of null for `asr` rows (bug:
+`_text_documents` must write `None` and Parquet must store a nullable string).
+
+Work items for code:
+
+1. Schema files are written (above). Delete the superseded ones (`shot_captions`,
+   `scene_summaries`, `shot_transcript_links`, `scene_transcript_links`,
+   `objects`, `embeddings_meta`, `feature_availability`, `text_sources`,
+   `asr_words`, scene review schemas) in Step 6 with the code that reads them.
+   Check: every table the worker and release write has exactly one schema file
+   under `schemas/v2/`, and no `v2` schema lacks a writer.
+2. `validate_package` validates each table against `schemas/v2/{table}.schema.json`
+   (load with `jsonschema.Draft202012Validator`, convert numpy values to Python
+   before validating, treat `NaN` as a violation); `build_release` validates
+   merged tables, writes `videos` (from `phase00_ingestion/tables/videos.parquet`
+   and the frame timelines) and `vector_map` (Parquet beside each index and the
+   SQLite table), and records `schema_version: release_v2` plus schema sha256s
+   in `manifest.json`. Worker manifest becomes `worker_package_v2`. Fix the
+   `keyframe_id` NaN bug. Check: `test_worker_video.py`, `test_release_build.py`
+   include a schema-violation case and a `videos` row check.
+3. `data-contracts.md` rewritten (done). Remaining check after Step 5b code:
+   every table and column named in the doc exists in a schema file and in the
+   5-video test release. `system2-retrieval.md` already lists the query and
+   agent state tables; confirm it needs no change.
+4. Record the contract version in `release/manifest.json`
+   (`schema_version: release_v2`) and in each package manifest.
+
+Order: item 1 and 2 land with Step 5b item 4 (release merge), because that is
+the last change to the table set before scenes; item 3 lands after Step 5b item
+5 (scenes) so the doc is written once.
+
+### Step 5e: Notebooks
+
+Added 2026-10-26. Rule: notebooks hold settings and one CLI call each; every
+decision lives in the package (`docs/agents/GUIDE.md` Rule 10).
+
+Current state at commit `93c7723`:
+
+| Notebook | State | Action |
+| --- | --- | --- |
+| `worker_batch.ipynb` | runs `worker-batch`; verified on Kaggle for 5 videos | keep; drop the `CAPTIONS` setting when Step 5b item 1 lands; rename to `01_worker_batch.ipynb` |
+| `build_release.ipynb` | runs `build-release` into `/kaggle/temp`; no upload, so the release is lost when the session ends | add `publish-release` call and `BUCKET_ID`, `BUCKET_PREFIX` settings (Step 5b item 7); rename to `03_build_release.ipynb` |
+| (missing) `caption_batch.ipynb` | - | new, same shape as `worker_batch.ipynb`, runs `caption-batch` (Step 5b item 2); `02_caption_batch.ipynb` |
+| `00_master_ingestion_and_assignment.ipynb`, `00A_...` | Phase00 variants superseded by 00B and 00C | delete |
+| `00B_master_ingestion_and_assignment.ipynb` (Colab, Drive) | Phase00 ingest, complete for Batch 1; needed for Batch 2 | keep; reduce to settings plus CLI calls if cells contain logic; verify on one archive in a test prefix before Batch 2 |
+| `00C_master_ingestion_and_assignment (local).ipynb` | local Phase00 variant | keep as `00C_master_ingestion_local.ipynb` (no spaces in the name) after the same reduction |
+| `01_worker_structure_pipeline.ipynb` | old Phase01 worker (scene stages, Vintern, Parakeet) | delete in Step 6 after the new worker has run one full batch |
+| `02_worker_feature_enrichment.ipynb` | old Phase02 (mock providers) | delete in Step 6 |
+| `03_merge_validate_index_release.ipynb` | old release flow against a local folder | delete in Step 6 |
+
+Work items:
+
+1. New `caption_batch.ipynb` and `publish-release` in `build_release.ipynb`
+   (with Step 5b items 2 and 7).
+2. Each kept notebook has a `test_notebooks.py` behavior test: cells are
+   settings, setup, or one CLI call; no cell imports `system1.*` modules
+   directly; secrets are read through `kaggle_secrets` or `google.colab.userdata`
+   and never printed. Replaces
+   `test_smoke.py::test_notebooks_are_operator_ready_thin_orchestration_shells`
+   (known failure in `AGENTS.md`).
+3. Operator runbook `system1/notebooks/README.md`: order of notebooks, Kaggle
+   secrets required (`HF_TOKEN` write access to the output repo and bucket),
+   settings per notebook, expected run time per batch, how to resume after a
+   session ends (rerun; finished videos are skipped), where outputs land, and
+   how to verify a batch (report JSON counts equal manifest counts).
+4. End-to-end verification per notebook on Kaggle, recorded in Progress with
+   kernel id and commit: `worker_batch` (5 videos, done at `93c7723`),
+   `caption_batch` (same 5), `build_release` with publish (5-video release in
+   `releases_test/`, `hf buckets sync` round trip, System 2 or `mvp-app`
+   opens the SQLite and FAISS files).
+5. Rename and delete per the table above in Step 6, together with
+   `system1/README.md` and `docs/README.md` updates.
+
+### Step 5f: Runtime efficiency and robustness on Kaggle, Colab, Hugging Face
+
+Added 2026-10-26 from a review of `worker/video.py`, `worker/batch.py`,
+`worker/stages.py`, `artifacts/hf_store.py`, `artifacts/package.py`,
+`providers/*`, `release/build.py`. Constraints: Kaggle and Colab give tens of
+GB of disk and a session limit (12 h Kaggle); a Kaggle GPU kernel has about 13
+GB RAM, a CPU kernel about 30 GB; network to Hugging Face drops occasionally.
+
+**Blocking for the full run**
+
+1. `build-release` streams one package at a time. Current: downloads every
+   ZIP to `packages/` (about 100 MB each, 87 GB for 873 videos), extracts all
+   to `.staging/` (second copy), copies media to `release/media` (third copy).
+   Change: for each ZIP: download, validate checksums, read tables and vectors
+   into memory, re-encode keyframes to WebP straight into `release/media/`
+   (Step 5b item 6), upload that video's media to the bucket (Step 5b item 7),
+   delete the ZIP and its media. Tables and vectors are concatenated at the
+   end; `db/`, `indexes/`, `manifest.json`, `READY.json` upload last. Peak
+   disk: one package plus `db/` and `indexes/`. Resumable: a video whose media
+   is already in the bucket (listed once at start) is not re-encoded or
+   re-uploaded. Check: build of the 5-video release leaves no `packages/` or
+   `.staging/` directory; disk high-water mark logged.
+2. Memory budget for indexes. 873 videos give about 340,000 image vectors
+   (1152 float32, 1.6 GB) and about 900,000 text vectors (1024 float32, 3.7
+   GB); `IndexFlatIP` holds a second copy while building. Run `build-release`
+   on a CPU kernel (about 30 GB RAM), not a GPU kernel. Record the measured
+   peak RSS in the manifest. System 2 host needs the same RAM to load
+   `text_e5.faiss`; Step 5c item 14 (HNSW or float16) is the fallback.
+
+**Worker time**
+
+3. One video decode instead of two. Current: TransNet decodes every frame
+   (106 s on an 18-minute video) in a subprocess that reloads weights per
+   video; `iter_decode_frame_groups` decodes every frame again (89 s). Change:
+   one `cv2` pass yields each frame once; the 48x27 frame goes to a TransNet
+   model loaded once per session (in-process, `providers/cuts.py`), the
+   full-resolution frame is kept only when it is a keyframe candidate of the
+   current segment. Because shot boundaries depend on cuts, the pass buffers
+   candidate frames per 2-second candidate interval and finalizes segments as
+   soon as TransNet predictions for that range exist (TransNet needs a 100-frame
+   window, so the lag is 100 frames). Expected: about 90 s per 18-minute video,
+   10 to 15% of the no-caption worker time. Check: cut segments and keyframes
+   identical to the two-pass result on the 5 test videos; worker seconds
+   recorded.
+4. Video downloaded once. Current: `hf_hub_download` into `.hf_cache` then
+   `shutil.copyfile` into `videos/` (two copies of about 150 MB, both deleted
+   per video). Change: `hf_hub_download(local_dir=...)` or use the cached path
+   directly; keep one copy. Check: `du` of `work_root` during one video.
+5. `write_artifact_zip` uses `ZIP_STORED` for `.jpg`, `.webp`, `.npy`,
+   `.parquet` (already compressed) and `ZIP_DEFLATED` only for JSON. Expected:
+   seconds of CPU per video and no size change. Check: package size within 1%
+   of the current size, zip time logged.
+6. Keyframe JPEGs are opened from disk once per model stage (SigLIP, OCR; also
+   captions until Step 5b item 1). Step 5c item 4 moves SigLIP into the
+   keyframe pass and removes one decode; OCR keeps reading from disk because it
+   runs after keyframes are final. No separate change.
+
+**Robustness**
+
+7. Retry on Hugging Face I/O. Current: a single failed `upload_file` or
+   `download_file` marks the video `failed`, deletes `work/`, and loses the GPU
+   time. Change: `HuggingFaceDatasetArtifactStore.upload_file` and
+   `download_file` retry 3 times with exponential backoff (2, 4, 8 s) on
+   `HfHubHTTPError` 5xx, 429, and connection errors; the batch runner retries
+   the upload once more before recording a failure and keeps `work/{video_id}`
+   when the failure is an upload, so a rerun in the same session finishes
+   without recomputing. Check: unit test with a store that fails twice then
+   succeeds.
+8. Stage checkpoints are session-local by decision. `work/` is deleted after
+   each video and `/kaggle/temp` disappears with the session, so
+   `StageRunner` markers only help within one session. With captions out of
+   the worker a video takes under 10 minutes, so a lost session costs at most
+   one video. No cross-session checkpoint upload (the old
+   `AIOU26_checkpoints` flow is not revived). Record in `system1-target.md`.
+9. Batch report survives a dead session. Current: report uploaded once at the
+   end. Change: after every video write `report.json` to the notebook's
+   persisted output directory (`/kaggle/working` or the Colab working dir) in
+   addition to `work_root`; upload to Hugging Face at the end as now. Check:
+   the file exists after the first video.
+10. One batch, one worker. Current: the uploaded set is listed once at start, so
+    two sessions on the same batch would both process the same videos. Rule:
+    one `batch_id` per session; the runbook (Step 5e item 3) states it. The
+    runner re-checks `exists()` for the ZIP right before upload and skips the
+    upload if another worker got there first (counts as `skipped`).
+11. TransNet fallback is bounded. Current: `detect_shot_scenes` retries on CPU
+    after a GPU failure, with no time limit; a 38-minute video on CPU can take
+    20 minutes or more. Change: no CPU retry in the worker; a GPU failure goes
+    straight to the one-segment fallback (status `fallback`, retried next run,
+    ADR 0024). Check: fallback path test already exists; remove the CPU attempt
+    for the worker code path only.
+12. Commit volume is acceptable: one commit per worker ZIP, caption ZIP, and
+    report gives under 2,000 commits for Batch 1 at about 6 per hour per
+    worker. No batching of commits.
+
+**Caption pass**
+
+13. Read only what is needed from the worker ZIP. The caption pass needs
+    `shots.parquet`, `keyframes.parquet`, and the representative keyframe of
+    each shot (about 400 of 500 images). Change: open the ZIP with `zipfile`
+    and read those members directly instead of extracting the whole package.
+    Check: temp disk per video under 100 MB.
+
+Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
+3, 4, 5, 11 before the full `batch_000` run; 10, 13 with their notebooks;
+6, 8, 12 are decisions, no code.
+
 ### Step 6: End-to-end run and cleanup
 
 1. Run the full pipeline on Kaggle for a 5 to 10 video batch; record time per
@@ -151,6 +497,19 @@ contract, `docs/validation/test-matrix.md`).
 - Selected OCR or ASR model handles Vietnamese diacritics poorly. Mitigation:
   trials compare against saved 2026-08-27 outputs before any switch.
 - Removing tests reduces coverage. Mitigation: Step 4 precedes deletions.
+- Caption pass throughput stays near 3.4 s per shot (about 500 GPU hours for
+  873 videos). Mitigation: run on several Kaggle accounts in parallel; release
+  ships without captions first; vLLM trial in Step 5b item 3; captions can be
+  dropped after the evaluation set without changing the worker.
+- vLLM pins a torch version that conflicts with ChunkFormer, EasyOCR, or
+  SigLIP. Mitigation: the caption pass is its own notebook and environment, so
+  the conflict cannot reach the worker.
+- Scene grouping weights are wrong for interview or single-take videos.
+  Mitigation: parameters are release-time configuration tuned on hand-labelled
+  videos; System 2 keeps the query-time temporal window (ADR 0021).
+- WebP re-encode of about 340,000 keyframes is slower than estimated.
+  Mitigation: encode in a process pool at release time; measure on the 5-video
+  release first.
 - Recovery: every stage change is its own commit; revert the commit to restore
   the previous stage. Hugging Face canonical data is never overwritten during
   this plan.
@@ -199,10 +558,43 @@ contract, `docs/validation/test-matrix.md`).
     `storage` section in `worker.yaml` (output defaults to
     `AIOU26_release_test`). New notebooks `notebooks/worker_batch.ipynb` and
     `notebooks/build_release.ipynb`; old notebooks remain until Step 6.
-  - [ ] Kaggle run of `worker_batch.ipynb` on 5 to 10 videos into
-    `AIOU26_release_test`, then `build_release.ipynb`.
-  - Open: how the built release is published (hundreds of thousands of media
-    files for 873 videos).
+  - [x] Kaggle run of `worker_batch.ipynb` (`quanlam/mare-worker-batch`,
+    commit `93c7723`, T4 x2) on the first 5 videos of `batch_000` into
+    `AIOU26_release_test`: 5 completed, 0 failed, no degraded stage. 70.3 min
+    of video in 130.7 min (about 1.9x video length): `L21_V014` (18.6 min)
+    2141 s, `L22_V004` (21.7 min) 2726 s, `L22_V010` (18.2 min) 2175 s,
+    `L23_V004` (6.6 min) 452 s, `L23_V010` (5.2 min) 346 s. In `L21_V014`,
+    captions took 1358 s (401 shots, 10 rejected) and OCR 519 s (500
+    keyframes); all other stages took about 4 min together. At this rate one
+    batch of about 73 videos needs over 40 GPU hours, more than one 12-hour
+    Kaggle session. Caption cost per video must drop before the full run.
+  - [x] `build-release` from those 5 packages (local CPU, 53 s): 1076 cut
+    segments, 1511 shots, 1932 keyframes, 5056 text documents (163 ASR, 1923
+    OCR, 1485 caption, 1485 visible_text); release 410 MB, of which media 376
+    MB. FTS5 matches with and without diacritics; image index self-search
+    returns the query keyframe first.
+  - Resolved 2026-10-26 (ADR 0025): captions leave the worker; the release is
+    published to a Hugging Face Storage Bucket with WebP keyframes re-encoded
+    at release time. Scenes return as a deterministic grouping (ADR 0026).
+- [ ] Step 5b (ADR 0025, ADR 0026):
+  - [ ] 1. Worker without captions; Kaggle time per video recorded.
+  - [ ] 2. Caption pass (`caption-batch`, `caption_batch.ipynb`); Kaggle time
+    per shot recorded.
+  - [ ] 3. vLLM versus transformers caption throughput trial on T4.
+  - [ ] 4. Release merges optional caption packages.
+  - [ ] 5. Scene grouping and text-only scene summaries; boundary precision
+    and recall on 3 hand-labelled videos.
+  - [ ] 6. WebP keyframes in the release; contract, schema, validator updated.
+  - [ ] 7. Bucket publish (`publish-release`); 5-video release round trip.
+- [ ] Step 5c (algorithm backlog, group A): none started.
+- [ ] Step 5d (data contract): audit, `schemas/v2/`, and `data-contracts.md`
+  rewrite done 2026-10-26; validator and `videos`/`vector_map` code not
+  started.
+- [ ] Step 5f (efficiency): review done 2026-10-26; no code started.
+  Blocking items: 1 (streaming release build), 2 (CPU kernel for the build),
+  7 (HF retry), 9 (report per video).
+- [ ] Step 5e (notebooks): `worker_batch` verified at `93c7723`;
+  `caption_batch`, publish step, notebook tests, runbook, renames not started.
 - [ ] Step 6: End-to-end run and cleanup.
 
 ## Trial Results
@@ -301,6 +693,19 @@ Observations:
   PaddleOCR detection and Qwen-only OCR), Qwen3-VL-4B constrained captions.
 - 2026-10-25: Documentation is updated per stage during implementation; only
   plans, ADRs, and status notes change before implementation.
+- 2026-10-26: Captions are a separate pass over worker packages, not a worker
+  stage (ADR 0025). Reason: 63% of worker time, one batch did not fit a Kaggle
+  session, and captions cannot be thinned because every shot is a distinct run
+  of frames.
+- 2026-10-26: The runtime release is published to the Hugging Face Storage
+  Bucket `1thesudden/aiou-app-storage` under `releases/{release_id}/`, with
+  keyframes re-encoded to WebP quality 80 at release time (ADR 0025). Worker
+  packages keep JPEG quality 90, so model inputs do not change.
+- 2026-10-26: Scenes return as a deterministic grouping of consecutive shots
+  from SigLIP, caption, ASR, and OCR evidence, with a text-only summary per
+  multi-shot scene (ADR 0026). Every shot keeps its own caption; the user's
+  example is one scene (a woman weaving a basket) made of two shots from
+  different angles.
 
 ## Validation
 
