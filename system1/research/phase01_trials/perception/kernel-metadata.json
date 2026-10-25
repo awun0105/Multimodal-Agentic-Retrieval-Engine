@@ -1,0 +1,14 @@
+{
+  "id": "quanlam/mare-phase01-trial-perception",
+  "title": "mare-phase01-trial-perception",
+  "code_file": "trial_perception.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

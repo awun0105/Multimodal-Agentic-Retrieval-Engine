@@ -1,0 +1,904 @@
+[
+ {
+  "shot_id": "L30_V030_SH00000",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0000041.jpg",
+  "old_caption_vi": "Hình ảnh hiển thị logo của kênh truyền hình Tuổi Trẻ TV, bao gồm tên kênh và địa chỉ trang web.",
+  "raw": "{\n  \"caption\": \"Logo của Tuổi Trẻ TV hiển thị trên nền trắng, với chữ 'tuổi trẻ' màu đỏ và 'TV' màu xanh dương, cùng địa chỉ website 'tv.tuoitre.vn' dưới đó.\",\n  \"objects\": [\"logo\", \"nền trắng\"],\n  \"actions\": [],\n  \"visible_text\": \"tuổi trẻTV tv.tuoitre.vn\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Logo của Tuổi Trẻ TV hiển thị trên nền trắng, với chữ 'tuổi trẻ' màu đỏ và 'TV' màu xanh dương, cùng địa chỉ website 'tv.tuoitre.vn' dưới đó.",
+   "objects": [
+    "logo",
+    "nền trắng"
+   ],
+   "actions": [],
+   "visible_text": "tuổi trẻTV tv.tuoitre.vn"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00001",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0000131.jpg",
+  "old_caption_vi": "Hình ảnh quảng cáo Herbalife, tập trung vào thương hiệu này là một giải pháp quản lý cân nặng và sức khỏe toàn cầu.",
+  "raw": "{\n  \"caption\": \"Một hình tròn màu xanh lá cây với logo Herbalife và dòng chữ tiếng Việt về thương hiệu quản lý cân nặng và sức khỏe trên thế giới, được hiển thị trên nền trắng.\",\n  \"objects\": [\"hình tròn\", \"logo Herbalife\", \"chữ số #1\"],\n  \"actions\": [],\n  \"visible_text\": \"Herbalife #1 thương hiệu quản lý cân nặng & sức khỏe trên thế giới\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một hình tròn màu xanh lá cây với logo Herbalife và dòng chữ tiếng Việt về thương hiệu quản lý cân nặng và sức khỏe trên thế giới, được hiển thị trên nền trắng.",
+   "objects": [
+    "hình tròn",
+    "logo Herbalife",
+    "chữ số #1"
+   ],
+   "actions": [],
+   "visible_text": "Herbalife #1 thương hiệu quản lý cân nặng & sức khỏe trên thế giới"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00002",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0000241.jpg",
+  "old_caption_vi": "Hình ảnh hiển thị một đoạn video quảng cáo hoặc thông báo về cuộc thi \"Lan tỏa năng lượng tích cực 2024\", có thể là của một kênh truyền hình nào đó.",
+  "raw": "{\n  \"caption\": \"Một khung hình trắng với văn bản màu xanh lá cây ở trung tâm, hiển thị thông tin về clip đọc dự thi cuộc thi.\",\n  \"objects\": [],\n  \"actions\": [],\n  \"visible_text\": \"Clip bạn đọc dự thi cuộc thi: Lan tỏa năng lượng tích cực 2024\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một khung hình trắng với văn bản màu xanh lá cây ở trung tâm, hiển thị thông tin về clip đọc dự thi cuộc thi.",
+   "objects": [],
+   "actions": [],
+   "visible_text": "Clip bạn đọc dự thi cuộc thi: Lan tỏa năng lượng tích cực 2024"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00003",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0000334.jpg",
+  "old_caption_vi": "Hình ảnh chụp một lớp học với các em nhỏ đang viết lên bảng đen. Trên tường có bản đồ Việt Nam và poster về an toàn thực phẩm.",
+  "raw": "{\n  \"caption\": \"Một giáo viên nam và hai học sinh nữ đang đứng trước bảng đen trong lớp học, giáo viên hướng dẫn học sinh viết chữ trên bảng. Học sinh mặc áo vàng và áo xanh, có một học sinh đội tóc bằng nơ hồng.\",\n  \"objects\": [\"giáo viên\", \"học sinh\", \"bảng đen\", \"bảng xanh\", \"bản đồ\", \"bảng thông tin\", \"bàn\", \"bộ đồ ăn\", \"bát\", \"bộ dụng cụ nấu ăn\"],\n  \"actions\": [\"đang viết trên bảng\", \"đang hướng dẫn\", \"đang đứng\"],\n  \"visible_text\": \"Thấp sáng tương lai bằng con chữ\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một giáo viên nam và hai học sinh nữ đang đứng trước bảng đen trong lớp học, giáo viên hướng dẫn học sinh viết chữ trên bảng. Học sinh mặc áo vàng và áo xanh, có một học sinh đội tóc bằng nơ hồng.",
+   "objects": [
+    "giáo viên",
+    "học sinh",
+    "bảng đen",
+    "bảng xanh",
+    "bản đồ",
+    "bảng thông tin",
+    "bàn",
+    "bộ đồ ăn",
+    "bát",
+    "bộ dụng cụ nấu ăn"
+   ],
+   "actions": [
+    "đang viết trên bảng",
+    "đang hướng dẫn",
+    "đang đứng"
+   ],
+   "visible_text": "Thấp sáng tương lai bằng con chữ"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00004",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0000385.jpg",
+  "old_caption_vi": "Hình ảnh chụp một bảng đen với các phép tính cộng được viết bằng phấn trắng. Một bàn tay đang cầm bút chì, chuẩn bị ghi thêm vào bài toán.",
+  "raw": "{\n  \"caption\": \"Một bàn tay đang dùng phấn trắng viết trên bảng xanh, thực hiện phép cộng 764 + 146. Có dòng chữ hướng dẫn ở dưới cùng của khung hình.\",\n  \"objects\": [\"bàn tay\", \"bảng xanh\", \"phấn trắng\", \"phép tính\"],\n  \"actions\": [\"viết trên bảng\"],\n  \"visible_text\": \"Thấp sáng tương lai bằng con chữ\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một bàn tay đang dùng phấn trắng viết trên bảng xanh, thực hiện phép cộng 764 + 146. Có dòng chữ hướng dẫn ở dưới cùng của khung hình.",
+   "objects": [
+    "bàn tay",
+    "bảng xanh",
+    "phấn trắng",
+    "phép tính"
+   ],
+   "actions": [
+    "viết trên bảng"
+   ],
+   "visible_text": "Thấp sáng tương lai bằng con chữ"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00005",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0000446.jpg",
+  "old_caption_vi": "Hình ảnh chụp một lớp học, có hai người đang làm bài toán trên bảng đen. Một cô giáo và một học sinh nữ đứng trước bảng viết các phép tính cộng trừ.",
+  "raw": "{\n  \"caption\": \"Một giáo viên nam và một học sinh nữ đang đứng trước bảng đen trong lớp học, học sinh đang viết phép tính trên bảng, giáo viên quan sát và hỗ trợ.\",\n  \"objects\": [\"giáo viên\", \"học sinh\", \"bảng đen\", \"phấn\", \"bảng chữ cái\", \"bản đồ\"],\n  \"actions\": [\"viết trên bảng\", \"quan sát\", \"hỗ trợ\"],\n  \"visible_text\": \"Thấp sáng tương lai bằng con chữ\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một giáo viên nam và một học sinh nữ đang đứng trước bảng đen trong lớp học, học sinh đang viết phép tính trên bảng, giáo viên quan sát và hỗ trợ.",
+   "objects": [
+    "giáo viên",
+    "học sinh",
+    "bảng đen",
+    "phấn",
+    "bảng chữ cái",
+    "bản đồ"
+   ],
+   "actions": [
+    "viết trên bảng",
+    "quan sát",
+    "hỗ trợ"
+   ],
+   "visible_text": "Thấp sáng tương lai bằng con chữ"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00006",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0000682.jpg",
+  "old_caption_vi": "Hình ảnh là một người đàn ông đang đứng trước cửa, có vẻ như anh ta đang trả lời phỏng vấn.  Trên màn hình hiển thị thông tin về thầy Lê Tấn Phát và vai trò của anh ấy trong chương trình 'Giáo viên lớp học tình thương Ánh Sáng Xanh'.",
+  "raw": "{\n  \"caption\": \"Thầy Lê Tấn Phát, giáo viên lớp học tình thương Ánh Sáng Xanh, đang đứng trong một không gian có trần nhà và quạt trần, mặc áo sơ mi màu xanh đậm và đeo thẻ tên.\",\n  \"objects\": [\"người đàn ông\", \"áo sơ mi\", \"thẻ tên\", \"quạt trần\", \"cửa kính\", \"bảng hiệu\"],\n  \"actions\": [\"đang nói\"],\n  \"visible_text\": \"Thầy LÊ TẤN PHÁT Giảng viên lớp học tình thương Ánh Sáng Xanh\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Thầy Lê Tấn Phát, giáo viên lớp học tình thương Ánh Sáng Xanh, đang đứng trong một không gian có trần nhà và quạt trần, mặc áo sơ mi màu xanh đậm và đeo thẻ tên.",
+   "objects": [
+    "người đàn ông",
+    "áo sơ mi",
+    "thẻ tên",
+    "quạt trần",
+    "cửa kính",
+    "bảng hiệu"
+   ],
+   "actions": [
+    "đang nói"
+   ],
+   "visible_text": "Thầy LÊ TẤN PHÁT Giảng viên lớp học tình thương Ánh Sáng Xanh"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00007",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0000875.jpg",
+  "old_caption_vi": "Hình ảnh chụp một lớp học với ba người đang ngồi trên ghế, hai em nhỏ và một người lớn. Một trong số các em nhỏ đang chỉ vào bảng đen có ghi phép tính toán. Trên bàn có sách vở và chai nước.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông và hai trẻ em đang học toán tại lớp học, người đàn ông chỉ vào bảng viết, còn một em bé đang viết phép tính trên bảng.\",\n  \"objects\": [\"người đàn ông\", \"trẻ em\", \"bảng xanh\", \"phấn\", \"bàn\", \"ghế nhựa\", \"bộ đồ ăn\"],\n  \"actions\": [\"chỉ vào bảng\", \"viết trên bảng\", \"học tập\"],\n  \"visible_text\": \"707 + 247 = 954\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông và hai trẻ em đang học toán tại lớp học, người đàn ông chỉ vào bảng viết, còn một em bé đang viết phép tính trên bảng.",
+   "objects": [
+    "người đàn ông",
+    "trẻ em",
+    "bảng xanh",
+    "phấn",
+    "bàn",
+    "ghế nhựa",
+    "bộ đồ ăn"
+   ],
+   "actions": [
+    "chỉ vào bảng",
+    "viết trên bảng",
+    "học tập"
+   ],
+   "visible_text": "707 + 247 = 954"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00008",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0001049.jpg",
+  "old_caption_vi": "Hình ảnh chụp một bảng đen với các phép tính được viết bằng phấn trắng. Một bàn tay đang chỉ vào kết quả của phép cộng.",
+  "raw": "{\n  \"caption\": \"Một bàn tay chỉ vào phép cộng 764 + 146 trên bảng xanh, với kết quả là 910 được viết bên dưới.\",\n  \"objects\": [\"bàn tay\", \"bảng xanh\", \"phấn\"],\n  \"actions\": [\"chỉ vào phép tính\"],\n  \"visible_text\": \"764 + 146 = 910\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một bàn tay chỉ vào phép cộng 764 + 146 trên bảng xanh, với kết quả là 910 được viết bên dưới.",
+   "objects": [
+    "bàn tay",
+    "bảng xanh",
+    "phấn"
+   ],
+   "actions": [
+    "chỉ vào phép tính"
+   ],
+   "visible_text": "764 + 146 = 910"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00009",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0001308.jpg",
+  "old_caption_vi": "Một người đàn ông mặc áo sơ mi xanh đang đứng trong một căn phòng, có vẻ như là một cảnh phim hoặc chương trình truyền hình. Anh ta đeo thẻ tên và nhìn về phía máy ảnh.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông trẻ mặc áo sơ mi màu xanh đậm, đeo dây chuyền, đang đứng trong một căn phòng có cửa sổ và quạt trần, nhìn thẳng vào camera.\",\n  \"objects\": [\"người đàn ông\", \"áo sơ mi\", \"dây chuyền\", \"cửa sổ\", \"quạt trần\", \"cửa\"],\n  \"actions\": [\"đang đứng\", \"nhìn vào camera\"],\n  \"visible_text\": \"tuoitreTV\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông trẻ mặc áo sơ mi màu xanh đậm, đeo dây chuyền, đang đứng trong một căn phòng có cửa sổ và quạt trần, nhìn thẳng vào camera.",
+   "objects": [
+    "người đàn ông",
+    "áo sơ mi",
+    "dây chuyền",
+    "cửa sổ",
+    "quạt trần",
+    "cửa"
+   ],
+   "actions": [
+    "đang đứng",
+    "nhìn vào camera"
+   ],
+   "visible_text": "tuoitreTV"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00010",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0001460.jpg",
+  "old_caption_vi": "Hai em bé đang ngồi học tập tại một bàn, có sách và bút chì. Một em gái mặc áo vàng với nơ trên tóc, một em trai đeo kính cũng mặc áo vàng tương tự.",
+  "raw": "{\n  \"caption\": \"Một bé gái và một bé trai đang ngồi cùng nhau đọc sách mở trên bàn, bé gái có hai bím tóc buộc bằng nơ hồng, bé trai đeo kính và mặc áo vàng xanh. Bàn có một hộp bút màu hồng và một cuốn sách nhỏ bên cạnh.\",\n  \"objects\": [\"bé gái\", \"bé trai\", \"sách\", \"bàn\", \"hộp bút\", \"ghế\"],\n  \"actions\": [\"đọc sách\", \"ngồi cùng nhau\"],\n  \"visible_text\": \"tuoitreTV\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một bé gái và một bé trai đang ngồi cùng nhau đọc sách mở trên bàn, bé gái có hai bím tóc buộc bằng nơ hồng, bé trai đeo kính và mặc áo vàng xanh. Bàn có một hộp bút màu hồng và một cuốn sách nhỏ bên cạnh.",
+   "objects": [
+    "bé gái",
+    "bé trai",
+    "sách",
+    "bàn",
+    "hộp bút",
+    "ghế"
+   ],
+   "actions": [
+    "đọc sách",
+    "ngồi cùng nhau"
+   ],
+   "visible_text": "tuoitreTV"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00011",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0001519.jpg",
+  "old_caption_vi": "Một bé gái và một bé trai đang ngồi học bài tại bàn trong lớp học. Cả hai đều mặc áo đồng phục màu vàng, có vẻ như là của trường học.",
+  "raw": "{\n  \"caption\": \"Một bé gái và một bé trai mặc áo vàng đang ngồi cùng nhau quan sát một vật thể trên bàn. Bé gái có hai bím tóc buộc bằng nơ hồng, còn bé trai đeo kính. Bàn có một chiếc túi xách màu hồng bên cạnh.\",\n  \"objects\": [\"bé gái\", \"bé trai\", \"bàn\", \"túi xách\", \"gương phản chiếu\", \"ghế\"],\n  \"actions\": [\"quan sát\", \"ngồi\", \"chỉ vào bàn\"],\n  \"visible_text\": \"tuoitreTV\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một bé gái và một bé trai mặc áo vàng đang ngồi cùng nhau quan sát một vật thể trên bàn. Bé gái có hai bím tóc buộc bằng nơ hồng, còn bé trai đeo kính. Bàn có một chiếc túi xách màu hồng bên cạnh.",
+   "objects": [
+    "bé gái",
+    "bé trai",
+    "bàn",
+    "túi xách",
+    "gương phản chiếu",
+    "ghế"
+   ],
+   "actions": [
+    "quan sát",
+    "ngồi",
+    "chỉ vào bàn"
+   ],
+   "visible_text": "tuoitreTV"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00012",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0001595.jpg",
+  "old_caption_vi": "Hình ảnh chụp một bé gái đang đọc truyện tranh. Truyện có nhiều trang, mỗi trang chứa các khung hình minh họa câu chuyện với lời thoại của nhân vật.",
+  "raw": "{\n  \"caption\": \"Một đứa trẻ đang đọc truyện tranh màu sắc trên bàn, tay cầm sách, bên cạnh có một hộp bút màu hồng và sách giáo khoa.\",\n  \"objects\": [\"truyện tranh\", \"hộp bút\", \"sách giáo khoa\", \"bàn\"],\n  \"actions\": [\"đọc truyện tranh\"],\n  \"visible_text\": \"tuoi tre TV\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một đứa trẻ đang đọc truyện tranh màu sắc trên bàn, tay cầm sách, bên cạnh có một hộp bút màu hồng và sách giáo khoa.",
+   "objects": [
+    "truyện tranh",
+    "hộp bút",
+    "sách giáo khoa",
+    "bàn"
+   ],
+   "actions": [
+    "đọc truyện tranh"
+   ],
+   "visible_text": "tuoi tre TV"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00013",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0001672.jpg",
+  "old_caption_vi": "Hai học sinh đang ngồi đọc sách tại bàn trong lớp học.",
+  "raw": "{\n  \"caption\": \"Hai em học sinh mặc áo đồng phục vàng và xanh đang ngồi cùng nhau đọc sách ở bàn học, em gái có hai bông hoa hồng buộc tóc.\",\n  \"objects\": [\"học sinh\", \"sách\", \"bàn học\", \"túi đựng đồ\", \"áo đồng phục\"],\n  \"actions\": [\"đọc sách\", \"ngồi cùng nhau\"],\n  \"visible_text\": \"tuoitreTV\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Hai em học sinh mặc áo đồng phục vàng và xanh đang ngồi cùng nhau đọc sách ở bàn học, em gái có hai bông hoa hồng buộc tóc.",
+   "objects": [
+    "học sinh",
+    "sách",
+    "bàn học",
+    "túi đựng đồ",
+    "áo đồng phục"
+   ],
+   "actions": [
+    "đọc sách",
+    "ngồi cùng nhau"
+   ],
+   "visible_text": "tuoitreTV"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00014",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0001804.jpg",
+  "old_caption_vi": "Một người đàn ông trẻ tuổi đang đứng trước cửa, đeo thẻ nhân viên của một công ty. Anh ta có vẻ ngoài bình thường và tự tin.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông mặc áo sơ mi màu xanh đậm, đeo dây chuyền, đang đứng trong một căn phòng có quạt trần và cửa kính, nhìn thẳng vào camera.\",\n  \"objects\": [\"người đàn ông\", \"áo sơ mi\", \"dây chuyền\", \"quạt trần\", \"cửa kính\"],\n  \"actions\": [\"đang nhìn vào camera\"],\n  \"visible_text\": \"tuoitreTV\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông mặc áo sơ mi màu xanh đậm, đeo dây chuyền, đang đứng trong một căn phòng có quạt trần và cửa kính, nhìn thẳng vào camera.",
+   "objects": [
+    "người đàn ông",
+    "áo sơ mi",
+    "dây chuyền",
+    "quạt trần",
+    "cửa kính"
+   ],
+   "actions": [
+    "đang nhìn vào camera"
+   ],
+   "visible_text": "tuoitreTV"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00015",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0001945.jpg",
+  "old_caption_vi": "Một học sinh đang viết lên bảng đen trong lớp học. Trên bảng có ghi ngày tháng năm và một số chữ khác.",
+  "raw": "{\n  \"caption\": \"Một giáo viên nam mặc áo sơ mi xanh đậm đang viết trên bảng xanh, ghi ngày tháng và tên 'Vĩnh'.\",\n  \"objects\": [\"giáo viên\", \"bảng xanh\", \"phấn\", \"bản đồ\"],\n  \"actions\": [\"viết trên bảng\"],\n  \"visible_text\": \"Thứ 4, ngày 14 tháng 8 năm 2024, VĨNH\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một giáo viên nam mặc áo sơ mi xanh đậm đang viết trên bảng xanh, ghi ngày tháng và tên 'Vĩnh'.",
+   "objects": [
+    "giáo viên",
+    "bảng xanh",
+    "phấn",
+    "bản đồ"
+   ],
+   "actions": [
+    "viết trên bảng"
+   ],
+   "visible_text": "Thứ 4, ngày 14 tháng 8 năm 2024, VĨNH"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00016",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0002045.jpg",
+  "old_caption_vi": "Một cô bé đang viết bài tập trong lớp học. Cô ấy mặc đồng phục trường, đeo kính và có một chiếc nơ trên tóc.",
+  "raw": "{\n  \"caption\": \"Một học sinh nữ mặc đồng phục học sinh màu xanh nhạt, đeo kính và có nơ trên tóc, đang viết vào sổ tay trên bàn học. Bàn có nhiều sách vở và bút, trong nền có một người khác cũng đang học.\",\n  \"objects\": [\"học sinh\", \"bàn học\", \"sổ tay\", \"bút\", \"sách\", \"đồng phục học sinh\", \"kính\", \"nơ\"],\n  \"actions\": [\"viết vào sổ tay\", \"học tập\"],\n  \"visible_text\": \"tuoitreTV\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một học sinh nữ mặc đồng phục học sinh màu xanh nhạt, đeo kính và có nơ trên tóc, đang viết vào sổ tay trên bàn học. Bàn có nhiều sách vở và bút, trong nền có một người khác cũng đang học.",
+   "objects": [
+    "học sinh",
+    "bàn học",
+    "sổ tay",
+    "bút",
+    "sách",
+    "đồng phục học sinh",
+    "kính",
+    "nơ"
+   ],
+   "actions": [
+    "viết vào sổ tay",
+    "học tập"
+   ],
+   "visible_text": "tuoitreTV"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00017",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0002104.jpg",
+  "old_caption_vi": "Một cậu bé đeo kính đang tập viết trên bàn học.",
+  "raw": "{\n  \"caption\": \"Một cậu bé đeo kính, mặc áo đồng phục vàng và xanh, đang viết vào giấy với bút màu. Cậu bé đeo vòng tay đỏ và có một bạn học bên cạnh.\",\n  \"objects\": [\"cậu bé\", \"kính\", \"áo đồng phục\", \"bút màu\", \"giấy\", \"vòng tay\", \"ghế\", \"bàn\"],\n  \"actions\": [\"viết\", \"đeo kính\", \"ngồi học\"],\n  \"visible_text\": \"tuoitreTV\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một cậu bé đeo kính, mặc áo đồng phục vàng và xanh, đang viết vào giấy với bút màu. Cậu bé đeo vòng tay đỏ và có một bạn học bên cạnh.",
+   "objects": [
+    "cậu bé",
+    "kính",
+    "áo đồng phục",
+    "bút màu",
+    "giấy",
+    "vòng tay",
+    "ghế",
+    "bàn"
+   ],
+   "actions": [
+    "viết",
+    "đeo kính",
+    "ngồi học"
+   ],
+   "visible_text": "tuoitreTV"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00018",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0002186.jpg",
+  "old_caption_vi": "Hình ảnh chụp một người đàn ông đang viết toán trên bảng đen. Bảng có hai bài tập tính toán được ghi rõ ràng, mỗi bài gồm phép nhân và phép cộng với các số đã cho.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông mặc áo sơ mi xanh đậm đang viết trên bảng xanh, hướng về phía bảng với tay cầm phấn. Bảng có các phép tính nhân được viết sẵn.\",\n  \"objects\": [\"người đàn ông\", \"bảng xanh\", \"phấn\", \"áo sơ mi\"],\n  \"actions\": [\"viết trên bảng\"],\n  \"visible_text\": \"1/ Tính 362 × 2 763 × 2 76 × 3 176 × 2 2/ Tính 76+ 6\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông mặc áo sơ mi xanh đậm đang viết trên bảng xanh, hướng về phía bảng với tay cầm phấn. Bảng có các phép tính nhân được viết sẵn.",
+   "objects": [
+    "người đàn ông",
+    "bảng xanh",
+    "phấn",
+    "áo sơ mi"
+   ],
+   "actions": [
+    "viết trên bảng"
+   ],
+   "visible_text": "1/ Tính 362 × 2 763 × 2 76 × 3 176 × 2 2/ Tính 76+ 6"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L30_V030_SH00019",
+  "path": "/kaggle/temp/trial/structure/L30_V030/keyframes/L30_V030_f0002268.jpg",
+  "old_caption_vi": "Một người đàn ông đang viết phép tính cộng trên bảng đen, với số 764 và 146 được ghi rõ ràng. Trên tường có một bản đồ Việt Nam.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông mặc áo sơ mi xanh đang viết phép tính cộng trên bảng xanh, tay cầm phấn, bên cạnh là bản đồ Việt Nam treo trên tường.\",\n  \"objects\": [\"người đàn ông\", \"bảng xanh\", \"phấn\", \"bản đồ Việt Nam\", \"áo sơ mi xanh\"],\n  \"actions\": [\"viết trên bảng\"],\n  \"visible_text\": \"31. 764 707 +146\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông mặc áo sơ mi xanh đang viết phép tính cộng trên bảng xanh, tay cầm phấn, bên cạnh là bản đồ Việt Nam treo trên tường.",
+   "objects": [
+    "người đàn ông",
+    "bảng xanh",
+    "phấn",
+    "bản đồ Việt Nam",
+    "áo sơ mi xanh"
+   ],
+   "actions": [
+    "viết trên bảng"
+   ],
+   "visible_text": "31. 764 707 +146"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00000",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0000040.jpg",
+  "old_caption_vi": "Hình ảnh hiển thị từ 'THANHNHIEN' màu xanh dương trên nền trắng.",
+  "raw": "{\n  \"caption\": \"Chữ 'THANH NIÊN' màu xanh dương nổi bật trên nền trắng, có bóng đổ nhẹ dưới chữ.\",\n  \"objects\": [\"chữ\"],\n  \"actions\": [],\n  \"visible_text\": \"THANH NIÊN\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Chữ 'THANH NIÊN' màu xanh dương nổi bật trên nền trắng, có bóng đổ nhẹ dưới chữ.",
+   "objects": [
+    "chữ"
+   ],
+   "actions": [],
+   "visible_text": "THANH NIÊN"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00001",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0000156.jpg",
+  "old_caption_vi": "Hình ảnh là một poster quảng cáo cho lớp ôn tập môn Vật lý chuyên đề 1, bao gồm các dạng bài tập về dao động điều hòa và con lắc. Poster có màu xanh dương làm nền với chữ cam nổi bật.",
+  "raw": "{\n  \"caption\": \"Một trang trình bày bài giảng vật lý với nền xanh đậm, chữ màu cam nổi bật, không có người hoặc đối tượng vật lý hiện diện.\",\n  \"objects\": [],\n  \"actions\": [],\n  \"visible_text\": \"ÔN TẬP MÔN VẬT LÝ CHUYÊN ĐỀ 1 DAO ĐỘNG ĐIỀU HOÀ CON LẮC LÒ XO CON LẮC ĐƠN Giáo viên hướng dẫn: Th.S. HUỲNH KIỀU VIỆT LÂM Giáo viên môn Vật Lý Trường THPT TENLÔMAN\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một trang trình bày bài giảng vật lý với nền xanh đậm, chữ màu cam nổi bật, không có người hoặc đối tượng vật lý hiện diện.",
+   "objects": [],
+   "actions": [],
+   "visible_text": "ÔN TẬP MÔN VẬT LÝ CHUYÊN ĐỀ 1 DAO ĐỘNG ĐIỀU HOÀ CON LẮC LÒ XO CON LẮC ĐƠN Giáo viên hướng dẫn: Th.S. HUỲNH KIỀU VIỆT LÂM Giáo viên môn Vật Lý Trường THPT TENLÔMAN"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00002",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0000851.jpg",
+  "old_caption_vi": "Một người đàn ông đang ngồi trước máy tính xách tay, có vẻ như là một buổi thuyết trình hoặc bài giảng trực tuyến. Trên màn hình hiển thị thông tin về môn Vật lý và chương trình CĐ 1: Dao động điều hòa - CLX - CLD.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông đeo kính, mặc áo sơ mi xanh nhạt, đang ngồi trước laptop màu hồng nhạt, giảng bài trong phòng có nền xanh dương với logo 'THANH NIÊN' ở góc trên bên trái.\",\n  \"objects\": [\"người đàn ông\", \"laptop\", \"máy tính\", \"bàn\", \"máy tính bảng\", \"máy chiếu\"],\n  \"actions\": [\"giảng bài\", \"đang giảng\"],\n  \"visible_text\": \"THANH NIÊN VẬT LÍ NĂM 2024 CD 1: DAO ĐỘNG ĐIỀU HÒA – CLLX – CLD KIẾN THỨC TRỌNG TÂM\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông đeo kính, mặc áo sơ mi xanh nhạt, đang ngồi trước laptop màu hồng nhạt, giảng bài trong phòng có nền xanh dương với logo 'THANH NIÊN' ở góc trên bên trái.",
+   "objects": [
+    "người đàn ông",
+    "laptop",
+    "máy tính",
+    "bàn",
+    "máy tính bảng",
+    "máy chiếu"
+   ],
+   "actions": [
+    "giảng bài",
+    "đang giảng"
+   ],
+   "visible_text": "THANH NIÊN VẬT LÍ NĂM 2024 CD 1: DAO ĐỘNG ĐIỀU HÒA – CLLX – CLD KIẾN THỨC TRỌNG TÂM"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00003",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0001780.jpg",
+  "old_caption_vi": "Hình ảnh chụp từ trên cao cho thấy một tòa nhà lớn của Đại học Sài Gòn Quốc tế (SIU) với tên trường được viết bằng tiếng Anh và tiếng Việt. Tòa nhà có kiến trúc hiện đại, nhiều cửa sổ kính và logo của trường ở phía trước.",
+  "raw": "{\n  \"caption\": \"Tòa nhà của Đại học Quốc tế Saigon (SIU) với biển hiệu đỏ nổi bật trên mái và logo của SIU cùng IACBE trên mặt tiền. Xung quanh là các tòa nhà cao tầng và nhà ở thấp tầng.\",\n  \"objects\": [\"tòa nhà\", \"biển hiệu\", \"logo\", \"cây xanh\", \"tòa nhà cao tầng\", \"nhà ở thấp tầng\"],\n  \"actions\": [],\n  \"visible_text\": \"SIU SAIGON INTERNATIONAL UNIVERSITY IACBE\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Tòa nhà của Đại học Quốc tế Saigon (SIU) với biển hiệu đỏ nổi bật trên mái và logo của SIU cùng IACBE trên mặt tiền. Xung quanh là các tòa nhà cao tầng và nhà ở thấp tầng.",
+   "objects": [
+    "tòa nhà",
+    "biển hiệu",
+    "logo",
+    "cây xanh",
+    "tòa nhà cao tầng",
+    "nhà ở thấp tầng"
+   ],
+   "actions": [],
+   "visible_text": "SIU SAIGON INTERNATIONAL UNIVERSITY IACBE"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00004",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0001794.jpg",
+  "old_caption_vi": "Hình ảnh chụp từ trên cao cho thấy một tòa nhà lớn với mái được phủ đầy tuyết, có logo của trường Đại học Sài Gòn Quốc tế (SGU) và tên trường được viết bằng tiếng Anh. Tòa nhà nằm trong khu vực đô thị đông đúc.",
+  "raw": "{\n  \"caption\": \"Tòa nhà của Đại học Quốc tế Sài Gòn với mái nhà cong màu trắng, nằm giữa khu đô thị với nhiều tòa nhà và cây xanh xung quanh.\",\n  \"objects\": [\"tòa nhà\", \"mái nhà\", \"cây xanh\", \"tòa nhà khác\"],\n  \"actions\": [],\n  \"visible_text\": \"The Saigon International University\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Tòa nhà của Đại học Quốc tế Sài Gòn với mái nhà cong màu trắng, nằm giữa khu đô thị với nhiều tòa nhà và cây xanh xung quanh.",
+   "objects": [
+    "tòa nhà",
+    "mái nhà",
+    "cây xanh",
+    "tòa nhà khác"
+   ],
+   "actions": [],
+   "visible_text": "The Saigon International University"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00005",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0001831.jpg",
+  "old_caption_vi": "Hình ảnh chụp mặt tiền của trường Đại học Quốc tế Sài Gòn (SGU).  Trước tòa nhà có ba cột cờ với các lá cờ khác nhau, bao gồm cả quốc kỳ Mỹ. Tòa nhà được thiết kế hiện đại và sang trọng.",
+  "raw": "{\n  \"caption\": \"Tòa nhà của Đại học Quốc tế Saigon với tên trường được ghi rõ trên mái và phía trước. Ba cờ đang tung bay trước tòa nhà, trong đó có cờ Mỹ và cờ Việt Nam.\",\n  \"objects\": [\"tòa nhà\", \"cờ\", \"cột cờ\", \"bảng tên\"],\n  \"actions\": [],\n  \"visible_text\": \"THE SAIGON INTERNATIONAL UNIVERSITY\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Tòa nhà của Đại học Quốc tế Saigon với tên trường được ghi rõ trên mái và phía trước. Ba cờ đang tung bay trước tòa nhà, trong đó có cờ Mỹ và cờ Việt Nam.",
+   "objects": [
+    "tòa nhà",
+    "cờ",
+    "cột cờ",
+    "bảng tên"
+   ],
+   "actions": [],
+   "visible_text": "THE SAIGON INTERNATIONAL UNIVERSITY"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00006",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0001876.jpg",
+  "old_caption_vi": "Hình ảnh là một giấy chứng nhận của IACBE (International Accreditation Council for Business Education) trao tặng cho trường Đại học Sài Gòn về các chương trình đào tạo quản trị kinh doanh.",
+  "raw": "{\n  \"caption\": \"Chứng chỉ xác nhận chương trình đào tạo kinh doanh do IACBE cấp, dành cho Đại học Quốc tế Saigon, với thời hạn từ ngày 30 tháng 3 năm 2020 đến ngày 30 tháng 4 năm 2027.\",\n  \"objects\": [\"chứng chỉ\", \"logo IACBE\", \"chữ ký\"],\n  \"actions\": [],\n  \"visible_text\": \"IACBE International Accreditation Council for Business Education THE BOARD OF COMMISSIONERS OF The International Accreditation Council for Business Education HEREBY AWARDS THIS Certificate of Accreditation BUSINESS PROGRAMS OFFERED BY The Saigon International University School of Business Administra\" \n}",
+  "valid": true,
+  "payload": {
+   "caption": "Chứng chỉ xác nhận chương trình đào tạo kinh doanh do IACBE cấp, dành cho Đại học Quốc tế Saigon, với thời hạn từ ngày 30 tháng 3 năm 2020 đến ngày 30 tháng 4 năm 2027.",
+   "objects": [
+    "chứng chỉ",
+    "logo IACBE",
+    "chữ ký"
+   ],
+   "actions": [],
+   "visible_text": "IACBE International Accreditation Council for Business Education THE BOARD OF COMMISSIONERS OF The International Accreditation Council for Business Education HEREBY AWARDS THIS Certificate of Accreditation BUSINESS PROGRAMS OFFERED BY The Saigon International University School of Business Administra"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00007",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0001918.jpg",
+  "old_caption_vi": "Một người đàn ông lớn tuổi, mặc vest xanh dương và đeo kính gọng tròn đang nói chuyện trước đám đông. Trên bàn có một bó hoa màu vàng.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông đeo kính, mặc áo khoác xanh đậm và áo sơ mi trắng, đang phát biểu với tay mở rộng, đứng trước một bục hoa màu vàng và đỏ. Phông nền có chữ 'of Israel' và 'RAK' mờ.\",\n  \"objects\": [\"người đàn ông\", \"kính\", \"áo khoác xanh đậm\", \"áo sơ mi trắng\", \"bục hoa\", \"phông nền\"],\n  \"actions\": [\"phát biểu\", \"mở tay\"],\n  \"visible_text\": \"of Israel RAK\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông đeo kính, mặc áo khoác xanh đậm và áo sơ mi trắng, đang phát biểu với tay mở rộng, đứng trước một bục hoa màu vàng và đỏ. Phông nền có chữ 'of Israel' và 'RAK' mờ.",
+   "objects": [
+    "người đàn ông",
+    "kính",
+    "áo khoác xanh đậm",
+    "áo sơ mi trắng",
+    "bục hoa",
+    "phông nền"
+   ],
+   "actions": [
+    "phát biểu",
+    "mở tay"
+   ],
+   "visible_text": "of Israel RAK"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00008",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0001937.jpg",
+  "old_caption_vi": "Bàu chủ trì buổi thuyết trình về học tập sáng tạo, có sự tham gia của nguyên Thủ tướng Israel Barak.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông mặc áo khoác xanh đậm đang đứng phát biểu tại bục diễn thuyết, phía sau là màn hình chiếu với tiêu đề 'Learning towards Creative Society' và tên 'EHUD BARAK'.\",\n  \"objects\": [\"người đàn ông\", \"bục diễn thuyết\", \"màn hình chiếu\", \"cờ đỏ\", \"hoa trang trí\"],\n  \"actions\": [\"phát biểu\", \"đang nói\"],\n  \"visible_text\": \"Learning towards Creative Society Presented by Former Prime Minister of Israel EHUD BARAK August 05, 2022\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông mặc áo khoác xanh đậm đang đứng phát biểu tại bục diễn thuyết, phía sau là màn hình chiếu với tiêu đề 'Learning towards Creative Society' và tên 'EHUD BARAK'.",
+   "objects": [
+    "người đàn ông",
+    "bục diễn thuyết",
+    "màn hình chiếu",
+    "cờ đỏ",
+    "hoa trang trí"
+   ],
+   "actions": [
+    "phát biểu",
+    "đang nói"
+   ],
+   "visible_text": "Learning towards Creative Society Presented by Former Prime Minister of Israel EHUD BARAK August 05, 2022"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00009",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0001956.jpg",
+  "old_caption_vi": "Một phụ nữ châu Phi đang nói chuyện, đội khăn quấn đầu và mặc áo có họa tiết da báo.",
+  "raw": "{\n  \"caption\": \"Một phụ nữ da màu với tóc búi braided đang nói chuyện, mặc áo có họa tiết báo, trong một không gian có ghế ngồi và tường màu sáng.\",\n  \"objects\": [\"phụ nữ\", \"áo họa tiết báo\", \"ghế\", \"tường\"],\n  \"actions\": [\"nói chuyện\"],\n  \"visible_text\": \"\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một phụ nữ da màu với tóc búi braided đang nói chuyện, mặc áo có họa tiết báo, trong một không gian có ghế ngồi và tường màu sáng.",
+   "objects": [
+    "phụ nữ",
+    "áo họa tiết báo",
+    "ghế",
+    "tường"
+   ],
+   "actions": [
+    "nói chuyện"
+   ],
+   "visible_text": ""
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00010",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0001982.jpg",
+  "old_caption_vi": "Một người phụ nữ đang nói chuyện với một robot màu cam trong văn phòng.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông và một người phụ nữ đang tương tác với một robot có thân màu cam và đầu màu trắng trong một không gian có tường trang trí hình học.\",\n  \"objects\": [\"người đàn ông\", \"người phụ nữ\", \"robot\", \"tường\", \"màn hình\"],\n  \"actions\": [\"chỉ tay vào robot\", \"đang nói chuyện với robot\"],\n  \"visible_text\": \"\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông và một người phụ nữ đang tương tác với một robot có thân màu cam và đầu màu trắng trong một không gian có tường trang trí hình học.",
+   "objects": [
+    "người đàn ông",
+    "người phụ nữ",
+    "robot",
+    "tường",
+    "màn hình"
+   ],
+   "actions": [
+    "chỉ tay vào robot",
+    "đang nói chuyện với robot"
+   ],
+   "visible_text": ""
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00011",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002009.jpg",
+  "old_caption_vi": "Một người phụ nữ đang chụp ảnh một robot trong văn phòng công nghệ. Văn phòng có nhiều bảng hiệu về các lĩnh vực như tự nhiên ngôn ngữ xử lý, trí tuệ nhân tạo và dữ liệu lớn.",
+  "raw": "{\n  \"caption\": \"Một người phụ nữ mặc áo thun trắng và quần jeans đang cầm điện thoại, đứng cạnh một robot màu trắng và cam trong một phòng trưng bày công nghệ. Phía sau có các biển hiệu về trí tuệ nhân tạo và dữ liệu lớn.\",\n  \"objects\": [\"người phụ nữ\", \"robot\", \"điện thoại\", \"biển hiệu\", \"bàn\", \"cây xanh\"],\n  \"actions\": [\"chụp ảnh bằng điện thoại\", \"đứng cạnh robot\"],\n  \"visible_text\": \"ROBOTICS, MACHINE LEARNING, BIG DATA, NATURAL LANGUAGE PROCESSING, INTERFACES\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người phụ nữ mặc áo thun trắng và quần jeans đang cầm điện thoại, đứng cạnh một robot màu trắng và cam trong một phòng trưng bày công nghệ. Phía sau có các biển hiệu về trí tuệ nhân tạo và dữ liệu lớn.",
+   "objects": [
+    "người phụ nữ",
+    "robot",
+    "điện thoại",
+    "biển hiệu",
+    "bàn",
+    "cây xanh"
+   ],
+   "actions": [
+    "chụp ảnh bằng điện thoại",
+    "đứng cạnh robot"
+   ],
+   "visible_text": "ROBOTICS, MACHINE LEARNING, BIG DATA, NATURAL LANGUAGE PROCESSING, INTERFACES"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00012",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002040.jpg",
+  "old_caption_vi": "Hình ảnh chụp sân khấu trong nhà hát, có một cây đàn piano màu đen đặt ở trung tâm. Ánh sáng xanh dương từ các đèn chiếu rọi xuống sàn và khán giả.",
+  "raw": "{\n  \"caption\": \"Một sân khấu được chiếu sáng bởi ánh sáng xanh lam từ các đèn pha, với hàng ghế khán giả rỗng phía trước. Ánh sáng từ trên cao chiếu xuống tạo hiệu ứng hào quang trên sân khấu.\",\n  \"objects\": [\"sân khấu\", \"ghế khán giả\", \"đèn pha\", \"ánh sáng\"],\n  \"actions\": [\"chiếu sáng\", \"hiển thị ánh sáng\"],\n  \"visible_text\": \"\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một sân khấu được chiếu sáng bởi ánh sáng xanh lam từ các đèn pha, với hàng ghế khán giả rỗng phía trước. Ánh sáng từ trên cao chiếu xuống tạo hiệu ứng hào quang trên sân khấu.",
+   "objects": [
+    "sân khấu",
+    "ghế khán giả",
+    "đèn pha",
+    "ánh sáng"
+   ],
+   "actions": [
+    "chiếu sáng",
+    "hiển thị ánh sáng"
+   ],
+   "visible_text": ""
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00013",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002072.jpg",
+  "old_caption_vi": "Hội trường đang diễn ra buổi biểu diễn của một trung tâm âm nhạc, có sự tham gia của nhiều nghệ sĩ và người hâm mộ.",
+  "raw": "{\n  \"caption\": \"Một dàn nhạc giao hưởng đang biểu diễn trên sân khấu, với piano upright ở trung tâm và các nhạc cụ dây xung quanh. Các nhạc công mặc trang phục tối màu, tập trung vào việc chơi nhạc.\",\n  \"objects\": [\"dàn nhạc giao hưởng\", \"piano upright\", \"violin\", \"cello\", \"trống\", \"đàn piano\", \"nhạc cụ dây\"],\n  \"actions\": [\"biểu diễn nhạc\", \"chơi nhạc cụ\", \"ngồi trên ghế\"],\n  \"visible_text\": \"SIU Piano\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một dàn nhạc giao hưởng đang biểu diễn trên sân khấu, với piano upright ở trung tâm và các nhạc cụ dây xung quanh. Các nhạc công mặc trang phục tối màu, tập trung vào việc chơi nhạc.",
+   "objects": [
+    "dàn nhạc giao hưởng",
+    "piano upright",
+    "violin",
+    "cello",
+    "trống",
+    "đàn piano",
+    "nhạc cụ dây"
+   ],
+   "actions": [
+    "biểu diễn nhạc",
+    "chơi nhạc cụ",
+    "ngồi trên ghế"
+   ],
+   "visible_text": "SIU Piano"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00014",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002115.jpg",
+  "old_caption_vi": "Một người đàn ông mặc áo khoác xanh nhạt đang nói chuyện với một phụ nữ ngồi đối diện. Họ có vẻ như đang trong cuộc họp hoặc hội nghị.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông mặc áo blazer xanh và áo sơ mi trắng đang nói chuyện, tay gesticulate, ngồi cạnh một người phụ nữ mặc áo khoác nâu, cả hai ngồi tại bàn họp với cốc nước và cờ nhỏ trên bàn.\",\n  \"objects\": [\"người đàn ông\", \"người phụ nữ\", \"bàn họp\", \"cốc nước\", \"cờ nhỏ\", \"gối ngồi\", \"khung tranh treo tường\"],\n  \"actions\": [\"nói chuyện\", \"gesticulate\", \"nghe\"],\n  \"visible_text\": \"\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông mặc áo blazer xanh và áo sơ mi trắng đang nói chuyện, tay gesticulate, ngồi cạnh một người phụ nữ mặc áo khoác nâu, cả hai ngồi tại bàn họp với cốc nước và cờ nhỏ trên bàn.",
+   "objects": [
+    "người đàn ông",
+    "người phụ nữ",
+    "bàn họp",
+    "cốc nước",
+    "cờ nhỏ",
+    "gối ngồi",
+    "khung tranh treo tường"
+   ],
+   "actions": [
+    "nói chuyện",
+    "gesticulate",
+    "nghe"
+   ],
+   "visible_text": ""
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00015",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002150.jpg",
+  "old_caption_vi": "Một người đàn ông mặc vest đang nói chuyện trong phòng họp, phía sau có bức ảnh của một nhân vật lịch sử.",
+  "raw": "{\n  \"caption\": \"Một người đàn ông có râu trắng, mặc áo khoác đen, áo sơ mi trắng và cà vạt xanh lá, đang nói chuyện trong một phòng có tường trắng và hai bức tranh treo tường.\",\n  \"objects\": [\"người đàn ông\", \"áo khoác đen\", \"áo sơ mi trắng\", \"cà vạt\", \"bức tranh\", \"giàn treo\", \"ghế da\"],\n  \"actions\": [\"nói chuyện\", \"giao tiếp\"],\n  \"visible_text\": \"\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người đàn ông có râu trắng, mặc áo khoác đen, áo sơ mi trắng và cà vạt xanh lá, đang nói chuyện trong một phòng có tường trắng và hai bức tranh treo tường.",
+   "objects": [
+    "người đàn ông",
+    "áo khoác đen",
+    "áo sơ mi trắng",
+    "cà vạt",
+    "bức tranh",
+    "giàn treo",
+    "ghế da"
+   ],
+   "actions": [
+    "nói chuyện",
+    "giao tiếp"
+   ],
+   "visible_text": ""
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00016",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002186.jpg",
+  "old_caption_vi": "Một người đàn ông và một phụ nữ đang ngồi tại bàn làm việc, xem xét các tài liệu. Có chai nước và kính râm trên bàn.",
+  "raw": "{\n  \"caption\": \"Một người phụ nữ đeo kính và một người đàn ông đang ngồi tại bàn họp, người đàn ông đang cầm tài liệu và nói, người phụ nữ đang đọc tài liệu.\",\n  \"objects\": [\"người phụ nữ\", \"người đàn ông\", \"bàn họp\", \"tài liệu\", \"glasses\", \"cốc nước\", \"chai nước\", \"cờ\"],\n  \"actions\": [\"đọc tài liệu\", \"nói\", \"chỉ vào tài liệu\"],\n  \"visible_text\": \"\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một người phụ nữ đeo kính và một người đàn ông đang ngồi tại bàn họp, người đàn ông đang cầm tài liệu và nói, người phụ nữ đang đọc tài liệu.",
+   "objects": [
+    "người phụ nữ",
+    "người đàn ông",
+    "bàn họp",
+    "tài liệu",
+    "glasses",
+    "cốc nước",
+    "chai nước",
+    "cờ"
+   ],
+   "actions": [
+    "đọc tài liệu",
+    "nói",
+    "chỉ vào tài liệu"
+   ],
+   "visible_text": ""
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00017",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002228.jpg",
+  "old_caption_vi": "Hình ảnh chụp một cuộc họp hoặc hội nghị đang diễn ra trong phòng họp. Có nhiều người tham gia, họ ngồi quanh bàn dài và sử dụng laptop. Trên tường có hai màn hình hiển thị thông tin về International College of Advanced Education (ICAE) tại Australia.",
+  "raw": "{\n  \"caption\": \"Một nhóm người đang họp trong phòng họp, với một người đàn ông mặc áo sơ mi xanh đang nói chuyện và gesticulate, còn những người khác đang lắng nghe và ghi chép. Bàn họp có hoa, nước uống và máy tính xách tay. Hai màn hình treo tường hiển thị logo và tên của 'International College of Advanced Education (ICAE), Australia'.\",\n  \"objects\": [\"người đàn ông\", \"bàn họp\", \"màn hình\", \"hoa\", \"nước uống\", \"máy tính xách tay\", \"áo sơ mi\", \"gương soi\"],\n  \"actions\": [\"nói chuyện\", \"lắng nghe\", \"ghi chép\", \"gesticulate\"],\n  \"visible_text\": \"International College of Advanced Education (ICAE), Australia\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Một nhóm người đang họp trong phòng họp, với một người đàn ông mặc áo sơ mi xanh đang nói chuyện và gesticulate, còn những người khác đang lắng nghe và ghi chép. Bàn họp có hoa, nước uống và máy tính xách tay. Hai màn hình treo tường hiển thị logo và tên của 'International College of Advanced Education (ICAE), Australia'.",
+   "objects": [
+    "người đàn ông",
+    "bàn họp",
+    "màn hình",
+    "hoa",
+    "nước uống",
+    "máy tính xách tay",
+    "áo sơ mi",
+    "gương soi"
+   ],
+   "actions": [
+    "nói chuyện",
+    "lắng nghe",
+    "ghi chép",
+    "gesticulate"
+   ],
+   "visible_text": "International College of Advanced Education (ICAE), Australia"
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00018",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002270.jpg",
+  "old_caption_vi": "Hai người đàn ông mặc vest đang ký kết một văn bản trước hai lá cờ của Việt Nam và Cộng hòa Séc.  Một bó hoa được đặt trên bàn.",
+  "raw": "{\n  \"caption\": \"Hai người đàn ông đang đứng tại bàn ký kết, một người cầm bìa đen, người kia cầm bìa đỏ, phía sau là hai quốc kỳ Việt Nam và Romania. Hai người đàn ông khác đứng phía sau, trong một phòng có bức tranh lớn và bàn gỗ bóng loáng.\",\n  \"objects\": [\"người đàn ông\", \"quốc kỳ\", \"bàn ký kết\", \"bìa đen\", \"bìa đỏ\", \"hoa\"], \n  \"actions\": [\"đang đứng\", \"cầm bìa\"], \n  \"visible_text\": \"\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Hai người đàn ông đang đứng tại bàn ký kết, một người cầm bìa đen, người kia cầm bìa đỏ, phía sau là hai quốc kỳ Việt Nam và Romania. Hai người đàn ông khác đứng phía sau, trong một phòng có bức tranh lớn và bàn gỗ bóng loáng.",
+   "objects": [
+    "người đàn ông",
+    "quốc kỳ",
+    "bàn ký kết",
+    "bìa đen",
+    "bìa đỏ",
+    "hoa"
+   ],
+   "actions": [
+    "đang đứng",
+    "cầm bìa"
+   ],
+   "visible_text": ""
+  },
+  "problems": []
+ },
+ {
+  "shot_id": "L25_V085_SH00019",
+  "path": "/kaggle/temp/trial/structure/L25_V085/keyframes/L25_V085_f0002309.jpg",
+  "old_caption_vi": "Hình ảnh chụp một buổi lễ ký kết thỏa thuận giữa Đại học Sài Gòn, Việt Nam và Viện Michael Dukakis về lãnh đạo và sáng tạo ở Hoa Kỳ.  Có hai người đang ngồi tại bàn ký kết với các tài liệu trên tay.",
+  "raw": "{\n  \"caption\": \"Hai người đang ký văn bản tại buổi lễ ký kết thỏa thuận giữa Đại học Quốc tế Sài Gòn và Viện Michael Dukakis về Leadership & Innovation, diễn ra tại thành phố Hochiminh vào ngày 6 tháng 1 năm 2022. Họ ngồi đối diện nhau tại bàn, có cờ Việt Nam và hoa hồng đỏ trên bàn.\",\n  \"objects\": [\"người đàn ông\", \"người phụ nữ\", \"bàn\", \"cờ Việt Nam\", \"hoa hồng đỏ\", \"bảng trình chiếu\", \"bút\", \"giấy tờ\", \"cốc nước\", \"bánh ngọt\"],\n  \"actions\": [\"ký văn bản\", \"đứng vỗ tay\", \"ngồi\"],\n  \"visible_text\": \"THE SAIGON INTERNATIONAL UNIVERSITY MICHAEL DUKAKIS INSTITUTE FOR LEADERSHIP AND INNOVATION MEMORANDUM OF UNDERSTANDING SIGNING CEREMONY between Saigon International University, Vietnam and Michael Dukakis Institute for Leadership & Innovation, USA Hochiminh City, January 6th, 2022\"\n}",
+  "valid": true,
+  "payload": {
+   "caption": "Hai người đang ký văn bản tại buổi lễ ký kết thỏa thuận giữa Đại học Quốc tế Sài Gòn và Viện Michael Dukakis về Leadership & Innovation, diễn ra tại thành phố Hochiminh vào ngày 6 tháng 1 năm 2022. Họ ngồi đối diện nhau tại bàn, có cờ Việt Nam và hoa hồng đỏ trên bàn.",
+   "objects": [
+    "người đàn ông",
+    "người phụ nữ",
+    "bàn",
+    "cờ Việt Nam",
+    "hoa hồng đỏ",
+    "bảng trình chiếu",
+    "bút",
+    "giấy tờ",
+    "cốc nước",
+    "bánh ngọt"
+   ],
+   "actions": [
+    "ký văn bản",
+    "đứng vỗ tay",
+    "ngồi"
+   ],
+   "visible_text": "THE SAIGON INTERNATIONAL UNIVERSITY MICHAEL DUKAKIS INSTITUTE FOR LEADERSHIP AND INNOVATION MEMORANDUM OF UNDERSTANDING SIGNING CEREMONY between Saigon International University, Vietnam and Michael Dukakis Institute for Leadership & Innovation, USA Hochiminh City, January 6th, 2022"
+  },
+  "problems": []
+ }
+]

@@ -1,0 +1,36 @@
+{
+  "timings_sec": {
+    "B": 272.3,
+    "C": 115.2,
+    "A": 569.4
+  },
+  "errors": {},
+  "metrics": {
+    "B_easyocr_det_vietocr": {
+      "detect_seconds_per_keyframe": 0.121,
+      "recognize_seconds_per_keyframe": 0.36,
+      "keyframes_with_text": 384,
+      "keyframes": 560
+    },
+    "C_easyocr": {
+      "detect_seconds_per_keyframe": 0.0,
+      "recognize_seconds_per_keyframe": 0.201,
+      "keyframes_with_text": 384,
+      "keyframes": 560
+    },
+    "A_paddle_det_vietocr": {
+      "detect_seconds_per_keyframe": 0.618,
+      "recognize_seconds_per_keyframe": 0.348,
+      "keyframes_with_text": 437,
+      "keyframes": 560
+    }
+  },
+  "env": {
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]",
+    "torch": "2.11.0+cu128",
+    "gpus": [
+      "Tesla T4",
+      "Tesla T4"
+    ]
+  }
+}

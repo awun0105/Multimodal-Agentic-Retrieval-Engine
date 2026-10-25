@@ -1,0 +1,21 @@
+{
+  "timings_sec": {
+    "setup": 38.5,
+    "download": 25.7,
+    "asr_phowhisper": 111.1,
+    "ocr_paddle": 3862.7
+  },
+  "errors": {
+    "asr_phowhisper": "Traceback (most recent call last):\n  File \"/kaggle/src/script.py\", line 89, in run\n    return fn(*args, **kwargs)\n  File \"/kaggle/src/script.py\", line 198, in asr_phowhisper\n    result = asr(str(item[\"wav\"]), chunk_length_s=30, batch_size=8, return_timestamps=True)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/automatic_speech_recognition.py\", line 288, in __call__\n    return super().__call__(inputs, **kwargs)\n           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/base.py\", line 1308, in __call__\n    return next(\n        iter(\n    ...<3 lines>...\n        )\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/pt_utils.py\", line 126, in __next__\n    item = next(self.iterator)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/pt_utils.py\", line 271, in __next__\n    processed = self.infer(next(self.iterator), **self.params)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/base.py\", line 1205, in forward\n    model_outputs = self._forward(model_inputs, **forward_params)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/automatic_speech_recognition.py\", line 570, in _forward\n    tokens = self.model.generate(**generate_kwargs)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/models/whisper/generation_whisper.py\", line 855, in generate\n    ) = self.generate_with_fallback(\n        ~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        segment_input=segment_input,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<15 lines>...\n        kwargs=kwargs,\n        ^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/models/whisper/generation_whisper.py\", line 1027, in generate_with_fallback\n    seek_outputs = super().generate(\n        segment_input,\n    ...<16 lines>...\n        **generate_kwargs,\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/torch/utils/_contextlib.py\", line 124, in decorate_context\n    return func(*args, **kwargs)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/generation/utils.py\", line 2989, in generate\n    result = decoding_method(\n        self,\n    ...<5 lines>...\n        **model_kwargs,\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/generation/utils.py\", line 3824, in _beam_search\n    model_kwargs[cache_key].reorder_cache(beam_idx)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/cache_utils.py\", line 2083, in reorder_cache\n    self.cross_attention_cache.reorder_cache(beam_idx)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/cache_utils.py\", line 1647, in reorder_cache\n    self.layers[layer_idx].reorder_cache(beam_idx)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/cache_utils.py\", line 99, in reorder_cache\n    self.keys = self.keys.index_select(0, beam_idx.to(self.keys.device))\n                ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 148.00 MiB. GPU 1 has a total capacity of 14.56 GiB of which 36.81 MiB is free. Including non-PyTorch memory, this process has 14.52 GiB memory in use. Of the allocated memory 13.54 GiB is allocated by PyTorch, and 875.60 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)\n"
+  },
+  "metrics": {},
+  "env": {
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]",
+    "torch": "2.11.0+cu128",
+    "cuda": true,
+    "gpus": [
+      "Tesla T4",
+      "Tesla T4"
+    ]
+  }
+}

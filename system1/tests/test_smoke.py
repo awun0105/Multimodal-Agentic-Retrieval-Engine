@@ -49,6 +49,14 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
+def ignore_host_free_disk(monkeypatch):
+    # The Colab free-disk wait loops forever on a host below 15 GB free; these
+    # tests exercise import and upload behavior, not the disk policy.
+    monkeypatch.setattr("system1.ingest.source_importer.wait_for_drive_sync", lambda **_: None)
+    monkeypatch.setattr("system1.ingest.source_importer._ensure_temp_disk_available", lambda *_: None)
+
+
+@pytest.fixture(autouse=True)
 def local_phase_execution(monkeypatch):
     monkeypatch.setenv("AIC_RESUME", "0")
     monkeypatch.setenv("AIC_SYNC", "0")

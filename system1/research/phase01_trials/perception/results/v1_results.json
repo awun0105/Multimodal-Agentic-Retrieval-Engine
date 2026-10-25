@@ -1,0 +1,312 @@
+{
+  "timings_sec": {
+    "setup": 53.8,
+    "download": 27.7,
+    "img_clip_multilingual": 67.4,
+    "img_siglip2_base": 19.8,
+    "img_siglip2_so400m": 59.4,
+    "txt_bge_m3": 35.0,
+    "txt_multilingual_e5_large": 21.7,
+    "txt_qwen3_embedding_0_6b": 16.1,
+    "asr_chunkformer": 153.5,
+    "asr_phowhisper": 96.1,
+    "ocr_paddle": 54.4
+  },
+  "errors": {
+    "asr_phowhisper": "Traceback (most recent call last):\n  File \"/kaggle/src/script.py\", line 89, in run\n    return fn(*args, **kwargs)\n  File \"/kaggle/src/script.py\", line 197, in asr_phowhisper\n    result = asr(str(item[\"wav\"]), chunk_length_s=30, batch_size=8, return_timestamps=True)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/automatic_speech_recognition.py\", line 288, in __call__\n    return super().__call__(inputs, **kwargs)\n           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/base.py\", line 1308, in __call__\n    return next(\n        iter(\n    ...<3 lines>...\n        )\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/pt_utils.py\", line 126, in __next__\n    item = next(self.iterator)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/pt_utils.py\", line 271, in __next__\n    processed = self.infer(next(self.iterator), **self.params)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/base.py\", line 1205, in forward\n    model_outputs = self._forward(model_inputs, **forward_params)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/pipelines/automatic_speech_recognition.py\", line 570, in _forward\n    tokens = self.model.generate(**generate_kwargs)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/models/whisper/generation_whisper.py\", line 855, in generate\n    ) = self.generate_with_fallback(\n        ~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n        segment_input=segment_input,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<15 lines>...\n        kwargs=kwargs,\n        ^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/models/whisper/generation_whisper.py\", line 1027, in generate_with_fallback\n    seek_outputs = super().generate(\n        segment_input,\n    ...<16 lines>...\n        **generate_kwargs,\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/torch/utils/_contextlib.py\", line 124, in decorate_context\n    return func(*args, **kwargs)\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/generation/utils.py\", line 2989, in generate\n    result = decoding_method(\n        self,\n    ...<5 lines>...\n        **model_kwargs,\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/generation/utils.py\", line 3824, in _beam_search\n    model_kwargs[cache_key].reorder_cache(beam_idx)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/cache_utils.py\", line 2083, in reorder_cache\n    self.cross_attention_cache.reorder_cache(beam_idx)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/cache_utils.py\", line 1647, in reorder_cache\n    self.layers[layer_idx].reorder_cache(beam_idx)\n    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/transformers/cache_utils.py\", line 99, in reorder_cache\n    self.keys = self.keys.index_select(0, beam_idx.to(self.keys.device))\n                ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntorch.OutOfMemoryError: CUDA out of memory. Tried to allocate 148.00 MiB. GPU 0 has a total capacity of 14.56 GiB of which 128.81 MiB is free. Including non-PyTorch memory, this process has 14.43 GiB memory in use. Of the allocated memory 13.46 GiB is allocated by PyTorch, and 861.88 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)\n",
+    "ocr_paddle": "Traceback (most recent call last):\n  File \"/kaggle/src/script.py\", line 89, in run\n    return fn(*args, **kwargs)\n  File \"/kaggle/src/script.py\", line 357, in ocr_paddle\n    for result in ocr.predict(path):\n                  ~~~~~~~~~~~^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/paddleocr/_pipelines/ocr.py\", line 223, in predict\n    return list(\n        self.predict_iter(\n    ...<11 lines>...\n        )\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/paddlex/inference/pipelines/_parallel.py\", line 161, in predict\n    yield from self._pipeline.predict(\n    ...<3 lines>...\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/paddlex/inference/pipelines/ocr/pipeline.py\", line 366, in predict\n    det_results = list(\n        self.text_det_model(doc_preprocessor_images, **text_det_params)\n    )\n  File \"/usr/local/lib/python3.13/dist-packages/paddlex/inference/models/predictors/base_predictor.py\", line 117, in __call__\n    yield from self.apply(input, **kwargs)\n  File \"/usr/local/lib/python3.13/dist-packages/paddlex/inference/models/predictors/base_predictor.py\", line 140, in apply\n    pred = self.process(batch_data, **kwargs)\n  File \"/usr/local/lib/python3.13/dist-packages/paddlex/inference/models/text_detection/predictor.py\", line 145, in process\n    batch_preds = self.runner(x=x)\n  File \"/usr/local/lib/python3.13/dist-packages/paddlex/inference/models/runners/paddle_static/runner.py\", line 297, in __call__\n    pred = self.infer(x)\n  File \"/usr/local/lib/python3.13/dist-packages/paddlex/inference/models/runners/paddle_static/runner.py\", line 265, in __call__\n    self.predictor.run()\n    ~~~~~~~~~~~~~~~~~~^^\nNotImplementedError: (Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at /paddle/paddle/fluid/framework/new_executor/instruction/onednn/onednn_instruction.cc:116)\n\n"
+  },
+  "metrics": {
+    "img_clip_multilingual": {
+      "per_video": {},
+      "image_seconds_per_keyframe": 0.0149,
+      "text_seconds_per_query_vi": 0.0205,
+      "combined_vi": {
+        "R@1": 0.55,
+        "R@5": 0.8,
+        "R@10": 0.85,
+        "MRR": 0.663801085568327,
+        "ranks": [
+          1,
+          1,
+          1,
+          36,
+          1,
+          2,
+          2,
+          4,
+          348,
+          2,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          3,
+          8,
+          27
+        ]
+      },
+      "text_seconds_per_query_en": 0.0008,
+      "combined_en": {
+        "R@1": 0.7,
+        "R@5": 0.85,
+        "R@10": 0.85,
+        "MRR": 0.7486921296296297,
+        "ranks": [
+          1,
+          1,
+          1,
+          24,
+          1,
+          1,
+          1,
+          4,
+          160,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          3,
+          3,
+          108
+        ]
+      }
+    },
+    "img_siglip2-base-patch16-256": {
+      "per_video": {},
+      "image_seconds_per_keyframe": 0.0107,
+      "text_seconds_per_query_vi": 0.0007,
+      "combined_vi": {
+        "R@1": 0.6,
+        "R@5": 0.85,
+        "R@10": 0.95,
+        "MRR": 0.7095238095238094,
+        "ranks": [
+          4,
+          1,
+          1,
+          3,
+          1,
+          2,
+          1,
+          21,
+          6,
+          2,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          4,
+          1,
+          7,
+          1
+        ]
+      },
+      "text_seconds_per_query_en": 0.0007,
+      "combined_en": {
+        "R@1": 0.7,
+        "R@5": 0.8,
+        "R@10": 0.85,
+        "MRR": 0.7399305555555555,
+        "ranks": [
+          1,
+          1,
+          1,
+          4,
+          1,
+          12,
+          1,
+          8,
+          16,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          4,
+          36
+        ]
+      }
+    },
+    "img_siglip2-so400m-patch14-384": {
+      "per_video": {},
+      "image_seconds_per_keyframe": 0.0537,
+      "text_seconds_per_query_vi": 0.003,
+      "combined_vi": {
+        "R@1": 0.7,
+        "R@5": 0.8,
+        "R@10": 1.0,
+        "MRR": 0.7506746031746031,
+        "ranks": [
+          9,
+          1,
+          1,
+          1,
+          1,
+          5,
+          1,
+          7,
+          6,
+          4,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          7,
+          1
+        ]
+      },
+      "text_seconds_per_query_en": 0.0037,
+      "combined_en": {
+        "R@1": 0.7,
+        "R@5": 0.9,
+        "R@10": 0.95,
+        "MRR": 0.7850595238095238,
+        "ranks": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          1,
+          10,
+          56,
+          3,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          4,
+          2
+        ]
+      }
+    },
+    "txt_bge_m3": {
+      "captions_vi": {
+        "R@1": 0.7,
+        "R@5": 0.9,
+        "R@10": 0.95,
+        "MRR": 0.7950216450216451,
+        "ranks": [
+          3,
+          7,
+          1,
+          1,
+          1,
+          1,
+          2,
+          11,
+          1,
+          1,
+          1,
+          1,
+          1,
+          2,
+          1,
+          1,
+          1,
+          1,
+          3,
+          1
+        ]
+      },
+      "doc_seconds_per_item": 0.0118,
+      "query_seconds_per_item": 0.0043
+    },
+    "txt_multilingual_e5_large": {
+      "captions_vi": {
+        "R@1": 0.75,
+        "R@5": 0.95,
+        "R@10": 1.0,
+        "MRR": 0.8183333333333334,
+        "ranks": [
+          3,
+          3,
+          1,
+          1,
+          1,
+          1,
+          1,
+          5,
+          1,
+          1,
+          3,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          6,
+          1
+        ]
+      },
+      "doc_seconds_per_item": 0.0103,
+      "query_seconds_per_item": 0.0049
+    },
+    "txt_qwen3_embedding_0_6b": {
+      "captions_vi": {
+        "R@1": 0.6,
+        "R@5": 0.95,
+        "R@10": 0.95,
+        "MRR": 0.7375,
+        "ranks": [
+          3,
+          3,
+          1,
+          3,
+          2,
+          1,
+          1,
+          12,
+          3,
+          1,
+          2,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          3,
+          1
+        ]
+      },
+      "doc_seconds_per_item": 0.0259,
+      "query_seconds_per_item": 0.0166
+    }
+  },
+  "env": {
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]",
+    "torch": "2.11.0+cu128",
+    "cuda": true,
+    "gpus": [
+      "Tesla T4",
+      "Tesla T4"
+    ]
+  }
+}
