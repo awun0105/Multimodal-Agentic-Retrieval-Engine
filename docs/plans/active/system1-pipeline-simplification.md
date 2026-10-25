@@ -580,8 +580,14 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   - [x] 1. Worker without captions (code, 2026-10-26): `worker/video.py` has
     no caption stage, manifest `worker_package_v2`, `shots.scene_id` null,
     `keyframes.is_representative`, nullable `text_documents.keyframe_id`;
-    `validate_package` checks every table against `schemas/v2`. Kaggle time
-    per video not yet recorded.
+    `validate_package` checks every table against `schemas/v2`. Kaggle run at
+    commit `46bf0c2` (`quanlam/mare-worker-batch` v7, same 5 videos, old v1
+    packages removed first): 5 completed, 0 failed, 70.3 min of video in 43.4
+    min (0.62x video length; was 1.9x with captions). Per video: `L21_V014`
+    767 s, `L22_V004` 892 s, `L22_V010` 670 s, `L23_V004` 161 s, `L23_V010`
+    117 s. `L21_V014` stages: OCR 505 s (66%), cuts 104 s, keyframes 89 s,
+    SigLIP 33 s, ASR 16 s, text vectors 9 s. One batch of 73 videos now fits
+    about 10.5 GPU hours, inside one Kaggle session. OCR is the next target.
   - [x] 2. Caption pass (code, 2026-10-26): `captions/{video,batch,models}.py`,
     CLI `caption-batch --persist-dir`, `notebooks/caption_batch.ipynb`,
     `tests/test_caption_pass.py`. Reads worker ZIP members in place (Step 5f
@@ -616,6 +622,14 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   `models.ocr.rerun_min_change 0.15`, `text.ocr_min_syllable_ratio 0.6`).
   Decision: a single valid syllable is not penalized, so one-word headlines
   survive; fragments like "Vập" are left to the repeat and length filters.
+  Measured at `46bf0c2` on the 5 test videos: `reused_from_shot` 0 on every
+  video (news shots mostly have one keyframe, and extra keyframes exist only
+  where the frame changed), `crop_cache_hits` 0 to 1 (detection boxes shift by
+  a few pixels, so exact 16x16 hashes never match). 5c.2b done 2026-10-26:
+  `CropCache` matches by Hamming distance (at most 24 of 256 bits; a 2-pixel
+  box shift costs about 10 bits, unrelated crops about 127) within neighbouring
+  size buckets; hit rate to be measured on the next Kaggle worker run. Item 5c.1 keeps its code but is not expected to save
+  time on news video.
   Plan checks (OCR lines before/after, cache hit rate, 200 dropped lines
   reviewed) wait for the next Kaggle run; the stage report now records
   `reused_from_shot` and `crop_cache_hits`. Items 4, 5, 6 coded 2026-10-26:

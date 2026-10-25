@@ -123,14 +123,21 @@ def test_ocr_reruns_on_first_keyframe_and_band_change_only() -> None:
     assert not should_rerun_ocr(first, first, min_change=0.15)
 
 
-def test_crop_cache_reuses_text_for_an_identical_crop() -> None:
+def test_crop_cache_reuses_text_for_a_slightly_shifted_crop() -> None:
+    from PIL import Image, ImageDraw
+
+    canvas = Image.new("RGB", (320, 240), "white")
+    ImageDraw.Draw(canvas).text((20, 100), "THOI SU", fill="black")
     cache = CropCache()
-    crop, other = _frame().crop((0, 0, 120, 30)), _frame(7).crop((0, 200, 120, 230))
+    crop = canvas.crop((10, 90, 130, 120))
+    shifted = canvas.crop((12, 91, 132, 121))  # detection box moved by two pixels
+    other = _frame(7).crop((0, 200, 120, 230))
     assert cache.get(crop) is None
     cache.put(crop, "THỜI SỰ")
     assert cache.get(crop.copy()) == "THỜI SỰ"
+    assert cache.get(shifted) == "THỜI SỰ"
     assert cache.get(other) is None
-    assert (cache.hits, cache.misses) == (1, 2)
+    assert (cache.hits, cache.misses) == (2, 2)
 
 
 def test_ocr_lines_with_few_vietnamese_syllables_are_dropped() -> None:

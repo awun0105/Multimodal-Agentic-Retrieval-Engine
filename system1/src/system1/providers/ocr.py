@@ -95,23 +95,39 @@ def crop_hash(image: Any) -> int:
 
 
 class CropCache:
-    """Recognized text per crop hash, exact match only, with hit and miss counters."""
+    """Recognized text per crop hash with hit and miss counters.
 
-    def __init__(self) -> None:
-        self._texts: dict[int, str] = {}
+    Detection boxes of the same overlay shift by a few pixels between frames,
+    so an exact hash never repeats; a crop matches a stored one when their
+    16x16 difference hashes differ in at most `max_distance` of 256 bits
+    (default 24: a two-pixel box shift costs about 10 bits; unrelated text
+    differs in about 128).
+    Also keyed by crop size bucket so a lookup only scans similar boxes.
+    """
+
+    def __init__(self, max_distance: int = 24) -> None:
+        self.max_distance = max_distance
+        self._entries: dict[tuple[int, int], list[tuple[int, str]]] = {}
         self.hits = 0
         self.misses = 0
 
+    @staticmethod
+    def _bucket(crop: Any) -> tuple[int, int]:
+        return (crop.width // 16, crop.height // 8)
+
     def get(self, crop: Any) -> str | None:
-        text = self._texts.get(crop_hash(crop))
-        if text is None:
-            self.misses += 1
-        else:
-            self.hits += 1
-        return text
+        code = crop_hash(crop)
+        width, height = self._bucket(crop)
+        for bucket in ((width + dw, height + dh) for dw in (-1, 0, 1) for dh in (-1, 0, 1)):
+            for stored, text in self._entries.get(bucket, ()):
+                if bin(stored ^ code).count("1") <= self.max_distance:
+                    self.hits += 1
+                    return text
+        self.misses += 1
+        return None
 
     def put(self, crop: Any, text: str) -> None:
-        self._texts[crop_hash(crop)] = text
+        self._entries.setdefault(self._bucket(crop), []).append((crop_hash(crop), text))
 
 
 class EasyVietOcr:
