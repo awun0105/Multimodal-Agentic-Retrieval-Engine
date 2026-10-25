@@ -17,7 +17,7 @@ import traceback
 from pathlib import Path
 
 REPO = "https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine.git"
-COMMIT = "25aba3d63605f5e5c24adaddf29ed19c07d5bf8f"
+COMMIT = "17a18914d2b9cdfaa3defc85a320a967fd7df9f3"
 OUT = Path(os.environ.get("TRIAL_OUT", "/kaggle/working"))
 WORK = Path(os.environ.get("TRIAL_WORK", "/kaggle/temp/trial"))
 RAW_REPO = "1thesudden/AIOU26_raw"

@@ -141,6 +141,41 @@ def test_cut_segments_with_changing_content_split_into_shots(video, tmp_path) ->
         assert (inside["start_frame"].iloc[1:].values == inside["end_frame"].iloc[:-1].values).all()
 
 
+def test_failed_cut_detection_falls_back_to_one_segment(video, tmp_path) -> None:
+    models = _models(Calls())
+
+    def broken_cuts(video_path, timeline_rows, work_dir):
+        raise RuntimeError("TransNet weights missing")
+
+    models.cuts = broken_cuts
+    zip_path = _run(video, tmp_path, models)
+
+    cuts = _table(zip_path, "cut_segments.parquet")
+    with zipfile.ZipFile(zip_path) as archive:
+        manifest = json.loads(archive.read("V1/manifest.json"))
+    assert cuts[["start_frame", "end_frame"]].values.tolist() == [[0, FRAMES]]
+    assert manifest["stages"]["cuts"]["status"] == "fallback"
+    assert "TransNet weights missing" in manifest["stages"]["cuts"]["error"]
+    assert len(_table(zip_path, "shots.parquet")) > 1
+
+
+def test_rerun_after_cut_fallback_retries_cuts_and_rebuilds_shots(video, tmp_path) -> None:
+    calls = Calls()
+    models = _models(calls)
+    working_cuts = models.cuts
+
+    def broken_cuts(video_path, timeline_rows, work_dir):
+        raise RuntimeError("TransNet weights missing")
+
+    models.cuts = broken_cuts
+    _run(video, tmp_path, models)
+    models.cuts = working_cuts
+    zip_path = _run(video, tmp_path, models)
+
+    assert len(_table(zip_path, "cut_segments.parquet")) == 2
+    assert set(_table(zip_path, "shots.parquet")["cut_segment_id"]) == {"V1_CS00000", "V1_CS00001"}
+
+
 def test_logo_repeated_on_every_keyframe_is_not_indexed(video, tmp_path) -> None:
     documents = _table(_run(video, tmp_path, _models(Calls())), "text_documents.parquet")
 

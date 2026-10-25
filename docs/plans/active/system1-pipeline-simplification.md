@@ -175,7 +175,19 @@ contract, `docs/validation/test-matrix.md`).
     ChunkFormer on GPU 4.1 s (`L30_V030`) and 18.1 s (`L25_V085`), OCR 0.37
     s/image, captions 4.1 s/image with 32/32 valid JSON. Open: OCR logo variants
     ("tuổi trerv", "tucitrery") are not caught by exact-match repeat filtering.
-  - [ ] Per-video worker wiring, packaging validator, release step.
+  - [x] Per-video worker (`worker/video.py`, `stages.py`, `package.py`,
+    `providers/cuts.py`). Kaggle run at commit `17a1891`
+    (`research/phase01_trials/worker/results/v3_results.json`), all stages pass:
+    `L30_V030` (5.7 min) in 5.7 min; `L25_V085` (38 min) in 29.6 min, of which
+    captions 1032 s (3.3 s/shot, 315 shots) and OCR 427 s (text-heavy slides).
+    Batch 16 at 512 px gained only about 1.4x over batch 8 at 768 px; per-token
+    constrained decoding with transformers `generate` is the limit. Next
+    optimization: vLLM structured outputs for captions.
+  - [x] Cut-detection fallback: one whole-video cut segment, status `fallback`,
+    retried on the next attempt; downstream stages rerun when an upstream
+    outcome changes.
+  - [ ] Release step: merge ZIPs, SQLite + FTS5, image and text indexes.
+  - [ ] Batch runner with Hugging Face sync; new Notebook 01 and 02.
 - [ ] Step 6: End-to-end run and cleanup.
 
 ## Trial Results

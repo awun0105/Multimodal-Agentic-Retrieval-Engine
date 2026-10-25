@@ -98,11 +98,17 @@ def process_video(
     text_config = config["text"]
 
     def cuts_stage():
-        rows = models.cuts(video.video_path, video.timeline_rows, root / "scratch")
+        report: dict[str, Any] = {"status": "pass"}
+        try:
+            rows = models.cuts(video.video_path, video.timeline_rows, root / "scratch")
+        except Exception as exc:
+            # Without cuts the whole video is one segment; shots still split by visual change.
+            rows = [_whole_video_segment(video.timeline_rows)]
+            report = {"status": "fallback", "error": f"{type(exc).__name__}: {exc}"[:500]}
         cuts = [{"cut_segment_id": f"{video_id}_CS{index:05d}", "video_id": video_id, **row}
                 for index, row in enumerate(rows)]
         pd.DataFrame(cuts, columns=CUT_COLUMNS).to_parquet(package / "cut_segments.parquet", index=False)
-        return {"status": "pass", "cut_segments": len(cuts)}
+        return {**report, "cut_segments": len(cuts)}
 
     def keyframes_stage():
         shots, keyframes, empty = _split_shots(video, pd.read_parquet(package / "cut_segments.parquet"),
@@ -196,6 +202,13 @@ def process_video(
     return write_artifact_zip(artifact_dir=package, zip_path=work_root / f"{video_id}.zip", video_id=video_id,
                               artifact_type="worker", batch_id=batch_id, worker_id=worker_id,
                               status="partial" if failed else "complete")
+
+
+def _whole_video_segment(timeline_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    timeline = sorted(timeline_rows, key=lambda row: int(row["frame_id"]))
+    last = timeline[-1]
+    return {"start_frame": 0, "end_frame": len(timeline), "start_sec": float(timeline[0]["pts_time"]),
+            "end_sec": float(last["pts_time"]) + float(last.get("duration_time") or 0.0)}
 
 
 def _split_shots(

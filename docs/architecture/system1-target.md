@@ -111,7 +111,9 @@ whole length.
 - Fail the video: unreadable media, `video_id` or frame mapping errors,
   schema-invalid package, checksum mismatch.
 - Continue and record: empty or failed ASR, OCR, or caption for an item; an
-  invalid shot or keyframe candidate.
+  invalid shot or keyframe candidate. If cut detection fails, the whole video
+  is one cut segment and shots still split by visual change (status
+  `fallback`). Failed and fallback stages run again on the next attempt.
 - Content checks at package time: OCR or caption equal to prompt text, one
   string repeated across most keyframes, high invalid-syllable rate in ASR,
   generic captions.

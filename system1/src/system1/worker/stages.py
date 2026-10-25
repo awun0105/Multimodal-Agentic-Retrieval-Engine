@@ -2,8 +2,9 @@
 
 A stage is skipped on rerun when its marker records a passing run with the same
 fingerprint. The fingerprint covers the stage name, its configuration, and the
-fingerprints of the stages it reads, so a configuration change reruns only the
-affected stage and the stages after it.
+outcome fingerprints of the stages it reads, so a configuration change or a
+different upstream result reruns only the affected stage and the stages after
+it. Failed and fallback stages always run again.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 StageReport = dict[str, Any]
+RETRY_STATUSES = {"failed", "fallback"}  # rerun these stages on the next attempt
 
 
 class StageRunner:
@@ -44,7 +46,7 @@ class StageRunner:
         marker = self.marker_dir / f"{name}.json"
         if marker.exists():
             saved = json.loads(marker.read_text(encoding="utf-8"))
-            if saved["fingerprint"] == fingerprint and saved["report"]["status"] != "failed":
+            if saved["fingerprint"] == fingerprint and saved["report"]["status"] not in RETRY_STATUSES:
                 return self._remember(name, fingerprint, saved["report"])
         start = time.monotonic()
         try:
@@ -59,7 +61,10 @@ class StageRunner:
         return self._remember(name, fingerprint, report)
 
     def _remember(self, name: str, fingerprint: str, report: StageReport) -> StageReport:
-        self.fingerprints[name] = fingerprint
+        # Downstream stages see the result too, so a rerun with a different
+        # outcome (for example a cut fallback that now passes) reruns them.
+        outcome = {key: value for key, value in report.items() if key != "seconds"}
+        self.fingerprints[name] = _fingerprint(name, outcome, [fingerprint])
         self.reports[name] = report
         return report
 
