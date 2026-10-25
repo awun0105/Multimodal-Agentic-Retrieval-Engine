@@ -186,7 +186,11 @@ contract, `docs/validation/test-matrix.md`).
   - [x] Cut-detection fallback: one whole-video cut segment, status `fallback`,
     retried on the next attempt; downstream stages rerun when an upstream
     outcome changes.
-  - [ ] Release step: merge ZIPs, SQLite + FTS5, image and text indexes.
+  - [x] Release step (`release/build.py`, `tests/test_release_build.py`):
+    validates every package checksum and content, rejects duplicate videos,
+    writes SQLite tables with FTS5 (`unicode61 remove_diacritics 0` over
+    `text` and `text_unaccented`), image and text inner-product indexes with
+    vector maps, copied media, and a manifest listing degraded stages.
   - [ ] Batch runner with Hugging Face sync; new Notebook 01 and 02.
 - [ ] Step 6: End-to-end run and cleanup.
 
