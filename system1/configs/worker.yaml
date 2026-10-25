@@ -1,0 +1,52 @@
+# Per-video worker for the simplified pipeline.
+# Design: docs/architecture/system1-target.md. Models: ADR 0023.
+# Trial evidence: docs/plans/active/system1-pipeline-simplification.md.
+schema_version: worker_v1
+
+keyframes:
+  candidate_interval_sec: 2.0
+  min_change: 0.15
+  subshot_drift: 0.35
+  max_subshot_sec: 12.0
+  edge_margin_frames: 2
+  jpeg_long_side: 1280
+  jpeg_quality: 90
+  thumbnail_width: 320
+
+models:
+  image_embedding:
+    model_id: google/siglip2-so400m-patch14-384
+    revision: e8e487298228002f3d8a82e0cd5c8ea9c567f57f
+    batch_size: 32
+    text_max_length: 64
+  text_embedding:
+    model_id: intfloat/multilingual-e5-large
+    revision: 3d7cfbdacd47fdda877c5cd8a79fbcc4f2a574f3
+    batch_size: 32
+  asr:
+    model_id: khanhld/chunkformer-ctc-large-vie
+    revision: 311fc03558a895dc2b32957f2fb4236c7fb1455b
+    chunk_size: 64
+    left_context_size: 128
+    right_context_size: 128
+    total_batch_duration_sec: 14400
+  ocr:
+    detector: easyocr
+    detector_languages: [vi]
+    recognizer: vietocr_vgg_transformer
+    crop_padding_px: 4
+    min_crop_px: 8
+    batch_size: 32
+  captions:
+    model_id: Qwen/Qwen3-VL-4B-Instruct
+    revision: ebb281ec70b05090aa6165b016eac8ec08e71b17
+    batch_size: 8
+    max_new_tokens: 700
+    max_image_side: 768
+
+text:
+  asr_chunk_min_sec: 10.0
+  asr_chunk_max_sec: 30.0
+  asr_chunk_max_gap_sec: 2.0
+  ocr_min_line_chars: 3
+  ocr_repeat_min_fraction: 0.5

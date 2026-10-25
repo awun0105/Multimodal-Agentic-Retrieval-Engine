@@ -39,6 +39,22 @@ phase01-production = [
     "transformers==4.57.6",
 ]
 
+# Per-video worker (ADR 0023). VietOCR pins old Pillow, einops, and gdown, so
+# it is installed separately with `pip install --no-deps vietocr==0.3.13`.
+worker = [
+    "accelerate>=1.0",
+    "chunkformer==1.2.2; python_version >= '3.11'",
+    "easyocr==1.7.2",
+    "einops>=0.8",
+    "gdown>=5.0",
+    "prefetch-generator>=1.0.1",
+    "sentence-transformers>=3.0",
+    "torch>=2.5",
+    "torchvision>=0.20",
+    "transformers>=4.57",
+    "xgrammar>=0.2",
+]
+
 [project.scripts]
 system1 = "system1.cli:main"
 system1-phase01-qualify = "system1.phase01_qualification_cli:main"

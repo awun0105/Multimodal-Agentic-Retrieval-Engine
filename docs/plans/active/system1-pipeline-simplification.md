@@ -201,7 +201,9 @@ Text embeddings over the 2026-08-27 Vintern shot captions (`caption_vi`):
 ASR: ChunkFormer-large-vie output has no broken syllables on both videos
 (for example "tiểu học lý nhơn", "báo thanh niên" where Parakeet wrote
 "Trừiểu học lý Dơn", "doáo Thanh niên"); output is lowercase without
-punctuation. Decode time: 17 s for `L30_V030`, 129 s for `L25_V085`.
+punctuation. Decode time: 17 s for `L30_V030`, 129 s for `L25_V085`, on CPU:
+`endless_decode` runs on the device of the model parameters and the trial did
+not move the model to the GPU.
 PhoWhisper-large ran out of GPU memory in both kernel versions (second version
 on an otherwise unused T4, batch 8, 30 s chunks); not retried because
 ChunkFormer already meets the need.
