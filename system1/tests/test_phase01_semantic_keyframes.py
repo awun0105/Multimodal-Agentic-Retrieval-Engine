@@ -5,8 +5,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
-from system1.config import load_configs
 from system1.keyframes import (
     SelectedKeyframe,
     candidate_frame_ids_for_shot,
@@ -24,13 +24,12 @@ from system1.keyframes.signals import (
     difference_hash_distance,
     text_jaccard_distance,
 )
-from system1.phase01 import production
 
 CONFIG_DIR = Path(__file__).parents[1] / "configs"
 
 
 def keyframe_config() -> dict:
-    return load_configs(CONFIG_DIR)["media"]["keyframe"]
+    return yaml.safe_load((CONFIG_DIR / "media.yaml").read_text(encoding="utf-8"))["keyframe"]
 
 
 def frame(value: int = 127) -> np.ndarray:
@@ -251,72 +250,6 @@ def test_coverage_seed_matching_actual_anchor_is_not_duplicated(monkeypatch) -> 
     assert len(middle_rows) == 1
     assert middle_rows[0]["decision_reason"] == "actual_anchor"
 
-
-def test_build_keyframes_decodes_anchors_seeds_and_probes_in_one_pass(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    media_config = load_configs(CONFIG_DIR)["media"]
-    probe_plan = TemporalProbePlan(
-        probes=(TemporalProbe(35, 0.7, 1.0),),
-        coverage_cap_reached=False,
-        remaining_max_probe_gap_seconds=1.0,
-        coverage_seeds=(TemporalProbe(5, 0.1, None, "coverage_seed_safe_start"),),
-    )
-    decoded_calls: list[list[set[int]]] = []
-
-    monkeypatch.setattr(
-        production,
-        "candidate_frame_ids_for_shot",
-        lambda *_args: {"early": (20,), "middle": (50,), "late": (80,)},
-    )
-    monkeypatch.setattr(
-        production,
-        "temporal_probe_plan_for_shot",
-        lambda *_args: probe_plan,
-    )
-
-    def decode_once(_video_path, groups):
-        captured = [set(group) for group in groups]
-        decoded_calls.append(captured)
-        return iter([{frame_id: frame() for frame_id in captured[0]}])
-
-    monkeypatch.setattr(production, "iter_decode_frame_groups", decode_once)
-    monkeypatch.setattr(
-        production,
-        "select_keyframes_for_shot",
-        lambda *_args: (anchors_for_long_shot(), []),
-    )
-    monkeypatch.setattr(
-        production,
-        "select_supplemental_keyframes",
-        lambda **_kwargs: ([], []),
-    )
-    monkeypatch.setattr(
-        production, "write_keyframe_images", lambda *_args, **_kwargs: None
-    )
-
-    production._build_keyframes(
-        video_id="v",
-        video_path=tmp_path / "video.mp4",
-        shots=[
-            {
-                "shot_id": "v_SH00000",
-                "start_frame": 0,
-                "end_frame": 101,
-                "start_sec": 0.0,
-                "end_sec": 2.02,
-            }
-        ],
-        timeline=[
-            {"frame_id": frame_id, "pts_time": frame_id * 0.02}
-            for frame_id in range(101)
-        ],
-        output_dir=tmp_path / "output",
-        config=media_config,
-    )
-
-    assert decoded_calls == [[{5, 20, 35, 50, 80}]]
 
 
 def test_short_shot_does_not_create_unnecessary_probes() -> None:

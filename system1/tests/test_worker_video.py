@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from system1.artifacts.package import validate_artifact_zip
-from system1.shots.transnet import scenes_to_shot_rows
+from system1.providers.cuts import TransNetStream
 from system1.text.evidence import AsrSegment
 from system1.worker.package import PackageError, representative_keyframes, validate_package
 from system1.worker.video import VideoInput, WorkerModels, process_video
@@ -46,12 +46,44 @@ class Calls:
         self.count[name] = self.count.get(name, 0) + 1
 
 
+class FakeCuts:
+    """TransNet stand-in: fixed per-frame predictions with the real 100-frame window lag."""
+
+    threshold = 0.5
+
+    def __init__(self, calls: Calls, predictions, *, error_at: int | None = None) -> None:
+        self.calls, self.predictions, self.error_at = calls, np.asarray(predictions, dtype=float), error_at
+
+    def start(self) -> TransNetStream:
+        self.calls.hit("cuts")
+        pushed = {"frames": 0}
+
+        def predict_window(frames):
+            if self.error_at is not None and pushed["frames"] >= self.error_at:
+                raise RuntimeError("CUDA error: device-side assert")
+            begin = stream.emitted
+            values = self.predictions[begin:begin + 50]
+            return np.pad(values, (0, 50 - len(values)))
+
+        stream = TransNetStream(predict_window)
+        push = stream.push
+
+        def counted_push(frame):
+            pushed["frames"] += 1
+            return push(frame)
+
+        stream.push = counted_push
+        return stream
+
+
+def _cut_predictions(frame_count: int, cut_frames: list[int]) -> np.ndarray:
+    predictions = np.zeros(frame_count)
+    predictions[cut_frames] = 0.9
+    return predictions
+
+
 def _models(calls: Calls, *, asr_error: bool = False) -> WorkerModels:
-    def cuts(video_path, timeline_rows, work_dir):
-        calls.hit("cuts")
-        rows = scenes_to_shot_rows(video_id="V1", scenes_inclusive=[[0, 74], [75, 149]],
-                                   frame_timeline=timeline_rows)
-        return [{key: row[key] for key in ("start_frame", "end_frame", "start_sec", "end_sec")} for row in rows]
+    cuts = FakeCuts(calls, _cut_predictions(FRAMES, [74]))  # cut segments [0, 75) and [75, 150)
 
     class Image:
         def embed_images(self, images):
@@ -137,10 +169,13 @@ def test_cut_segments_with_changing_content_split_into_shots(video, tmp_path) ->
 def test_failed_cut_detection_falls_back_to_one_segment(video, tmp_path) -> None:
     models = _models(Calls())
 
-    def broken_cuts(video_path, timeline_rows, work_dir):
-        raise RuntimeError("TransNet weights missing")
+    class BrokenCuts:
+        threshold = 0.5
 
-    models.cuts = broken_cuts
+        def start(self):
+            raise RuntimeError("TransNet weights missing")
+
+    models.cuts = BrokenCuts()
     zip_path = _run(video, tmp_path, models)
 
     cuts = _table(zip_path, "cut_segments.parquet")
@@ -157,10 +192,13 @@ def test_rerun_after_cut_fallback_retries_cuts_and_rebuilds_shots(video, tmp_pat
     models = _models(calls)
     working_cuts = models.cuts
 
-    def broken_cuts(video_path, timeline_rows, work_dir):
-        raise RuntimeError("TransNet weights missing")
+    class BrokenCuts:
+        threshold = 0.5
 
-    models.cuts = broken_cuts
+        def start(self):
+            raise RuntimeError("TransNet weights missing")
+
+    models.cuts = BrokenCuts()
     _run(video, tmp_path, models)
     models.cuts = working_cuts
     zip_path = _run(video, tmp_path, models)
@@ -303,3 +341,112 @@ def test_representative_uses_vectors_over_the_middle_rule() -> None:
 
     assert representative_keyframes(keyframes)["keyframe_id"].tolist() == ["b"]
     assert representative_keyframes(keyframes, vectors)["keyframe_id"].tolist() in (["a"], ["c"])
+
+
+def test_gpu_failure_mid_video_falls_back_without_a_second_attempt(video, tmp_path) -> None:
+    calls = Calls()
+    models = _models(calls)
+    models.cuts = FakeCuts(calls, _cut_predictions(FRAMES, [74]), error_at=120)
+    zip_path = _run(video, tmp_path, models)
+
+    with zipfile.ZipFile(zip_path) as archive:
+        manifest = json.loads(archive.read("V1/manifest.json"))
+    assert calls.count["cuts"] == 1  # no CPU retry (plan Step 5f item 11)
+    assert manifest["stages"]["cuts"]["status"] == "fallback"
+    assert "device-side assert" in manifest["stages"]["cuts"]["error"]
+    assert _table(zip_path, "cut_segments.parquet")[["start_frame", "end_frame"]].values.tolist() == [[0, FRAMES]]
+    keyframes = _table(zip_path, "keyframes.parquet")
+    with zipfile.ZipFile(zip_path) as archive:
+        images = {name for name in archive.namelist() if name.startswith("V1/keyframes/")}
+    assert images == {f"V1/{ref}" for ref in keyframes["keyframe_ref"]}
+
+
+def _make_equivalence_video(path: Path, frame_count: int) -> None:
+    """Hard cuts at frames 100 and 200, a slow blend inside the middle segment, motion in the first."""
+
+    import cv2
+
+    rng = np.random.default_rng(7)
+    first, second, third, fourth = (rng.integers(0, 255, size=(64, 96, 3), dtype=np.uint8) for _ in range(4))
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (96, 64))
+    for index in range(frame_count):
+        if index < 100:
+            frame = np.roll(first, index, axis=1)
+        elif index < 200:
+            weight = (index - 100) / 99
+            frame = ((1 - weight) * second + weight * third).astype(np.uint8)
+        else:
+            frame = fourth
+        writer.write(frame)
+    writer.release()
+
+
+def test_single_pass_matches_two_pass_cuts_shots_and_keyframes(tmp_path) -> None:
+    from system1.keyframes.adaptive import iter_cut_segment_frames, plan_candidate_frames
+    from system1.keyframes.builder import iter_decode_frame_groups
+    from system1.shots.transnet import scenes_to_shot_rows
+    from system1.shots.transnet_worker import predictions_to_scenes
+    from system1.worker.video import _policy, _single_pass, _split_shots
+
+    frame_count = 300
+    path = tmp_path / "V2.mp4"
+    _make_equivalence_video(path, frame_count)
+    timeline = [{"video_id": "V2", "frame_id": i, "pts_time": i / FPS, "duration_time": 1 / FPS}
+                for i in range(frame_count)]
+    video = VideoInput(video_id="V2", video_path=path, timeline_rows=timeline)
+    # A one-frame cut, a five-frame dissolve run, and runs touching both ends (not cuts).
+    predictions = _cut_predictions(frame_count, [0, 1, 99, 198, 199, 200, 201, 202, 297, 298, 299])
+    scenes = predictions_to_scenes(predictions, 0.5)
+    assert scenes == [[0, 99], [100, 200], [201, 299]]
+
+    class MeanColor:  # coarse grey layout, centred, so a content change moves the vector
+        def embed_images(self, images):
+            vectors = [np.asarray(image.convert("L").resize((8, 8)), dtype="float32").reshape(-1)
+                       for image in images]
+            return np.stack([vector - vector.mean() + 1e-3 for vector in vectors])
+
+    settings = CONFIG["keyframes"]
+    rows = scenes_to_shot_rows(video_id="V2", scenes_inclusive=scenes, frame_timeline=timeline)
+    two_pass_cuts = pd.DataFrame(
+        [{"cut_segment_id": f"V2_CS{index:05d}", "video_id": "V2",
+          **{key: row[key] for key in ("start_frame", "end_frame", "start_sec", "end_sec")}}
+         for index, row in enumerate(rows)])
+    two_pass = _split_shots(video, two_pass_cuts, settings, tmp_path / "two", MeanColor())
+    single_cuts, single = _single_pass(video, settings, tmp_path / "one", MeanColor(),
+                                       FakeCuts(Calls(), predictions))
+
+    assert pd.DataFrame(single_cuts).equals(two_pass_cuts)
+    assert single[0] == two_pass[0] and single[1] == two_pass[1] and single[3] == two_pass[3]
+    np.testing.assert_array_equal(single[2], two_pass[2])
+    assert len(single[0]) > len(scenes)  # the blend and the motion split segments into shots
+    for row in single[1]:
+        assert (tmp_path / "one" / row["keyframe_ref"]).read_bytes() == \
+            (tmp_path / "two" / row["keyframe_ref"]).read_bytes()
+
+    # Candidate frames are the same arrays the two-pass decoder returns.
+    pts = [row["pts_time"] for row in timeline]
+    policy = _policy(settings)
+    plans = [plan_candidate_frames(start_frame=s, end_frame=e + 1, pts=pts, policy=policy) for s, e in scenes]
+    single_groups = list(iter_cut_segment_frames(path, pts=pts, policy=policy,
+                                                 predictor=FakeCuts(Calls(), predictions).start(), threshold=0.5))
+    assert [(s, e, plan) for s, e, plan, _ in single_groups] == \
+        [(s, e + 1, plan) for (s, e), plan in zip(scenes, plans)]
+    for (_, _, _, frames), expected in zip(single_groups, iter_decode_frame_groups(path, plans)):
+        assert frames.keys() == expected.keys()
+        assert all(np.array_equal(frames[key], expected[key]) for key in frames)
+
+
+@pytest.mark.parametrize("frame_count", [1, 50, 74, 75, 100, 151])
+def test_transnet_stream_gives_each_frame_its_window_prediction(frame_count) -> None:
+    # Each window predicts its middle 50 frames (25..74); frame i must get the value computed from itself.
+    def predict_window(frames):
+        return [float(frame[0, 0, 0]) + 1000 * float(frame[0, 0, 1]) for frame in frames[25:75]]
+
+    stream = TransNetStream(predict_window)
+    values: list[float] = []
+    for index in range(frame_count):
+        frame = np.zeros((27, 48, 3), dtype=np.uint8)
+        frame[0, 0, 0], frame[0, 0, 1] = index % 256, index // 256
+        values.extend(stream.push(frame))
+    values.extend(stream.finish())
+    assert values == [float(index) for index in range(frame_count)]

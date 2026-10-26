@@ -687,7 +687,19 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   `hf_hub_download(local_dir=...)` and moves the file), 5 (`ZIP_STORED` for
   .jpg/.jpeg/.webp/.npy/.parquet), 10 (`exists()` re-check right before the
   worker and caption ZIP upload; counted as skipped) coded 2026-10-26, not
-  yet run on Kaggle. Open: 3, 11.
+  yet run on Kaggle. Items 3 and 11 coded 2026-10-26: the cuts stage
+  decodes once with `cv2` (`keyframes.adaptive.iter_cut_segment_frames`);
+  TransNet runs in process, loaded once per session (`providers.cuts.
+  TransNetStream`, same 100-frame windows as `transnet_worker`, input
+  resized by `cv2` INTER_AREA instead of ffmpeg, so predictions may differ
+  slightly from the subprocess); cut segments are finalized after the
+  predictor lag and open positive runs; full-resolution frames are held only
+  while their segment is unknown or while they can be candidates. Shots and
+  keyframes pass to the keyframes stage in memory; a keyframes-only rerun
+  decodes again from `cut_segments.parquet`. A TransNet failure goes straight
+  to the one-segment fallback, no CPU retry. Test: single pass equals the
+  two-pass result on a synthetic 300-frame video. Kaggle check pending: cut
+  segments and keyframes identical on the 5 test videos, worker seconds.
   New known failure: `test_phase01_runtime_qualification.py::
   test_qualified_python313_production_tuple_is_pinned_in_project_and_lock`
   (lockfile now has two resolutions because of the `release` extra); the test
@@ -699,6 +711,28 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   `system1/notebooks/README.md`; `tests/test_notebooks.py` replaces the smoke
   notebook test, with an allowlist of 00B and 00C logic cells still to reduce.
 - [ ] Step 6: End-to-end run and cleanup.
+  - [x] Item 2 and deferred 5d/5e deletions (2026-10-26). Removed, each had
+    no live importer from `cli.py`, notebooks, or `mvp-app`:
+    - `asr/` (NeMo, faster-whisper, VAD, links): replaced by `providers/asr.py`.
+    - `config/` (YAML loader for old phase configs): worker reads `worker.yaml`.
+    - `db/sqlite_builder.py`, `indexes/builder.py`, `indexes/visual.py`: replaced by `release/build.py`, `indexes/vectors.py`.
+    - `features/` (Phase02 mock providers): replaced by worker stages.
+    - `gemini/client.py`, `vlm/`: replaced by `providers/captions.py`.
+    - `phase01/` except `model_artifacts.py` (runner, production, smoke, preflight, qa, review, scheduler, checkpoint, validation, phase00); `phase01/__init__.py` reduced to a docstring.
+    - `phase01_qualification.py`, `phase01_qualification_cli.py`, `phase01_qualification_worker.py`, script `system1-phase01-qualify`.
+    - `release/merge.py`, `release/writer.py`, `release/smoke.py`, `release/phase_artifacts.py`: replaced by `release/build.py`, `release/publish.py`.
+    - `scenes/builder.py`, `grouping.py`, `speech.py`, `summary.py`, `vlm_judge.py`: replaced by `scenes/deterministic.py`, `scenes/release_builder.py`.
+    - `shots/builder.py`, `shots/understanding.py`; `shots/__init__.py` exports TransNet only.
+    - `structure/`, `text/builder.py`, `validation/`: replaced by worker stages, `text/evidence.py`, `worker/package.validate_package`.
+    - `release/types.py`: `BuildOptions`, `config_hash` (only used by removed modules).
+    - CLI: `phase01-prepare-asr-runtime`, `phase01-smoke`, `process-batch`, `feature-batch`, `merge`, `build-db`, `build-index`, `validate`, `smoke-test`, `release`, `sync-release`, `restore-release`, `sync-structure-artifacts`, `restore-structure-artifacts`.
+    - Notebooks `01_worker_structure_pipeline`, `02_worker_feature_enrichment`, `03_merge_validate_index_release`.
+    - `system1/prompts/` (all read only by `vlm/`, `gemini/`, `phase01/`).
+    - `configs/` except `worker.yaml` and `media.yaml`.
+    - Schemas: shot_captions, scene_summaries, shot_transcript_links, scene_transcript_links, objects, embeddings_meta, feature_availability, text_sources, asr_words, scene_partition_manual_review, scene_partition_review_candidate.
+    - `pyproject.toml` extra `phase01-production` and its `[tool.uv] conflicts`; `uv.lock` relocked.
+    - 21 test files for removed modules (including `test_phase01_runtime_qualification.py`, `test_phase01_asr_alignment.py`, `test_phase01_vlm_client.py`); old-flow tests cut from `test_smoke.py`, `test_runtime_environment.py`, `test_phase_structure_artifacts.py`, `test_checkpoint_workflow_cli.py`.
+    Check: `cd system1 && uv run pytest -q` 332 passed, 0 failed.
 
 ## Trial Results
 
@@ -815,9 +849,8 @@ Observations:
 - Focused proof: behavior tests per stage (Step 4).
 - Integration proof: one Kaggle run from Phase00 restore to validated release
   for 5 to 10 videos.
-- Repository-required checks: `cd system1 && uv run pytest -q
-  --ignore=tests/test_phase01_vlm_client.py` with no new failures beyond the
-  known list in `AGENTS.md`.
+- Repository-required checks: `cd system1 && uv run pytest -q` with no new
+  failures beyond the known list in `AGENTS.md`.
 
 ## Result
 

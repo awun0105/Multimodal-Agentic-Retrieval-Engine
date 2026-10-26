@@ -22,23 +22,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-phase01-production = [
-    "bitsandbytes==0.47.0",
-    "faster-whisper==1.2.1",
-    "nemo_toolkit[asr]==2.7.3",
-    "onnx==1.18.0",
-    "onnxruntime==1.28.0; python_version >= '3.11'",
-    "accelerate>=0.33.0",
-    "einops>=0.8.0",
-    "qwen-vl-utils>=0.0.8",
-    "sentencepiece>=0.2.0",
-    "timm>=1.0.0",
-    "torch==2.8.0",
-    "torchvision==0.23.0",
-    "torchaudio==2.8.0",
-    "transformers==4.57.6",
-]
-
 # Per-video worker (ADR 0023). VietOCR pins old Pillow, einops, and gdown, so
 # it is installed separately with `pip install --no-deps vietocr==0.3.13`.
 worker = [
@@ -56,14 +39,13 @@ worker = [
 ]
 
 # Release build and bucket publish (ADR 0025). The Storage Bucket API needs
-# huggingface_hub 1.x, which the old phase01-production extra cannot use.
+# huggingface_hub 1.x.
 release = [
     "huggingface_hub>=1.27,<2",
 ]
 
 [project.scripts]
 system1 = "system1.cli:main"
-system1-phase01-qualify = "system1.phase01_qualification_cli:main"
 
 [dependency-groups]
 dev = [
@@ -74,8 +56,3 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.uv]
-conflicts = [
-    [{ extra = "release" }, { extra = "phase01-production" }],
-]

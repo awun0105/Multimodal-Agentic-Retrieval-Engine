@@ -1,8 +1,0 @@
-fps_policy:
-  scope: per_video
-  source: ffprobe
-  planning_expected_fps: 25
-frame_id_policy:
-  primary: decoded_original_frame_index
-  fallback: timestamp_based_only_when_needed
-boundary_convention: "[start_frame, end_frame)"

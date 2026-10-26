@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import yaml
 from PIL import Image
 
-from system1.config import load_configs
 from system1.keyframes.builder import (
     candidate_frame_ids_for_shot,
     evaluate_candidate,
@@ -25,7 +25,7 @@ CONFIG_DIR = Path(__file__).parents[1] / "configs"
 
 
 def keyframe_config() -> dict:
-    return load_configs(CONFIG_DIR)["media"]["keyframe"]
+    return yaml.safe_load((CONFIG_DIR / "media.yaml").read_text(encoding="utf-8"))["keyframe"]
 
 
 def checkerboard(size: int = 64) -> np.ndarray:

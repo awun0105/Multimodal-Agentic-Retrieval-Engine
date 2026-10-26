@@ -100,62 +100,6 @@ def test_ingest_resume_restores_phase00_and_skips(tmp_path: Path) -> None:
     assert "Restored phase00 checkpoint; skipping ingest." in result.output
 
 
-def test_process_batch_sync_saves_phase01_checkpoint(tmp_path: Path) -> None:
-    output_dir = tmp_path / "output"
-    artifact_root = tmp_path / "artifact-store"
-
-    runner.invoke(app, ["ingest", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    runner.invoke(app, ["assign-batches", "--num-batches", "1", "--output", str(output_dir), "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    result = runner.invoke(
-        app,
-        [
-            "process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--output", str(output_dir), "--input", "input", "--sync", "--artifact-root", str(artifact_root), "--no-resume",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert (artifact_root / checkpoint_relative_path("phase01_structure", "batch_000")).exists()
-
-
-def test_process_batch_resume_restores_phase01_and_skips(tmp_path: Path) -> None:
-    output_dir = tmp_path / "output"
-    artifact_root = tmp_path / "artifact-store"
-
-    runner.invoke(app, ["ingest", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    runner.invoke(app, ["assign-batches", "--num-batches", "1", "--output", str(output_dir), "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--output", str(output_dir), "--input", "input", "--sync", "--artifact-root", str(artifact_root), "--no-resume"])
-    shutil.rmtree(output_dir / DEFAULT_RELEASE_ID)
-
-    result = runner.invoke(
-        app,
-        [
-            "process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--output", str(output_dir), "--input", "input", "--resume", "--artifact-root", str(artifact_root), "--no-sync",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert (output_dir / DEFAULT_RELEASE_ID / "manifests" / "worker_reports" / "structure_batch_000_worker_123.json").exists()
-    assert "Restored phase01 checkpoint; skipping process-batch." in result.output
-
-
-def test_feature_batch_sync_saves_phase02_checkpoint(tmp_path: Path) -> None:
-    output_dir = tmp_path / "output"
-    artifact_root = tmp_path / "artifact-store"
-
-    runner.invoke(app, ["ingest", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    runner.invoke(app, ["assign-batches", "--num-batches", "1", "--output", str(output_dir), "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    runner.invoke(app, ["process-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--output", str(output_dir), "--input", "input", "--no-resume", "--no-sync", "--artifact-root", str(artifact_root)])
-    result = runner.invoke(
-        app,
-        [
-            "feature-batch", "--batch-id", "batch_000", "--worker-id", "worker_123", "--providers", "mock", "--output", str(output_dir), "--input", "input", "--sync", "--artifact-root", str(artifact_root), "--no-resume",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert (artifact_root / checkpoint_relative_path("phase02_features", "batch_000")).exists()
-
-
 def test_default_cli_behavior_does_not_sync_phase00(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("AIC_SYNC", raising=False)
     output_dir = tmp_path / "output"
@@ -184,15 +128,6 @@ def test_aic_sync_env_enables_default_cli_sync(tmp_path: Path, monkeypatch) -> N
     assert assigned.exit_code == 0, assigned.output
 
     assert (artifact_root / checkpoint_relative_path("phase00_ingest_assignment")).exists()
-
-
-def test_merge_help_does_not_expose_checkpoint_options() -> None:
-    result = runner.invoke(app, ["merge", "--help"])
-
-    assert result.exit_code == 0, result.output
-    assert "--artifact-root" not in result.output
-    assert "--sync" not in result.output
-    assert "--resume" not in result.output
 
 
 def test_phase_command_help_includes_artifact_backend() -> None:

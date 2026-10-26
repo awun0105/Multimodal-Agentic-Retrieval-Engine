@@ -47,6 +47,10 @@ Resolved. Use SQLite FTS5 as MVP text search. Treat Tantivy/OpenSearch/BM25 JSON
 
 ## Conflict 7: Phase01 semantic structure target vs current fallback implementation
 
+Resolved 2026-10-26: `process-batch` and the old Phase01 modules were removed
+(plan `system1-pipeline-simplification` Step 6); the worker path in ADR 0023
+replaces them. The text below is historical.
+
 - Target docs/spec now define Notebook 01 / `process-batch` as phase01
   semantic structure: restore phase00, reuse phase00 video facts, process only
   the assigned batch, stage per-video raw media from `AIC26_raw` or local input,

@@ -9,12 +9,19 @@ text vectors, package. Each stage has a checkpoint (`stages.StageRunner`).
 Cuts, keyframes, and image vectors are required; ASR and OCR degrade to empty
 output and a failed status (ADR 0024). Captions run in a separate pass
 (`system1.captions`, ADR 0025).
+
+The cuts stage decodes the video once: each frame feeds TransNet and the
+candidate frames of each cut segment are selected as soon as the segment is
+known (plan Step 5f item 3). It hands the shots and keyframes to the keyframes
+stage in memory; when only the keyframes stage reruns, it decodes the
+candidates again from `cut_segments.parquet`.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+import shutil
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -24,7 +31,14 @@ import pandas as pd
 from PIL import Image
 
 from system1.artifacts.package import write_artifact_zip
-from system1.keyframes.adaptive import AdaptiveKeyframePolicy, plan_candidate_frames, select_adaptive_keyframes
+from system1.keyframes.adaptive import (
+    AdaptiveKeyframePolicy,
+    CutDetectionError,
+    CutPredictor,
+    iter_cut_segment_frames,
+    plan_candidate_frames,
+    select_adaptive_keyframes,
+)
 from system1.keyframes.builder import iter_decode_frame_groups, write_keyframe_images
 from system1.providers.ocr import CropCache, clean_ocr_lines, frame_text_hashes, should_rerun_ocr
 from system1.text.evidence import (
@@ -43,6 +57,12 @@ SHOT_COLUMNS = ["shot_id", "video_id", "cut_segment_id", "scene_id", "start_fram
                 "end_sec"]
 DOCUMENT_COLUMNS = ["doc_id", "video_id", "evidence_type", "start_sec", "end_sec", "shot_ids",
                     "keyframe_id", "text", "text_unaccented", "window"]
+
+
+class CutDetector(Protocol):
+    threshold: float
+
+    def start(self) -> CutPredictor: ...
 
 
 class ImageEmbedder(Protocol):
@@ -70,7 +90,7 @@ class VideoInput:
 
 @dataclass
 class WorkerModels:
-    cuts: Callable[[Path, list[dict[str, Any]], Path], list[dict[str, Any]]]
+    cuts: CutDetector
     image: ImageEmbedder
     asr: SpeechRecognizer
     ocr: TextReader
@@ -95,24 +115,32 @@ def process_video(
     model_config = config["models"]
     text_config = config["text"]
 
+    single_pass: dict[str, Any] = {}
+
     def cuts_stage():
         report: dict[str, Any] = {"status": "pass"}
         try:
-            rows = models.cuts(video.video_path, video.timeline_rows, root / "scratch")
-        except Exception as exc:
-            # Without cuts the whole video is one segment; shots still split by visual change.
-            rows = [_whole_video_segment(video.timeline_rows)]
-            report = {"status": "fallback", "error": f"{type(exc).__name__}: {exc}"[:500]}
-        cuts = [{"cut_segment_id": f"{video_id}_CS{index:05d}", "video_id": video_id, **row}
-                for index, row in enumerate(rows)]
+            cuts, result = _single_pass(video, config["keyframes"], package, models.image, models.cuts)
+        except CutDetectionError as exc:
+            # No CPU retry (plan Step 5f item 11): the whole video is one segment,
+            # shots still split by visual change, and the next run retries the cuts.
+            for folder in ("keyframes", "thumbnails"):
+                shutil.rmtree(package / folder / video_id, ignore_errors=True)
+            cuts, result = _single_pass(video, config["keyframes"], package, models.image, None)
+            report = {"status": "fallback", "error": str(exc)[:500]}
         pd.DataFrame(cuts, columns=CUT_COLUMNS).to_parquet(package / "cut_segments.parquet", index=False)
+        single_pass["result"] = result
         return {**report, "cut_segments": len(cuts)}
 
     vectors_path = root / "scratch" / "keyframe_vectors.npy"
 
     def keyframes_stage():
-        shots, keyframes, vectors, report = _split_shots(
-            video, pd.read_parquet(package / "cut_segments.parquet"), config["keyframes"], package, models.image)
+        if "result" in single_pass:
+            shots, keyframes, vectors, report = single_pass.pop("result")
+        else:
+            shots, keyframes, vectors, report = _split_shots(
+                video, pd.read_parquet(package / "cut_segments.parquet"), config["keyframes"], package,
+                models.image)
         if not keyframes:
             raise ValueError(f"no usable keyframe in {video_id}")
         # scene_id is null in worker packages; the release sets it (ADR 0026).
@@ -209,24 +237,8 @@ def process_video(
                               status="partial" if failed else "complete")
 
 
-def _whole_video_segment(timeline_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    timeline = sorted(timeline_rows, key=lambda row: int(row["frame_id"]))
-    last = timeline[-1]
-    return {"start_frame": 0, "end_frame": len(timeline), "start_sec": float(timeline[0]["pts_time"]),
-            "end_sec": float(last["pts_time"]) + float(last.get("duration_time") or 0.0)}
-
-
-def _split_shots(
-    video: VideoInput, cuts: pd.DataFrame, settings: Mapping[str, Any], package: Path, embedder: ImageEmbedder
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], np.ndarray, dict[str, int]]:
-    """Split cut segments into shots, write keyframe images, and return shot rows,
-    keyframe rows, keyframe image vectors aligned to the rows, and a stage report.
-
-    The usable candidates of each cut segment are embedded in one call; the
-    shot split uses the vectors (plan Step 5c item 4).
-    """
-
-    policy = AdaptiveKeyframePolicy(
+def _policy(settings: Mapping[str, Any]) -> AdaptiveKeyframePolicy:
+    return AdaptiveKeyframePolicy(
         candidate_interval_sec=float(settings["candidate_interval_sec"]),
         min_change=float(settings["min_change"]),
         shot_drift=float(settings["shot_drift"]),
@@ -235,32 +247,95 @@ def _split_shots(
         min_sharpness_ratio=float(settings.get("min_sharpness_ratio", 0.3)),
     )
 
+
+def _timeline_pts(video: VideoInput) -> tuple[list[float], float]:
+    timeline = sorted(video.timeline_rows, key=lambda row: int(row["frame_id"]))
+    pts = [float(row["pts_time"]) for row in timeline]
+    return pts, pts[-1] + float(timeline[-1].get("duration_time") or 0.0)
+
+
+def _single_pass(
+    video: VideoInput, settings: Mapping[str, Any], package: Path, embedder: ImageEmbedder,
+    detector: CutDetector | None,
+) -> tuple[list[dict[str, Any]], tuple[list[dict[str, Any]], list[dict[str, Any]], np.ndarray, dict[str, int]]]:
+    """Detect cuts and split shots in one decode; return cut rows and the `_split_shots` result.
+
+    With `detector=None` the whole video is one cut segment. A detector failure
+    raises `CutDetectionError`; keyframe images already written stay on disk.
+    """
+
+    policy = _policy(settings)
+    pts, video_end = _timeline_pts(video)
+    if detector is None:
+        predictor, threshold = None, 0.5
+    else:
+        try:
+            predictor, threshold = detector.start(), float(detector.threshold)
+        except Exception as exc:
+            raise CutDetectionError(f"{type(exc).__name__}: {exc}") from exc
+    cuts: list[dict[str, Any]] = []
+
+    def segments():
+        for start, end, plan, frames in iter_cut_segment_frames(
+                video.video_path, pts=pts, policy=policy, predictor=predictor, threshold=threshold):
+            cut_segment_id = f"{video.video_id}_CS{len(cuts):05d}"
+            cuts.append({"cut_segment_id": cut_segment_id, "video_id": video.video_id, "start_frame": start,
+                         "end_frame": end, "start_sec": pts[start],
+                         "end_sec": pts[end] if end < len(pts) else video_end})
+            yield cut_segment_id, start, end, plan, frames
+
+    result = _build_shots(video.video_id, pts, video_end, segments(), policy, settings, package, embedder)
+    return cuts, result
+
+
+def _split_shots(
+    video: VideoInput, cuts: pd.DataFrame, settings: Mapping[str, Any], package: Path, embedder: ImageEmbedder
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], np.ndarray, dict[str, int]]:
+    """Split stored cut segments into shots, decoding the candidates again; see `_build_shots`."""
+
+    policy = _policy(settings)
+    pts, video_end = _timeline_pts(video)
+    plans = [plan_candidate_frames(start_frame=int(cut.start_frame), end_frame=int(cut.end_frame),
+                                   pts=pts, policy=policy) for cut in cuts.itertuples()]
+    segments = ((cut.cut_segment_id, int(cut.start_frame), int(cut.end_frame), plan, frames)
+                for cut, plan, frames in zip(cuts.itertuples(), plans,
+                                             iter_decode_frame_groups(video.video_path, plans)))
+    return _build_shots(video.video_id, pts, video_end, segments, policy, settings, package, embedder)
+
+
+def _build_shots(
+    video_id: str, pts: list[float], video_end: float,
+    segments: Iterable[tuple[str, int, int, list[int], dict[int, np.ndarray]]],
+    policy: AdaptiveKeyframePolicy, settings: Mapping[str, Any], package: Path, embedder: ImageEmbedder,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], np.ndarray, dict[str, int]]:
+    """Split cut segments into shots, write keyframe images, and return shot rows,
+    keyframe rows, keyframe image vectors aligned to the rows, and a stage report.
+
+    `segments` yields `(cut_segment_id, start_frame, end_frame, plan, frames)`.
+    The usable candidates of each cut segment are embedded in one call; the
+    shot split uses the vectors (plan Step 5c item 4).
+    """
+
     def embed(frames: list[np.ndarray]) -> np.ndarray:
         return embedder.embed_images([Image.fromarray(frame) for frame in frames])
 
-    timeline = sorted(video.timeline_rows, key=lambda row: int(row["frame_id"]))
-    pts = [float(row["pts_time"]) for row in timeline]
-    video_end = pts[-1] + float(timeline[-1].get("duration_time") or 0.0)
-    plans = [plan_candidate_frames(start_frame=int(cut.start_frame), end_frame=int(cut.end_frame),
-                                   pts=pts, policy=policy) for cut in cuts.itertuples()]
-    video_id = video.video_id
     shots: list[dict[str, Any]] = []
     keyframes: list[dict[str, Any]] = []
     vectors: list[np.ndarray] = []
     report = {"cut_segments_without_keyframe": 0, "blurred_dropped": 0}
-    for cut, plan, frames in zip(cuts.itertuples(), plans, iter_decode_frame_groups(video.video_path, plans)):
+    for cut_segment_id, cut_start, cut_end, plan, frames in segments:
         kept = select_adaptive_keyframes([(frame, pts[frame], frames.get(frame)) for frame in plan],
                                          policy=policy, embed=embed, report=report)
         report["cut_segments_without_keyframe"] += not kept
         starts = {item.shot_index: item.frame_id for item in kept if item.reason == "shot_start"}
-        bounds = [int(cut.start_frame)] + [starts[index] for index in sorted(starts) if index > 0]
-        bounds.append(int(cut.end_frame))
+        bounds = [cut_start] + [starts[index] for index in sorted(starts) if index > 0]
+        bounds.append(cut_end)
         shot_ids = {}
         for index in sorted(starts):
             start, end = bounds[index], bounds[index + 1]
             shot_ids[index] = f"{video_id}_SH{len(shots):05d}"
             shots.append({"shot_id": shot_ids[index], "video_id": video_id,
-                          "cut_segment_id": cut.cut_segment_id, "start_frame": start, "end_frame": end,
+                          "cut_segment_id": cut_segment_id, "start_frame": start, "end_frame": end,
                           "start_sec": pts[start], "end_sec": pts[end] if end < len(pts) else video_end})
         for item in kept:
             keyframe_ref = f"keyframes/{video_id}/{video_id}_f{item.frame_id:07d}.jpg"
@@ -272,7 +347,7 @@ def _split_shots(
                                   thumbnail_width=int(settings["thumbnail_width"]))
             keyframes.append({"keyframe_id": f"{video_id}:{item.frame_id}", "video_id": video_id,
                               "frame_id": item.frame_id, "timestamp_sec": item.timestamp_sec,
-                              "shot_id": shot_ids[item.shot_index], "cut_segment_id": cut.cut_segment_id,
+                              "shot_id": shot_ids[item.shot_index], "cut_segment_id": cut_segment_id,
                               "selection_reason": item.reason, "keyframe_ref": keyframe_ref,
                               "thumbnail_ref": thumbnail_ref})
             vectors.append(item.vector)

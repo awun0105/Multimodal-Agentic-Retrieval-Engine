@@ -46,8 +46,7 @@ AIOU26_raw
 
 AIOU26_release
   processed workspace + final release repo:
-  phase00_ingestion/, phase01_structure/, phase02_features/,
-  phase03_merged/, releases/, checkpoints/, logs/
+  phase00_ingestion/, worker and caption packages, checkpoints/, logs/
 ```
 
 Google Drive may still be used as an organizer handoff source or operator
@@ -173,188 +172,33 @@ cp -R /path/to/sample/input ./input
 `import-canonical-raw` is the CLI wrapper around source-folder staging,
 standardization, probing, and raw upload. `sync-phase00-ingestion` and
 `restore-phase00-ingestion` use the phase00 Hugging Face layout for
-Notebook 00 outputs. Restore keeps the canonical
-`phase00_ingestion/` snapshot and materializes `tables/`, `raw_mapping/`,
-`frame_timeline/`, and `manifests/` into the active local release layout used by
-`process-batch`.
-`sync-structure-artifacts` and
-`restore-structure-artifacts` map local phase01 structure ZIPs and worker
-reports to and from the Hugging Face `phase01_structure` layout. Notebook 01 is
-the thin worker orchestration for the production `process-batch` path. Package
-code now owns release resolution/restore, persistent per-stage resume,
-TransNet V2, search-band keyframes, default pinned NeMo/Parakeet Vietnamese
-ASR with Silero VAD and Flashlight 4-gram decoding, Vintern OCR, Qwen2.5-VL default shot
-captions, and Gemini scene grouping/summaries, strict packaging, remote
-checksum verification, and reports.
+Notebook 00 outputs. Restore keeps the canonical `phase00_ingestion/` snapshot
+and materializes `tables/`, `raw_mapping/`, `frame_timeline/`, and
+`manifests/` into the local release layout.
 
 ## Local setup
 
 ```bash
 cd system1
-uv sync
-
-# Required for the production Notebook 01 path.
-uv sync --extra phase01-production
+uv sync                    # Phase00 ingest and tests
+uv sync --extra worker     # per-video worker and caption pass (GPU)
+uv sync --extra release    # build-release --publish (huggingface_hub 1.x)
 ```
 
-Python 3.13 production workers also require the project-owned Flashlight wheel.
-Notebook 01 installs it automatically in Step 3 from the configured checkpoint
-dataset and verifies its manifest, wheel checksum, Python ABI, platform, and
-import before preflight. A manual equivalent is:
+## Pipeline commands
 
-```bash
-system1 phase01-prepare-asr-runtime
-```
+After Phase00 (`ingest`, `assign-batches`, `sync-phase00-ingestion`):
 
-Maintainers build the pinned wheel in a clean Python 3.13 Linux x86-64 image
-with `scripts/prepare_flashlight_text_artifact.py`, then upload the emitted
-wheel and `manifest.json` at the exact configured checkpoint prefix. Production
-never compiles Flashlight inside a worker notebook.
+- `system1 worker-batch`: per-video worker (ADR 0023), one package per video.
+- `system1 caption-batch`: caption pass over worker packages (ADR 0025).
+- `system1 build-release [--publish --bucket-id ... --bucket-prefix ...]`:
+  merges packages, groups scenes (ADR 0026), writes SQLite, FAISS, and WebP
+  media, and optionally publishes to the Storage Bucket.
 
-From the repository root, the reproducible build and upload commands are:
-
-```bash
-mkdir -p /tmp/system1-flashlight-artifact
-docker run --rm \
-  -v "$PWD:/repo" \
-  -v /tmp/system1-flashlight-artifact:/out \
-  -w /repo \
-  quay.io/pypa/manylinux2014_x86_64 \
-  bash -lc 'yum install -y boost-devel && /opt/python/cp313-cp313/bin/python -m pip install cmake setuptools wheel auditwheel pybind11 && /opt/python/cp313-cp313/bin/python system1/scripts/prepare_flashlight_text_artifact.py --output /out --jobs 2'
-
-hf upload 1thesudden/AIOU26_checkpoints \
-  /tmp/system1-flashlight-artifact/manifest.json \
-  model_artifacts/runtime_wheels/flashlight_text/0.0.7/cp313-linux-x86_64/manifest.json \
-  --repo-type dataset
-
-hf upload 1thesudden/AIOU26_checkpoints \
-  /tmp/system1-flashlight-artifact/flashlight_text-0.0.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl \
-  model_artifacts/runtime_wheels/flashlight_text/0.0.7/cp313-linux-x86_64/flashlight_text-0.0.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl \
-  --repo-type dataset
-```
-
-The committed manifest SHA-256 is
-`e00041b237090a1ad5638f4b3667b7f7eee2803ff4858a2ce68ee779d0ad9a1b`.
-If the wheel is rebuilt, update both configured manifest hashes only after the
-new artifact has been verified and uploaded.
-
-## Main phase-based pipeline
-
-Notebook 01 calls production `process-batch` directly and does not repeat a
-one-video smoke for every worker. There is no mode or provider selector. A
-typical invocation after Phase00 is:
-
-```bash
-system1 process-batch \
-  --batch-id batch_000 \
-  --worker-id worker_000 \
-  --release-id-override canonical_release_v001 \
-  --hf-repo-id your-org/AIOU26_release \
-  --hf-checkpoint-repo your-org/AIOU26_checkpoints \
-  --output output \
-  --sync
-```
-
-The real one-video smoke is an optional developer check, normally run once to
-validate the full Phase01 implementation before assigning production workers:
-
-```bash
-system1 phase01-smoke \
-  --output output \
-  --scratch-dir scratch
-```
-
-The smoke uses package-configured release/checkpoint test repositories and
-isolated `_smoke/<run_id>` prefixes. It calls the production batch core, requires
-all ten stages through `sync` to be computed, validates the package and remote
-checksum, prints a report, and cleans local intermediates while keeping the
-shared model cache. It never starts a production batch. Notebook 01 contains
-the same invocation in a Markdown cell for an operator to copy into a new code
-cell only when this one-time check is wanted.
-
-Before changing the production NumPy/NeMo/Transformers contract, qualify a full
-candidate stack in a fresh Colab Python 3.13 runtime:
-
-```bash
-python -m pip install -e system1
-system1-phase01-qualify \
-  --workspace /content/aic_phase01 \
-  --candidate py313-nemo273
-```
-
-Installation and model checks run in separate subprocesses. Only a PASS
-`phase01_runtime_qualification_v1.json` authorizes synchronizing the qualified
-versions into `pyproject.toml`, `configs/models.yaml`, and `uv.lock`.
-
-The production Python 3.13 tuple is qualified as NumPy `2.1.3`, NeMo `2.7.3`,
-and Transformers `4.57.6`. Gate 1 run `20260830T061502Z_d6a7d17c` passed on a
-Colab Tesla T4, including the complete PyTorch CUDA stack, Parquet ABI, real
-NeMo transcription, Vintern-1B/Vintern-3B inference, Qwen2.5-VL inference, and
-GPU cleanup. Its immutable report is stored under
-`_qualification/20260830T061502Z_d6a7d17c/` in the configured qualification
-dataset repository.
-
-The override is needed for legacy Phase00 manifests without `completed_at`;
-new manifests are auto-resolved when it is omitted. The checkpoint repository
-may be public or private, but the configured token must have write access and
-the preflight must pass its write/read proof. A public repository exposes its
-intermediate checkpoint artifacts publicly. Before the first production run,
-provision the verified TransNet artifact and set its generated `weights_sha256`
-in `configs/models.yaml` as described below.
-
-The older mock E2E remains a developer test path, injected only through guarded
-test environment variables. It is not a user-facing Notebook 01 choice.
-
-Verified clean mock E2E sequence:
-
-```bash
-rm -rf output/competition_dataset_v001
-
-system1 ingest \
-  --input input \
-  --output output
-
-system1 assign-batches \
-  --num-batches 1 \
-  --output output
-
-AIC_ALLOW_TEST_PROVIDERS=1 AIC_SYSTEM1_TEST_PROVIDER_PROFILE=mock system1 process-batch \
-  --worker-id worker_clean \
-  --batch-id batch_000 \
-  --input input \
-  --output output
-
-system1 feature-batch \
-  --worker-id worker_clean \
-  --batch-id batch_000 \
-  --providers mock \
-  --input input \
-  --output output
-
-system1 merge \
-  --output output
-
-system1 build-index \
-  --output output
-
-system1 build-db \
-  --output output
-
-system1 validate \
-  --output output
-
-system1 smoke-test \
-  --release output/competition_dataset_v001
-```
-
-Expected mock E2E result:
-
-- `validation_report.json` status: `pass`
-- `smoke_test_report.json` status: `pass`
-- `release_usable`: `true`
-- `visual_search`: `degraded` in debug mode because the visual index may be a stub
-- `media_resolved`: `true`
-- `FTS query returned`: `true`
+Settings live in `configs/worker.yaml`. The old `process-batch`,
+`feature-batch`, `merge`, `build-db`, `build-index`, `validate`,
+`smoke-test`, `release`, and structure sync commands were removed on
+2026-10-26 (plan `system1-pipeline-simplification` Step 6).
 
 ## Notebook order
 
@@ -366,108 +210,12 @@ Run notebooks in this order (runbook: `notebooks/README.md`):
 3. `notebooks/02_caption_batch.ipynb`
 4. `notebooks/03_build_release.ipynb`
 
-`01_worker_structure_pipeline.ipynb`, `02_worker_feature_enrichment.ipynb`, and
-`03_merge_validate_index_release.ipynb` are the old Phase01, Phase02, and
-release notebooks; they are removed in plan Step 6.
-
 Notebooks hold settings and one CLI call each. They do not reimplement pipeline logic.
 
 ## Release output layout
 
-Current local package layout produced by the System 1 CLI:
-
-```text
-output/competition_dataset_v001/
-  artifacts/
-    structure/
-      L21_V001_structure.zip
-      L21_V002_structure.zip
-    features/
-      L21_V001_features.zip
-      L21_V002_features.zip
-  manifests/
-    worker_reports/
-      structure_batch_000_worker_000.json
-      features_batch_000_worker_000.json
-```
-
-The local CLI packages artifact ZIPs and worker reports in the release output
-tree. Phase01 structure Hugging Face sync/restore is handled by
-`sync-structure-artifacts` and `restore-structure-artifacts`; phase02 features
-sync/restore remains a separate future workflow target.
-
-Phase01 structure mapping:
-
-```text
-Local:
-  artifacts/structure/{video_id}_structure.zip
-  manifests/worker_reports/structure_{batch_id}_{worker_id}.json
-
-HF:
-  canonical_release_vXXX/phase01_structure/artifacts/{batch_id}/{video_id}_structure.zip
-  canonical_release_vXXX/phase01_structure/worker_reports/structure_{batch_id}_{worker_id}.json
-```
-
-`sync-structure-artifacts` reads `manifests/{batch_id}.txt`, validates each
-structure ZIP manifest/checksum before upload, and uploads only artifacts in
-that batch. `restore-structure-artifacts` downloads structure ZIPs and worker
-reports for one batch back into the local layout; it does not extract ZIPs.
-
-Notebook 01 responsibility:
-
-```text
-setup runtime + package
-  -> fresh subprocess runtime/import preflight
-  -> pinned one-video HF smoke in test release/checkpoint namespaces
-  -> require every Phase01 stage source=computed and validate remote checksum
-  -> cleanup local smoke artifacts while retaining shared model cache
-  -> restore Phase00 core tables + selected batch manifest from AIOU26_release
-  -> restore only frame_timeline files referenced by that batch
-  -> read manifests/{batch_id}.txt
-  -> resolve versioned config and validate production dependencies
-  -> restore and validate per-video/per-stage checkpoints
-  -> process only that batch through the fixed production stages
-  -> write artifacts/structure/{video_id}_structure.zip
-  -> write manifests/worker_reports/structure_{batch_id}_{worker_id}.json
-  -> sync those batch artifacts to phase01_structure
-```
-
-`process-batch` reuses Phase00 video facts from `tables/videos.parquet`
-and `raw_mapping/media_store_manifest.parquet`, plus
-`frame_timeline/{video_id}.parquet` when available, instead of re-probing every
-video. It may stage only the current video/metadata pair from `AIOU26_raw` or a
-local input directory into scratch, but it must not copy the full raw dataset
-into runtime storage. If a decoded frame timeline is unavailable, the package
-must fail that production video because canonical `frame_id` values require the
-decoded original timeline. Explicit estimated/degraded mapping may remain only
-in debug/test profiles and must never be hidden in notebook code.
-
-The Phase01 structure package is semantic structure, not feature enrichment.
-It contains shot rows, selected keyframes, thumbnails, production
-ASR/transcript rows, OCR rows from selected keyframes, one canonical bilingual
-shot-caption row per shot generated from that shot's representative keyframe,
-scene rows, bilingual Gemini scene summaries, package manifests, checksums, and
-errors.
-Production phase01 standardizes on TransNet V2 for shot boundaries and
-keyframes selected from bands centered at 20%/50%/80% of each shot. ASR defaults
-to the pinned NeMo/Parakeet Vietnamese provider with speech-aware Silero VAD,
-a 30-second hard cap, checksum-pinned 4-gram KenLM/lexicon assets, and
-Flashlight beam search. Faster-Whisper remains an explicit provider override.
-Legacy mock/fallback code
-remains reachable only through guarded test injection and cannot be selected
-from Notebook 01 or the public CLI.
-
-The complete accepted production sequence and failure policy are documented in
-`docs/architecture/system1-notebook01-production-pipeline.md`.
-
-The accepted production scene-grouping target is documented in
-`docs/architecture/system1-scene-grouping.md`. It uses overlapping multimodal
-context/focus windows and structured boundary judgements, but deterministic
-package code remains responsible for the complete scene partition, canonical
-IDs/ranges, mappings, and validation. Unresolved Gemini/provider failure fails
-the production video. The production implementation is in
-`src/system1/scenes/grouping.py` and `src/system1/scenes/gemini_judge.py`;
-fallback behavior is test/debug only.
+The release layout and tables are defined in
+`docs/architecture/data-contracts.md` and `schemas/v2/`.
 
 ## One-time TransNet artifact preparation
 
@@ -486,7 +234,7 @@ run:
 git clone --branch ASR --single-branch https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine.git
 cd Multimodal-Agentic-Retrieval-Engine/system1
 git lfs install
-python -m pip install -q -e ".[phase01-production]"
+python -m pip install -q -e ".[worker]"
 python -m pip install -q tensorflow torch
 python scripts/prepare_transnetv2_artifact.py \
   --output-dir /content/transnetv2-artifact \
@@ -520,7 +268,7 @@ the expected weights SHA-256, and writes
 ```bash
 git clone --branch ASR --single-branch https://github.com/awun0105/Multimodal-Agentic-Retrieval-Engine.git
 cd Multimodal-Agentic-Retrieval-Engine/system1
-python -m pip install -q -e ".[phase01-production]"
+python -m pip install -q -e ".[worker]"
 python scripts/prepare_transnetv2_artifact.py \
   --output-dir /content/transnetv2-artifact \
   --preconverted-weights-repo-id Sn4kehead/TransNetV2 \
@@ -532,103 +280,5 @@ python scripts/prepare_transnetv2_artifact.py \
   --path-in-repo model_artifacts/transnetv2/85cef72af9a916bdfd7cc94a670c9cdfbf12d1ed
 ```
 
-For mirror artifacts, `configs/models.yaml` must intentionally set
-`phase01.shot_detection.conversion_verified: false`; runtime validation rejects
-unverified conversion manifests unless the resolved config explicitly selects
-that policy. Until the checksum is configured, production preflight fails
-intentionally before video processing.
-
-Target per-video structure ZIP layout:
-
-```text
-{video_id}_structure.zip
-└── {video_id}/
-    ├── metadata_normalized.json
-    ├── asr_segments.parquet
-    ├── shots.parquet
-    ├── scenes.parquet
-    ├── keyframes.parquet
-    ├── shot_captions.parquet
-    ├── shot_transcript_links.parquet
-    ├── scene_transcript_links.parquet
-    ├── scene_summaries.parquet
-    ├── keyframes/
-    ├── thumbnails/
-    ├── manifest.json
-    ├── artifact_manifest.json
-    ├── checksums.json
-    └── errors.jsonl
-```
-
-Target Notebook 02 consumes only these project-generated keyframes and emits
-Gemini OCR, configured object detections, and separate SigLIP/BEiT3 embedding
-matrices/index inputs. The final runtime release uses `siglip.faiss` and
-`beit3.faiss` with shared `embeddings_meta` and `vector_map` keyed by
-`(index_name, vector_id)`. The current `feature-batch`/single-index path remains
-debug compatibility code and is not production Notebook 02 completion.
-
-Hugging Face shared target layout:
-
-```text
-AIOU26_release/canonical_release_vXXX/
-  phase00_ingestion/
-    tables/
-    raw_mapping/
-    frame_timeline/
-    manifests/
-    reports/
-  phase01_structure/
-    artifacts/
-      batch_000/
-        L21_V001_structure.zip
-    worker_reports/
-      structure_batch_000_worker_000.json
-  phase02_features/
-    artifacts/
-      batch_000/
-        L21_V001_features.zip
-    worker_reports/
-      features_batch_000_worker_000.json
-  phase03_merged/
-  releases/
-  checkpoints/
-  logs/
-```
-
-`phase00_ingestion` is not the final runtime release. The final app-ready
-release for System 2 lives under:
-
-```text
-AIOU26_release/canonical_release_vXXX/releases/competition_dataset_vXXX/
-```
-
-Legacy flat paths under
-`canonical_release_vXXX/{manifests,tables,raw_mapping}` are deprecated. New
-outputs should use
-`canonical_release_vXXX/phase00_ingestion/{manifests,tables,raw_mapping,frame_timeline,reports}`.
-
-Local final release layout after merge/index/release:
-
-```text
-output/competition_dataset_v001/
-  tables/
-  artifacts/
-  media/
-  indexes/
-  db/
-  manifests/
-  raw_mapping/
-```
-
-## Inspect release health
-
-Check these first:
-
-- `manifests/validation_report.json`
-- `manifests/smoke_test_report.json`
-- `manifests/merge_report.json`
-
-## Legacy dev helper
-
-The legacy `build-mini-seed` one-command helper has been removed from the main CLI. Use the phase-based workflow above for dev, tests, and releases.
-The main path for the current MVP is the phase-based CLI pipeline above.
+For mirror artifacts, `configs/worker.yaml` sets `models.shot_detection.conversion_verified: false`;
+the worker rejects unverified conversion manifests unless that flag says so.

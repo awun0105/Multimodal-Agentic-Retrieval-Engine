@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from system1.config import ProviderPlan
 from system1.runtime.environment import resolve_runtime_environment
 
 DEFAULT_RELEASE_ID = "competition_dataset_v001"
@@ -15,12 +14,6 @@ DEFAULT_FRAME_ID = 0
 INDEX_NAME = "visual"
 INDEX_VERSION = "v001"
 CHECKPOINT_VERSION = "v001"
-
-
-@dataclass(frozen=True)
-class BuildOptions:
-    providers: str = "mock"
-    provider_plan: ProviderPlan | None = None
 
 
 
@@ -55,12 +48,6 @@ def create_release_directories(release_dir: Path) -> None:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def config_hash(options: BuildOptions) -> str:
-    plan = options.provider_plan.__dict__ if options.provider_plan else {}
-    payload = {"providers": options.providers, "provider_plan": plan}
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
 def file_checksum(path: Path) -> str:

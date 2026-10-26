@@ -1,9 +1,0 @@
-release_id: competition_dataset_v001
-video_id_policy: filename_stem
-input:
-  raw_videos: system1/input/raw_videos
-  metadata: system1/input/metadata
-output: system1/output
-notes:
-  - "For the current MVP, CLI --input and --output are the runtime source of truth."
-  - "This config is descriptive and does not override explicit CLI paths."

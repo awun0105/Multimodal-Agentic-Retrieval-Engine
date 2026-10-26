@@ -1,7 +1,0 @@
-fps_policy:
-  scope: per_video
-  source: ffprobe
-  planning_expected_fps: 25
-frame_id_policy: decoded_original_frame_index
-batching:
-  default_num_batches: 1

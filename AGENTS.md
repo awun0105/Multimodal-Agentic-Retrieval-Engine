@@ -57,21 +57,17 @@ Hard rules:
 Run the tests for each component you change:
 
 ```bash
-# system1, base install (no torch/NeMo)
-cd system1 && uv run pytest -q --ignore=tests/test_phase01_vlm_client.py
+# system1 (base install; worker and release extras are not needed for tests)
+cd system1 && uv run pytest -q
 cd system1 && uv run pytest -q tests/<test_file>.py   # focused
-
-# system1, full suite (installs torch, NeMo, transformers)
-cd system1 && uv run --extra phase01-production pytest -q
 
 # mvp-app (installs torch and model dependencies on first setup)
 cd mvp-app && make setup && uv pip install --python .venv/bin/python -r requirements-dev.txt
 cd mvp-app && .venv/bin/python -m pytest -q
 ```
 
-Known failures on the base install (2026-10-26): three tests in
-`tests/test_phase01_asr_alignment.py` need NeMo. Report new failures
-separately from these.
+Known failures on the base install (2026-10-26): none. Report new failures
+separately.
 
 No linter is configured for the repository yet. Do not reformat existing code.
 

@@ -5,10 +5,8 @@ import pytest
 
 from system1.batch.writer import assign_batches
 from system1.commands.common import release_dir
-from system1.features.builder import process_feature_batch
 from system1.ingest.pipeline import run_ingestion
 from system1.media.probe import VideoProbe, VideoProbeWithTimeline
-from system1.release.merge import _is_complete_status
 from system1.runtime import (
     RuntimeEnvironment,
     RuntimePaths,
@@ -17,7 +15,6 @@ from system1.runtime import (
     resolve_runtime_environment,
     resolve_runtime_paths,
 )
-from system1.structure.builder import process_structure_batch
 
 
 @pytest.fixture(autouse=True)
@@ -120,16 +117,6 @@ def test_parse_bool_handles_known_values():
     assert parse_bool("unknown", default=True) is True
 
 
-@pytest.mark.parametrize("status", ["pass", "complete", "complete_local"])
-def test_release_merge_accepts_all_complete_statuses(status: str) -> None:
-    assert _is_complete_status(status) is True
-
-
-@pytest.mark.parametrize("status", [None, "unknown", "failed", "partial"])
-def test_release_merge_rejects_incomplete_statuses(status: object) -> None:
-    assert _is_complete_status(status) is False
-
-
 def test_release_id_affects_release_dir_and_phase_outputs(tmp_path, monkeypatch):
     release_id = "competition_dataset_custom"
     monkeypatch.setenv("AIC_RELEASE_ID", release_id)
@@ -147,27 +134,4 @@ def test_release_id_affects_release_dir_and_phase_outputs(tmp_path, monkeypatch)
     batch_manifest_path = assign_batches(output_dir, num_batches=1)
     assert batch_manifest_path.parent.parent.name == release_id
 
-    structure_report = process_structure_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", providers="mock")
-    assert structure_report.parent.name == "worker_reports"
-    assert structure_report.parents[2].name == release_id
 
-    feature_report = process_feature_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", providers="mock")
-    assert feature_report.parent.name == "worker_reports"
-    assert feature_report.parents[2].name == release_id
-
-
-def test_merge_dataset_manifest_release_id_matches_folder(tmp_path, monkeypatch):
-    release_id = "competition_dataset_custom"
-    monkeypatch.setenv("AIC_RELEASE_ID", release_id)
-    output_dir = tmp_path / "output"
-    input_dir = Path("input")
-
-    run_ingestion(output_dir, input_dir=input_dir)
-    assign_batches(output_dir, num_batches=1)
-    process_structure_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", providers="mock")
-    process_feature_batch(output_dir, input_dir=input_dir, batch_id="batch_000", worker_id="worker_x", providers="mock")
-
-    from system1.release.merge import merge_worker_outputs
-    merge_report = merge_worker_outputs(output_dir / release_id)
-    manifest = json.loads((merge_report.parent / "dataset_manifest.json").read_text(encoding="utf-8"))
-    assert manifest["release_id"] == release_id

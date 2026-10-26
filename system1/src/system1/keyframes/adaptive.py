@@ -13,8 +13,11 @@ covered across its whole length.
 from __future__ import annotations
 
 import bisect
-from collections.abc import Callable, Sequence
+from collections import deque
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 
@@ -22,6 +25,23 @@ from system1.keyframes.signals import difference_hash, difference_hash_distance,
 
 HASH_SIZE = 8
 BLANK_LUMA_STD = 4.0
+CUT_FRAME_SIZE = (48, 27)  # (width, height) of the frames the cut predictor reads
+
+
+class CutPredictor(Protocol):
+    """Per-frame cut probabilities from a stream of 48x27 RGB frames.
+
+    `push` returns the predictions that became available, in frame order;
+    `finish` returns the rest. Together they give one value per pushed frame.
+    """
+
+    def push(self, frame: np.ndarray) -> Sequence[float]: ...
+
+    def finish(self) -> Sequence[float]: ...
+
+
+class CutDetectionError(RuntimeError):
+    """The cut predictor failed or disagreed with the timeline; the caller falls back to one segment."""
 
 
 @dataclass(frozen=True)
@@ -157,3 +177,137 @@ def _cosine_distance(left: np.ndarray, right: np.ndarray) -> float:
 
 def _is_blank(frame: np.ndarray) -> bool:
     return float(np.asarray(frame, dtype=np.float32).mean(axis=-1).std()) < BLANK_LUMA_STD
+
+
+def iter_cut_segment_frames(
+    video_path: Path | str,
+    *,
+    pts: Sequence[float],
+    policy: AdaptiveKeyframePolicy,
+    predictor: CutPredictor | None,
+    threshold: float,
+) -> Iterator[tuple[int, int, list[int], dict[int, np.ndarray]]]:
+    """Decode the video once; yield `(start_frame, end_frame, plan, frames)` per cut segment.
+
+    Each frame feeds the cut predictor as a 48x27 frame. Cut segments follow
+    `predictions_to_scenes` (midpoint of each positive run that touches neither
+    end); `plan` is `plan_candidate_frames` of the segment and `frames` maps its
+    decoded candidates to RGB arrays, as `iter_decode_frame_groups` would.
+    A full-resolution frame is held only while its segment start is unknown
+    (the predictor lag plus any open positive run) or while it can still be a
+    candidate of its segment. With `predictor=None` the whole timeline is one
+    segment. Predictor errors and a frame count different from `pts` raise
+    `CutDetectionError`.
+    """
+
+    import cv2
+
+    frame_total = len(pts)
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise RuntimeError(f"Cannot open video for keyframe extraction: {video_path}")
+    predictions: list[float] = []
+    boundaries: deque[int] = deque()  # last frame of each cut segment, from closed runs
+    state = {"run_start": None, "scanned": 0, "classified": 0, "start": 0}
+    pending: dict[int, np.ndarray] = {}  # BGR frames whose segment is not known yet
+    kept: dict[int, np.ndarray] = {}  # RGB frames that can be candidates of the current segment
+    window = _CandidateWindow(0, pts, policy)
+
+    def known_until() -> int:
+        # Frames before the returned index have a known segment start.
+        while state["scanned"] < len(predictions):
+            index = state["scanned"]
+            positive = predictions[index] > threshold
+            if positive and state["run_start"] is None:
+                state["run_start"] = index
+            elif not positive and state["run_start"] is not None:
+                if state["run_start"] > 0:
+                    boundaries.append((state["run_start"] + index - 1) // 2)
+                state["run_start"] = None
+            state["scanned"] += 1
+        return state["run_start"] if state["run_start"] is not None else state["scanned"]
+
+    def finalize(end: int) -> tuple[int, int, list[int], dict[int, np.ndarray]]:
+        start = state["start"]
+        plan = plan_candidate_frames(start_frame=start, end_frame=end, pts=pts, policy=policy)
+        frames = {frame: kept[frame] for frame in plan if frame in kept}
+        kept.clear()
+        return start, end, plan, frames
+
+    def classify(limit: int) -> Iterator[tuple[int, int, list[int], dict[int, np.ndarray]]]:
+        nonlocal window
+        while state["classified"] < limit:
+            frame = state["classified"]
+            bgr = pending.pop(frame, None)
+            if bgr is not None and window.wants(frame):
+                kept[frame] = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            state["classified"] += 1
+            if boundaries and boundaries[0] == frame:
+                boundaries.popleft()
+                yield finalize(frame + 1)
+                state["start"] = frame + 1
+                window = _CandidateWindow(frame + 1, pts, policy)
+
+    def predict(call, *args) -> Sequence[float]:
+        try:
+            return [float(value) for value in call(*args)]
+        except Exception as exc:
+            raise CutDetectionError(f"{type(exc).__name__}: {exc}") from exc
+
+    try:
+        decoded = 0
+        while decoded < frame_total and capture.grab():  # frames past the timeline are never used
+            ok, bgr = capture.retrieve()
+            if ok and bgr is not None:
+                pending[decoded] = bgr
+            if predictor is None:
+                predictions.append(0.0)
+            elif not ok or bgr is None:
+                raise CutDetectionError(f"frame {decoded} could not be decoded for cut detection")
+            else:
+                small = cv2.resize(bgr, CUT_FRAME_SIZE, interpolation=cv2.INTER_AREA)
+                predictions.extend(predict(predictor.push, cv2.cvtColor(small, cv2.COLOR_BGR2RGB)))
+            decoded += 1
+            yield from classify(known_until())
+        if predictor is None:
+            predictions.extend([0.0] * (frame_total - len(predictions)))
+        else:
+            predictions.extend(predict(predictor.finish))
+            if not decoded == len(predictions) == frame_total:
+                raise CutDetectionError(f"decoded {decoded} frames and {len(predictions)} predictions "
+                                        f"for a timeline of {frame_total} frames")
+        known_until()  # a positive run that reaches the last frame is not a cut
+        yield from classify(frame_total)
+        yield finalize(frame_total)
+    finally:
+        capture.release()
+
+
+class _CandidateWindow:
+    """Which frames of a segment starting at `start` can appear in its candidate plan.
+
+    The plan holds grid frames from `start + edge_margin_frames` every
+    `candidate_interval_sec`, or the middle frame of a segment shorter than one
+    interval. Every frame up to the second grid frame is kept (it covers the
+    middle frame); after that only grid frames. The grid repeats the float
+    steps of `plan_candidate_frames`, so the selected frames match it exactly.
+    """
+
+    def __init__(self, start: int, pts: Sequence[float], policy: AdaptiveKeyframePolicy) -> None:
+        self.pts = pts
+        self.first = start + policy.edge_margin_frames
+        self.interval = policy.candidate_interval_sec
+        if self.first >= len(pts):
+            self.until, self.next = len(pts), len(pts)
+            return
+        self.target = float(pts[self.first]) + self.interval
+        self.until = bisect.bisect_left(pts, self.target, lo=self.first)
+        self.next = self.until
+
+    def wants(self, frame: int) -> bool:
+        if frame <= self.until:
+            return True
+        while self.next < frame and self.next < len(self.pts):
+            self.target += self.interval
+            self.next = bisect.bisect_left(self.pts, self.target, lo=self.first)
+        return frame == self.next
