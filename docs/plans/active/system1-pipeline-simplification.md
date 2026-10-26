@@ -598,11 +598,20 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
     shots 1463 s, `L23_V004` 107 shots 297 s, `L23_V010` 93 shots 231 s.
     Valid JSON 1485/1511 (98.3%); all 26 rejects are `repetition_loop`.
     Captions still cost about 2x the worker; item 3 (vLLM) decides whether
-    the pass stays on transformers.
+    the pass stays on transformers. Rerun at `7bd6fdc` on the one-pass
+    worker packages (1170 shots after the SigLIP shot split): 5 completed,
+    4082 s (3.49 s/shot; 68 min for 70.3 min of video, 0.97x), valid
+    1152/1170 (98.5%, 18 rejected). Per video: `L21_V014` 331 shots 1149 s,
+    `L22_V004` 422 shots 1474 s, `L22_V010` 325 shots 1190 s, `L23_V004` 53
+    shots 175 s, `L23_V010` 39 shots 95 s.
   - [ ] 3. vLLM versus transformers caption throughput trial on T4.
     Trial kernel written, not run (2026-10-26):
     `system1/research/phase01_trials/caption_vllm/` (`quanlam/mare-caption-vllm`),
     vLLM 0.11.0, float16, `enforce_eager`, one T4, `L23_V010` and `L23_V004`.
+    Run 2026-10-26 at `7bd6fdc` failed at `LLM(...)`: `Qwen2Tokenizer has no
+    attribute all_special_tokens_extended` (Kaggle image has transformers
+    5.x). Fixed by pinning `transformers>=4.57,<5` (`0ebd73e`, kernel v4);
+    rerun pending.
   - [x] 4. Release merges optional caption packages (code, 2026-10-26):
     `release/build.py` streams one worker ZIP at a time, verifies the caption
     package `worker_package_sha256`, lists `videos_with_captions`.
