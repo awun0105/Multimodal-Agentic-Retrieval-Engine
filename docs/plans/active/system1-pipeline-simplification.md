@@ -657,8 +657,12 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   a few pixels, so exact 16x16 hashes never match). 5c.2b done 2026-10-26:
   `CropCache` matches by Hamming distance (at most 24 of 256 bits; a 2-pixel
   box shift costs about 10 bits, unrelated crops about 127) within neighbouring
-  size buckets; hit rate to be measured on the next Kaggle worker run. Item 5c.1 keeps its code but is not expected to save
-  time on news video.
+  size buckets. Measured at `3125e71` on the 5 videos: `crop_cache_hits`
+  53, 123, 33, 70, 20 (about 1 to 8% of crops), `reused_from_shot` still 0,
+  `blurred_dropped` 1, 1, 1, 0, 2. OCR time `L21_V014` 505 s to 419 s; OCR
+  documents 1914 to 1910 after the syllable filter (3842 lines kept in
+  `L21_V014`). Item 5c.1 keeps its code but is not expected to save time on
+  news video.
   Plan checks (OCR lines before/after, cache hit rate, 200 dropped lines
   reviewed) wait for the next Kaggle run; the stage report now records
   `reused_from_shot` and `crop_cache_hits`. Items 4, 5, 6 coded 2026-10-26:
@@ -675,7 +679,9 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   stepped by `text.asr_window_step_sec 10` with `window` = true; all other
   documents (asr chunks, ocr, caption, visible_text) write `window` = false.
   `window` is required in `text_documents.schema.json` and
-  `data-contracts.md`. Checks on Kaggle pending.
+  `data-contracts.md`. Kaggle run at `3125e71`: 182 `asr` chunks (was 163
+  time cuts) and 413 `asr` windows over the 5 videos; `L21_V014` 50 chunks
+  and 107 windows.
 - [ ] Step 5d (data contract): audit, `schemas/v2/`, and `data-contracts.md`
   rewrite done 2026-10-26; validator and `videos`/`vector_map` code not
   started.
@@ -698,8 +704,19 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   keyframes pass to the keyframes stage in memory; a keyframes-only rerun
   decodes again from `cut_segments.parquet`. A TransNet failure goes straight
   to the one-segment fallback, no CPU retry. Test: single pass equals the
-  two-pass result on a synthetic 300-frame video. Kaggle check pending: cut
-  segments and keyframes identical on the 5 test videos, worker seconds.
+  two-pass result on a synthetic 300-frame video. Kaggle run at `3125e71`
+  (`quanlam/mare-worker-batch`, T4, same 5 videos, old packages removed
+  first): 5 completed, 0 failed, 2464 s of worker time for 70.3 min of video
+  (0.58x; was 2607 s at `46bf0c2`). Per video: `L21_V014` 718 s (was 767),
+  `L22_V004` 822 s (892), `L22_V010` 648 s (670), `L23_V004` 155 s (161),
+  `L23_V010` 120 s (117). Cut segments against the previous release in the
+  bucket: 1075 of 1076 identical; `L22_V004` has one extra boundary at frame
+  24017 (cv2 INTER_AREA input versus the ffmpeg scaler). Keyframes: 1928 now
+  versus 1932, 1921 in common (blur filter dropped 5, SigLIP split moved 6).
+  `L21_V014` stages: cuts+shots+SigLIP one pass 269 s (was 104+89+33 = 226 s
+  in three passes, so the single pass is not faster on a T4 kernel; the
+  saving came from OCR), OCR 419 s (was 505), text vectors 13 s, ASR 12 s.
+  Package sizes 33 to 128 MB (ZIP_STORED).
   New known failure: `test_phase01_runtime_qualification.py::
   test_qualified_python313_production_tuple_is_pinned_in_project_and_lock`
   (lockfile now has two resolutions because of the `release` extra); the test
