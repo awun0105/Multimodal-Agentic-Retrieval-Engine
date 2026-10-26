@@ -619,8 +619,18 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
     --bucket-prefix --persist-dir` (no separate `publish-release` command);
     `build_release.ipynb` installs `system1[release]` (huggingface_hub 1.x for
     the bucket API; `[tool.uv] conflicts` keeps it apart from
-    `phase01-production`). Not done: 5-video round trip against the real bucket;
-    skip of videos whose media is already in the bucket.
+    `phase01-production`). Kaggle run at commit `200e013`
+    (`quanlam/mare-build-release`, CPU kernel): 5 packages built and
+    published to `1thesudden/aiou-app-storage` prefix
+    `releases_test/canonical_release_v001` in 312 s end to end, peak RSS 560
+    MB, 3870 files, 0 degraded stages. Tables: 1076 cut_segments, 1511 shots,
+    1932 keyframes, 5047 text_documents (asr 163, ocr 1914, caption 1485,
+    visible_text 1485), 0 scenes, 6979 vector_map rows. Round trip with `hf
+    buckets sync` (control files 33 MB: app.sqlite 4.9 MB, image index 8.9
+    MB, text index 20.7 MB): `READY.json` sha256 equals the downloaded
+    `manifest.json`, FAISS ntotal equals the vector maps (1932, 5047), FTS5
+    query works, keyframes are 1280x720 WebP. Not done: skip of videos whose
+    media is already in the bucket (a rerun re-uploads media).
 - [ ] Step 5c (algorithm backlog, group A): items 1, 2, 3 coded 2026-10-26
   (`providers/ocr.py`: `frame_text_hashes`, `should_rerun_ocr`, `CropCache`,
   `EasyVietOcr.read(image, cache)`; `text/evidence.py`:
