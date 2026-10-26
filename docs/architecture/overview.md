@@ -3,9 +3,9 @@
 ## Current Status
 
 This repository contains an implemented System 1 Python package and test suite,
-plus System 2 backend and frontend scaffolds. The System 1 debug/mock pipeline
-can build and validate release artifacts; production semantic providers remain
-unfinished. The System 2 architecture below is an accepted target, not a
+plus System 2 backend and frontend scaffolds. The System 1 worker, caption
+pass, and release builder ran on 5 videos on Kaggle
+(`docs/architecture/system1-target.md`). The System 2 architecture below is an accepted target, not a
 running application.
 
 Current implementation status: `docs/product/current-state.md`.

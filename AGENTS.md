@@ -44,7 +44,7 @@ Hard rules:
 | Product scope, competition rules, acceptance | `docs/product/requirements-truth-set.md`, `docs/product/rules-2026.md`, `docs/product/acceptance-criteria.md`, `docs/product/official/` |
 | What is implemented and verified | `docs/product/current-state.md`, `docs/validation/test-matrix.md` |
 | IDs, schemas, artifact and storage layout | `docs/architecture/data-contracts.md`, `system1/schemas/` |
-| System 1 pipeline behavior | `docs/architecture/system1-target.md`, ADRs 0021 to 0024, and `docs/plans/active/system1-pipeline-simplification.md` first; other `docs/architecture/system1-*.md` are partly outdated until the plan completes |
+| System 1 pipeline behavior | `docs/architecture/system1-target.md`, `docs/architecture/system1-ingestion.md` (Phase00), ADRs 0021 to 0026, `system1/notebooks/README.md`; `docs/archive/` is history only |
 | System 2 runtime, API, UI | `docs/architecture/system2-retrieval.md`, `docs/product/api-contracts.md`, `docs/product/ui-implementation.md` |
 | Lasting decisions | `docs/decisions/` |
 | Work in progress | `docs/plans/active/` |

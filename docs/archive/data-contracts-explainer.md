@@ -1,9 +1,7 @@
+> Superseded 2026-10-26 by `docs/architecture/data-contracts.md`. Archived; describes the removed pipeline.
+
 # Giải Thích Data Contract Và Luồng Dữ Liệu Retrieval
 
-> **Being superseded (2026-10-25).** Parts of this document describe the System 1
-> pipeline before ADRs 0021 to 0024. Where it conflicts with those ADRs or
-> `docs/plans/active/system1-pipeline-simplification.md`, the ADRs and the plan
-> win. This document is updated per stage during implementation.
 
 ## Trạng thái
 

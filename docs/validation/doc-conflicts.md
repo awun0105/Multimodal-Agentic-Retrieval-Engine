@@ -47,34 +47,10 @@ Resolved. Use SQLite FTS5 as MVP text search. Treat Tantivy/OpenSearch/BM25 JSON
 
 ## Conflict 7: Phase01 semantic structure target vs current fallback implementation
 
-Resolved 2026-10-26: `process-batch` and the old Phase01 modules were removed
-(plan `system1-pipeline-simplification` Step 6); the worker path in ADR 0023
-replaces them. The text below is historical.
-
-- Target docs/spec now define Notebook 01 / `process-batch` as phase01
-  semantic structure: restore phase00, reuse phase00 video facts, process only
-  the assigned batch, stage per-video raw media from `AIC26_raw` or local input,
-  generate TransNet V2 shot boundaries, selected keyframes, thumbnails, one
-  representative keyframe per shot, one canonical `shot_captions` row per shot,
-  required ASR/transcript rows, shot transcript links, scenes, scene summaries,
-  structure ZIPs, worker report, and sync to `phase01_structure`.
-- Current package implementation can produce valid structure ZIPs and reports,
-  and the fallback scaffold now consumes Phase00 decoded frame timelines when
-  available through provider interfaces. The package layout now follows the
-  one-shot-caption-per-shot contract: `shot_captions` is produced in Phase01,
-  Phase02 no longer produces caption/enriched-summary artifacts, and merge
-  combines Phase01 text evidence with Phase02 feature evidence.
-- The remaining gap is provider/algorithmic implementation depth: the current
-  package still uses fallback/provider-scaffold behavior for production
-  algorithms such as TransNet V2 shot detection, full representative-keyframe
-  selection policy, mandatory real ASR, VLM shot captioning, and LLM scene
-  summarization.
-
-Partially resolved. File naming, package layout, canonical Phase01
-shot-caption ownership, Phase02 caption removal, and timeline-aware fallback
-interfaces have been migrated toward the target phase01 contract. Real provider
-implementations and algorithm integrations remain open package work and must
-not move into Notebook 01 cells.
+Resolved 2026-10-26: the old Phase01 command and modules were removed (plan
+`system1-pipeline-simplification` Step 6); the worker path in ADR 0023 and
+`docs/architecture/system1-target.md` replaces them. The pre-removal text is in
+Git history and in `docs/archive/system1-notebook01-production-pipeline.md`.
 
 ## Conflict 8: Optional Organizer Metadata vs Required Canonical Metadata
 
@@ -108,5 +84,20 @@ Resolved 2026-10-26. `data-contracts.md` now describes `release_v2`
 `text_documents_fts`, `vector_map`) with schemas in `system1/schemas/v2/`.
 Query and agent state tables are System 2 runtime state
 (`system2-retrieval.md`). Old schemas and the modules that read them are
-removed in plan Step 6. Until plan Step 5b and 5d code lands, worker packages
-still lack `scene_id` and `is_representative`; the plan records this gap.
+removed in plan Step 6. Worker packages are `worker_package_v2` with
+`is_representative`; `shots.scene_id` is null in packages and set by the
+release builder (plan Step 5b items 1 and 5).
+
+## Conflict 10: Old System 1 Architecture Documents vs ADRs 0021 to 0026
+
+- `system1-spec.md`, `system1-throughput.md`,
+  `system1-notebook01-production-pipeline.md`, `system1-scene-grouping.md`,
+  `data-contracts-explainer.md`, and the Phase01/Phase02 parts of
+  `system1-ingestion.md` described the removed pipeline and carried
+  "being superseded" notes.
+
+Resolved 2026-10-26 (plan Step 6 item 3). Those files moved to `docs/archive/`
+with a "superseded by" header. `system1-ingestion.md` now covers Phase00 only.
+Live System 1 docs: `system1-target.md`, `system1-ingestion.md`,
+`data-contracts.md`, ADRs 0021 to 0026. ADR 0014 and ADR 0015 still link to the
+old `docs/architecture/` paths of archived files.

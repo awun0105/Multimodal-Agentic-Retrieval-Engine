@@ -1,3 +1,5 @@
+> Superseded 2026-10-26 by `docs/roadmap/README.md`. Archived; describes the roadmap before the System 1 pipeline simplification.
+
 # MVP-0.6 System 1 Mini Seed Dataset And Validation
 
 ## Status

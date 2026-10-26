@@ -35,7 +35,7 @@ supplied by configuration. Provider failure after bounded retry fails the
 production video; it does not trigger a silent semantic fallback.
 
 The complete canonical design is
-`docs/architecture/system1-scene-grouping.md`.
+`docs/archive/system1-scene-grouping.md`.
 
 Provider amendment, 2026-09-01: the Gemini adapter above records the initial
 implementation choice, not the current production runtime. ADR 0018 governs

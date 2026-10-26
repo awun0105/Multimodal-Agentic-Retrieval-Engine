@@ -50,7 +50,7 @@ detections, and separate SigLIP and BEiT3 indexes. Exact runtime model IDs remai
 configuration/provenance values.
 
 The complete target contract is
-`docs/architecture/system1-notebook01-production-pipeline.md`.
+`docs/archive/system1-notebook01-production-pipeline.md`.
 
 ## Alternatives Considered
 

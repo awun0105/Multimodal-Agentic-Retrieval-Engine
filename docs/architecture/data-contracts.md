@@ -321,7 +321,8 @@ decoded `pts_time` of those frames.
   non-empty has no caption or `visible_text` document.
 - `text_documents` is the only text-search table. `evidence_type`:
   `asr` (10 to 30 s chunks), `ocr` (one keyframe's lines joined by newline),
-  `caption`, `visible_text`, `scene` (release only). `shot_ids` lists the shots
+  `caption`, `visible_text`. The schema also allows `scene`, but no code writes
+  it (ADR 0026 amendment). `shot_ids` lists the shots
   overlapping `[start_sec, end_sec]`. `keyframe_id` is set for `ocr`,
   `caption`, `visible_text` and null otherwise. `text_unaccented` is `text`
   with Vietnamese diacritics removed (`system1.text.evidence.unaccent`).
@@ -383,7 +384,7 @@ A reader treats a prefix without `READY.json` as incomplete.
 | `shots` | `shots_v2` | merged; `scene_id` set |
 | `scenes` | `scenes_v2` | built at release time (ADR 0026) |
 | `keyframes` | `keyframes_v4` | merged; `keyframe_ref` ends in `.webp` |
-| `text_documents` | `text_documents_v2` | merged worker and caption documents plus `scene` summaries |
+| `text_documents` | `text_documents_v2` | merged worker and caption documents |
 | `text_documents_fts` | FTS5 over `text`, `text_unaccented`; `tokenize='unicode61 remove_diacritics 0'`; external content table `text_documents` | one per document |
 | `vector_map` | `vector_map_v2` | one per FAISS row |
 
@@ -440,7 +441,7 @@ media is needed.
 
 - Official Batch 2 dataset structure and final submission transport are not
   confirmed.
-- `scenes`, `scene` documents, `is_representative`, and `videos` are specified
-  here and in `schemas/v2/` ahead of the code that writes them (plan Step 5b
-  and 5d). Until that code lands, worker packages carry `worker_package_v1`
-  manifests without `scene_id` and `is_representative`.
+- `scenes` (with `summary`) are written by the release builder
+  (`scenes/release_builder.py`) and covered by `tests/test_release_build.py`,
+  but no release built from real packages has contained scenes yet (plan Step
+  5b item 5). Scene boundary precision and recall are not measured.

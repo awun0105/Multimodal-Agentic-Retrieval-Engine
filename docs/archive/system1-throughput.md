@@ -1,9 +1,7 @@
+> Superseded 2026-10-26 by `docs/architecture/system1-target.md`, ADR 0025, and `system1/notebooks/README.md`. Archived; describes the removed pipeline.
+
 # System 1 Throughput Plan
 
-> **Being superseded (2026-10-25).** Parts of this document describe the System 1
-> pipeline before ADRs 0021 to 0024. Where it conflicts with those ADRs or
-> `docs/plans/active/system1-pipeline-simplification.md`, the ADRs and the plan
-> win. This document is updated per stage during implementation.
 
 Tài liệu này mô tả cách vận hành **System 1 preprocessing pipeline** để xử lý dataset video nhanh, ổn định, dễ chia việc cho nhiều teammate, và dễ khôi phục khi một session Kaggle/Colab bị lỗi.
 

@@ -1,3 +1,5 @@
+> Superseded 2026-10-26 by `docs/roadmap/README.md`. Archived; describes the roadmap before the System 1 pipeline simplification.
+
 # Phase 7 — Hybrid Search, Workspace, And Submission
 
 ## Maps To

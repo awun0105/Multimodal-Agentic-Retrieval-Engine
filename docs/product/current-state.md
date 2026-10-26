@@ -1,39 +1,54 @@
 # Current State
 
-> **Review update (2026-10-25).** Phase01 ran on 77 videos on 2026-08-25 to
-> 2026-08-27 (56 completed), with output defects recorded in ADR 0023. Phase02
-> is mock only. Current work: `docs/plans/active/system1-pipeline-simplification.md`.
+Date: 2026-10-26
 
-## Status
+What is implemented and verified today. Every row cites the Progress section of
+`docs/plans/active/system1-pipeline-simplification.md` (plan) or a test. Design
+is in `docs/architecture/system1-target.md`; tables and IDs in
+`docs/architecture/data-contracts.md`; remaining work in `docs/roadmap/README.md`.
 
-Repository snapshot refreshed during Notebook 01 production implementation on
-2026-08-16.
-
-## Implemented And Observed
+## System 1: Verified On Real Data
 
 | Area | State | Evidence |
 | --- | --- | --- |
-| System 1 Python package and `system1` CLI | implemented | `system1/pyproject.toml`, `system1/src/system1/cli.py` |
-| Debug/mock System 1 release path through ingest, batching, processing, merge, index, SQLite build, validation, and smoke reporting | implemented for the debug/mock profile | `system1/README.md`, `system1/tests/test_smoke.py` |
-| Repository Harness Core 0.1.7 workflow | installed | `.harness-core/manifest.json`, `AGENTS.md`, `docs/WORKFLOW.md` |
+| Phase00 ingest (`stream-standardize-upload-raw`, `ingest`, `assign-batches`, Notebook 00B/00C) | 873 videos in `canonical_raw_v001`; Phase00 complete for `canonical_release_v001` | `docs/architecture/system1-target.md` (Phase00) |
+| Worker (`worker-batch`, `01_worker_batch.ipynb`): cuts, shots, keyframes, SigLIP2 vectors, ChunkFormer ASR, OCR, text vectors, package | Kaggle T4 x2 at commit `46bf0c2`, first 5 videos of `batch_000`: 5 completed, 0 failed, 70.3 min of video in 43.4 min (0.62x video length). OCR is 66% of worker time. | plan Step 5b item 1 |
+| Caption pass (`caption-batch`, `02_caption_batch.ipynb`), Qwen3-VL-4B on transformers | Kaggle T4 at commit `2224257`, same 5 videos: 1511 shots in 5184 s (3.43 s/shot, 1.23x video length); valid JSON 1485/1511 (98.3%), all rejects `repetition_loop` | plan Step 5b item 2 |
+| Release build and bucket publish (`build-release --publish`, `03_build_release.ipynb`) | Kaggle CPU kernel at commit `200e013`: 5 packages built and published to bucket `1thesudden/aiou-app-storage` prefix `releases_test/canonical_release_v001` in 312 s, peak RSS 560 MB, 0 degraded stages. Round trip with `hf buckets sync`: `READY.json` sha256 equals `manifest.json`, FAISS ntotal equals vector maps (1932, 5047), FTS5 query works, keyframes are WebP. | plan Step 5b item 7 |
+| Test suite | `cd system1 && uv run pytest -q`: 332 passed, 0 failed after the Step 6 deletions | plan Step 6 item 2 |
 
-## Partial Or Not Implemented
+## System 1: Coded, Not Verified On Real Data
 
 | Area | State | Evidence |
 | --- | --- | --- |
-| Canonical per-video metadata in Notebook 00B/00C | implemented and locally validated | Both raw upload package paths generate schema 1.0 JSON for every video, retain organizer source reference/checksum without a duplicate HF tree, retry `ffprobe`, project the same facts into inventory, and propagate provenance through canonical HF ingest. Notebook gates and automated tests cover the contract; a live full-dataset `canonical_raw_v009` upload has not yet been run. |
-| Production Phase00 decoded frame timeline from canonical HF raw | implemented and locally validated | Notebook 00B/00C create each decoded timeline while the video is already in bounded upload scratch. The raw inventory and progress record its path/status/row count; required resume backfills older missing timelines; canonical HF ingest downloads and validates only the compact Parquet, not the MP4. Automated tests cover the workflow, while a live full-dataset `canonical_raw_v009` rehearsal remains pending. |
-| Production Phase01 semantic algorithms | implemented, externally blocked from live proof | The public `process-batch` path and thin Notebook 01 implement batch-scoped checksum-resumable Phase00 restore, deterministic resolved config, writable public-or-private per-video/per-stage checkpoints with grouped output commits, dependency invalidation, TransNet V2 subprocess inference, one-pass bounded-RAM search-band keyframes, faster-whisper large-v3 OOM recovery, optional pinned NeMo/Parakeet Vietnamese ASR with FFmpeg silence segmentation, Gemini Interactions structured captions/boundaries/summaries with stage-local request cache/retry/concurrency controls, bounded scratch-scoped Hugging Face download caches, strict package validation, sync verification, remote layout verification, and QA/worker reports. The complete local suite passes 251 tests. A live run still requires the one-time verified TransNet artifact/checksum, credentials, and real-provider acceptance proof; see `docs/plans/completed/notebook01-production-pipeline.md`. |
-| Production Phase02 enrichment and dual visual indexes | partial/debug only | Current code builds a single debug visual embedding/index path. The accepted target is Gemini OCR, configured object detection, and separate SigLIP and BEiT3 FAISS indexes over Notebook 01 keyframes with shared `embeddings_meta`/`vector_map`; it is not implemented yet. |
-| System 2 backend | scaffold only | `system2/backend/pyproject.toml` and package placeholders |
-| System 2 frontend | scaffold only | minimal `system2/frontend/package.json` and no application source |
-| Search adapters, live fusion, Query Sessions, agent runtime, and organizer submission adapter | not implemented | target documentation exists, but System 2 runtime code does not implement it |
+| Scenes in the release (`scenes/release_builder.py`, ADR 0026) | every shot gets a `scene_id`; `scenes.summary` joins shot captions, null without captions; no model call. The published 5-video release has 0 scenes (built before the wiring). Boundary precision and recall on hand-labelled videos not measured. | plan Step 5b item 5; `tests/test_release_build.py`, `tests/test_scene_deterministic.py` |
+| One-pass decode with in-process TransNet (`providers.cuts.TransNetStream`) | single pass equals the two-pass result on a synthetic 300-frame video; not run on Kaggle | plan Step 5f items 3, 11 |
+| OCR rerun skip, crop cache by Hamming distance, syllable filter | hit rate not measured since the Hamming change | plan Step 5c items 1 to 3 |
+| Shot split by SigLIP drift, representative keyframe, blur filter | thresholds not tuned on real video | plan Step 5c items 4 to 6 |
+| ASR sentence chunks and overlapping `window` documents | not run on Kaggle | plan Step 5c items 7, 8 |
+| Bucket media resume, single video download, `ZIP_STORED`, upload re-check | not run on Kaggle | plan Step 5b item 7, Step 5f items 4, 5, 10 |
+| vLLM caption trial | kernel written (`system1/research/phase01_trials/caption_vllm/`), not run | plan Step 5b item 3 |
+
+## Removed
+
+The previous Phase01/Phase02 pipeline was removed on 2026-10-26 (plan Step 6
+item 2): Notebooks 01 to 03 of the old flow, the old Phase01 runner and
+qualification modules, Phase02 mock providers, the old merge, SQLite, index,
+and release writers, VLM scene grouping, `system1/prompts/`, old configs and
+schemas, and their CLI commands. The plan lists every removed path.
+
+## Pending
+
+| Area | State |
+| --- | --- |
+| Full `batch_000` run (worker, caption pass, release) | not started |
+| Remaining Phase00 batches | not started |
+| Evaluation set | not started; separate plan |
+| System 2 runtime (FastAPI + React) reading the release contract | scaffold only (`system2/backend/`, `system2/frontend/`) |
+| `mvp-app/` | Gradio app used for the preliminary round; does not read `release_v2` |
 
 ## Interpretation Rule
 
-Treat System 1 debug/mock behavior as implemented only where code and tests
-provide evidence. Do not describe the implemented Phase01 adapters as
-production-validated until real-provider acceptance passes, and do not describe
-System 2 target architecture as running behavior. Product and architecture
-decisions remain normative targets; implementation status belongs here and in
-`docs/validation/test-matrix.md`.
+A row is verified only when a Kaggle run or test recorded in the plan shows it.
+Coded rows must not be described as working until their Kaggle check is
+recorded in the plan Progress.

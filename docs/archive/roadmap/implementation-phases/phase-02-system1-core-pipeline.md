@@ -1,3 +1,5 @@
+> Superseded 2026-10-26 by `docs/roadmap/README.md`. Archived; describes the roadmap before the System 1 pipeline simplification.
+
 # Phase 2 — System 1 Core Pipeline On Last-Year Data
 
 ## Maps To

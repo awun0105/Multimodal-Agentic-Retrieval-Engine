@@ -1,9 +1,7 @@
+> Superseded 2026-10-26 by `docs/architecture/system1-target.md`, `docs/architecture/data-contracts.md`, and ADRs 0021 to 0026. Archived; describes the removed pipeline.
+
 # System 1 Specification v1.1
 
-> **Being superseded (2026-10-25).** Parts of this document describe the System 1
-> pipeline before ADRs 0021 to 0024. Where it conflicts with those ADRs or
-> `docs/plans/active/system1-pipeline-simplification.md`, the ADRs and the plan
-> win. This document is updated per stage during implementation.
 
 ## HCMC AI Challenge 2026 — Multimedia Dataset Factory
 

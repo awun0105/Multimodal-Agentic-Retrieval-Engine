@@ -12,8 +12,8 @@ It describes System 1 after the plan completes. Each part is marked:
   implementation and record the result here.
 - **Pending trial**: chosen after the Kaggle trials in plan Step 3.
 
-Where this document conflicts with older System 1 architecture documents, this
-document and ADRs 0021 to 0024 win. Phase00 is unchanged and remains described
+Superseded System 1 documents are in `docs/archive/`; this document and ADRs
+0021 to 0026 win over them. Phase00 is unchanged and remains described
 by `docs/architecture/system1-ingestion.md`, ADR 0016, and ADR 0017.
 
 ## Goal
@@ -34,7 +34,7 @@ Phase00  Ingest (unchanged)                          Notebook 00B/00C
   videos table, batch manifests                     → HF AIOU26_release/phase00_ingestion
   │
   ▼
-Phase01  Per-video worker                             Notebook 01 (one batch per worker)
+Phase01  Per-video worker                             01_worker_batch (one batch per worker)
   1 ASR              speech to text with timestamps (runs first, most GPU memory free)
   2 cuts             TransNetV2 cut segments
   3 shots, keyframes split cut segments into shots by visual change; keyframes
@@ -45,14 +45,14 @@ Phase01  Per-video worker                             Notebook 01 (one batch per
   8 sync             → HF AIOU26_release/{release_id}/worker/artifacts/{batch_id}/{video_id}.zip
   │
   ▼
-Caption pass  Per-video, over worker packages (ADR 0025)   caption_batch notebook
+Caption pass  Per-video, over worker packages (ADR 0025)   02_caption_batch
   one constrained JSON call per shot → captions, visible_text documents, text vectors
   → HF AIOU26_release/{release_id}/captions/artifacts/{batch_id}/{video_id}.zip
   │
   ▼
-Release  Merge, group, index, validate, publish        build_release notebook
+Release  Merge, group, index, validate, publish        03_build_release
   restore worker (+ caption) ZIPs → merge tables → scenes (ADR 0026)
-  → scene summaries (text-only) → SQLite + FTS5 → FAISS image + text indexes
+  → scene summaries (joined captions) → SQLite + FTS5 → FAISS image + text indexes
   → WebP keyframes → release validation → HF Storage Bucket releases/{release_id}/
   │
   ▼
@@ -147,8 +147,7 @@ whole length.
 
 ## Release Step: Merge, Group, Index, Validate, Publish (Decided, ADR 0025 and 0026)
 
-`build-release` (CLI) driven by `03_build_release.ipynb`; replaces Notebooks 02
-and 03:
+`build-release` (CLI) driven by `03_build_release.ipynb`:
 
 1. Restore every worker ZIP and every available caption ZIP for the release
    from `AIOU26_release`.
@@ -156,9 +155,9 @@ and 03:
    package are included and marked in the manifest.
 3. Group shots into scenes (ADR 0026) from SigLIP vectors, caption vectors,
    ASR timing, and OCR overlap; write `scenes` and `shots.scene_id`.
-4. Summarize each multi-shot scene with one text-only constrained call over its
-   shot captions, `visible_text`, and ASR; single-shot scenes reuse the shot
-   caption. Write `scene` text documents with text vectors.
+4. Set `scenes.summary` to the scene's distinct shot captions joined in time
+   order, null when no shot has a caption. No model call and no `scene` text
+   documents (ADR 0026 amendment 2026-10-26).
 5. Build SQLite with FTS5 over text documents (`unicode61 remove_diacritics 0`
    over `text` and `text_unaccented`).
 6. Build FAISS inner-product indexes over L2-normalized image vectors and text
@@ -188,7 +187,7 @@ release/
                                 thumbnail refs
     text_documents              doc_id, video_id, start/end time and frame,
                                 shot_ids, evidence_type (asr | ocr | caption |
-                                visible_text | scene), text, text_unaccented
+                                visible_text), text, text_unaccented, window
     text_documents_fts          FTS5 over text and text_unaccented
   indexes/
     image_siglip2.faiss                   image index

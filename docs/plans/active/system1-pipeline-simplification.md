@@ -733,6 +733,7 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
     - `pyproject.toml` extra `phase01-production` and its `[tool.uv] conflicts`; `uv.lock` relocked.
     - 21 test files for removed modules (including `test_phase01_runtime_qualification.py`, `test_phase01_asr_alignment.py`, `test_phase01_vlm_client.py`); old-flow tests cut from `test_smoke.py`, `test_runtime_environment.py`, `test_phase_structure_artifacts.py`, `test_checkpoint_workflow_cli.py`.
     Check: `cd system1 && uv run pytest -q` 332 passed, 0 failed.
+  - [x] Item 3 docs (2026-10-26): rewrote `docs/product/current-state.md`, `docs/roadmap/README.md`; reduced `docs/architecture/system1-ingestion.md` to Phase00; moved `system1-spec.md`, `system1-throughput.md`, `system1-notebook01-production-pipeline.md`, `system1-scene-grouping.md`, `data-contracts-explainer.md`, the old ingestion text, and the old roadmap files to `docs/archive/`; fixed stale lines in `system1-target.md`, `data-contracts.md`, `overview.md`, `doc-conflicts.md`, `test-matrix.md`, `docs/README.md`, `AGENTS.md`.
 
 ## Trial Results
 

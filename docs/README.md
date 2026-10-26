@@ -7,9 +7,10 @@ This directory is the shared documentation source of truth for humans and agents
 | Path | Content | Main reader |
 | --- | --- | --- |
 | `docs/product/` | Product behavior, competition rules, acceptance criteria, API contracts, and current state. `official/` holds organizer source material. | humans and agents |
-| `docs/architecture/` | System 1 / System 2 structure, data contracts, ingestion, throughput, and storage. `system1-target.md` is the System 1 design being implemented; older System 1 files are partly outdated. `data-contracts-explainer.md` is a Vietnamese walkthrough. | humans and agents |
+| `docs/architecture/` | System 1 / System 2 structure, data contracts, and storage. System 1: `system1-target.md` (pipeline), `system1-ingestion.md` (Phase00), `data-contracts.md` (tables, IDs, runtime contract). | humans and agents |
+| `docs/archive/` | Superseded documents kept for history (old System 1 spec, throughput, Notebook 01, scene grouping, Vietnamese data-contract explainer, old roadmap). Not authoritative. | humans |
 | `docs/decisions/` | Numbered lasting product and architecture decisions. | humans and agents |
-| `docs/roadmap/` | Phase roadmap, backlog, and team collaboration plan used to create milestones and issues. | humans |
+| `docs/roadmap/` | Remaining steps after the System 1 pipeline simplification (`README.md`). | humans |
 | `docs/plans/active/` | Durable execution plans currently in progress. | agents |
 | `docs/plans/completed/` | Validated execution history worth retaining. | agents |
 | `docs/validation/` | Behavior-to-proof matrix and doc/code conflict records. | humans and agents |

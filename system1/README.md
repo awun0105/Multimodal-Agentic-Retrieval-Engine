@@ -124,19 +124,6 @@ system1 restore-phase00-ingestion \
   --release-id canonical_release_v003 \
   --hf-repo-id your-org/AIOU26_release \
   --output output
-
-system1 sync-structure-artifacts \
-  --output output \
-  --hf-repo-id your-org/AIOU26_release \
-  --release-id canonical_release_v003 \
-  --batch-id batch_000 \
-  --worker-id worker_local_01
-
-system1 restore-structure-artifacts \
-  --output output \
-  --hf-repo-id your-org/AIOU26_release \
-  --release-id canonical_release_v003 \
-  --batch-id batch_000
 ```
 
 `standardize-archives` writes:
