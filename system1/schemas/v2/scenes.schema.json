@@ -49,6 +49,10 @@
     "shot_count": {
       "type": "integer",
       "minimum": 1
+    },
+    "summary": {
+      "type": ["string", "null"],
+      "description": "Distinct shot captions of the scene joined in time order; null when no shot has a caption."
     }
   },
   "additionalProperties": false,

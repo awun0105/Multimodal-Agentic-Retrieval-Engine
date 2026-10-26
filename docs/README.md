@@ -16,7 +16,8 @@ This directory is the shared documentation source of truth for humans and agents
 | `docs/agents/` | Project rules for coding agents: `GUIDE.md` (coding, gates, handoff) and `plain-prose.md` (writing style). Loaded through `AGENTS.md`. | agents |
 
 Component guides live next to the code: `system1/README.md`,
-`mvp-app/README.md`, `deploy/kaggle/README.md`, and `system1/research/`.
+`system1/notebooks/README.md` (System 1 notebook runbook), `mvp-app/README.md`,
+`deploy/kaggle/README.md`, and `system1/research/`.
 
 ## Harness-Managed Files
 

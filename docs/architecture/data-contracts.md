@@ -310,6 +310,8 @@ decoded `pts_time` of those frames.
   its shot's frame range.
 - `scenes` (release only, ADR 0026) tile the video's shots in order;
   `start_frame`/`end_frame` equal the first and last shot's bounds.
+  `summary` is the scene's distinct shot captions joined in time order, null
+  when no shot has a caption (ADR 0026 amendment 2026-10-26).
 
 ### Evidence
 
@@ -324,6 +326,13 @@ decoded `pts_time` of those frames.
   `caption`, `visible_text` and null otherwise. `text_unaccented` is `text`
   with Vietnamese diacritics removed (`system1.text.evidence.unaccent`).
   Every row has a text vector at the same index.
+- `window` (boolean, required) is true for overlapping `asr` windows
+  (`text.asr_window_sec` long, stepped by `text.asr_window_step_sec`) and
+  false for every other row, including `asr` chunks. Chunks cut at sentence
+  punctuation or a pause longer than `text.asr_sentence_gap_sec` when one
+  exists. Window `doc_id`s continue the `asr` numbering after the chunks.
+  Release FTS and vectors index window rows like other rows; System 2 dedupes
+  hits on `window`.
 
 ### Vectors
 

@@ -147,7 +147,7 @@ whole length.
 
 ## Release Step: Merge, Group, Index, Validate, Publish (Decided, ADR 0025 and 0026)
 
-`build-release` (CLI) driven by `build_release.ipynb`; replaces Notebooks 02
+`build-release` (CLI) driven by `03_build_release.ipynb`; replaces Notebooks 02
 and 03:
 
 1. Restore every worker ZIP and every available caption ZIP for the release

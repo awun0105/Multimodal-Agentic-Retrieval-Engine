@@ -101,6 +101,16 @@ captions and run on CPU or GPU inside the caption pass.
 A scene with one shot reuses the shot caption as its summary without a model
 call.
 
+Amendment (2026-10-26): the release runs on a CPU kernel, so it makes no model
+call. `scenes.summary` is the scene's distinct shot captions joined in time
+order, and null when no shot in the scene has a caption. The release writes no
+`scene` text documents, because it cannot compute E5 vectors on CPU. The
+text-only constrained call and `scene` documents are deferred to a later pass
+that has a model. Grouping uses the mean SigLIP vector of a shot's keyframes,
+the E5 vector of the shot's `caption` document, the spans of the video's `asr`
+documents, and the lines of the shot's `ocr` documents
+(`system1/src/system1/scenes/release_builder.py`).
+
 ### 3. Contract
 
 Release tables gain `scenes` (`scene_id`, `video_id`, `start_shot_id`,

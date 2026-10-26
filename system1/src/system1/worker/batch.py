@@ -9,7 +9,10 @@ Remote layout (docs/architecture/system1-target.md):
 A video whose package already exists in the output store is skipped, so a
 restarted session continues where the last one stopped. A failed video is
 recorded and the batch continues. Local files, including a Hugging Face
-download cache at `work_root/.hf_cache`, are removed after each video.
+download cache at `work_root/.hf_cache`, are removed after each video. The
+video file is downloaded with `single_copy=True`, so only one copy is on disk.
+Right before an upload the output path is checked again; if another session
+uploaded it meanwhile, the video counts as skipped.
 """
 
 from __future__ import annotations
@@ -29,7 +32,9 @@ from system1.worker.video import VideoInput, WorkerModels, process_video
 
 
 class Store(Protocol):
-    def download_file(self, relative_path: str, target: Path) -> Path: ...
+    def download_file(self, relative_path: str, target: Path, **kwargs: Any) -> Path: ...
+
+    def exists(self, relative_path: str) -> bool: ...
 
     def upload_file(self, source: Path, relative_path: str) -> Path: ...
 
@@ -88,8 +93,12 @@ def run_batch(
             video = _download_video(video_id, mapping.loc[video_id], raw_store, work_root / "videos")
             zip_path = process_video(video, config=config, models=models, work_root=work_root / "work",
                                      batch_id=paths.batch_id, worker_id=paths.worker_id)
-            output_store.upload_file(zip_path, f"{paths.artifacts}/{video_id}.zip")
-            report["completed"].append(video_id)
+            remote_zip = f"{paths.artifacts}/{video_id}.zip"
+            if output_store.exists(remote_zip):
+                report["skipped"].append(video_id)
+            else:
+                output_store.upload_file(zip_path, remote_zip)
+                report["completed"].append(video_id)
         except Exception as exc:
             report["failed"][video_id] = f"{type(exc).__name__}: {exc}"[:500]
             traceback.print_exc()
@@ -107,7 +116,8 @@ def run_batch(
 
 def _download_video(video_id: str, row: Any, raw_store: Store, target: Path) -> VideoInput:
     prefix = str(row["canonical_prefix"]).strip("/")
-    video = raw_store.download_file(f"{prefix}/{row['canonical_video_path']}", target / f"{video_id}.mp4")
+    video = raw_store.download_file(f"{prefix}/{row['canonical_video_path']}", target / f"{video_id}.mp4",
+                                   single_copy=True)
     timeline = raw_store.download_file(f"{prefix}/{row['canonical_frame_timeline_path']}",
                                        target / f"{video_id}.parquet")
     rows = pd.read_parquet(timeline).sort_values("frame_id").to_dict("records")

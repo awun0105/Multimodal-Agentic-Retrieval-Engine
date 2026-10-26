@@ -6,7 +6,8 @@ in batches; finished batches are recorded in `{release_dir}/.upload-state.json`
 so a rerun skips them. Pattern follows `mvp-app/tools/upload_release.py`.
 
 `client` is any object with `batch_add(list[(local_path, remote_path)])` and
-`exists(remote_paths) -> set[str]`; `BucketClient` wraps huggingface_hub.
+`exists(remote_paths) -> set[str]`, and `list_folders(prefix) -> set[str]` for
+the media sink resume; `BucketClient` wraps huggingface_hub.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ class Client(Protocol):
 
     def exists(self, remote_paths: Sequence[str]) -> set[str]: ...
 
+    def list_folders(self, prefix: str) -> set[str]: ...
+
 
 class BucketClient:
     """huggingface_hub bucket calls, as in mvp-app/tools/upload_release.py."""
@@ -48,6 +51,14 @@ class BucketClient:
         from huggingface_hub import get_bucket_paths_info
 
         return {item.path for item in get_bucket_paths_info(self.bucket_id, list(remote_paths))}
+
+    def list_folders(self, prefix: str) -> set[str]:
+        """Names of the direct subfolders of `prefix`."""
+        from huggingface_hub import BucketFolder, list_bucket_tree
+
+        return {item.path.rstrip("/").rsplit("/", 1)[-1]
+                for item in list_bucket_tree(self.bucket_id, prefix, recursive=False, token=self.token)
+                if isinstance(item, BucketFolder)}
 
 
 def publish_release(
@@ -105,12 +116,30 @@ def media_sink_for(
     batch_size: int = BATCH_SIZE,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Callable[[str, Path], None]:
-    """A `build_release` media sink: upload one video's media under `prefix/media/`, then delete it."""
+    """A `build_release` media sink: upload one video's media under `prefix/media/`, then delete it.
+
+    Videos whose `media/keyframes/{video_id}` folder is already in the bucket when the sink is
+    created are not uploaded again; `sink.stats` counts uploaded and skipped videos. If listing
+    fails, every video is uploaded.
+    """
 
     prefix = prefix.strip("/")
+    try:
+        published = client.list_folders(f"{prefix}/media/keyframes")
+    except Exception as exc:
+        print(f"Media listing failed, uploading every video: {exc}", flush=True)
+        published = set()
+    if published:
+        print(f"Media already in bucket for {len(published)} videos; skipping them", flush=True)
+    stats = {"uploaded": 0, "skipped": 0}
 
     def sink(video_id: str, media_root: Path) -> None:
         folders = [media_root / kind / video_id for kind in ("keyframes", "thumbnails")]
+        if video_id in published:
+            stats["skipped"] += 1
+            for folder in folders:
+                shutil.rmtree(folder, ignore_errors=True)
+            return
         pairs = [(path, f"{prefix}/media/{path.relative_to(media_root).as_posix()}")
                  for folder in folders for path in _files(folder)]
         for start in range(0, len(pairs), batch_size):
@@ -118,7 +147,9 @@ def media_sink_for(
             _with_retry(lambda: client.batch_add(batch), sleep=sleep)
         for folder in folders:
             shutil.rmtree(folder, ignore_errors=True)
+        stats["uploaded"] += 1
 
+    sink.stats = stats  # type: ignore[attr-defined]
     return sink
 
 

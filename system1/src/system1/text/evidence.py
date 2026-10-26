@@ -47,12 +47,17 @@ def chunk_asr_segments(
     min_sec: float,
     max_sec: float,
     max_gap_sec: float,
+    sentence_gap_sec: float = 0.6,
 ) -> list[AsrSegment]:
     """Group consecutive segments into chunks of at most `max_sec`.
 
-    A chunk closes when adding the next segment would exceed `max_sec`, or
-    when it has reached `min_sec` and the next segment starts after a pause
-    longer than `max_gap_sec`. A pause longer than `max_sec` always closes it.
+    A chunk closes when it has reached `min_sec` and the next segment starts
+    after a pause longer than `max_gap_sec`; a pause longer than `max_sec`
+    always closes it. When adding the next segment would exceed `max_sec`, the
+    chunk is cut at its last sentence boundary that leaves at least `min_sec`:
+    a segment ending with . ? ! or an ellipsis, or a pause longer than
+    `sentence_gap_sec` after it. Without such a boundary the whole chunk
+    closes. Segments are never split.
     """
 
     chunks: list[AsrSegment] = []
@@ -61,15 +66,39 @@ def chunk_asr_segments(
         if current:
             start = current[0].start_sec
             gap = segment.start_sec - current[-1].end_sec
-            too_long = segment.end_sec - start > max_sec
-            paused = gap > max_gap_sec and (current[-1].end_sec - start >= min_sec or gap > max_sec)
-            if too_long or paused:
+            if gap > max_gap_sec and (current[-1].end_sec - start >= min_sec or gap > max_sec):
                 chunks.append(_merge(current))
                 current = []
+        while current and segment.end_sec - current[0].start_sec > max_sec:
+            cut = _sentence_cut(current, segment, min_sec=min_sec, gap_sec=sentence_gap_sec)
+            chunks.append(_merge(current[:cut]))
+            current = current[cut:]
         current.append(segment)
     if current:
         chunks.append(_merge(current))
     return chunks
+
+
+def asr_windows(segments: Sequence[AsrSegment], *, window_sec: float, step_sec: float) -> list[AsrSegment]:
+    """Overlapping windows: segments starting in `[t, t + window_sec)` for t stepped by `step_sec`.
+
+    Segments are never split. Empty windows and windows with the same segments
+    as the previous one are dropped.
+    """
+
+    ordered = sorted(segments, key=lambda item: item.start_sec)
+    if not ordered:
+        return []
+    windows: list[AsrSegment] = []
+    previous: list[AsrSegment] = []
+    start = ordered[0].start_sec
+    while start <= ordered[-1].start_sec:
+        members = [segment for segment in ordered if start <= segment.start_sec < start + window_sec]
+        if members and members != previous:
+            windows.append(_merge(members))
+            previous = members
+        start += step_sec
+    return windows
 
 
 def shots_for_interval(
@@ -159,6 +188,19 @@ def _strip_edges(token: str) -> str:
 
 def _lines(text: str) -> list[str]:
     return list(dict.fromkeys(line.strip() for line in text.splitlines() if line.strip()))
+
+
+def _sentence_cut(current: Sequence[AsrSegment], following: AsrSegment, *, min_sec: float,
+                  gap_sec: float) -> int:
+    """Length of the longest prefix of `current` that ends on a sentence boundary and spans `min_sec`."""
+
+    for index in range(len(current), 0, -1):
+        last = current[index - 1]
+        after = current[index] if index < len(current) else following
+        boundary = last.text.rstrip().endswith((".", "?", "!", "\u2026")) or after.start_sec - last.end_sec > gap_sec
+        if boundary and last.end_sec - current[0].start_sec >= min_sec:
+            return index
+    return len(current)
 
 
 def _merge(segments: Sequence[AsrSegment]) -> AsrSegment:

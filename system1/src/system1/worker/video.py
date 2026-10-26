@@ -29,6 +29,7 @@ from system1.keyframes.builder import iter_decode_frame_groups, write_keyframe_i
 from system1.providers.ocr import CropCache, clean_ocr_lines, frame_text_hashes, should_rerun_ocr
 from system1.text.evidence import (
     AsrSegment,
+    asr_windows,
     chunk_asr_segments,
     shots_for_interval,
     strip_video_wide_repeats,
@@ -41,7 +42,7 @@ CUT_COLUMNS = ["cut_segment_id", "video_id", "start_frame", "end_frame", "start_
 SHOT_COLUMNS = ["shot_id", "video_id", "cut_segment_id", "scene_id", "start_frame", "end_frame", "start_sec",
                 "end_sec"]
 DOCUMENT_COLUMNS = ["doc_id", "video_id", "evidence_type", "start_sec", "end_sec", "shot_ids",
-                    "keyframe_id", "text", "text_unaccented"]
+                    "keyframe_id", "text", "text_unaccented", "window"]
 
 
 class ImageEmbedder(Protocol):
@@ -168,7 +169,7 @@ def process_video(
     def documents_stage():
         documents = _text_documents(video_id, package, text_config)
         # keyframe_id is null for asr rows; a string column keeps it null, not NaN.
-        pd.DataFrame(documents, columns=DOCUMENT_COLUMNS).astype({"keyframe_id": "string"}).to_parquet(
+        pd.DataFrame(documents, columns=DOCUMENT_COLUMNS).astype({"keyframe_id": "string", "window": "bool"}).to_parquet(
             package / "text_documents.parquet", index=False)
         return {"status": "pass", "documents": len(documents)}
 
@@ -285,7 +286,7 @@ def _text_documents(video_id: str, package: Path, settings: Mapping[str, Any]) -
     documents: list[dict[str, Any]] = []
 
     def add(kind: str, start: float, end: float, text: str, keyframe_id: str | None = None,
-            shot_ids: str | None = None) -> None:
+            shot_ids: str | None = None, window: bool = False) -> None:
         text = " ".join(text.split())
         if text:
             documents.append({
@@ -293,14 +294,19 @@ def _text_documents(video_id: str, package: Path, settings: Mapping[str, Any]) -
                 "start_sec": float(start), "end_sec": float(end),
                 "shot_ids": shot_ids or ",".join(shots_for_interval(start, max(end, start + 1e-6), spans)),
                 "keyframe_id": keyframe_id, "text": text, "text_unaccented": unaccent(text),
+                "window": window,
             })
 
     segments = [AsrSegment(row.start_sec, row.end_sec, row.text)
                 for row in pd.read_parquet(package / "asr_segments.parquet").itertuples()]
     for chunk in chunk_asr_segments(segments, min_sec=float(settings["asr_chunk_min_sec"]),
                                     max_sec=float(settings["asr_chunk_max_sec"]),
-                                    max_gap_sec=float(settings["asr_chunk_max_gap_sec"])):
+                                    max_gap_sec=float(settings["asr_chunk_max_gap_sec"]),
+                                    sentence_gap_sec=float(settings["asr_sentence_gap_sec"])):
         add("asr", chunk.start_sec, chunk.end_sec, chunk.text)
+    for window in asr_windows(segments, window_sec=float(settings["asr_window_sec"]),
+                              step_sec=float(settings["asr_window_step_sec"])):
+        add("asr", window.start_sec, window.end_sec, window.text, window=True)
 
     ocr = pd.read_parquet(package / "ocr.parquet")
     texts = {row.keyframe_id: "\n".join(row.lines) for row in ocr.itertuples()}

@@ -31,6 +31,9 @@ class FakeBucket:
     def exists(self, remote_paths):
         return self.paths & set(remote_paths)
 
+    def list_folders(self, prefix):
+        return {path.removeprefix(prefix + "/").split("/")[0] for path in self.paths if path.startswith(prefix + "/")}
+
 
 @pytest.fixture
 def release(tmp_path) -> Path:
@@ -128,3 +131,30 @@ def test_media_sink_uploads_one_video_then_deletes_it(release) -> None:
         f"media/{kind}/V1/V1_f{i:07d}.webp" for kind in ("keyframes", "thumbnails") for i in range(3))
     assert not (release / "media" / "keyframes" / "V1").exists()
     assert not (release / "media" / "thumbnails" / "V1").exists()
+
+
+def test_media_sink_skips_videos_already_in_the_bucket(release) -> None:
+    bucket = FakeBucket()
+    bucket.paths = {f"{PREFIX}/media/keyframes/V1/V1_f0000000.webp"}
+    (release / "media" / "keyframes" / "V2").mkdir()
+    (release / "media" / "keyframes" / "V2" / "V2_f0000000.webp").write_bytes(b"x")
+    sink = media_sink_for(bucket, PREFIX, sleep=lambda s: None)
+
+    sink("V1", release / "media")
+    sink("V2", release / "media")
+
+    assert _uploads(bucket) == ["media/keyframes/V2/V2_f0000000.webp"]
+    assert sink.stats == {"uploaded": 1, "skipped": 1}
+    assert not (release / "media" / "keyframes" / "V1").exists()
+
+
+def test_media_sink_uploads_everything_when_listing_fails(release) -> None:
+    class NoListing(FakeBucket):
+        def list_folders(self, prefix):
+            raise ConnectionError("listing unavailable")
+
+    bucket = NoListing()
+    sink = media_sink_for(bucket, PREFIX, sleep=lambda s: None)
+    sink("V1", release / "media")
+
+    assert len(_uploads(bucket)) == 6

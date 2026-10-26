@@ -162,9 +162,9 @@ Added 2026-10-26 after the first end-to-end run (Progress, Step 5 item 11).
    `test_release_build.py` covers a release with and without captions.
 5. Scenes: `scenes/grouping.py` as a pure function over shot evidence with the
    ADR 0026 signals and parameters from `worker.yaml` section `scenes`;
-   `release/build.py` writes `scenes` and `shots.scene_id`; scene summaries via
-   one text-only constrained call per multi-shot scene, `scene` documents with
-   vectors. Check: behavior tests on synthetic shots (two angles of one
+   `release/build.py` writes `scenes` and `shots.scene_id`; `scenes.summary` is
+   the distinct shot captions joined in time order, with no model call and no
+   `scene` documents at release time (ADR 0026 amendment 2026-10-26). Check: behavior tests on synthetic shots (two angles of one
    situation join; silence plus visual change splits; `max_scene_sec` splits;
    short single-shot scene merges); hand-labelled boundaries on 3 videos with
    precision and recall recorded here.
@@ -600,6 +600,9 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
     Captions still cost about 2x the worker; item 3 (vLLM) decides whether
     the pass stays on transformers.
   - [ ] 3. vLLM versus transformers caption throughput trial on T4.
+    Trial kernel written, not run (2026-10-26):
+    `system1/research/phase01_trials/caption_vllm/` (`quanlam/mare-caption-vllm`),
+    vLLM 0.11.0, float16, `enforce_eager`, one T4, `L23_V010` and `L23_V004`.
   - [x] 4. Release merges optional caption packages (code, 2026-10-26):
     `release/build.py` streams one worker ZIP at a time, verifies the caption
     package `worker_package_sha256`, lists `videos_with_captions`.
@@ -607,8 +610,13 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
     and recall on 3 hand-labelled videos. Done 2026-10-26: pure grouping in
     `scenes/deterministic.py` (`ShotEvidence`, `SceneParams.from_config`,
     `continuity_score`, `group_scenes`, `scene_ids_for_shots`), `worker.yaml`
-    section `scenes`, `tests/test_scene_deterministic.py` (7 tests). Not done:
-    wiring into `release/build.py`, scene summaries, hand-labelled check.
+    section `scenes`, `tests/test_scene_deterministic.py` (7 tests). Wiring
+    done 2026-10-26: `scenes/release_builder.py` is the default
+    `scene_builder` of `build_release` and the `build-release` CLI; every shot
+    gets a `scene_id`; `scenes.summary` joins shot captions, null without
+    captions; no model call and no `scene` documents (ADR 0026 amendment).
+    `tests/test_release_build.py` covers it. Not done: hand-labelled boundary
+    precision and recall on 3 videos; a release run on real packages.
   - [x] 6. WebP keyframes in the release (code, 2026-10-26): quality 80,
     `.webp` refs, `videos` and `vector_map` tables, `release_v2` manifest with
     `schema_sha256` and `peak_rss_mb`, SQLite WAL and foreign_keys pragmas.
@@ -629,8 +637,12 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
     buckets sync` (control files 33 MB: app.sqlite 4.9 MB, image index 8.9
     MB, text index 20.7 MB): `READY.json` sha256 equals the downloaded
     `manifest.json`, FAISS ntotal equals the vector maps (1932, 5047), FTS5
-    query works, keyframes are 1280x720 WebP. Not done: skip of videos whose
-    media is already in the bucket (a rerun re-uploads media).
+    query works, keyframes are 1280x720 WebP. Media resume coded 2026-10-26:
+    `media_sink_for` lists `{prefix}/media/keyframes/` once
+    (`BucketClient.list_folders`, `list_bucket_tree` non-recursive) and skips
+    videos whose keyframes folder exists; `sink.stats` counts uploaded and
+    skipped; a failed listing uploads everything. A video whose upload died
+    midway is also skipped. Not yet run on Kaggle.
 - [ ] Step 5c (algorithm backlog, group A): items 1, 2, 3 coded 2026-10-26
   (`providers/ocr.py`: `frame_text_hashes`, `should_rerun_ocr`, `CropCache`,
   `EasyVietOcr.read(image, cache)`; `text/evidence.py`:
@@ -656,19 +668,36 @@ Order: 1, 2, 7, 9 before the 5-video release round trip (Step 5b item 7);
   blur filter `min_sharpness_ratio 0.3` with `blurred_dropped` in the stage
   report; keyframes checkpoint includes the image model config. Thresholds not
   tuned on real video.
+  Items 7, 8 done 2026-10-26: `chunk_asr_segments(sentence_gap_sec)` cuts at
+  the last segment ending in . ? ! or an ellipsis, or before a pause longer
+  than `text.asr_sentence_gap_sec 0.6`, that leaves `min_sec`; falls back to
+  the time cut. `asr_windows` adds `asr` documents of `text.asr_window_sec 20`
+  stepped by `text.asr_window_step_sec 10` with `window` = true; all other
+  documents (asr chunks, ocr, caption, visible_text) write `window` = false.
+  `window` is required in `text_documents.schema.json` and
+  `data-contracts.md`. Checks on Kaggle pending.
 - [ ] Step 5d (data contract): audit, `schemas/v2/`, and `data-contracts.md`
   rewrite done 2026-10-26; validator and `videos`/`vector_map` code not
   started.
 - [ ] Step 5f (efficiency): items 1 (streaming build), 2 (CPU kernel noted in
   the notebook), 6, 7 (HF retry with backoff, client-agnostic), 9 (report per
   video in worker and caption batch via `--persist-dir`, build report), 13
-  (caption pass reads ZIP members) coded 2026-10-26. Open: 3, 4, 5, 10, 11.
+  (caption pass reads ZIP members) coded 2026-10-26. Items 4 (video
+  downloaded once: `download_file(single_copy=True)` uses
+  `hf_hub_download(local_dir=...)` and moves the file), 5 (`ZIP_STORED` for
+  .jpg/.jpeg/.webp/.npy/.parquet), 10 (`exists()` re-check right before the
+  worker and caption ZIP upload; counted as skipped) coded 2026-10-26, not
+  yet run on Kaggle. Open: 3, 11.
   New known failure: `test_phase01_runtime_qualification.py::
   test_qualified_python313_production_tuple_is_pinned_in_project_and_lock`
   (lockfile now has two resolutions because of the `release` extra); the test
   belongs to the old qualification module removed in Step 6.
-- [ ] Step 5e (notebooks): `worker_batch` verified at `93c7723`;
-  `caption_batch`, publish step, notebook tests, runbook, renames not started.
+- [ ] Step 5e (notebooks): `worker_batch` verified at `93c7723`.
+  Done 2026-10-26: items 2, 3, 5. Renamed to `01_worker_batch.ipynb`,
+  `02_caption_batch.ipynb`, `03_build_release.ipynb`,
+  `00C_master_ingestion_local.ipynb`; deleted `00_` and `00A_`; runbook
+  `system1/notebooks/README.md`; `tests/test_notebooks.py` replaces the smoke
+  notebook test, with an allowlist of 00B and 00C logic cells still to reduce.
 - [ ] Step 6: End-to-end run and cleanup.
 
 ## Trial Results

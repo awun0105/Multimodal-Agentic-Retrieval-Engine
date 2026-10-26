@@ -181,13 +181,44 @@ def test_phase00_table_without_a_required_column_is_rejected(packages, captions,
         _build(packages, captions, tmp_path / "build", phase00_videos=phase00)
 
 
-def test_shots_have_null_scene_and_scenes_table_is_empty(packages, captions, tmp_path) -> None:
+def test_every_shot_has_a_scene_and_scenes_tile_each_video(packages, captions, tmp_path) -> None:
     release = _build(packages, captions, tmp_path / "build")
 
-    assert _query(release, "SELECT count(*) FROM shots WHERE scene_id IS NOT NULL") == [(0,)]
-    assert _query(release, "SELECT count(*) FROM scenes") == [(0,)]
-    columns = [row[1] for row in _query(release, "PRAGMA table_info(scenes)")]
-    assert "start_shot_id" in columns and "shot_count" in columns
+    assert _query(release, "SELECT count(*) FROM shots WHERE scene_id IS NULL") == [(0,)]
+    assert _query(release, "SELECT count(*) FROM shots WHERE scene_id NOT IN (SELECT scene_id FROM scenes)") == [(0,)]
+    per_video = dict(_query(release, "SELECT video_id, count(*) FROM scenes GROUP BY video_id"))
+    assert set(per_video) == {"V1", "V2"} and min(per_video.values()) >= 1
+    shot_counts = dict(_query(release, "SELECT video_id, count(*) FROM shots GROUP BY video_id"))
+    assert dict(_query(release, "SELECT video_id, sum(shot_count) FROM scenes GROUP BY video_id")) == shot_counts
+
+
+def test_scene_summary_joins_captions_and_is_null_without_them(packages, captions, tmp_path) -> None:
+    release = _build(packages, captions, tmp_path / "build")
+
+    for scene_id, video_id, summary in _query(release, "SELECT scene_id, video_id, summary FROM scenes"):
+        captions_in_order = [row[0] for row in _query(release, f"""
+            SELECT d.text FROM text_documents d JOIN shots s ON s.shot_id = d.shot_ids
+            WHERE d.evidence_type = 'caption' AND s.scene_id = '{scene_id}' ORDER BY s.start_frame""")]
+        if video_id == "V1":
+            assert captions_in_order and summary == " ".join(dict.fromkeys(captions_in_order))
+        else:
+            assert summary is None
+    assert _query(release, "SELECT count(*) FROM text_documents WHERE evidence_type = 'scene'") == [(0,)]
+
+
+def test_custom_scene_builder_is_used(packages, captions, tmp_path) -> None:
+    calls = []
+
+    def builder(video_id, evidence):
+        calls.append((video_id, sorted(evidence)))
+        from system1.scenes.release_builder import make_scene_builder
+        from test_scene_deterministic import PARAMS
+        return make_scene_builder(PARAMS.__dict__)(video_id, evidence)
+
+    _build(packages, captions, tmp_path / "build", scene_builder=builder)
+
+    assert [video_id for video_id, _ in calls] == ["V1", "V2"]
+    assert calls[0][1] == ["image_vectors", "keyframes", "shots", "text_documents", "text_vectors"]
 
 
 def test_manifest_records_release_v2_fields(packages, captions, tmp_path) -> None:

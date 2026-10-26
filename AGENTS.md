@@ -69,11 +69,9 @@ cd mvp-app && make setup && uv pip install --python .venv/bin/python -r requirem
 cd mvp-app && .venv/bin/python -m pytest -q
 ```
 
-Known failures on the base install (2026-10-25): three tests in
-`tests/test_phase01_asr_alignment.py` need NeMo, and
-`tests/test_smoke.py::test_notebooks_are_operator_ready_thin_orchestration_shells`
-expects a stale `monolith-mvp-app` string. Report new failures separately from
-these.
+Known failures on the base install (2026-10-26): three tests in
+`tests/test_phase01_asr_alignment.py` need NeMo. Report new failures
+separately from these.
 
 No linter is configured for the repository yet. Do not reformat existing code.
 

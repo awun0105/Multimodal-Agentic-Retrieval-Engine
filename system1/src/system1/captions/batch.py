@@ -76,8 +76,12 @@ def run_caption_batch(
             zip_path = caption_video(worker_zip, config=config, captioner=captioner, text_embedder=text_embedder,
                                      work_root=work_root / "work", batch_id=paths.batch_id,
                                      worker_id=paths.worker_id)
-            output_store.upload_file(zip_path, f"{paths.artifacts}/{video_id}.zip")
-            report["completed"].append(video_id)
+            remote_zip = f"{paths.artifacts}/{video_id}.zip"
+            if output_store.exists(remote_zip):  # another session uploaded it meanwhile
+                report["skipped"].append(video_id)
+            else:
+                output_store.upload_file(zip_path, remote_zip)
+                report["completed"].append(video_id)
         except Exception as exc:
             report["failed"][video_id] = f"{type(exc).__name__}: {exc}"[:500]
             traceback.print_exc()

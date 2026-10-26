@@ -305,3 +305,19 @@ def test_phase01_structure_path_helpers() -> None:
         phase01_structure_worker_report_remote_path("canonical_release_v003", "structure_batch_000_worker.json")
         == "canonical_release_v003/phase01_structure/worker_reports/structure_batch_000_worker.json"
     )
+
+
+def test_artifact_zip_stores_compressed_media_and_deflates_text(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifact"
+    for name in ("a.jpg", "b.JPEG", "c.webp", "d.npy", "e.parquet", "f.json", "g.txt"):
+        (artifact_dir / "sub").mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "sub" / name).write_bytes(b"payload " * 64)
+    zip_path = write_artifact_zip(artifact_dir=artifact_dir, zip_path=tmp_path / "V1.zip", video_id="V1",
+                                  artifact_type="worker", batch_id="b", worker_id="w", status="ok")
+
+    with zipfile.ZipFile(zip_path) as archive:
+        types = {Path(info.filename).name: info.compress_type for info in archive.infolist()}
+    stored = {"a.jpg", "b.JPEG", "c.webp", "d.npy", "e.parquet"}
+    assert {name for name, kind in types.items() if kind == zipfile.ZIP_STORED} == stored
+    assert all(kind == zipfile.ZIP_DEFLATED for name, kind in types.items() if name not in stored)
+    assert {"f.json", "g.txt"} <= set(types)

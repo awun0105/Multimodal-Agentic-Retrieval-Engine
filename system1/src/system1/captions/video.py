@@ -27,7 +27,7 @@ from system1.worker.package import PackageError, validate_table
 
 CAPTION_COLUMNS = ["shot_id", "keyframe_id", "caption", "objects", "actions", "visible_text", "problems"]
 DOCUMENT_COLUMNS = ["doc_id", "video_id", "evidence_type", "start_sec", "end_sec", "shot_ids",
-                    "keyframe_id", "text", "text_unaccented"]
+                    "keyframe_id", "text", "text_unaccented", "window"]
 
 
 class Captioner(Protocol):
@@ -78,7 +78,7 @@ def caption_video(
     package = work_root / video_id / "package"
     package.mkdir(parents=True, exist_ok=True)
     captions_table = pd.DataFrame(captions, columns=CAPTION_COLUMNS)
-    documents_table = pd.DataFrame(documents, columns=DOCUMENT_COLUMNS).astype({"keyframe_id": "string"})
+    documents_table = pd.DataFrame(documents, columns=DOCUMENT_COLUMNS).astype({"keyframe_id": "string", "window": "bool"})
     validate_table("captions", captions_table)
     validate_table("text_documents", documents_table)
     captions_table.to_parquet(package / "captions.parquet", index=False)
@@ -122,7 +122,7 @@ def _documents(video_id: str, captions: list[dict[str, Any]], timestamps: Mappin
                 documents.append({"doc_id": f"{video_id}:{kind}:{len(documents):05d}", "video_id": video_id,
                                   "evidence_type": kind, "start_sec": timestamp, "end_sec": timestamp,
                                   "shot_ids": row["shot_id"], "keyframe_id": row["keyframe_id"],
-                                  "text": text, "text_unaccented": unaccent(text)})
+                                  "text": text, "text_unaccented": unaccent(text), "window": False})
     return documents
 
 

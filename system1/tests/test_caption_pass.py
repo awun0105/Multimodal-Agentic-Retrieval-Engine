@@ -142,3 +142,21 @@ def test_batch_skips_videos_that_already_have_a_caption_package(stores, tmp_path
 
     assert report["skipped"] == ["V1"]
     assert "captions" not in calls.count
+
+
+def test_batch_skips_upload_when_another_session_uploaded_meanwhile(stores, tmp_path) -> None:
+    output = stores[1]
+    remote = f"{RELEASE}/captions/artifacts/batch_000/V1.zip"
+    original = output.list_files
+
+    def list_then_appear(prefix=""):
+        files = original(prefix)
+        (output.root / remote).parent.mkdir(parents=True, exist_ok=True)
+        (output.root / remote).write_bytes(b"other session")
+        return files
+
+    output.list_files = list_then_appear
+    report = _run_batch(stores, tmp_path, Calls(), limit=1)
+
+    assert report["skipped"] == ["V1"]
+    assert remote not in output.uploads

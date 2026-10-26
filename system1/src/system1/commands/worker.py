@@ -98,6 +98,7 @@ def register(app: typer.Typer) -> None:
 
         from system1.release.build import build_release
         from system1.release.publish import BucketClient, media_sink_for, publish_release
+        from system1.scenes.release_builder import make_scene_builder
 
         config = _worker_config()
         storage = config["storage"]
@@ -159,7 +160,8 @@ def register(app: typer.Typer) -> None:
         release = build_release(
             release_id=release_id, worker_zips=worker_zips, caption_zips_by_video=caption_zip,
             phase00_videos=phase00_videos, out_dir=out_dir,
-            media_sink=media_sink_for(client, prefix) if client is not None else None, progress=progress,
+            media_sink=media_sink_for(client, prefix) if client is not None else None,
+            scene_builder=make_scene_builder(config["scenes"]), progress=progress,
         )
         shutil.rmtree(downloads, ignore_errors=True)
         typer.echo(f"Built {release} from {len(worker_remotes)} packages")

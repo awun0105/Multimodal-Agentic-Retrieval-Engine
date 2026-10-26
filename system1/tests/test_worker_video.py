@@ -221,8 +221,17 @@ def test_asr_documents_have_null_keyframe_id(video, tmp_path) -> None:
 
     assert str(table.schema.field("keyframe_id").type) in ("string", "large_string")
     rows = table.to_pylist()
-    assert [row["keyframe_id"] for row in rows if row["evidence_type"] == "asr"] == [None]
+    assert [row["keyframe_id"] for row in rows if row["evidence_type"] == "asr"] == [None, None]
     assert all(row["keyframe_id"] for row in rows if row["evidence_type"] == "ocr")
+
+
+def test_asr_window_documents_follow_chunks_and_are_flagged(video, tmp_path) -> None:
+    documents = _table(_run(video, tmp_path, _models(Calls())), "text_documents.parquet")
+
+    asr = documents[documents["evidence_type"] == "asr"]
+    assert list(asr["doc_id"]) == ["V1:asr:00000", "V1:asr:00001"]
+    assert list(asr["window"]) == [False, True]
+    assert not documents.loc[documents["evidence_type"] == "ocr", "window"].any()
 
 
 def test_package_satisfies_v2_schemas_with_null_scene_and_one_representative(video, tmp_path) -> None:
@@ -248,6 +257,16 @@ def test_validator_rejects_a_schema_violation(video, tmp_path) -> None:
     shots.loc[0, "shot_id"] = "V1_shot_zero"
     shots.to_parquet(package_dir / "shots.parquet", index=False)
     with pytest.raises(PackageError, match="shots.schema.json at shot_id"):
+        validate_package(package_dir, video_id="V1")
+
+
+def test_validator_rejects_text_documents_without_window(video, tmp_path) -> None:
+    _run(video, tmp_path, _models(Calls()))
+    package_dir = tmp_path / "work" / "V1" / "package"
+    documents = pd.read_parquet(package_dir / "text_documents.parquet")
+    documents.drop(columns=["window"]).to_parquet(package_dir / "text_documents.parquet", index=False)
+
+    with pytest.raises(PackageError, match="window"):
         validate_package(package_dir, video_id="V1")
 
 

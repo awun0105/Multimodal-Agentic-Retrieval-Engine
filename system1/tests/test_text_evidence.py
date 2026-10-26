@@ -6,6 +6,7 @@ import pytest
 
 from system1.text.evidence import (
     AsrSegment,
+    asr_windows,
     chunk_asr_segments,
     is_prompt_echo,
     parse_chunkformer_segments,
@@ -47,6 +48,45 @@ def test_a_long_silence_closes_the_chunk() -> None:
     chunks = chunk_asr_segments(segments, min_sec=10.0, max_sec=30.0, max_gap_sec=2.0)
 
     assert [chunk.text for chunk in chunks] == ["w0 w1", "w2"]
+
+
+def test_chunk_is_cut_at_sentence_punctuation_not_at_max_sec() -> None:
+    texts = ["a", "b", "c.", "d", "e", "f", "g"]
+    segments = [AsrSegment(i * 5.0, i * 5.0 + 4.9, text) for i, text in enumerate(texts)]
+
+    chunks = chunk_asr_segments(segments, min_sec=10.0, max_sec=30.0, max_gap_sec=2.0)
+
+    assert [chunk.text for chunk in chunks] == ["a b c.", "d e f g"]
+
+
+def test_chunk_is_cut_at_a_short_pause_not_at_max_sec() -> None:
+    spans = [(0.0, 5.0), (5.0, 10.0), (10.0, 15.0), (15.8, 20.0), (20.0, 25.0), (25.0, 30.0), (30.0, 35.0)]
+
+    chunks = chunk_asr_segments(_segments(spans), min_sec=10.0, max_sec=30.0, max_gap_sec=2.0,
+                                sentence_gap_sec=0.6)
+
+    assert [chunk.text for chunk in chunks] == ["w0 w1 w2", "w3 w4 w5 w6"]
+
+
+def test_sentence_chunks_obey_max_sec_and_keep_text_order() -> None:
+    segments = [AsrSegment(i * 3.0, i * 3.0 + 2.9, f"w{i}" + ("." if i % 4 == 3 else ""))
+                for i in range(40)]
+
+    chunks = chunk_asr_segments(segments, min_sec=10.0, max_sec=30.0, max_gap_sec=2.0)
+
+    assert all(chunk.end_sec - chunk.start_sec <= 30.0 for chunk in chunks)
+    assert all(chunk.text.endswith(".") for chunk in chunks[:-1])
+    assert " ".join(chunk.text for chunk in chunks) == " ".join(s.text for s in segments)
+
+
+def test_asr_windows_overlap_and_never_split_segments() -> None:
+    segments = _segments([(i * 5.0, i * 5.0 + 4.0) for i in range(8)])
+
+    windows = asr_windows(segments, window_sec=20.0, step_sec=10.0)
+
+    assert [window.text for window in windows] == ["w0 w1 w2 w3", "w2 w3 w4 w5", "w4 w5 w6 w7", "w6 w7"]
+    assert (windows[1].start_sec, windows[1].end_sec) == (10.0, 29.0)
+    assert asr_windows([], window_sec=20.0, step_sec=10.0) == []
 
 
 def test_chunk_maps_to_every_overlapping_shot() -> None:

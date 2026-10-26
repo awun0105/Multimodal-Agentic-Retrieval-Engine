@@ -358,14 +358,19 @@ Expected mock E2E result:
 
 ## Notebook order
 
-Run notebooks in this order:
+Run notebooks in this order (runbook: `notebooks/README.md`):
 
-1. `notebooks/00_master_ingestion_and_assignment.ipynb`
-2. `notebooks/01_worker_structure_pipeline.ipynb`
-3. `notebooks/02_worker_feature_enrichment.ipynb`
-4. `notebooks/03_merge_validate_index_release.ipynb`
+1. `notebooks/00B_master_ingestion_and_assignment.ipynb` (Colab, Drive) or
+   `notebooks/00C_master_ingestion_local.ipynb` (local)
+2. `notebooks/01_worker_batch.ipynb`
+3. `notebooks/02_caption_batch.ipynb`
+4. `notebooks/03_build_release.ipynb`
 
-Notebooks are thin orchestration only. They should call CLI commands or thin `src/system1` helpers, not reimplement pipeline logic.
+`01_worker_structure_pipeline.ipynb`, `02_worker_feature_enrichment.ipynb`, and
+`03_merge_validate_index_release.ipynb` are the old Phase01, Phase02, and
+release notebooks; they are removed in plan Step 6.
+
+Notebooks hold settings and one CLI call each. They do not reimplement pipeline logic.
 
 ## Release output layout
 

@@ -22,7 +22,7 @@ class LocalStore:
         self.root = root
         self.uploads: list[str] = []
 
-    def download_file(self, relative_path, target: Path) -> Path:
+    def download_file(self, relative_path, target: Path, **kwargs) -> Path:
         source = self.root / str(relative_path)
         if not source.is_file():
             raise FileNotFoundError(relative_path)
@@ -36,6 +36,9 @@ class LocalStore:
         shutil.copyfile(source, target)
         self.uploads.append(str(relative_path))
         return target
+
+    def exists(self, relative_path) -> bool:
+        return (self.root / str(relative_path)).is_file()
 
     def list_files(self, prefix="") -> list[Path]:
         base = self.root / str(prefix)
@@ -103,3 +106,38 @@ def test_local_files_are_removed_after_upload(stores, tmp_path) -> None:
 
     leftovers = [path for path in (tmp_path / "local").rglob("*") if path.is_file()]
     assert leftovers == []
+
+
+def test_video_has_one_local_copy_during_processing(stores, tmp_path, monkeypatch) -> None:
+    import system1.worker.batch as batch
+
+    seen: list[list[str]] = []
+    real = batch.process_video
+
+    def counting(video, **kwargs):
+        seen.append(sorted(p.name for p in (tmp_path / "local").rglob("*.mp4")))
+        return real(video, **kwargs)
+
+    monkeypatch.setattr(batch, "process_video", counting)
+    _run(stores, tmp_path, Calls(), limit=1)
+
+    assert seen == [["V1.mp4"]]
+
+
+def test_video_uploaded_by_another_session_meanwhile_is_skipped(stores, tmp_path) -> None:
+    output = stores[2]
+    remote = f"{RELEASE}/worker/artifacts/batch_000/V1.zip"
+    original = output.list_files
+
+    def list_then_appear(prefix=""):
+        files = original(prefix)
+        (output.root / remote).parent.mkdir(parents=True, exist_ok=True)
+        (output.root / remote).write_bytes(b"other session")
+        return files
+
+    output.list_files = list_then_appear
+    report = _run(stores, tmp_path, Calls(), limit=1)
+
+    assert report["skipped"] == ["V1"]
+    assert remote not in output.uploads
+    assert (output.root / remote).read_bytes() == b"other session"

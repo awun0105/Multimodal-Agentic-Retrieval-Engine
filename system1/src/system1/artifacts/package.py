@@ -62,6 +62,9 @@ def build_artifact_manifest(
     }
 
 
+STORED_SUFFIXES = frozenset({".jpg", ".jpeg", ".webp", ".npy", ".parquet"})
+
+
 def write_artifact_zip(
     *,
     artifact_dir: Path,
@@ -101,7 +104,10 @@ def write_artifact_zip(
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(artifact_dir.rglob("*")):
             if path.is_file():
-                archive.write(path, arcname=f"{video_id}/{path.relative_to(artifact_dir).as_posix()}")
+                # Images, arrays, and Parquet are already compressed; deflating them only costs CPU.
+                compression = zipfile.ZIP_STORED if path.suffix.lower() in STORED_SUFFIXES else zipfile.ZIP_DEFLATED
+                archive.write(path, arcname=f"{video_id}/{path.relative_to(artifact_dir).as_posix()}",
+                              compress_type=compression)
     return zip_path
 
 

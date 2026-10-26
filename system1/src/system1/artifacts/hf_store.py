@@ -242,8 +242,12 @@ class HuggingFaceDatasetArtifactStore:
         target: Path,
         *,
         cache_dir: Path | str | None = None,
+        single_copy: bool = False,
     ) -> Path:
+        """Download to `target`. With `single_copy`, skip the shared cache so only `target` holds the bytes."""
         remote_path = self._remote_path(relative_path)
+        if single_copy:
+            return self._download_single_copy(remote_path, target)
         effective_cache_dir = cache_dir if cache_dir is not None else self.cache_dir
         try:
             cached_path = self._retry(lambda: hf_hub_download(
@@ -264,6 +268,25 @@ class HuggingFaceDatasetArtifactStore:
         temp_path = target.with_name(f".{target.name}.tmp.{os.getpid()}")
         shutil.copyfile(cached_path, temp_path)
         os.replace(temp_path, target)
+        return target
+
+    def _download_single_copy(self, remote_path: str, target: Path) -> Path:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = target.parent / f".{target.name}.download.{os.getpid()}"
+        try:
+            downloaded = self._retry(lambda: hf_hub_download(
+                repo_id=self.repo_id,
+                repo_type=self.repo_type,
+                revision=self.revision,
+                filename=remote_path,
+                token=self.token,
+                local_dir=str(staging),
+            ))
+            os.replace(downloaded, target)
+        except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
+            raise FileNotFoundError(remote_path) from exc
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
         return target
 
     def read_json(self, relative_path: str | Path) -> dict[str, Any]:

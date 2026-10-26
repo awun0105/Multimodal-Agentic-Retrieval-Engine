@@ -39,6 +39,7 @@ from PIL import Image
 
 from system1.artifacts.package import extract_artifact_zip, validate_artifact_zip
 from system1.indexes.vectors import build_vector_index
+from system1.scenes.release_builder import SCENE_COLUMNS, make_scene_builder
 from system1.worker.package import SCHEMA_DIR, PackageError, validate_package, validate_table
 
 IMAGE_INDEX = "image_siglip2"
@@ -48,8 +49,6 @@ WEBP_QUALITY = 80
 VIDEO_COLUMNS = ["video_id", "video_ref", "duration_sec", "fps", "frame_count", "width", "height",
                  "organizer_metadata_present", "title", "author", "channel_id", "channel_url", "description",
                  "keywords", "length", "publish_date", "thumbnail_url", "watch_url"]
-SCENE_COLUMNS = ["scene_id", "video_id", "start_shot_id", "end_shot_id", "start_frame", "end_frame",
-                 "start_sec", "end_sec", "shot_count"]
 # videos_v2 column -> accepted Phase00 column names, first match wins.
 VIDEO_SOURCES = {
     "video_id": ("video_id",),
@@ -66,7 +65,7 @@ OPTIONAL_VIDEO_SOURCES["title"] = ("title", "metadata_title")
 
 MediaSink = Callable[[str, Path], None]
 # scene_builder(video_id, evidence) -> (scenes table, {shot_id: scene_id}); evidence holds that
-# video's shots, keyframes, text_documents tables and image_vectors array.
+# video's shots, keyframes, text_documents tables and image_vectors, text_vectors arrays.
 SceneBuilder = Callable[[str, Mapping[str, Any]], tuple[pd.DataFrame, Mapping[str, str]]]
 
 
@@ -89,7 +88,8 @@ def build_release(
 
     `worker_zips` may be lazy (a generator or a callable returning one), and
     `caption_zips_by_video` may be a fetcher `video_id -> Path | None`, so a
-    caller can download each package only when it is needed.
+    caller can download each package only when it is needed. Without a
+    `scene_builder`, scenes are grouped with `worker.yaml` section `scenes`.
     """
 
     out_dir = Path(out_dir)
@@ -99,6 +99,8 @@ def build_release(
     media = release / "media"
     media.mkdir(parents=True)
     fetch_captions = _caption_fetcher(caption_zips_by_video)
+    if scene_builder is None:
+        scene_builder = make_scene_builder(_default_scene_config())
 
     tables: dict[str, list[pd.DataFrame]] = {name: [] for name in (*PACKAGE_TABLES, "scenes")}
     image_vectors: list[np.ndarray] = []
@@ -243,16 +245,25 @@ def _read_captions(caption_zip: Path, video_id: str, worker_zip: Path) -> tuple[
     return documents, vectors, dict(manifest.get("models", {}))
 
 
-def _assign_scenes(video: dict[str, Any], scene_builder: SceneBuilder | None, scenes: list[pd.DataFrame]) -> None:
-    """Hook for ADR 0026 grouping. Without a builder, `shots.scene_id` stays null."""
+def _default_scene_config() -> Mapping[str, Any]:
+    import yaml
+
+    from system1.runtime.environment import resolve_runtime_environment
+
+    path = resolve_runtime_environment().config_root / "worker.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["scenes"]
+
+
+def _assign_scenes(video: dict[str, Any], scene_builder: SceneBuilder, scenes: list[pd.DataFrame]) -> None:
+    """ADR 0026 grouping: fill `shots.scene_id` and add the video's scenes."""
 
     shots = video["shots"]
-    if scene_builder is None:
-        video["shots"] = shots.assign(scene_id=pd.Series([None] * len(shots), dtype="object"))
-        return
     table, shot_scene_ids = scene_builder(video["video_id"], {
         "shots": shots, "keyframes": video["keyframes"], "text_documents": video["text_documents"],
-        "image_vectors": video["image_vectors"]})
+        "image_vectors": video["image_vectors"], "text_vectors": video["text_vectors"]})
+    missing = [shot_id for shot_id in shots["shot_id"] if shot_id not in shot_scene_ids]
+    if missing:
+        raise ReleaseError(f"video {video['video_id']}: shots without a scene: {missing[:5]}")
     video["shots"] = shots.assign(scene_id=[shot_scene_ids.get(shot_id) for shot_id in shots["shot_id"]])
     scenes.append(table)
 

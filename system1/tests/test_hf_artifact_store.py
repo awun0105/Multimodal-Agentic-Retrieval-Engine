@@ -168,6 +168,25 @@ def test_download_file_uses_hf_hub_download_and_copies(monkeypatch, tmp_path: Pa
     assert calls["cache_dir"] == str(cache_dir)
 
 
+def test_single_copy_download_leaves_only_the_target(monkeypatch, tmp_path: Path) -> None:
+    def fake_download(**kwargs):
+        assert "cache_dir" not in kwargs
+        path = Path(kwargs["local_dir"]) / kwargs["filename"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"video")
+        (Path(kwargs["local_dir"]) / ".cache" / "huggingface").mkdir(parents=True)
+        return str(path)
+
+    monkeypatch.setattr("system1.artifacts.hf_store.hf_hub_download", fake_download)
+    store = HuggingFaceDatasetArtifactStore(repo_id="org/repo", cache_dir=tmp_path / "hf-cache")
+    target = tmp_path / "videos" / "V1.mp4"
+
+    store.download_file("raw/V1.mp4", target, single_copy=True)
+
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == [target]
+    assert target.read_bytes() == b"video"
+
+
 def test_download_file_uses_store_default_cache_dir(monkeypatch, tmp_path: Path) -> None:
     cached = tmp_path / "cached.bin"
     cached.write_bytes(b"payload")
